@@ -52,6 +52,7 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL es obligatorio}
+      AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET es obligatorio}
       NODE_ENV: production
       PORT: "3000"
       HOSTNAME: "0.0.0.0"
