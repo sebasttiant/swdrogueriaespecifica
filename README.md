@@ -4,12 +4,18 @@ Base técnica del software de gestión para **Droguería Específica**.
 100% web, responsive, **mobile-first** (el gerente opera desde el celular),
 dockerizado desde el inicio y **auditable**.
 
-> **Estado: Fase 1 (cimientos).** Estructura, stack, Docker, CI/CD, base visual
-> y base de auditoría. La lógica de negocio se implementa en fases siguientes.
+> **Estado: Fase 2 en progreso.** Sobre los cimientos de Fase 1 ya hay
+> **autenticación real** (JWT stateless en cookie httpOnly, roles, auditoría de
+> login) y **catálogo de productos con lotes y control de vencimientos**
+> (semáforo derivado por fecha). Pendientes/faltantes, el loop de entradas y
+> reportes/líderes quedan para fases siguientes.
 
 ---
 
-## Stack (versiones fijadas, sin rangos)
+## Stack
+
+> Dependencias controladas por lockfile; las versiones efectivas quedan fijadas
+> en `pnpm-lock.yaml`.
 
 | Capa        | Tecnología            | Versión        |
 | ----------- | --------------------- | -------------- |
@@ -24,10 +30,13 @@ dockerizado desde el inicio y **auditable**.
 | Base datos  | PostgreSQL (Docker)   | 18.4-alpine    |
 | Validación  | Zod                   | 4.4.3          |
 | Gráficas    | Recharts              | 3.8.1          |
+| Auth (JWT)  | jose                  | 6.2.3          |
+| Hash passwd | @node-rs/argon2       | 2.0.2          |
 | App runtime | Debian 13 "trixie"    | node:24.16.0-trixie |
 
-> **Auth:** en Fase 1 **no** se instala ninguna dependencia de auth. Solo se deja
-> la estructura Edge-safe / Node-only lista (ver _Estrategia de Auth_).
+> **Auth (Fase 2):** sesión **JWT stateless** en cookie httpOnly — `jose` (firma
+> Edge-safe, verificable en el middleware sin tocar la DB) + `@node-rs/argon2`
+> (hash de contraseñas, binario precompilado). Ver _Estrategia de Auth_.
 
 ---
 
@@ -80,7 +89,7 @@ pnpm check:toolchain   # o: node scripts/check-toolchain.mjs
 ```bash
 ./scripts/bootstrap.sh     # activa pnpm 11.5.2 + instala (ver "Bootstrap del toolchain")
 cp env.example .env        # completá los valores (ver nota de .env más abajo)
-pnpm dev                   # http://localhost:3000  ->  redirige a /dashboard
+pnpm dev                   # http://localhost:3000  ->  /login (rutas privadas protegidas)
 ```
 
 > Si ya tenés pnpm 11.5.2 activo, podés usar `pnpm install` directamente en vez
@@ -88,7 +97,19 @@ pnpm dev                   # http://localhost:3000  ->  redirige a /dashboard
 
 > **Nota sobre `.env`:** el archivo de ejemplo se llama **`env.example`** (sin
 > punto inicial) porque la política de seguridad del entorno bloquea crear
-> archivos `.env*`. Copialo a `.env` con `cp env.example .env`.
+> archivos `.env*`. Copialo a `.env` con `cp env.example .env`. Recordá setear
+> `AUTH_SECRET` (≥32 chars: `openssl rand -base64 32`), obligatorio (fail-fast).
+
+### Acceso (dev)
+
+Las rutas privadas exigen sesión. Sembrá el usuario admin y entrá con él:
+
+```bash
+pnpm db:seed   # crea admin@drogueriaespecifica.com (rol ADMIN)
+```
+
+La contraseña sale de `SEED_ADMIN_PASSWORD` (o el fallback de dev en `seed.ts`).
+**Nunca usar el fallback en producción.**
 
 ---
 
@@ -111,10 +132,18 @@ Validar la configuración del compose sin levantar nada:
 docker compose config
 ```
 
-> **Fase 1 incluye la migración inicial** (`apps/web/prisma/migrations/…_init`)
-> con las 6 tablas, enums e índices. El servicio `migrate` corre
-> `prisma migrate deploy` y **aplica esas migraciones ANTES** de que arranque la
-> web, así la base queda con tablas desde el primer `up`.
+> **Migraciones.** El servicio `migrate` corre `prisma migrate deploy` y aplica
+> **todas** las migraciones ANTES de que arranque la web. Hoy: `init` (6 tablas,
+> enums e índices), `add_product_batches` (lotes/vencimientos) y
+> `add_quantity_check` (CHECK `quantity >= 0`).
+>
+> ⚠️ **Antes de aplicar `add_quantity_check` en una base con datos reales**,
+> validá que no existan lotes con cantidad negativa — PostgreSQL **rechaza** el
+> CHECK si ya hay filas inválidas:
+>
+> ```sql
+> SELECT count(*) FROM product_batches WHERE quantity < 0;  -- debe dar 0
+> ```
 
 ---
 
@@ -143,24 +172,26 @@ Todos con **pnpm** (nunca npm):
 ```
 apps/web/
   app/
-    (auth)/login/            # login placeholder (logo + form deshabilitado)
-    (dashboard)/             # dashboard + módulos (productos, pendientes, ...)
+    (auth)/login/            # login real (form + server action)
+    (dashboard)/             # dashboard + módulos; productos: listado + detalle [id]
     api/health/              # healthcheck (no toca la DB)
     _components/
-      app-shell/             # Sidebar, Topbar, MobileNav, PageHeader, BrandLogo
+      app-shell/             # Sidebar, Topbar (logout), MobileNav, PageHeader, BrandLogo
       ui/                    # Button, Card, Badge, StatusPill, KpiCard, QuickAction
-  features/                  # lógica por feature (Fase 1: estructura)
+  features/                  # lógica por feature (UI + Zod por dominio)
     auth/ productos/ pendientes/ faltantes/ entradas/ reportes/ auditoria/
   lib/
-    auth/                    # split Edge-safe (config.edge) / Node-only (index.node)
+    auth/                    # Edge-safe (config.edge, jwt.edge) + Node-only (index.node, require-role, password)
+    inventory/               # helpers puros: semáforo de vencimiento / stock vendible
     db/                      # cliente Prisma singleton (adapter-pg)
-    validations/ constants/ utils/
-  server/
-    actions/ services/ repositories/   # services/audit.service.ts (auditoría)
+    pagination.ts            # paginación cursor-based compartida
+    constants/ utils/
+  server/                    # action -> service -> repository (por dominio)
+    actions/ services/ repositories/   # auth.* , product.* , product-batch.* , audit.service
   prisma/
-    schema.prisma            # User, Product, Pending, MissingItem, InventoryEntry, AuditLog
-    seed.ts
-  middleware.ts              # Edge-safe (sin Prisma); placeholder de protección
+    schema.prisma            # User, Product, ProductBatch, Pending, MissingItem, InventoryEntry, AuditLog
+    migrations/ seed.ts
+  middleware.ts              # Edge-safe: protege rutas privadas (verifica JWT con jose)
   Dockerfile                 # multi-stage (base/deps/builder/migrate/runner)
 docker-compose.yml
 .github/workflows/           # ci-pr, ci-main, codeql, gitleaks
@@ -192,29 +223,33 @@ Piezas ya disponibles:
 - **Acciones/módulos canónicos** (`lib/constants/audit.ts`): fuente de verdad tipada.
 - **Tipos de consulta** (`features/auditoria/types.ts`): filtros para la pantalla de Fase 2.
 
-En Fase 2 se construye la pantalla de consulta (filtros: fecha, usuario, acción,
-módulo, entidad, resultado) y se cablea `recordAudit` en cada acción de negocio.
+`recordAudit` ya está cableado en login/logout y en el alta de productos
+(`PRODUCT_CREATE`). Falta la **pantalla de consulta** (filtros: fecha, usuario,
+acción, módulo, entidad, resultado) y cablearlo en el resto de acciones de negocio,
+que llegan en fases siguientes.
 
 ---
 
-## Estrategia de Auth (decisión de Fase 1)
+## Estrategia de Auth (Fase 2)
 
-Fase 1 **no implementa login** ni instala dependencias de auth (evita beta o
-desalineadas). Solo deja la arquitectura limpia:
+Sesión **JWT stateless** en cookie httpOnly. Elegida por escala (~300 usuarios
+concurrentes): el middleware verifica la firma en el Edge **sin consultar la DB**.
 
-- `lib/auth/config.edge.ts` — **Edge-safe**: sin Prisma, sin Node-only. Lo usa `middleware.ts`.
-- `lib/auth/index.node.ts` — **Node-only** (placeholder): futuro punto único de sesión.
+- `lib/auth/config.edge.ts` / `lib/auth/jwt.edge.ts` — **Edge-safe**: firma y
+  verificación con `jose` (Web Crypto). Los usa `middleware.ts`. Sin Prisma.
+- `lib/auth/index.node.ts` — **Node-only**: `getCurrentSession()` (lee la cookie).
+- `lib/auth/require-role.ts` — guards `requireSession` / `requireRole`; `hasRole` puro.
+- `lib/auth/password.ts` — hash/verify con `@node-rs/argon2`.
 - `lib/auth/session.ts` — tipos compartidos.
 
-En Fase 2/3 se elige el mecanismo (Auth.js v5 si está estable, NextAuth v4 si se
-necesita estabilidad inmediata, o auth propia con cookie httpOnly) y se implementa.
+Roles: `ADMIN`, `LIDER`, `OPERADOR`. Las **mutaciones** (p. ej. alta de productos)
+exigen `ADMIN`/`LIDER`; la **lectura** es para cualquier sesión válida. El
+`middleware.ts` protege todas las rutas privadas y redirige a `/login` sin sesión.
+Login/logout quedan auditados (`auth.login` / `auth.login.failed` / `auth.logout`).
 
-> ⚠️ **Importante para Fase 2 — protección de rutas.** En Fase 1 el dashboard y
-> los módulos quedan **públicos** (no hay login). Esto se acepta **solo como
-> Fase 1**. La Fase 2 **debe** proteger todas las rutas privadas: `middleware.ts`
-> (hoy placeholder edge-safe) tiene que exigir cookie de sesión válida y redirigir
-> a `/login` cuando falte. Nota: Next 16 deprecó `middleware.ts` a favor de
-> `proxy.ts` — la migración a `proxy.ts` se hace al implementar la protección real.
+> El JWT lleva solo `sub`, `role`, `name`/`email`; expiración corta (2h) sin
+> refresh en esta fase. Revocación instantánea (sesiones en DB / blacklist) queda
+> en roadmap si aparece el requisito. Requiere `AUTH_SECRET` (≥32 chars, fail-fast).
 
 ---
 
