@@ -5,8 +5,9 @@ packages:
 # Allowlist explícita de dependencias autorizadas a ejecutar build scripts.
 # Toolchain oficial, necesario:
 #   esbuild -> tsx/vitest · unrs-resolver -> ESLint · sharp -> next/image
-#   prisma / @prisma/engines -> CLI y Migrate
+#   prisma / @prisma/engines -> CLI y Migrate · @node-rs/argon2 -> hash nativo
 onlyBuiltDependencies:
+  - "@node-rs/argon2"
   - "@prisma/engines"
   - esbuild
   - prisma
