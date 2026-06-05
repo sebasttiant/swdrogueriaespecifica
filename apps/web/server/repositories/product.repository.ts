@@ -59,6 +59,10 @@ export async function listProducts(params: {
   return { items, nextCursor };
 }
 
+export async function findProductById(id: string): Promise<Product | null> {
+  return prisma.product.findUnique({ where: { id } });
+}
+
 export async function createProduct(data: CreateProductData): Promise<Product> {
   return prisma.product.create({ data });
 }

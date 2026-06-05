@@ -49,6 +49,14 @@ enum AuditResult {
   FAILURE
 }
 
+// Estado del lote: SOLO decisiones humanas. "Vencido" (lo decide el reloj) y
+// "agotado" (lo decide la cantidad) son DERIVADOS, nunca se guardan acá.
+enum BatchStatus {
+  DISPONIBLE
+  CUARENTENA
+  RETENIDO
+}
+
 // --------------------------------------------------------------------------
 // Usuarios
 // --------------------------------------------------------------------------
@@ -91,10 +99,38 @@ model Product {
   pendings         Pending[]
   missingItems     MissingItem[]
   inventoryEntries InventoryEntry[]
+  batches          ProductBatch[]
 
   @@index([active])
   @@index([name])
   @@map("products")
+}
+
+// --------------------------------------------------------------------------
+// Lotes de inventario (ProductBatch)
+//
+// El stock físico real vive acá, no en Product. Cada lote tiene su propio
+// vencimiento. Stock vendible = status DISPONIBLE && quantity > 0 && no vencido
+// (se calcula por query, NO se cachea en Product).
+// --------------------------------------------------------------------------
+
+model ProductBatch {
+  id        String      @id @default(cuid())
+  product   Product     @relation(fields: [productId], references: [id])
+  productId String
+  batchCode String // número de lote del proveedor
+  expiresAt DateTime // vencimiento de ESTE lote
+  quantity  Int // stock físico de ESTE lote
+  location  String? // ubicación física (estante, depósito)
+  status    BatchStatus @default(DISPONIBLE)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@unique([productId, batchCode])
+  @@index([expiresAt]) // alertas de vencimiento globales (futuro)
+  @@index([productId, status]) // stock vendible por producto
+  @@index([productId, expiresAt, id]) // listado paginado por producto (where+orderBy)
+  @@map("product_batches")
 }
 
 // --------------------------------------------------------------------------

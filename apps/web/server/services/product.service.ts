@@ -8,6 +8,7 @@ import type { Paginated } from "@/lib/pagination";
 import type { Product } from "@/lib/generated/prisma/client";
 import {
   createProduct,
+  findProductById,
   listProducts,
   type CreateProductData,
   type ProductListItem,
@@ -18,6 +19,10 @@ export function getProducts(params: {
   take?: number;
 }): Promise<Paginated<ProductListItem>> {
   return listProducts(params);
+}
+
+export function getProduct(id: string): Promise<Product | null> {
+  return findProductById(id);
 }
 
 export function addProduct(data: CreateProductData): Promise<Product> {
