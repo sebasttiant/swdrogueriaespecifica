@@ -1,0 +1,23 @@
+# Keep the Docker build context small and reproducible.
+**/node_modules
+**/.next
+**/out
+**/dist
+**/build
+**/coverage
+**/generated/prisma
+
+.git
+.github
+**/.env
+**/.env.local
+**/.env.*.local
+
+**/*.log
+.DS_Store
+Thumbs.db
+.idea
+.vscode
+
+README.md
+docs

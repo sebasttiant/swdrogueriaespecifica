@@ -1,0 +1,65 @@
+name: CI (main)
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-main-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Lint · Typecheck · Test · Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.16.0"
+
+      - name: Activar pnpm 11.5.2 (Corepack)
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.5.2 --activate
+          pnpm -v
+
+      - name: Instalar dependencias
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build imagen web
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          target: runner
+          push: false
+          tags: drogueria-especifica-web:main
+
+  # Despliegue: preparado, sin deploy real todavía (Fase posterior).
+  deploy:
+    name: Deploy (placeholder)
+    needs: [quality, docker]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pendiente
+        run: echo "Deploy real se configura en una fase posterior."

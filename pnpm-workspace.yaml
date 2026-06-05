@@ -1,0 +1,14 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# Allowlist explícita de dependencias autorizadas a ejecutar build scripts.
+# Toolchain oficial, necesario:
+#   esbuild -> tsx/vitest · unrs-resolver -> ESLint · sharp -> next/image
+#   prisma / @prisma/engines -> CLI y Migrate
+onlyBuiltDependencies:
+  - "@prisma/engines"
+  - esbuild
+  - prisma
+  - sharp
+  - unrs-resolver

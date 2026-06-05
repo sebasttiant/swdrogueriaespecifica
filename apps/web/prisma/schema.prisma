@@ -1,0 +1,202 @@
+// ==========================================================================
+// Droguería Específica — Prisma schema (Fase 1)
+//
+// Base de datos PREPARADA para la lógica futura, pero SIN reglas de negocio
+// implementadas todavía. La lógica (Pendiente -> Faltante automático ->
+// Entrada -> Dashboard/Reportes) se cablea en fases posteriores.
+//
+// Prisma 7: generador rust-free `prisma-client` + driver adapter (pg).
+// El cliente generado se importa desde `../lib/generated/prisma/client`.
+// ==========================================================================
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../lib/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  // Prisma 7: la URL de conexión vive en `prisma.config.ts` (no acá).
+  provider = "postgresql"
+}
+
+// --------------------------------------------------------------------------
+// Enums de estado (definidos desde Fase 1 para no migrar tipos más tarde)
+// --------------------------------------------------------------------------
+
+enum UserRole {
+  ADMIN
+  LIDER
+  OPERADOR
+}
+
+enum PendingStatus {
+  PENDIENTE
+  PARCIAL
+  ENTREGADO
+  CANCELADO
+}
+
+enum MissingItemStatus {
+  FALTANTE
+  PEDIDO
+  RECIBIDO
+  CANCELADO
+}
+
+enum AuditResult {
+  SUCCESS
+  FAILURE
+}
+
+// --------------------------------------------------------------------------
+// Usuarios
+// --------------------------------------------------------------------------
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String? // se completa cuando se implemente auth (Fase 2)
+  role         UserRole @default(OPERADOR)
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Entidades creadas por este usuario (trazabilidad de autoría)
+  pendings        Pending[]
+  missingItems    MissingItem[]
+  inventoryEntries InventoryEntry[]
+  auditLogs       AuditLog[]
+
+  @@index([active])
+  @@map("users")
+}
+
+// --------------------------------------------------------------------------
+// Productos
+// --------------------------------------------------------------------------
+
+model Product {
+  id         String   @id @default(cuid())
+  code       String   @unique // SKU / código interno
+  name       String
+  unit       String // unidad de medida (ej: "unidad", "caja", "ml")
+  minStock   Int      @default(0) // stock mínimo para alertas
+  reorderQty Int      @default(0) // cantidad sugerida de reorden
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  pendings         Pending[]
+  missingItems     MissingItem[]
+  inventoryEntries InventoryEntry[]
+
+  @@index([active])
+  @@index([name])
+  @@map("products")
+}
+
+// --------------------------------------------------------------------------
+// Pendientes (solicitudes de cliente)
+// --------------------------------------------------------------------------
+
+model Pending {
+  id           String        @id @default(cuid())
+  product      Product       @relation(fields: [productId], references: [id])
+  productId    String
+  quantity     Int
+  status       PendingStatus @default(PENDIENTE)
+  customerName String?
+  note         String?
+  createdBy    User?         @relation(fields: [createdById], references: [id])
+  createdById  String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  // Faltantes generados a partir de este pendiente (lógica de Fase 2)
+  missingItems MissingItem[]
+
+  @@index([status])
+  @@index([productId])
+  @@index([createdAt])
+  @@map("pendings")
+}
+
+// --------------------------------------------------------------------------
+// Faltantes (lo que hay que conseguir/pedir)
+// --------------------------------------------------------------------------
+
+model MissingItem {
+  id          String            @id @default(cuid())
+  product     Product           @relation(fields: [productId], references: [id])
+  productId   String
+  quantity    Int
+  status      MissingItemStatus @default(FALTANTE)
+  // Pendiente que lo originó (cuando se genera automáticamente). Null = manual.
+  origin      Pending?          @relation(fields: [originId], references: [id])
+  originId    String?
+  createdBy   User?             @relation(fields: [createdById], references: [id])
+  createdById String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@index([status])
+  @@index([productId])
+  @@index([createdAt])
+  @@map("missing_items")
+}
+
+// --------------------------------------------------------------------------
+// Entradas de inventario
+// --------------------------------------------------------------------------
+
+model InventoryEntry {
+  id          String   @id @default(cuid())
+  product     Product  @relation(fields: [productId], references: [id])
+  productId   String
+  quantity    Int
+  note        String?
+  createdBy   User?    @relation(fields: [createdById], references: [id])
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  @@index([productId])
+  @@index([createdAt])
+  @@map("inventory_entries")
+}
+
+// --------------------------------------------------------------------------
+// Auditoría — base obligatoria desde Fase 1.
+// Responde: quién, cuándo, qué, sobre qué registro, qué cambió, desde dónde,
+// y si fue exitoso o fallido.
+//
+// `action` es String (no enum) a propósito: la lista de acciones crece por
+// fase. Las acciones canónicas viven en `lib/constants/audit.ts` (AUDIT_ACTIONS).
+// --------------------------------------------------------------------------
+
+model AuditLog {
+  id        String      @id @default(cuid())
+  // Responsable (puede ser null para acciones del sistema o login fallido)
+  user      User?       @relation(fields: [userId], references: [id])
+  userId    String?
+  action    String // ej: "product.create", "auth.login.failed"
+  module    String // ej: "productos", "auth", "entradas"
+  entity    String // nombre de la entidad afectada, ej: "Product"
+  entityId  String? // id del registro afectado (si aplica)
+  result    AuditResult @default(SUCCESS)
+  ip        String?
+  userAgent String?
+  channel   String? // canal/método de ingreso, ej: "web", "mobile"
+  before    Json? // estado anterior (si aplica)
+  after     Json? // estado nuevo (si aplica)
+  createdAt DateTime    @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([module])
+  @@index([entity, entityId])
+  @@index([result])
+  @@index([createdAt])
+  @@map("audit_logs")
+}

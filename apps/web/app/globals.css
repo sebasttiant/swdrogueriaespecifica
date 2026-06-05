@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+/* ==========================================================================
+   Tokens visuales — Droguería Específica
+   Paleta: azul corporativo + verde saludable, sobre blanco / azul muy claro.
+   Estados (danger/warning/success) SIEMPRE acompañados de texto, nunca solo color.
+   ========================================================================== */
+@theme {
+  /* Marca */
+  --color-primary: #0b66c3; /* azul corporativo principal */
+  --color-primary-foreground: #ffffff;
+  --color-primary-dark: #0c2a47; /* navy / azul oscuro */
+
+  --color-secondary: #4fb477; /* verde corporativo claro */
+  --color-secondary-foreground: #0c2a47;
+
+  /* Superficies */
+  --color-background: #f3f8fc; /* azul muy claro */
+  --color-surface: #ffffff;
+  --color-muted: #e6eef7; /* gris azulado claro */
+  --color-muted-foreground: #54708c;
+
+  /* Estados */
+  --color-danger: #dc2626;
+  --color-danger-foreground: #ffffff;
+  --color-warning: #f59e0b;
+  --color-warning-foreground: #3a2a00;
+  --color-success: #16a34a;
+  --color-success-foreground: #ffffff;
+
+  /* Bordes y texto */
+  --color-border: #d4e0ee; /* gris suave */
+  --color-text: #0c2a47; /* azul oscuro */
+
+  /* Radios cómodos (UI amigable, dedos de adulto) */
+  --radius-card: 1rem;
+  --radius-btn: 0.75rem;
+
+  /* Tipografía: stack del sistema (sin descargas en build, arranque confiable) */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+}
+
+/* Base accesible: texto grande y legible para una persona adulta (~60 años). */
+html {
+  font-size: 17px;
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  line-height: 1.5;
+}
+
+/* Áreas táctiles cómodas por defecto. */
+button,
+a {
+  touch-action: manipulation;
+}
+
+/* Foco visible para accesibilidad por teclado. */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}

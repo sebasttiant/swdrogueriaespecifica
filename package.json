@@ -1,0 +1,26 @@
+{
+  "name": "drogueria-especifica",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Software web para Droguería Específica — base técnica (Fase 1).",
+  "packageManager": "pnpm@11.5.2",
+  "engines": {
+    "node": ">=24.16.0 <25",
+    "pnpm": ">=11.5.2"
+  },
+  "scripts": {
+    "check:toolchain": "node scripts/check-toolchain.mjs",
+    "bootstrap": "bash scripts/bootstrap.sh",
+    "dev": "pnpm --filter @drogueria/web dev",
+    "build": "pnpm --filter @drogueria/web build",
+    "start": "pnpm --filter @drogueria/web start",
+    "lint": "pnpm --filter @drogueria/web lint",
+    "typecheck": "pnpm --filter @drogueria/web typecheck",
+    "test": "pnpm --filter @drogueria/web test",
+    "db:generate": "pnpm --filter @drogueria/web db:generate",
+    "db:migrate": "pnpm --filter @drogueria/web db:migrate",
+    "db:deploy": "pnpm --filter @drogueria/web db:deploy",
+    "db:seed": "pnpm --filter @drogueria/web db:seed",
+    "docker:build": "docker build -f apps/web/Dockerfile -t drogueria-especifica-web:local ."
+  }
+}
