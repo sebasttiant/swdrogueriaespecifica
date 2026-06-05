@@ -2,6 +2,14 @@ packages:
   - "apps/*"
   - "packages/*"
 
+allowBuilds:
+  "@node-rs/argon2": true
+  "@prisma/engines": true
+  esbuild: true
+  prisma: true
+  sharp: true
+  unrs-resolver: true
+
 # Allowlist explícita de dependencias autorizadas a ejecutar build scripts.
 # Toolchain oficial, necesario:
 #   esbuild -> tsx/vitest · unrs-resolver -> ESLint · sharp -> next/image
