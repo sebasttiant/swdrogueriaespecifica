@@ -1,30 +1,44 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-import { isPublicRoute } from "@/lib/auth/config.edge";
+import {
+  DEFAULT_AUTHENTICATED_ROUTE,
+  isPublicRoute,
+  LOGIN_ROUTE,
+  SESSION_COOKIE,
+} from "@/lib/auth/config.edge";
+import { verifySession } from "@/lib/auth/jwt.edge";
 
 // --------------------------------------------------------------------------
 // Middleware EDGE-SAFE.
 //
 // Reglas:
-//  - SIN Prisma.
-//  - SIN imports Node-only.
-//  - Solo protege rutas (no consulta la base).
+//  - SIN Prisma, SIN imports Node-only.
+//  - Verifica la sesión SOLO con la firma del JWT (`jose`), nunca toca la base.
 //
-// Fase 1: PLACEHOLDER. No bloquea (todavía no hay login). El contrato queda
-// listo: en Fase 2, si la ruta no es pública y falta cookie de sesión válida,
-// se redirige a LOGIN_ROUTE usando únicamente APIs de Edge.
+// Slice 1b: enforcement real.
+//  - Ruta pública + sesión válida → redirige al dashboard (no relogear).
+//  - Ruta privada sin sesión válida → redirige al login.
 // --------------------------------------------------------------------------
 
-export function middleware(request: NextRequest): NextResponse {
+export async function middleware(request: NextRequest): Promise<NextResponse> {
   const { pathname } = request.nextUrl;
+  const token = request.cookies.get(SESSION_COOKIE)?.value;
+  const session = token ? await verifySession(token) : null;
 
   if (isPublicRoute(pathname)) {
+    if (session) {
+      return NextResponse.redirect(
+        new URL(DEFAULT_AUTHENTICATED_ROUTE, request.url),
+      );
+    }
     return NextResponse.next();
   }
 
-  // TODO(Fase 2): exigir cookie httpOnly de sesión válida; si falta, redirigir
-  // a LOGIN_ROUTE. En Fase 1 dejamos pasar para no romper la navegación base.
+  if (!session) {
+    return NextResponse.redirect(new URL(LOGIN_ROUTE, request.url));
+  }
+
   return NextResponse.next();
 }
 
