@@ -17,6 +17,14 @@ export type ProductListItem = Pick<
   "id" | "code" | "name" | "unit" | "minStock" | "reorderQty" | "active" | "createdAt"
 >;
 
+export type CreateProductData = {
+  code: string;
+  name: string;
+  unit: string;
+  minStock: number;
+  reorderQty: number;
+};
+
 const LIST_SELECT = {
   id: true,
   code: true,
@@ -49,4 +57,8 @@ export async function listProducts(params: {
   const nextCursor = hasMore && last ? encodeCursor(last.id) : null;
 
   return { items, nextCursor };
+}
+
+export async function createProduct(data: CreateProductData): Promise<Product> {
+  return prisma.product.create({ data });
 }
