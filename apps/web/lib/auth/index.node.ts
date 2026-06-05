@@ -1,20 +1,22 @@
 // --------------------------------------------------------------------------
 // Punto de entrada de auth NODE-ONLY.
 //
-// Fase 1: PLACEHOLDER. Devuelve `null` (no hay login implementado todavía).
-// No importa Prisma a propósito, para no crear dependencias muertas.
-//
-// Fase 2/3: este módulo será el ÚNICO lugar que:
-//   - lea la cookie httpOnly de sesión,
-//   - verifique el token,
-//   - cargue el usuario desde la base (vía `@/lib/db/prisma`),
-//   - aplique hashing seguro de contraseñas.
-// NUNCA debe importarse desde `middleware.ts` (Edge) ni desde componentes cliente.
+// Slice 1a: lee la cookie httpOnly de sesión y verifica el JWT (stateless, sin
+// tocar la base). Es el ÚNICO lugar server-side donde se resuelve la sesión.
+// NUNCA debe importarse desde `middleware.ts` (Edge) ni desde componentes
+// cliente. El middleware verifica el token con `jwt.edge.ts` directamente.
 // --------------------------------------------------------------------------
 
+import { cookies } from "next/headers";
+
+import { SESSION_COOKIE } from "./config.edge";
+import { verifySession } from "./jwt.edge";
 import type { Session } from "./session";
 
 export async function getCurrentSession(): Promise<Session | null> {
-  // TODO(Fase 2): leer cookie httpOnly, verificar y cargar usuario desde DB.
-  return null;
+  const store = await cookies();
+  const token = store.get(SESSION_COOKIE)?.value;
+  if (!token) return null;
+
+  return verifySession(token);
 }

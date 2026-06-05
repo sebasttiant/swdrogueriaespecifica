@@ -8,6 +8,10 @@ import { z } from "zod";
 
 const serverEnvSchema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL es obligatoria"),
+  // Secreto de firma del JWT de sesión (Fase 2). Mínimo 32 chars.
+  AUTH_SECRET: z
+    .string()
+    .min(32, "AUTH_SECRET debe tener al menos 32 caracteres"),
   NODE_ENV: z
     .enum(["development", "test", "production"])
     .default("development"),
