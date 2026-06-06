@@ -10,7 +10,7 @@ import {
   encodeCursor,
   type Paginated,
 } from "@/lib/pagination";
-import type { ProductBatch } from "@/lib/generated/prisma/client";
+import type { ProductBatch, Prisma } from "@/lib/generated/prisma/client";
 
 export type BatchListItem = Pick<
   ProductBatch,
@@ -52,11 +52,14 @@ export async function listBatchesByProduct(params: {
 }
 
 // Stock vendible: DISPONIBLE + con stock + no vencido. SUM por SQL, no en JS.
+// `client` permite leer el stock dentro de la misma transacción que lo consume
+// (pending.service), manteniendo la lectura consistente con las escrituras.
 export async function stockByProduct(
   productId: string,
   now: Date = new Date(),
+  client: Prisma.TransactionClient = prisma,
 ): Promise<number> {
-  const result = await prisma.productBatch.aggregate({
+  const result = await client.productBatch.aggregate({
     where: {
       productId,
       status: "DISPONIBLE",
