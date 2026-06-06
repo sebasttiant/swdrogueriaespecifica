@@ -2,9 +2,9 @@
 # Droguería Específica — orquestación local / base de despliegue (Fase 1)
 #
 # Orden de arranque garantizado por healthchecks y condiciones:
-#   postgres (healthy)  ->  migrate (corre y termina OK)  ->  web (arranca)
+#   postgres (healthy)  ->  migrate (termina OK)  ->  seed (termina OK)  ->  web
 #
-# Levantar todo:   docker compose up --build
+# Levantar/resetear local: docker compose up -d --build --force-recreate
 # Validar config:  docker compose config
 # ==========================================================================
 
@@ -44,6 +44,22 @@ services:
     networks:
       - drogueria
 
+  # Carga datos demo/admin DESPUÉS de migrar y ANTES de levantar la web.
+  seed:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      target: seed
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL es obligatorio}
+      SEED_ADMIN_PASSWORD: "${SEED_ADMIN_PASSWORD:-Especifica2026!}"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+    networks:
+      - drogueria
+
   web:
     build:
       context: .
@@ -61,7 +77,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      migrate:
+      seed:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]

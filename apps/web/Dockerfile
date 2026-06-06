@@ -9,6 +9,7 @@
 #   deps     -> instala dependencias (frozen lockfile)
 #   builder  -> prisma generate + next build (standalone)
 #   migrate  -> aplica migraciones (corre y termina; usado por compose)
+#   seed     -> carga datos iniciales (corre y termina; usado por compose)
 #   runner   -> imagen final mínima, usuario no-root
 # ==========================================================================
 
@@ -52,6 +53,15 @@ FROM deps AS migrate
 WORKDIR /app/apps/web
 USER node
 CMD ["node_modules/.bin/prisma", "migrate", "deploy"]
+
+# ---------- seed ----------
+# Ejecuta el seed después de las migraciones. Usa builder porque seed.ts importa
+# código de la app y el Prisma Client generado durante el build.
+FROM builder AS seed
+WORKDIR /app/apps/web
+ENV PATH="/app/apps/web/node_modules/.bin:/app/node_modules/.bin:$PATH"
+USER node
+CMD ["node_modules/.bin/prisma", "db", "seed"]
 
 # ---------- runner ----------
 FROM node:24.16.0-trixie AS runner

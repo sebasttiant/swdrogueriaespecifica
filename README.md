@@ -117,11 +117,11 @@ La contraseña sale de `SEED_ADMIN_PASSWORD` (o el fallback de dev en `seed.ts`)
 
 ```bash
 cp env.example .env
-docker compose up --build
+docker compose up -d --build --force-recreate
 ```
 
 Orden garantizado por healthchecks:
-`postgres (healthy)` → `migrate (corre y termina)` → `web (arranca)`.
+`postgres (healthy)` → `migrate (corre y termina)` → `seed (corre y termina)` → `web (arranca)`.
 
 - Web: http://localhost:3000
 - Healthcheck: http://localhost:3000/api/health
@@ -136,6 +136,10 @@ docker compose config
 > **todas** las migraciones ANTES de que arranque la web. Hoy: `init` (6 tablas,
 > enums e índices), `add_product_batches` (lotes/vencimientos) y
 > `add_quantity_check` (CHECK `quantity >= 0`).
+>
+> **Seed.** El servicio `seed` corre después de `migrate` y antes de `web`, así el
+> usuario demo `admin@drogueriaespecifica.com` existe al abrir la app. La
+> contraseña sale de `SEED_ADMIN_PASSWORD` o del fallback de desarrollo.
 >
 > ⚠️ **Antes de aplicar `add_quantity_check` en una base con datos reales**,
 > validá que no existan lotes con cantidad negativa — PostgreSQL **rechaza** el
