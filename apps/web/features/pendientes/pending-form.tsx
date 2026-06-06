@@ -71,6 +71,18 @@ export function PendingForm({ products }: PendingFormProps) {
           />
         </div>
         <div className="space-y-1.5">
+          <label htmlFor="promisedAt" className="text-sm font-medium text-text">
+            Entrega prometida
+          </label>
+          <input
+            id="promisedAt"
+            name="promisedAt"
+            type="datetime-local"
+            required
+            className={fieldClass}
+          />
+        </div>
+        <div className="space-y-1.5">
           <label htmlFor="customerName" className="text-sm font-medium text-text">
             Cliente <span className="text-muted-foreground">(opcional)</span>
           </label>

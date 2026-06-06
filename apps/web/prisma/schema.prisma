@@ -143,6 +143,9 @@ model Pending {
   productId    String
   quantity     Int
   status       PendingStatus @default(PENDIENTE)
+  // Promesa de entrega al cliente: cuándo le respondemos. Obligatoria: en
+  // droguería el pendiente es operativo y necesita una fecha/hora comprometida.
+  promisedAt   DateTime
   customerName String?
   note         String?
   createdBy    User?         @relation(fields: [createdById], references: [id])

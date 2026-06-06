@@ -23,6 +23,7 @@ import { registerPending } from "./pending.service";
 const baseInput = {
   productId: "prod_1",
   quantity: 5,
+  promisedAt: new Date("2026-06-09T14:30:00"),
   createdById: "user_1",
 };
 
