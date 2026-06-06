@@ -1,3 +1,5 @@
+import { headers } from "next/headers";
+
 import type { AuditAction, AuditModule } from "@/lib/constants/audit";
 import { prisma } from "@/lib/db/prisma";
 import type { Prisma } from "@/lib/generated/prisma/client";
@@ -59,4 +61,21 @@ export async function recordAudit(input: RecordAuditInput): Promise<void> {
   } catch (error) {
     console.error("[audit] No se pudo registrar la auditoría:", error);
   }
+}
+
+/**
+ * Construye el AuditContext desde los headers de la request actual.
+ * Server-only (usa next/headers). Reutilizable por cualquier Server Action.
+ */
+export async function auditContextFromHeaders(
+  userId?: string | null,
+): Promise<AuditContext> {
+  const h = await headers();
+  const forwarded = h.get("x-forwarded-for")?.split(",")[0]?.trim();
+  return {
+    userId: userId ?? null,
+    ip: forwarded ?? h.get("x-real-ip") ?? null,
+    userAgent: h.get("user-agent") ?? null,
+    channel: "web",
+  };
 }

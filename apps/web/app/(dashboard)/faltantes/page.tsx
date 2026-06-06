@@ -1,23 +1,27 @@
 import type { Metadata } from "next";
 
 import { PageHeader } from "@/app/_components/app-shell/page-header";
-import { Card } from "@/app/_components/ui/card";
+import { MissingList } from "@/features/faltantes/missing-list";
+import { getMissingItems } from "@/server/services/missing-item.service";
 
 export const metadata: Metadata = { title: "Faltantes" };
 
-export default function FaltantesPage() {
+export default async function FaltantesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ cursor?: string }>;
+}) {
+  const { cursor } = await searchParams;
+  const { items, nextCursor } = await getMissingItems({ cursor });
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Faltantes"
-        description="Lo que hay que conseguir. Estados: Faltante, Pedido, Recibido, Cancelado."
+        description="Lo que hay que conseguir. Se generan automáticamente desde un pendiente sin stock suficiente."
       />
-      <Card>
-        <p className="text-base text-muted-foreground">
-          Módulo en construcción. Los faltantes pueden generarse automáticamente
-          desde un pendiente sin stock suficiente (Fase 2).
-        </p>
-      </Card>
+
+      <MissingList items={items} nextCursor={nextCursor} />
     </div>
   );
 }

@@ -1,7 +1,7 @@
-// Seed mínimo de Fase 1. NO crea credenciales reales (auth es Fase 2).
-// Carga un usuario admin placeholder y un par de productos de ejemplo
-// para que el dashboard y las pantallas tengan datos al desarrollar.
+// Seed de desarrollo. Crea un admin con contraseña hasheada (auth Fase 2) y
+// un par de productos de ejemplo para tener datos al desarrollar.
 import { PrismaPg } from "@prisma/adapter-pg";
+import { hashPassword } from "../lib/auth/password";
 import { PrismaClient } from "../lib/generated/prisma/client";
 
 const adapter = new PrismaPg({
@@ -9,15 +9,21 @@ const adapter = new PrismaPg({
 });
 const prisma = new PrismaClient({ adapter });
 
+// Password del admin para desarrollo. Configurable por env; NUNCA usar el
+// fallback en producción.
+const ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD ?? "Especifica2026!";
+
 async function main(): Promise<void> {
+  const passwordHash = await hashPassword(ADMIN_PASSWORD);
+
   const admin = await prisma.user.upsert({
     where: { email: "admin@drogueriaespecifica.com" },
-    update: {},
+    update: { passwordHash },
     create: {
       email: "admin@drogueriaespecifica.com",
       name: "Administrador",
       role: "ADMIN",
-      // passwordHash se setea cuando se implemente auth (Fase 2)
+      passwordHash,
     },
   });
 

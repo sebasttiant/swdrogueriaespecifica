@@ -21,8 +21,17 @@ export const metadata: Metadata = { title: "Dashboard" };
 // Los valores ("—") y la lista de urgencias se conectan a datos en fases siguientes.
 export const dynamic = "force-dynamic";
 
+const COLOMBIA_TIME_ZONE = "America/Bogota";
+
 function getGreeting(date: Date): string {
-  const hour = date.getHours();
+  const hour = Number(
+    new Intl.DateTimeFormat("es-CO", {
+      hour: "numeric",
+      hour12: false,
+      timeZone: COLOMBIA_TIME_ZONE,
+    }).format(date),
+  );
+
   if (hour < 12) return "Buenos días";
   if (hour < 19) return "Buenas tardes";
   return "Buenas noches";
@@ -40,6 +49,7 @@ export default function DashboardPage() {
       day: "numeric",
       month: "long",
       year: "numeric",
+      timeZone: COLOMBIA_TIME_ZONE,
     }).format(now),
   );
 
