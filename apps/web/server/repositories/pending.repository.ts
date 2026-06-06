@@ -17,6 +17,7 @@ export type PendingListItem = {
   id: string;
   quantity: number;
   status: PendingStatus;
+  promisedAt: Date;
   customerName: string | null;
   note: string | null;
   createdAt: Date;
@@ -26,6 +27,7 @@ export type PendingListItem = {
 export type CreatePendingData = {
   productId: string;
   quantity: number;
+  promisedAt: Date;
   customerName?: string;
   note?: string;
   createdById?: string | null;
@@ -35,6 +37,7 @@ const LIST_SELECT = {
   id: true,
   quantity: true,
   status: true,
+  promisedAt: true,
   customerName: true,
   note: true,
   createdAt: true,
@@ -75,6 +78,7 @@ export async function createPending(
     data: {
       productId: data.productId,
       quantity: data.quantity,
+      promisedAt: data.promisedAt,
       customerName: data.customerName ?? null,
       note: data.note ?? null,
       createdById: data.createdById ?? null,

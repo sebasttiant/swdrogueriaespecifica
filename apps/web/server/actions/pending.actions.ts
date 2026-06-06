@@ -30,7 +30,9 @@ export async function createPendingAction(
     productId: formData.get("productId"),
     quantity: formData.get("quantity"),
     // FormData devuelve null cuando el campo no viene; lo normalizamos a
-    // undefined para que el schema aplique sus reglas de texto opcional.
+    // undefined para que el schema aplique sus reglas (texto opcional / fecha
+    // obligatoria) en vez de coercer null a una fecha epoch válida.
+    promisedAt: formData.get("promisedAt") ?? undefined,
     customerName: formData.get("customerName") ?? undefined,
     note: formData.get("note") ?? undefined,
   });
@@ -52,7 +54,8 @@ export async function createPendingAction(
       module: AUDIT_MODULES.PENDIENTES,
       entity: "Pending",
       entityId: result.pending.id,
-      after: parsed.data,
+      // `after` debe ser JSON: el Date de la promesa se guarda como ISO.
+      after: { ...parsed.data, promisedAt: parsed.data.promisedAt.toISOString() },
       context,
     });
 

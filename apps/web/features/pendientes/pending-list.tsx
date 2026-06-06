@@ -4,6 +4,10 @@ import { Badge } from "@/app/_components/ui/badge";
 import { Card } from "@/app/_components/ui/card";
 import type { PendingStatus } from "@/lib/generated/prisma/client";
 import type { PendingListItem } from "@/server/repositories/pending.repository";
+import {
+  computeDeadlineStatus,
+  type DeadlineStatus,
+} from "./deadline-status";
 
 type PendingListProps = {
   items: PendingListItem[];
@@ -20,6 +24,24 @@ const STATUS: Record<
   CANCELADO: { label: "Cancelado", tone: "neutral" },
 };
 
+// Semáforo operativo: el déficit de tiempo respecto de la promesa de entrega.
+const DEADLINE: Record<
+  DeadlineStatus,
+  { label: string; tone: "neutral" | "success" | "warning" | "danger" }
+> = {
+  VENCIDO: { label: "Vencido", tone: "danger" },
+  VENCE_PRONTO: { label: "Vence pronto", tone: "warning" },
+  A_TIEMPO: { label: "A tiempo", tone: "success" },
+  FINALIZADO: { label: "Finalizado", tone: "neutral" },
+};
+
+// Promesa en hora de Colombia: el negocio es operativo en esa zona.
+const promiseFormatter = new Intl.DateTimeFormat("es-CO", {
+  timeZone: "America/Bogota",
+  dateStyle: "short",
+  timeStyle: "short",
+});
+
 // Listado presentacional (server component). Mobile-first: tarjetas apiladas.
 export function PendingList({ items, nextCursor }: PendingListProps) {
   if (items.length === 0) {
@@ -32,10 +54,15 @@ export function PendingList({ items, nextCursor }: PendingListProps) {
     );
   }
 
+  // Un único "ahora" para todo el render: semáforo coherente entre tarjetas.
+  const now = new Date();
+
   return (
     <div className="space-y-3">
       {items.map((pending) => {
         const status = STATUS[pending.status];
+        const deadline =
+          DEADLINE[computeDeadlineStatus(pending.promisedAt, pending.status, now)];
         return (
           <Card key={pending.id} className="flex items-center justify-between gap-3">
             <div className="min-w-0">
@@ -46,8 +73,14 @@ export function PendingList({ items, nextCursor }: PendingListProps) {
                 {pending.quantity} {pending.product.unit} · {pending.product.code}
                 {pending.customerName ? ` · ${pending.customerName}` : ""}
               </p>
+              <p className="text-sm text-muted-foreground">
+                Promesa: {promiseFormatter.format(pending.promisedAt)}
+              </p>
             </div>
-            <Badge tone={status.tone}>{status.label}</Badge>
+            <div className="flex shrink-0 flex-col items-end gap-1.5">
+              <Badge tone={deadline.tone}>{deadline.label}</Badge>
+              <Badge tone={status.tone}>{status.label}</Badge>
+            </div>
           </Card>
         );
       })}
