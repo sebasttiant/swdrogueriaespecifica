@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-import { NAV_ITEMS } from "@/lib/constants/nav";
+import type { SessionRole } from "@/lib/auth/session";
+import { visibleNavItems } from "@/lib/constants/nav";
 import { cn } from "@/lib/utils/cn";
 
 import { BrandLogo } from "./brand-logo";
@@ -12,9 +13,14 @@ function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
+type SidebarProps = {
+  role: SessionRole | null;
+};
+
 // Sidebar SOLO desktop (lg+). En celular se usa la barra inferior (MobileNav).
-export function Sidebar() {
+export function Sidebar({ role }: SidebarProps) {
   const pathname = usePathname();
+  const navItems = visibleNavItems(role);
 
   return (
     <aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-surface lg:flex">
@@ -22,7 +28,7 @@ export function Sidebar() {
         <BrandLogo className="h-8 w-auto" priority />
       </div>
       <nav className="flex-1 space-y-1 overflow-y-auto p-3" aria-label="Navegación principal">
-        {NAV_ITEMS.map((item) => {
+        {navItems.map((item) => {
           const active = isActive(pathname, item.href);
           const Icon = item.icon;
           return (

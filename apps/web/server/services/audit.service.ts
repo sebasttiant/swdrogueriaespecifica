@@ -3,6 +3,11 @@ import { headers } from "next/headers";
 import type { AuditAction, AuditModule } from "@/lib/constants/audit";
 import { prisma } from "@/lib/db/prisma";
 import type { Prisma } from "@/lib/generated/prisma/client";
+import type { Paginated } from "@/lib/pagination";
+import {
+  listAuditLogs,
+  type AuditLogListItem,
+} from "@/server/repositories/audit.repository";
 
 // --------------------------------------------------------------------------
 // Servicio de auditoría reutilizable (server-only).
@@ -14,6 +19,15 @@ import type { Prisma } from "@/lib/generated/prisma/client";
 // En Fase 1 el servicio está listo para usarse; las acciones de negocio que lo
 // invocan se implementan por fase (ver `lib/constants/audit.ts`).
 // --------------------------------------------------------------------------
+
+// Boundary de LECTURA para la UI de auditoría. La página delega acá y nunca
+// toca el repositorio directo (mismo patrón que pendientes/faltantes).
+export function getAuditLogs(params: {
+  cursor?: string | null;
+  take?: number;
+}): Promise<Paginated<AuditLogListItem>> {
+  return listAuditLogs(params);
+}
 
 export type AuditContext = {
   userId?: string | null;
