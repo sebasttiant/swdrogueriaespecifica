@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { LucideIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils/cn";
@@ -19,12 +20,27 @@ type KpiCardProps = {
   icon: LucideIcon;
   tone?: KpiTone;
   hint?: string;
+  // Si se pasa, la tarjeta entera es un link tocable hacia ese módulo.
+  href?: string;
 };
 
-// Tarjeta KPI grande y legible. Prioriza claridad en celular.
-export function KpiCard({ label, value, icon: Icon, tone = "primary", hint }: KpiCardProps) {
-  return (
-    <Card className="flex items-center gap-4">
+// Tarjeta KPI grande y legible. Prioriza claridad en celular. Si recibe `href`,
+// toda la tarjeta es tocable (área grande, mobile-first) y navega al módulo.
+export function KpiCard({
+  label,
+  value,
+  icon: Icon,
+  tone = "primary",
+  hint,
+  href,
+}: KpiCardProps) {
+  const content = (
+    <Card
+      className={cn(
+        "flex items-center gap-4",
+        href && "transition-colors hover:border-primary hover:bg-primary/5",
+      )}
+    >
       <span
         className={cn(
           "flex size-12 shrink-0 items-center justify-center rounded-xl",
@@ -39,5 +55,13 @@ export function KpiCard({ label, value, icon: Icon, tone = "primary", hint }: Kp
         {hint ? <p className="mt-0.5 truncate text-xs text-muted-foreground">{hint}</p> : null}
       </div>
     </Card>
+  );
+
+  if (!href) return content;
+
+  return (
+    <Link href={href} className="block rounded-[var(--radius-card)]">
+      {content}
+    </Link>
   );
 }

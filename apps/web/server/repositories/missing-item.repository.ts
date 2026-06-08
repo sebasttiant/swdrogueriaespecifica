@@ -60,6 +60,13 @@ export async function listMissingItems(params: {
   return { items, nextCursor };
 }
 
+// Estados "abiertos": el faltante sigue requiriendo gestión (no resuelto).
+const OPEN_STATUSES: MissingItemStatus[] = ["FALTANTE", "PEDIDO"];
+
+export function countOpenMissingItems(): Promise<number> {
+  return prisma.missingItem.count({ where: { status: { in: OPEN_STATUSES } } });
+}
+
 // `client` permite ejecutar dentro de una transacción (ver pending.service).
 export async function createMissingItem(
   data: CreateMissingItemData,

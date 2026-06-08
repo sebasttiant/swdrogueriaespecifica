@@ -7,6 +7,7 @@
 
 import type { Paginated } from "@/lib/pagination";
 import {
+  countOpenMissingItems,
   listMissingItems,
   type MissingItemListItem,
 } from "@/server/repositories/missing-item.repository";
@@ -16,4 +17,9 @@ export function getMissingItems(params: {
   take?: number;
 }): Promise<Paginated<MissingItemListItem>> {
   return listMissingItems(params);
+}
+
+// Conteo de faltantes abiertos para el KPI del dashboard.
+export function getOpenMissingCount(): Promise<number> {
+  return countOpenMissingItems();
 }
