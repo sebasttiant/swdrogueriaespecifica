@@ -14,14 +14,37 @@ import { Card, CardTitle } from "@/app/_components/ui/card";
 import { KpiCard } from "@/app/_components/ui/kpi-card";
 import { QuickAction } from "@/app/_components/ui/quick-action";
 import { StatusPill } from "@/app/_components/ui/status-pill";
+import {
+  computeDeadlineStatus,
+  type DeadlineStatus,
+} from "@/features/pendientes/deadline-status";
+import { getPendingDashboard } from "@/server/services/pending.service";
+import { getOpenMissingCount } from "@/server/services/missing-item.service";
 
 export const metadata: Metadata = { title: "Dashboard" };
 
-// Placeholder de Fase 1: estructura visual lista, sin lógica real todavía.
-// Los valores ("—") y la lista de urgencias se conectan a datos en fases siguientes.
+// Datos reales en vivo: nunca cachear.
 export const dynamic = "force-dynamic";
 
 const COLOMBIA_TIME_ZONE = "America/Bogota";
+
+// Semáforo → pill (mismo criterio que el listado de pendientes).
+const DEADLINE_PILL: Record<
+  DeadlineStatus,
+  { tone: "success" | "warning" | "danger" | "neutral"; label: string }
+> = {
+  VENCIDO: { tone: "danger", label: "Vencido" },
+  VENCE_PRONTO: { tone: "warning", label: "Vence pronto" },
+  A_TIEMPO: { tone: "success", label: "A tiempo" },
+  FINALIZADO: { tone: "neutral", label: "Finalizado" },
+};
+
+// Promesa en hora de Colombia, coherente con el resto del módulo.
+const promiseFormatter = new Intl.DateTimeFormat("es-CO", {
+  timeZone: COLOMBIA_TIME_ZONE,
+  dateStyle: "short",
+  timeStyle: "short",
+});
 
 function getGreeting(date: Date): string {
   const hour = Number(
@@ -41,8 +64,13 @@ function capitalize(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-export default function DashboardPage() {
+export default async function DashboardPage() {
   const now = new Date();
+  const [dashboard, openMissingCount] = await Promise.all([
+    getPendingDashboard(now),
+    getOpenMissingCount(),
+  ]);
+  const hasOverdue = dashboard.overdueCount > 0;
   const dateLabel = capitalize(
     new Intl.DateTimeFormat("es-CO", {
       weekday: "long",
@@ -62,17 +90,24 @@ export default function DashboardPage() {
         <div>
           <CardTitle>Estado general de la operación</CardTitle>
           <p className="text-sm text-muted-foreground">
-            Resumen rápido del día (datos de ejemplo en Fase 1).
+            Resumen rápido del día según los pendientes.
           </p>
         </div>
-        <StatusPill tone="success" label="Operación normal" />
+        <StatusPill
+          tone={hasOverdue ? "danger" : "success"}
+          label={
+            hasOverdue
+              ? `${dashboard.overdueCount} pendiente${dashboard.overdueCount === 1 ? "" : "s"} vencido${dashboard.overdueCount === 1 ? "" : "s"}`
+              : "Operación normal"
+          }
+        />
       </Card>
 
       {/* KPIs principales */}
       <section aria-label="Indicadores principales">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <KpiCard label="Pendientes abiertos" value="—" icon={ClipboardList} tone="primary" hint="Sin datos reales aún" />
-          <KpiCard label="Faltantes urgentes" value="—" icon={PackageX} tone="danger" hint="Sin datos reales aún" />
+          <KpiCard label="Pendientes abiertos" value={dashboard.openCount} icon={ClipboardList} tone="primary" hint={hasOverdue ? `${dashboard.overdueCount} vencido${dashboard.overdueCount === 1 ? "" : "s"}` : "Al día"} href="/pendientes" />
+          <KpiCard label="Faltantes abiertos" value={openMissingCount} icon={PackageX} tone="danger" hint={openMissingCount > 0 ? "Requieren gestión" : "Sin faltantes"} href="/faltantes" />
           <KpiCard label="Productos bajo mínimo" value="—" icon={PackageMinus} tone="warning" hint="Sin datos reales aún" />
           <KpiCard label="Próximos vencimientos" value="—" icon={CalendarClock} tone="success" hint="Sin datos reales aún" />
         </div>
@@ -90,15 +125,44 @@ export default function DashboardPage() {
       </section>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        {/* Urgencias (placeholder) */}
+        {/* Urgencias: pendientes abiertos que vencen antes, primero. */}
         <Card className="space-y-3">
           <CardTitle>Urgencias del día</CardTitle>
-          <p className="text-sm text-muted-foreground">
-            Acá aparecerán los pendientes y faltantes más urgentes. Todavía sin datos.
-          </p>
-          <ul className="space-y-2 text-sm text-muted-foreground">
-            <li className="rounded-lg bg-muted/60 px-3 py-2">Sin urgencias registradas</li>
-          </ul>
+          {dashboard.urgent.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Sin pendientes abiertos. Todo al día.
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {dashboard.urgent.map((pending) => {
+                const deadline =
+                  DEADLINE_PILL[
+                    computeDeadlineStatus(pending.promisedAt, pending.status, now)
+                  ];
+                return (
+                  <li
+                    key={pending.id}
+                    className="flex items-center justify-between gap-3 rounded-lg bg-muted/60 px-3 py-2"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-text">
+                        {pending.product.name}
+                      </p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {pending.quantity} {pending.product.unit} ·{" "}
+                        {promiseFormatter.format(pending.promisedAt)}
+                      </p>
+                    </div>
+                    <StatusPill
+                      tone={deadline.tone}
+                      label={deadline.label}
+                      className="shrink-0"
+                    />
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </Card>
 
         {/* Semáforo (placeholder + leyenda accesible) */}

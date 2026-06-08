@@ -30,6 +30,11 @@ describe("middleware", () => {
     expect(res.headers.get("location")).toBeNull();
   });
 
+  it("deja pasar un asset estático público sin sesión", async () => {
+    const res = await middleware(requestFor("/logo-especifica.webp"));
+    expect(res.headers.get("location")).toBeNull();
+  });
+
   it("redirige a /login una ruta privada sin sesión", async () => {
     const res = await middleware(requestFor("/dashboard"));
     expect(res.headers.get("location")).toContain("/login");

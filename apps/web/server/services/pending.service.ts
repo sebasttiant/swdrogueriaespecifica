@@ -12,8 +12,11 @@
 
 import type { Pending, MissingItem } from "@/lib/generated/prisma/client";
 import {
+  countOpenPendings,
+  countOverduePendings,
   createPending,
   listPendings,
+  listUrgentPendings,
   type CreatePendingData,
   type PendingListItem,
 } from "@/server/repositories/pending.repository";
@@ -46,6 +49,25 @@ export function getPendings(params: {
   take?: number;
 }): Promise<Paginated<PendingListItem>> {
   return listPendings(params);
+}
+
+export type PendingDashboard = {
+  openCount: number;
+  overdueCount: number;
+  urgent: PendingListItem[];
+};
+
+// Resumen para el dashboard: cuántos pendientes abiertos hay, cuántos vencidos,
+// y los más urgentes para mostrar arriba. Las tres consultas van en paralelo.
+export async function getPendingDashboard(
+  now: Date = new Date(),
+): Promise<PendingDashboard> {
+  const [openCount, overdueCount, urgent] = await Promise.all([
+    countOpenPendings(),
+    countOverduePendings(now),
+    listUrgentPendings(5),
+  ]);
+  return { openCount, overdueCount, urgent };
 }
 
 /**

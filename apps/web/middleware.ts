@@ -3,6 +3,7 @@ import type { NextRequest } from "next/server";
 
 import {
   DEFAULT_AUTHENTICATED_ROUTE,
+  isPublicAsset,
   isPublicRoute,
   LOGIN_ROUTE,
   SESSION_COOKIE,
@@ -23,6 +24,13 @@ import { verifySession } from "@/lib/auth/jwt.edge";
 
 export async function middleware(request: NextRequest): Promise<NextResponse> {
   const { pathname } = request.nextUrl;
+
+  // Static assets from /public (logo, favicon, etc.) are public: never gate them
+  // behind the session, or unauthenticated pages like /login lose their assets.
+  if (isPublicAsset(pathname)) {
+    return NextResponse.next();
+  }
+
   const token = request.cookies.get(SESSION_COOKIE)?.value;
   const session = token ? await verifySession(token) : null;
 
@@ -43,6 +51,10 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
 }
 
 export const config = {
-  // Excluye assets internos y el healthcheck (debe responder sin sesión).
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|api/health).*)"],
+  // Excluye assets internos de Next, el healthcheck y los archivos estáticos de
+  // /public (rutas de un solo segmento con extensión: /logo-especifica.webp,
+  // /favicon.ico, ...). Las rutas de app son sin extensión y siguen protegidas.
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|api/health|[^/]+\\.[^/]+$).*)",
+  ],
 };

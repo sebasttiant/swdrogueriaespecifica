@@ -3,18 +3,23 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-import { NAV_ITEMS } from "@/lib/constants/nav";
+import type { SessionRole } from "@/lib/auth/session";
+import { visibleNavItems } from "@/lib/constants/nav";
 import { cn } from "@/lib/utils/cn";
 
 function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
+type MobileNavProps = {
+  role: SessionRole | null;
+};
+
 // Barra inferior fija — SOLO celular/tablet (oculta en lg+).
 // Muestra las acciones principales con áreas táctiles grandes.
-export function MobileNav() {
+export function MobileNav({ role }: MobileNavProps) {
   const pathname = usePathname();
-  const items = NAV_ITEMS.filter((item) => item.primaryMobile);
+  const items = visibleNavItems(role).filter((item) => item.primaryMobile);
 
   return (
     <nav

@@ -70,6 +70,30 @@ export async function listPendings(params: {
 // `client` permite ejecutar dentro de una transacción (Prisma.$transaction);
 // por defecto usa el singleton. Así el service compone alta de pendiente +
 // faltante de forma atómica sin que el repo conozca la transacción.
+// Estados "abiertos": siguen requiriendo atención operativa.
+const OPEN_STATUSES: PendingStatus[] = ["PENDIENTE", "PARCIAL"];
+
+export function countOpenPendings(): Promise<number> {
+  return prisma.pending.count({ where: { status: { in: OPEN_STATUSES } } });
+}
+
+// Vencidos = abiertos cuya promesa ya pasó.
+export function countOverduePendings(now: Date = new Date()): Promise<number> {
+  return prisma.pending.count({
+    where: { status: { in: OPEN_STATUSES }, promisedAt: { lt: now } },
+  });
+}
+
+// Pendientes abiertos más urgentes: los que vencen antes, primero.
+export function listUrgentPendings(take: number): Promise<PendingListItem[]> {
+  return prisma.pending.findMany({
+    where: { status: { in: OPEN_STATUSES } },
+    take,
+    orderBy: [{ promisedAt: "asc" }, { id: "asc" }],
+    select: LIST_SELECT,
+  });
+}
+
 export async function createPending(
   data: CreatePendingData,
   client: Prisma.TransactionClient = prisma,

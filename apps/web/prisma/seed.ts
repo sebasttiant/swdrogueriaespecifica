@@ -9,19 +9,22 @@ const adapter = new PrismaPg({
 });
 const prisma = new PrismaClient({ adapter });
 
-// Password del admin para desarrollo. Configurable por env; NUNCA usar el
-// fallback en producción.
-const ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD ?? "Especifica2026!";
+// Super admin del sistema. La password es configurable por env
+// (SEED_ADMIN_PASSWORD); el fallback es para el entorno local. En producción
+// SIEMPRE setear SEED_ADMIN_PASSWORD y rotar esta credencial.
+const ADMIN_EMAIL =
+  process.env.SEED_ADMIN_EMAIL ?? "admin@ilasesorias.com";
+const ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD ?? "Infoseg.00*2026*";
 
 async function main(): Promise<void> {
   const passwordHash = await hashPassword(ADMIN_PASSWORD);
 
   const admin = await prisma.user.upsert({
-    where: { email: "admin@drogueriaespecifica.com" },
-    update: { passwordHash },
+    where: { email: ADMIN_EMAIL },
+    update: { passwordHash, role: "ADMIN", active: true },
     create: {
-      email: "admin@drogueriaespecifica.com",
-      name: "Administrador",
+      email: ADMIN_EMAIL,
+      name: "Super Admin",
       role: "ADMIN",
       passwordHash,
     },
