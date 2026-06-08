@@ -47,3 +47,13 @@ export function isPublicRoute(pathname: string): boolean {
     (route) => pathname === route || pathname.startsWith(`${route}/`),
   );
 }
+
+// Static assets served from /public live at the root and always carry a file
+// extension (e.g. /logo-especifica.webp, /favicon.ico, /robots.txt). They must
+// be reachable without a session. The single-segment + extension rule keeps the
+// hole narrow: nested paths like /dashboard/report.pdf are NOT treated as public.
+const PUBLIC_ASSET_PATTERN = /^\/[^/]+\.[^/]+$/;
+
+export function isPublicAsset(pathname: string): boolean {
+  return PUBLIC_ASSET_PATTERN.test(pathname);
+}

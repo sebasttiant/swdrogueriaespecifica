@@ -105,11 +105,13 @@ pnpm dev                   # http://localhost:3000  ->  /login (rutas privadas p
 Las rutas privadas exigen sesión. Sembrá el usuario admin y entrá con él:
 
 ```bash
-pnpm db:seed   # crea admin@drogueriaespecifica.com (rol ADMIN)
+pnpm db:seed   # crea el usuario admin (rol ADMIN)
 ```
 
-La contraseña sale de `SEED_ADMIN_PASSWORD` (o el fallback de dev en `seed.ts`).
-**Nunca usar el fallback en producción.**
+El email y la contraseña del admin se configuran con las variables de entorno
+`SEED_ADMIN_EMAIL` y `SEED_ADMIN_PASSWORD` (ver `env.example`). Si no se setean,
+el seed usa valores de desarrollo definidos en `seed.ts`.
+**Nunca usar los valores de desarrollo en producción.**
 
 ---
 
@@ -138,8 +140,9 @@ docker compose config
 > `add_quantity_check` (CHECK `quantity >= 0`).
 >
 > **Seed.** El servicio `seed` corre después de `migrate` y antes de `web`, así el
-> usuario demo `admin@drogueriaespecifica.com` existe al abrir la app. La
-> contraseña sale de `SEED_ADMIN_PASSWORD` o del fallback de desarrollo.
+> usuario admin existe al abrir la app. Su email y contraseña se configuran con
+> `SEED_ADMIN_EMAIL` y `SEED_ADMIN_PASSWORD` (ver `env.example`); si no se setean,
+> el seed usa valores de desarrollo.
 >
 > ⚠️ **Antes de aplicar `add_quantity_check` en una base con datos reales**,
 > validá que no existan lotes con cantidad negativa — PostgreSQL **rechaza** el
