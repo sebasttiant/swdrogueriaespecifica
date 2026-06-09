@@ -115,3 +115,60 @@ function wallTimeToUtcArgs(
     wall.second,
   ];
 }
+
+// --------------------------------------------------------------------------
+// Display helper — formats a UTC Date as a Bogota wall-time string.
+//
+// Complements parseBogotaWallTime (parse) with the inverse: display.
+// DST-safe: uses Intl.DateTimeFormat with timeZone "America/Bogota" — never
+// a hardcoded -5 offset. Colombia does not observe DST, but the Intl approach
+// is the canonical, future-proof way to handle timezone formatting.
+// --------------------------------------------------------------------------
+
+export type BogotaDateStyle = "date" | "time" | "datetime";
+
+/**
+ * Formats `date` as a human-readable string anchored to Bogota wall time.
+ *
+ * - `"date"`     → numeric date (es-CO locale, e.g. "9/6/2026")
+ * - `"time"`     → "HH:mm" in Bogota wall time (24h)
+ * - `"datetime"` → date + time combined (default)
+ *
+ * Uses `Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", ... })`.
+ * Never hardcodes the UTC-5 offset.
+ */
+export function formatBogotaDate(
+  date: Date,
+  opts?: { style?: BogotaDateStyle },
+): string {
+  const style = opts?.style ?? "datetime";
+
+  if (style === "time") {
+    return new Intl.DateTimeFormat("es-CO", {
+      timeZone: BOGOTA_TIME_ZONE,
+      hourCycle: "h23",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(date);
+  }
+
+  if (style === "date") {
+    return new Intl.DateTimeFormat("es-CO", {
+      timeZone: BOGOTA_TIME_ZONE,
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+    }).format(date);
+  }
+
+  // "datetime": date + time
+  return new Intl.DateTimeFormat("es-CO", {
+    timeZone: BOGOTA_TIME_ZONE,
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hourCycle: "h23",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
