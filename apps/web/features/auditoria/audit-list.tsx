@@ -41,7 +41,7 @@ export function AuditList({ items, nextCursor }: AuditListProps) {
     return (
       <Card>
         <p className="text-base text-muted-foreground">
-          Todavía no hay eventos de auditoría registrados.
+          No hay registros de auditoría.
         </p>
       </Card>
     );
