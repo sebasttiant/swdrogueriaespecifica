@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
-import { requireSession } from "@/lib/auth/require-role";
+import { requireActiveRole } from "@/lib/auth/require-role";
 import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
 import {
   auditContextFromHeaders,
@@ -12,10 +12,12 @@ import { registerPending } from "@/server/services/pending.service";
 import { pendingCreateSchema } from "@/features/pendientes/schema";
 
 // --------------------------------------------------------------------------
-// Server Actions de pendientes (finas): Zod → requireSession → service → audit.
-// Registrar un pendiente es trabajo operativo: lo permite cualquier sesión
-// autenticada. La regla de déficit (genera faltante) vive en el service; acá
-// solo auditamos cada efecto de forma best-effort.
+// Server Actions de pendientes (finas): Zod → requireActiveRole → service → audit.
+// Registrar un pendiente requiere un usuario activo en DB (DB-authoritative guard).
+// Un token JWT válido de un usuario desactivado es rechazado. Roles permitidos:
+// SUPERADMIN, ADMIN, OPERADOR — todos deben tener active=true en la DB.
+// La regla de déficit (genera faltante) vive en el service; acá solo auditamos
+// cada efecto de forma best-effort.
 // --------------------------------------------------------------------------
 
 export type PendingFormState = { error: string | null; ok: boolean };
@@ -24,7 +26,7 @@ export async function createPendingAction(
   _prev: PendingFormState,
   formData: FormData,
 ): Promise<PendingFormState> {
-  const session = await requireSession();
+  const session = await requireActiveRole("SUPERADMIN", "ADMIN", "OPERADOR");
 
   const parsed = pendingCreateSchema.safeParse({
     productId: formData.get("productId"),
