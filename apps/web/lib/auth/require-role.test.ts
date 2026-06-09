@@ -1,6 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { hasRole } from "./require-role";
+// La autorización DB-authoritative compone redirect + sesión JWT + lectura de
+// base. Mockeamos cada borde; `redirect` lanza (como en Next) para cortar flujo.
+const { redirect, getCurrentSession, findUserById } = vi.hoisted(() => ({
+  redirect: vi.fn((url: string) => {
+    throw new Error(`REDIRECT:${url}`);
+  }),
+  getCurrentSession: vi.fn(),
+  findUserById: vi.fn(),
+}));
+
+vi.mock("next/navigation", () => ({ redirect }));
+vi.mock("./index.node", () => ({ getCurrentSession }));
+vi.mock("@/server/repositories/user.repository", () => ({ findUserById }));
+
+import { hasRole, requireActiveRole } from "./require-role";
 
 describe("hasRole", () => {
   it("permite cuando el rol está en la lista", () => {
@@ -14,5 +28,58 @@ describe("hasRole", () => {
 
   it("niega con lista vacía de roles permitidos", () => {
     expect(hasRole("ADMIN", [])).toBe(false);
+  });
+});
+
+describe("requireActiveRole (DB-authoritative)", () => {
+  const session = {
+    user: { id: "u1", email: "a@x.com", name: "A", role: "ADMIN" as const },
+  };
+  const dbUser = {
+    id: "u1",
+    email: "a@x.com",
+    name: "A",
+    role: "ADMIN" as const,
+    active: true,
+    createdAt: new Date(),
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("redirige a /login si no hay sesión", async () => {
+    getCurrentSession.mockResolvedValue(null);
+    await expect(requireActiveRole("ADMIN")).rejects.toThrow("REDIRECT:/login");
+  });
+
+  it("redirige a /login si el usuario ya no existe en la base", async () => {
+    getCurrentSession.mockResolvedValue(session);
+    findUserById.mockResolvedValue(null);
+    await expect(requireActiveRole("ADMIN")).rejects.toThrow("REDIRECT:/login");
+  });
+
+  it("BLOQUEA un JWT ADMIN viejo de un usuario DESACTIVADO", async () => {
+    getCurrentSession.mockResolvedValue(session);
+    findUserById.mockResolvedValue({ ...dbUser, active: false });
+    await expect(requireActiveRole("ADMIN")).rejects.toThrow("REDIRECT:/login");
+  });
+
+  it("BLOQUEA un JWT ADMIN viejo de un usuario DEGRADADO (DB = OPERADOR)", async () => {
+    getCurrentSession.mockResolvedValue(session);
+    findUserById.mockResolvedValue({ ...dbUser, role: "OPERADOR" });
+    await expect(requireActiveRole("ADMIN")).rejects.toThrow(
+      "REDIRECT:/dashboard",
+    );
+  });
+
+  it("permite un ADMIN activo y vigente en la base", async () => {
+    getCurrentSession.mockResolvedValue(session);
+    findUserById.mockResolvedValue(dbUser);
+
+    const result = await requireActiveRole("ADMIN");
+
+    expect(result.user.role).toBe("ADMIN");
+    expect(redirect).not.toHaveBeenCalled();
   });
 });

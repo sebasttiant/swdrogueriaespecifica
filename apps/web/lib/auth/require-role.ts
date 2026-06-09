@@ -9,6 +9,8 @@
 
 import { redirect } from "next/navigation";
 
+import { findUserById } from "@/server/repositories/user.repository";
+
 import { DEFAULT_AUTHENTICATED_ROUTE, LOGIN_ROUTE } from "./config.edge";
 import { getCurrentSession } from "./index.node";
 import type { Session, SessionRole } from "./session";
@@ -39,4 +41,35 @@ export async function requireRole(
     redirect(DEFAULT_AUTHENTICATED_ROUTE);
   }
   return session;
+}
+
+/**
+ * Guard DB-AUTHORITATIVE para operaciones sensibles (módulo Admin).
+ *
+ * `requireRole` autoriza desde el payload del JWT, que vive hasta 2h. Si un
+ * usuario es degradado o desactivado, su token viejo todavía dice "ADMIN". Para
+ * administrar usuarios eso es inaceptable: acá releemos rol y estado desde la
+ * base en CADA request, y la sesión devuelta refleja el estado real.
+ *
+ *  - Sin sesión / usuario inexistente / inactivo → login (cuenta ida o cortada).
+ *  - Autenticado pero sin el rol requerido → su home (no al login).
+ */
+export async function requireActiveRole(
+  ...allowed: SessionRole[]
+): Promise<Session> {
+  const session = await getCurrentSession();
+  if (!session) redirect(LOGIN_ROUTE);
+
+  const user = await findUserById(session.user.id);
+  if (!user || !user.active) redirect(LOGIN_ROUTE);
+  if (!hasRole(user.role, allowed)) redirect(DEFAULT_AUTHENTICATED_ROUTE);
+
+  return {
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+    },
+  };
 }

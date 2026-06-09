@@ -12,6 +12,7 @@ export const AUDIT_MODULES = {
   ENTRADAS: "entradas",
   REPORTES: "reportes",
   AUDITORIA: "auditoria",
+  USUARIOS: "usuarios",
   ADMIN: "admin",
 } as const;
 
@@ -39,6 +40,11 @@ export const AUDIT_ACTIONS = {
   // Reportes / archivos
   REPORT_EXPORT: "report.export",
   FILE_IMPORT: "file.import",
+  // Usuarios (gestión por ADMIN)
+  USER_CREATE: "user.create",
+  USER_UPDATE: "user.update",
+  USER_ACTIVATE: "user.activate",
+  USER_DEACTIVATE: "user.deactivate",
   // Admin
   ADMIN_CHANGE: "admin.change",
 } as const;
