@@ -18,7 +18,8 @@ export type NavItem = {
   icon: LucideIcon;
   // Si true, se muestra en la barra inferior móvil (espacio limitado).
   primaryMobile?: boolean;
-  // Si true, solo lo ven los ADMIN (módulos sensibles, p. ej. Auditoría).
+  // Si true, solo lo ven los administradores (SUPERADMIN/ADMIN); módulos
+  // sensibles, p. ej. Auditoría.
   adminOnly?: boolean;
 };
 
@@ -34,11 +35,15 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { label: "Auditoría", href: "/auditoria", icon: ShieldCheck, adminOnly: true },
 ] as const;
 
-// Items visibles según el rol de la sesión. Los módulos `adminOnly` (Auditoría)
-// solo aparecen para ADMIN; sin sesión o con otro rol quedan ocultos. Espeja el
-// guard de ruta de la página: ocultar el link sin dejar de proteger el acceso.
+// Items visibles según el rol de la sesión. Los módulos `adminOnly` (Usuarios,
+// Auditoría) solo aparecen para administradores (SUPERADMIN/ADMIN); sin sesión o
+// con otro rol quedan ocultos. Espeja el guard de ruta de la página: ocultar el
+// link sin dejar de proteger el acceso.
+const ADMIN_ROLES: readonly SessionRole[] = ["SUPERADMIN", "ADMIN"];
+
 export function visibleNavItems(
   role: SessionRole | null | undefined,
 ): readonly NavItem[] {
-  return NAV_ITEMS.filter((item) => !item.adminOnly || role === "ADMIN");
+  const isAdmin = role != null && ADMIN_ROLES.includes(role);
+  return NAV_ITEMS.filter((item) => !item.adminOnly || isAdmin);
 }

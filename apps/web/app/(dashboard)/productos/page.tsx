@@ -18,7 +18,7 @@ export default async function ProductosPage({
   const { cursor } = await searchParams;
   const session = await getCurrentSession();
   const canManage = session
-    ? hasRole(session.user.role, ["ADMIN", "LIDER"])
+    ? hasRole(session.user.role, ["SUPERADMIN", "ADMIN"])
     : false;
 
   const { items, nextCursor } = await getProducts({ cursor });

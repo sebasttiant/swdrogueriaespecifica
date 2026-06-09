@@ -93,11 +93,30 @@ describe("updateUser · protección de rol (atómica)", () => {
       updateUser({
         id: "admin-2",
         actingUserId: "admin-1",
-        input: { name: "Admin", email: "a2@x.com", role: "LIDER" },
+        input: { name: "Admin", email: "a2@x.com", role: "OPERADOR" },
       }),
     ).rejects.toMatchObject({ code: "LAST_ADMIN" });
     expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
     expect(prismaMock.$queryRaw).toHaveBeenCalled(); // se tomó el lock
+    expect(prismaMock.user.update).not.toHaveBeenCalled();
+  });
+
+  it("bloquea degradar al último administrador activo siendo SUPERADMIN", async () => {
+    prismaMock.user.findUnique.mockResolvedValue({
+      ...admin,
+      id: "super-1",
+      role: "SUPERADMIN",
+    });
+    prismaMock.$queryRaw.mockResolvedValue([{ id: "super-1" }]); // único admin
+
+    await expect(
+      updateUser({
+        id: "super-1",
+        actingUserId: "admin-1",
+        input: { name: "Root", email: "root@x.com", role: "OPERADOR" },
+      }),
+    ).rejects.toMatchObject({ code: "LAST_ADMIN" });
+    expect(prismaMock.$queryRaw).toHaveBeenCalled();
     expect(prismaMock.user.update).not.toHaveBeenCalled();
   });
 
@@ -108,9 +127,23 @@ describe("updateUser · protección de rol (atómica)", () => {
     await updateUser({
       id: "admin-2",
       actingUserId: "admin-1",
-      input: { name: "Admin", email: "a2@x.com", role: "LIDER" },
+      input: { name: "Admin", email: "a2@x.com", role: "OPERADOR" },
     });
 
+    expect(prismaMock.user.update).toHaveBeenCalled();
+  });
+
+  it("no toma el lock al pasar de ADMIN a SUPERADMIN (sigue siendo admin)", async () => {
+    prismaMock.user.findUnique.mockResolvedValue({ ...admin, id: "admin-2" });
+
+    await updateUser({
+      id: "admin-2",
+      actingUserId: "admin-1",
+      input: { name: "Admin", email: "a2@x.com", role: "SUPERADMIN" },
+    });
+
+    // No es degradación: ambos roles son administrativos → no se evalúa lockout.
+    expect(prismaMock.$queryRaw).not.toHaveBeenCalled();
     expect(prismaMock.user.update).toHaveBeenCalled();
   });
 
@@ -120,7 +153,7 @@ describe("updateUser · protección de rol (atómica)", () => {
     await updateUser({
       id: "op-1",
       actingUserId: "admin-1",
-      input: { name: "Op2", email: "op@x.com", role: "LIDER" },
+      input: { name: "Op2", email: "op@x.com", role: "OPERADOR" },
     });
 
     expect(prismaMock.$queryRaw).not.toHaveBeenCalled();
@@ -146,6 +179,21 @@ describe("setUserActive · protección de cuenta (atómica)", () => {
       setUserActive({ id: "admin-2", actingUserId: "admin-1", active: false }),
     ).rejects.toMatchObject({ code: "LAST_ADMIN" });
     expect(prismaMock.$queryRaw).toHaveBeenCalled();
+  });
+
+  it("bloquea desactivar al último administrador activo siendo SUPERADMIN", async () => {
+    prismaMock.user.findUnique.mockResolvedValue({
+      ...admin,
+      id: "super-1",
+      role: "SUPERADMIN",
+    });
+    prismaMock.$queryRaw.mockResolvedValue([{ id: "super-1" }]);
+
+    await expect(
+      setUserActive({ id: "super-1", actingUserId: "admin-1", active: false }),
+    ).rejects.toMatchObject({ code: "LAST_ADMIN" });
+    expect(prismaMock.$queryRaw).toHaveBeenCalled();
+    expect(prismaMock.user.update).not.toHaveBeenCalled();
   });
 
   it("permite desactivar a un operador sin tomar el lock", async () => {

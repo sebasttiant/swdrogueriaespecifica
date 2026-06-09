@@ -14,8 +14,8 @@ type UserListProps = {
 };
 
 const ROLE_TONE: Record<UserRole, "primary" | "warning" | "neutral"> = {
-  ADMIN: "primary",
-  LIDER: "warning",
+  SUPERADMIN: "primary",
+  ADMIN: "warning",
   OPERADOR: "neutral",
 };
 

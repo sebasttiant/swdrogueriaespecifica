@@ -17,7 +17,7 @@ import type { Session, SessionRole, SessionUser } from "./session";
 const TOKEN_TTL = "2h";
 const ALG = "HS256";
 
-const ROLES: readonly SessionRole[] = ["ADMIN", "LIDER", "OPERADOR"];
+const ROLES: readonly SessionRole[] = ["SUPERADMIN", "ADMIN", "OPERADOR"];
 
 // Se lee en runtime (no al cargar el módulo) para que el Edge y los tests
 // puedan inyectar el valor sin reordenar imports.

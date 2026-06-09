@@ -17,7 +17,7 @@ export default async function AuditoriaPage({
 }: {
   searchParams: Promise<{ cursor?: string }>;
 }) {
-  await requireActiveRole("ADMIN");
+  await requireActiveRole("SUPERADMIN", "ADMIN");
 
   const { cursor } = await searchParams;
   const { items, nextCursor } = await getAuditLogs({ cursor });
