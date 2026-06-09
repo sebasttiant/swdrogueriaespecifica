@@ -21,12 +21,20 @@ export function MobileNav({ role }: MobileNavProps) {
   const pathname = usePathname();
   const items = visibleNavItems(role).filter((item) => item.primaryMobile);
 
+  // Derive column count dynamically from items rendered.
+  // Using inline style for gridTemplateColumns avoids relying on Tailwind JIT
+  // to generate arbitrary `grid-cols-N` classes at runtime.
+  const colCount = Math.max(1, items.length);
+
   return (
     <nav
       aria-label="Navegación principal"
       className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface lg:hidden"
     >
-      <ul className="grid grid-cols-4">
+      <ul
+        className="grid"
+        style={{ gridTemplateColumns: `repeat(${colCount}, minmax(0, 1fr))` }}
+      >
         {items.map((item) => {
           const active = isActive(pathname, item.href);
           const Icon = item.icon;
