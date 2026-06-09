@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 import { PageHeader } from "@/app/_components/app-shell/page-header";
-import { requireRole } from "@/lib/auth/require-role";
+import { requireActiveRole } from "@/lib/auth/require-role";
 import { AuditList } from "@/features/auditoria/audit-list";
 import { getAuditLogs } from "@/server/services/audit.service";
 
@@ -17,7 +17,7 @@ export default async function AuditoriaPage({
 }: {
   searchParams: Promise<{ cursor?: string }>;
 }) {
-  await requireRole("ADMIN");
+  await requireActiveRole("ADMIN");
 
   const { cursor } = await searchParams;
   const { items, nextCursor } = await getAuditLogs({ cursor });

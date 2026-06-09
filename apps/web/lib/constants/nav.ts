@@ -6,6 +6,7 @@ import {
   PackagePlus,
   BarChart3,
   ShieldCheck,
+  Users,
   type LucideIcon,
 } from "lucide-react";
 
@@ -29,6 +30,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { label: "Entradas", href: "/entradas", icon: PackagePlus, primaryMobile: true },
   { label: "Productos", href: "/productos", icon: Package },
   { label: "Reportes", href: "/reportes", icon: BarChart3 },
+  { label: "Usuarios", href: "/admin", icon: Users, adminOnly: true },
   { label: "Auditoría", href: "/auditoria", icon: ShieldCheck, adminOnly: true },
 ] as const;
 
