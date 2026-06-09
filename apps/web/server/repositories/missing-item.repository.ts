@@ -43,7 +43,20 @@ export async function listMissingItems(params: {
   take?: number;
 }): Promise<Paginated<MissingItemListItem>> {
   const take = clampTake(params.take);
-  const cursorId = params.cursor ? decodeCursor(params.cursor) : null;
+  let cursorId = params.cursor ? decodeCursor(params.cursor) : null;
+
+  // El cursor es input controlado por el usuario. `decodeCursor` ya descarta la
+  // basura (round-trip), pero un cursor bien formado puede apuntar a un id que
+  // no existe (registro borrado o cursor inventado). Validamos su existencia con
+  // un lookup barato por PK: si no existe, lo ignoramos y servimos la primera
+  // página. Así un cursor inutilizable nunca rompe la consulta de paginación.
+  if (cursorId) {
+    const exists = await prisma.missingItem.findUnique({
+      where: { id: cursorId },
+      select: { id: true },
+    });
+    if (!exists) cursorId = null;
+  }
 
   const rows = await prisma.missingItem.findMany({
     take: take + 1,

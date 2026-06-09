@@ -49,7 +49,20 @@ export async function listPendings(params: {
   take?: number;
 }): Promise<Paginated<PendingListItem>> {
   const take = clampTake(params.take);
-  const cursorId = params.cursor ? decodeCursor(params.cursor) : null;
+  let cursorId = params.cursor ? decodeCursor(params.cursor) : null;
+
+  // El cursor es input controlado por el usuario. `decodeCursor` ya descarta la
+  // basura (round-trip), pero un cursor bien formado puede apuntar a un id que
+  // no existe (registro borrado o cursor inventado). Validamos su existencia con
+  // un lookup barato por PK: si no existe, lo ignoramos y servimos la primera
+  // página. Así un cursor inutilizable nunca rompe la consulta de paginación.
+  if (cursorId) {
+    const exists = await prisma.pending.findUnique({
+      where: { id: cursorId },
+      select: { id: true },
+    });
+    if (!exists) cursorId = null;
+  }
 
   // take + 1 para detectar página siguiente sin un count extra.
   const rows = await prisma.pending.findMany({
