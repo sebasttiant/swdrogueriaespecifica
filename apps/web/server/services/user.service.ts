@@ -20,7 +20,7 @@ import {
   createUser as createUserRow,
   findUserById,
   listUsers,
-  lockActiveAdminIds,
+  lockActiveAdministratorIds,
   setUserActive as setUserActiveRow,
   updateUser as updateUserRow,
   type UserListItem,
@@ -31,6 +31,11 @@ export type UserRuleCode =
   | "SELF_DEACTIVATION"
   | "SELF_ROLE_CHANGE"
   | "LAST_ADMIN";
+
+// Roles administrativos: pueden gestionar usuarios y mutar el catálogo. El
+// sistema nunca puede quedar sin al menos uno activo (protección anti-lockout).
+const ADMIN_ROLES: readonly UserRole[] = ["SUPERADMIN", "ADMIN"];
+const isAdminRole = (role: UserRole): boolean => ADMIN_ROLES.includes(role);
 
 // Error de regla de negocio: la Server Action lo mapea a un mensaje claro.
 export class UserRuleError extends Error {
@@ -71,21 +76,23 @@ export async function updateUser(args: {
   actingUserId: string;
   input: { name: string; email: string; role: UserRole };
 }): Promise<UserListItem> {
-  // ATÓMICO: lock de admins activos + chequeo + update en una sola transacción,
-  // para que dos demociones concurrentes no dejen el sistema sin admin.
+  // ATÓMICO: lock de administradores activos + chequeo + update en una sola
+  // transacción, para que dos demociones concurrentes no dejen el sistema sin
+  // ningún administrador activo.
   return prisma.$transaction(async (tx) => {
     const target = await findUserById(args.id, tx);
     if (!target) throw new UserRuleError("NOT_FOUND");
 
+    // Degradación = pasar de un rol administrativo a uno no administrativo.
     const demotingFromAdmin =
-      target.role === "ADMIN" && args.input.role !== "ADMIN";
+      isAdminRole(target.role) && !isAdminRole(args.input.role);
 
     if (demotingFromAdmin) {
       if (args.id === args.actingUserId) {
         throw new UserRuleError("SELF_ROLE_CHANGE");
       }
       if (target.active) {
-        const adminIds = await lockActiveAdminIds(tx);
+        const adminIds = await lockActiveAdministratorIds(tx);
         if (adminIds.length <= 1) throw new UserRuleError("LAST_ADMIN");
       }
     }
@@ -109,8 +116,8 @@ export async function setUserActive(args: {
       if (args.id === args.actingUserId) {
         throw new UserRuleError("SELF_DEACTIVATION");
       }
-      if (target.role === "ADMIN" && target.active) {
-        const adminIds = await lockActiveAdminIds(tx);
+      if (isAdminRole(target.role) && target.active) {
+        const adminIds = await lockActiveAdministratorIds(tx);
         if (adminIds.length <= 1) throw new UserRuleError("LAST_ADMIN");
       }
     }

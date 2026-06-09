@@ -249,8 +249,9 @@ concurrentes): el middleware verifica la firma en el Edge **sin consultar la DB*
 - `lib/auth/password.ts` — hash/verify con `@node-rs/argon2`.
 - `lib/auth/session.ts` — tipos compartidos.
 
-Roles: `ADMIN`, `LIDER`, `OPERADOR`. Las **mutaciones** (p. ej. alta de productos)
-exigen `ADMIN`/`LIDER`; la **lectura** es para cualquier sesión válida. El
+Roles: `SUPERADMIN`, `ADMIN`, `OPERADOR`. Las **mutaciones** (p. ej. alta de
+productos) y los módulos administrativos (Usuarios, Auditoría) exigen
+`SUPERADMIN`/`ADMIN`; la **lectura** operativa es para cualquier sesión válida. El
 `middleware.ts` protege todas las rutas privadas y redirige a `/login` sin sesión.
 Login/logout quedan auditados (`auth.login` / `auth.login.failed` / `auth.logout`).
 

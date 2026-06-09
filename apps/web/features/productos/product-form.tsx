@@ -13,7 +13,7 @@ const INITIAL_STATE: ProductFormState = { error: null, ok: false };
 const inputClass =
   "min-h-11 w-full rounded-[var(--radius-btn)] border border-border bg-muted/40 px-3 text-base text-text placeholder:text-muted-foreground";
 
-// Alta de producto. Solo se monta para ADMIN/LIDER (la página decide).
+// Alta de producto. Solo se monta para SUPERADMIN/ADMIN (la página decide).
 export function ProductForm() {
   const [state, formAction, isPending] = useActionState(
     createProductAction,

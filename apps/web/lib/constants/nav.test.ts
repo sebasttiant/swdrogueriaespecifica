@@ -9,17 +9,16 @@ function labels(role: Parameters<typeof visibleNavItems>[0]): string[] {
 const ADMIN_ONLY_COUNT = NAV_ITEMS.filter((item) => item.adminOnly).length;
 
 describe("visibleNavItems", () => {
-  it("muestra los módulos admin (Usuarios, Auditoría) solo para ADMIN", () => {
-    const admin = labels("ADMIN");
-    expect(admin).toContain("Usuarios");
-    expect(admin).toContain("Auditoría");
+  it("muestra los módulos admin (Usuarios, Auditoría) a SUPERADMIN y ADMIN", () => {
+    for (const role of ["SUPERADMIN", "ADMIN"] as const) {
+      expect(labels(role)).toContain("Usuarios");
+      expect(labels(role)).toContain("Auditoría");
+    }
   });
 
-  it("oculta los módulos admin a LIDER y OPERADOR", () => {
-    for (const role of ["LIDER", "OPERADOR"] as const) {
-      expect(labels(role)).not.toContain("Usuarios");
-      expect(labels(role)).not.toContain("Auditoría");
-    }
+  it("oculta los módulos admin a OPERADOR", () => {
+    expect(labels("OPERADOR")).not.toContain("Usuarios");
+    expect(labels("OPERADOR")).not.toContain("Auditoría");
   });
 
   it("oculta items admin-only cuando no hay rol (sin sesión)", () => {

@@ -14,9 +14,10 @@ import { productCreateSchema } from "@/features/productos/schema";
 
 // --------------------------------------------------------------------------
 // Server Actions de productos (finas): Zod → requireActiveRole → service →
-// audit. Mutaciones restringidas a ADMIN/LIDER; la lectura es para cualquier
-// sesión. El guard es DB-authoritative: un JWT viejo de un usuario degradado o
-// desactivado no alcanza para mutar (se revalida rol/estado contra la base).
+// audit. Mutaciones restringidas a SUPERADMIN/ADMIN; la lectura es para
+// cualquier sesión. El guard es DB-authoritative: un JWT viejo de un usuario
+// degradado o desactivado no alcanza para mutar (se revalida rol/estado contra
+// la base).
 // --------------------------------------------------------------------------
 
 export type ProductFormState = { error: string | null; ok: boolean };
@@ -44,7 +45,7 @@ export async function createProductAction(
   // Enforcement de rol antes de cualquier validación o efecto. DB-authoritative:
   // relee rol/estado de la base, no confía en el payload del JWT (puede estar
   // stale si degradaron/desactivaron al usuario).
-  const session = await requireActiveRole("ADMIN", "LIDER");
+  const session = await requireActiveRole("SUPERADMIN", "ADMIN");
 
   const parsed = productCreateSchema.safeParse({
     code: formData.get("code"),

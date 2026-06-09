@@ -17,7 +17,7 @@ export type UserCredentials = {
   id: string;
   email: string;
   name: string;
-  role: "ADMIN" | "LIDER" | "OPERADOR";
+  role: "SUPERADMIN" | "ADMIN" | "OPERADOR";
   active: boolean;
   passwordHash: string | null;
 };
@@ -137,16 +137,17 @@ export function setUserActive(
 }
 
 /**
- * Bloquea (FOR UPDATE) las filas de ADMIN activos y devuelve sus ids. Debe
- * llamarse DENTRO de una transacción: el lock serializa demociones/bajas de
- * admin concurrentes, evitando que dos requests dejen el sistema sin admin.
+ * Bloquea (FOR UPDATE) las filas de usuarios ADMINISTRATIVOS (SUPERADMIN o
+ * ADMIN) activos y devuelve sus ids. Debe llamarse DENTRO de una transacción:
+ * el lock serializa demociones/bajas de administradores concurrentes, evitando
+ * que dos requests dejen el sistema sin ningún administrador activo.
  * `count(*)` no admite FOR UPDATE, por eso seleccionamos filas y contamos en JS.
  */
-export async function lockActiveAdminIds(
+export async function lockActiveAdministratorIds(
   client: Prisma.TransactionClient,
 ): Promise<string[]> {
   const rows = await client.$queryRaw<{ id: string }[]>`
-    SELECT id FROM users WHERE role = 'ADMIN' AND active = true FOR UPDATE
+    SELECT id FROM users WHERE role IN ('SUPERADMIN', 'ADMIN') AND active = true FOR UPDATE
   `;
   return rows.map((row) => row.id);
 }

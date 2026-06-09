@@ -37,7 +37,7 @@ vi.mock("@/features/productos/schema", () => ({
 import { createProductAction } from "./product.actions";
 
 const PREV = { error: null, ok: false };
-const session = { user: { id: "u1", email: "a@x.com", name: "A", role: "LIDER" } };
+const session = { user: { id: "u1", email: "a@x.com", name: "A", role: "ADMIN" } };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -45,7 +45,7 @@ beforeEach(() => {
 });
 
 describe("createProductAction · guard DB-authoritative", () => {
-  it("usa requireActiveRole('ADMIN','LIDER'), no el rol del JWT", async () => {
+  it("usa requireActiveRole('SUPERADMIN','ADMIN'), no el rol del JWT", async () => {
     requireActiveRole.mockResolvedValue(session);
     safeParse.mockReturnValue({
       success: true,
@@ -55,7 +55,7 @@ describe("createProductAction · guard DB-authoritative", () => {
 
     await createProductAction(PREV, new FormData());
 
-    expect(requireActiveRole).toHaveBeenCalledWith("ADMIN", "LIDER");
+    expect(requireActiveRole).toHaveBeenCalledWith("SUPERADMIN", "ADMIN");
   });
 
   it("un usuario degradado/desactivado (guard redirige) NO llega a mutar", async () => {

@@ -56,6 +56,28 @@ describe("userCreateSchema", () => {
         name: "   ",
         email: "ana@example.com",
         password: "secret-123",
+        role: "OPERADOR",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("acepta SUPERADMIN como rol asignable", () => {
+    expect(
+      userCreateSchema.safeParse({
+        name: "Root",
+        email: "root@example.com",
+        password: "secret-123",
+        role: "SUPERADMIN",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rechaza LIDER (rol eliminado del modelo)", () => {
+    expect(
+      userCreateSchema.safeParse({
+        name: "Ana",
+        email: "ana@example.com",
+        password: "secret-123",
         role: "LIDER",
       }).success,
     ).toBe(false);
@@ -67,7 +89,7 @@ describe("userUpdateSchema", () => {
     const result = userUpdateSchema.safeParse({
       name: "Ana",
       email: "ana@example.com",
-      role: "LIDER",
+      role: "ADMIN",
     });
     expect(result.success).toBe(true);
   });

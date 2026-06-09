@@ -17,7 +17,7 @@ export default async function AdminUserEditPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requireActiveRole("ADMIN");
+  await requireActiveRole("SUPERADMIN", "ADMIN");
 
   const { id } = await params;
   const user = await getUserById(id);

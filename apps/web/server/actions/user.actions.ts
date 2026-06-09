@@ -22,8 +22,9 @@ import {
 } from "@/features/admin/schema";
 
 // --------------------------------------------------------------------------
-// Server Actions de gestión de usuarios (finas): Zod → requireRole(ADMIN) →
-// service → audit. Solo ADMIN: el enforcement va antes de cualquier efecto.
+// Server Actions de gestión de usuarios (finas): Zod →
+// requireActiveRole(SUPERADMIN, ADMIN) → service → audit. Solo administradores:
+// el enforcement DB-authoritative va antes de cualquier efecto.
 // --------------------------------------------------------------------------
 
 export type UserFormState = { error: string | null; ok: boolean };
@@ -53,7 +54,7 @@ export async function createUserAction(
   _prev: UserFormState,
   formData: FormData,
 ): Promise<UserFormState> {
-  const session = await requireActiveRole("ADMIN");
+  const session = await requireActiveRole("SUPERADMIN", "ADMIN");
 
   const parsed = userCreateSchema.safeParse({
     name: formData.get("name"),
@@ -93,7 +94,7 @@ export async function updateUserAction(
   _prev: UserFormState,
   formData: FormData,
 ): Promise<UserFormState> {
-  const session = await requireActiveRole("ADMIN");
+  const session = await requireActiveRole("SUPERADMIN", "ADMIN");
 
   const id = formData.get("id");
   if (typeof id !== "string" || id.length === 0) {
@@ -144,7 +145,7 @@ export async function setUserActiveAction(
   _prev: UserFormState,
   formData: FormData,
 ): Promise<UserFormState> {
-  const session = await requireActiveRole("ADMIN");
+  const session = await requireActiveRole("SUPERADMIN", "ADMIN");
 
   const id = formData.get("id");
   const activeRaw = formData.get("active");
