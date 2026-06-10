@@ -2,7 +2,8 @@ import Link from "next/link";
 
 import { Badge } from "@/app/_components/ui/badge";
 import { Card } from "@/app/_components/ui/card";
-import { expiryLevel, isAgotado } from "@/lib/inventory/batch-status";
+import { expiryLevel, isAgotado, type ExpiryLevel } from "@/lib/inventory/batch-status";
+import { formatBogotaDate } from "@/lib/datetime/bogota";
 import type { BatchListItem } from "@/server/repositories/product-batch.repository";
 
 type BatchListProps = {
@@ -11,24 +12,28 @@ type BatchListProps = {
   nextCursor: string | null;
 };
 
-const EXPIRY_TONE = {
-  ok: "success",
-  warning: "warning",
+// 4-tier label/tone maps. Both expired and critical map to "danger" tone.
+// Labels live in the feature layer — lib stays language-free.
+const EXPIRY_TONE: Record<ExpiryLevel, "danger" | "warning" | "success" | "neutral"> = {
   expired: "danger",
-} as const;
+  critical: "danger",
+  warning: "warning",
+  ok: "success",
+};
 
-const EXPIRY_LABEL = {
-  ok: "Vigente",
-  warning: "Por vencer",
+const EXPIRY_LABEL: Record<ExpiryLevel, string> = {
   expired: "Vencido",
-} as const;
-
-function formatDate(date: Date): string {
-  return date.toLocaleDateString("es-AR");
-}
+  critical: "Crítico",
+  warning: "Por vencer",
+  ok: "Vigente",
+};
 
 // Listado de lotes con semáforo de vencimiento DERIVADO en lectura.
+// S3: supports 4 tiers (expired / critical / warning / ok) with calendar-day
+// Bogota semantics. Uses formatBogotaDate for consistent date display.
 export function BatchList({ productId, items, nextCursor }: BatchListProps) {
+  const now = new Date();
+
   if (items.length === 0) {
     return (
       <Card>
@@ -42,7 +47,7 @@ export function BatchList({ productId, items, nextCursor }: BatchListProps) {
   return (
     <div className="space-y-3">
       {items.map((batch) => {
-        const level = expiryLevel(batch.expiresAt);
+        const level = expiryLevel(batch.expiresAt, now);
         return (
           <Card key={batch.id} className="space-y-2">
             <div className="flex items-center justify-between gap-3">
@@ -52,7 +57,7 @@ export function BatchList({ productId, items, nextCursor }: BatchListProps) {
               <Badge tone={EXPIRY_TONE[level]}>{EXPIRY_LABEL[level]}</Badge>
             </div>
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
-              <span>Vence: {formatDate(batch.expiresAt)}</span>
+              <span>Vence: {formatBogotaDate(batch.expiresAt, { style: "date" })}</span>
               <span>Cantidad: {batch.quantity}</span>
               {batch.location ? <span>Ubicación: {batch.location}</span> : null}
               <span>Estado: {batch.status}</span>
