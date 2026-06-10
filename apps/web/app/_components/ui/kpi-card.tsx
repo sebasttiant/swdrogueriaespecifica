@@ -38,7 +38,7 @@ export function KpiCard({
     <Card
       className={cn(
         "flex items-center gap-4",
-        href && "transition-colors hover:border-primary hover:bg-primary/5",
+        href && "transition-colors duration-150 ease-in-out hover:border-primary hover:bg-primary/5",
       )}
     >
       <span

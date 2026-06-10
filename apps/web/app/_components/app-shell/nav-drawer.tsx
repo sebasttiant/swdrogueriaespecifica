@@ -98,7 +98,7 @@ export function NavDrawer({ role }: NavDrawerProps) {
             role="dialog"
             aria-modal="true"
             aria-label="Menú de navegación"
-            className="fixed inset-y-0 left-0 z-50 flex w-72 flex-col border-r border-border bg-surface shadow-lg lg:hidden"
+            className="fixed inset-y-0 left-0 z-50 flex w-72 flex-col border-r border-border bg-surface shadow-lg transition-transform duration-200 ease-in-out lg:hidden"
           >
             {/* Panel header */}
             <div className="flex h-16 items-center justify-between border-b border-border px-4">
