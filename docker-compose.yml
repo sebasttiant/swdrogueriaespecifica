@@ -75,7 +75,9 @@ services:
       PORT: "3000"
       HOSTNAME: "0.0.0.0"
     ports:
-      - "3000:3000"
+      # Puerto externo 3132 -> interno 3000. La app sigue escuchando en 3000
+      # dentro del contenedor; solo se publica 3132 hacia afuera.
+      - "3132:3000"
     depends_on:
       postgres:
         condition: service_healthy
