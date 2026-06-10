@@ -20,6 +20,8 @@ import {
 } from "@/features/pendientes/deadline-status";
 import { getPendingDashboard } from "@/server/services/pending.service";
 import { getOpenMissingCount } from "@/server/services/missing-item.service";
+import { getExpiringBatchCounts } from "@/server/services/product-batch.service";
+import { formatBogotaDate } from "@/lib/datetime/bogota";
 
 export const metadata: Metadata = { title: "Dashboard" };
 
@@ -38,13 +40,6 @@ const DEADLINE_PILL: Record<
   A_TIEMPO: { tone: "success", label: "A tiempo" },
   FINALIZADO: { tone: "neutral", label: "Finalizado" },
 };
-
-// Promesa en hora de Colombia, coherente con el resto del módulo.
-const promiseFormatter = new Intl.DateTimeFormat("es-CO", {
-  timeZone: COLOMBIA_TIME_ZONE,
-  dateStyle: "short",
-  timeStyle: "short",
-});
 
 function getGreeting(date: Date): string {
   const hour = Number(
@@ -66,10 +61,12 @@ function capitalize(value: string): string {
 
 export default async function DashboardPage() {
   const now = new Date();
-  const [dashboard, openMissingCount] = await Promise.all([
+  const [dashboard, openMissingCount, expiringCounts] = await Promise.all([
     getPendingDashboard(now),
     getOpenMissingCount(),
+    getExpiringBatchCounts(now),
   ]);
+
   const hasOverdue = dashboard.overdueCount > 0;
   const dateLabel = capitalize(
     new Intl.DateTimeFormat("es-CO", {
@@ -80,6 +77,31 @@ export default async function DashboardPage() {
       timeZone: COLOMBIA_TIME_ZONE,
     }).format(now),
   );
+
+  // D2: KPI = critical + warning only (expires NOT counted here).
+  const expiringKpiCount = expiringCounts.critical + expiringCounts.warning;
+  const expiringKpiTone =
+    expiringCounts.critical > 0
+      ? "danger"
+      : expiringCounts.warning > 0
+        ? "warning"
+        : "success";
+  const expiringKpiHint =
+    expiringKpiCount === 0
+      ? "No hay productos próximos a vencer"
+      : `${expiringCounts.critical} críticos · ${expiringCounts.warning} por vencer`;
+
+  // Delivery windows KPI: Atrasada (danger) / Próxima (warning)
+  const deliveryTone =
+    dashboard.overdueCount > 0
+      ? "danger"
+      : dashboard.upcomingCount > 0
+        ? "warning"
+        : "success";
+  const deliveryHint =
+    dashboard.overdueCount === 0 && dashboard.upcomingCount === 0
+      ? "No hay entregas atrasadas"
+      : `${dashboard.overdueCount} atrasada${dashboard.overdueCount === 1 ? "" : "s"} · ${dashboard.upcomingCount} próxima${dashboard.upcomingCount === 1 ? "" : "s"}`;
 
   return (
     <div className="space-y-6">
@@ -106,10 +128,38 @@ export default async function DashboardPage() {
       {/* KPIs principales */}
       <section aria-label="Indicadores principales">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <KpiCard label="Pendientes abiertos" value={dashboard.openCount} icon={ClipboardList} tone="primary" hint={hasOverdue ? `${dashboard.overdueCount} vencido${dashboard.overdueCount === 1 ? "" : "s"}` : "Al día"} href="/pendientes" />
-          <KpiCard label="Faltantes abiertos" value={openMissingCount} icon={PackageX} tone="danger" hint={openMissingCount > 0 ? "Requieren gestión" : "Sin faltantes"} href="/faltantes" />
-          <KpiCard label="Productos bajo mínimo" value="—" icon={PackageMinus} tone="warning" hint="Sin datos reales aún" />
-          <KpiCard label="Próximos vencimientos" value="—" icon={CalendarClock} tone="success" hint="Sin datos reales aún" />
+          <KpiCard
+            label="Pendientes abiertos"
+            value={dashboard.openCount}
+            icon={ClipboardList}
+            tone="primary"
+            hint={hasOverdue ? `${dashboard.overdueCount} vencido${dashboard.overdueCount === 1 ? "" : "s"}` : "Al día"}
+            href="/pendientes"
+          />
+          <KpiCard
+            label="Faltantes abiertos"
+            value={openMissingCount}
+            icon={PackageX}
+            tone="danger"
+            hint={openMissingCount > 0 ? "Requieren gestión" : "Sin faltantes"}
+            href="/faltantes"
+          />
+          <KpiCard
+            label="Entregas próximas / atrasadas"
+            value={`${dashboard.overdueCount} / ${dashboard.upcomingCount}`}
+            icon={PackageMinus}
+            tone={deliveryTone}
+            hint={deliveryHint}
+            href="/pendientes"
+          />
+          <KpiCard
+            label="Próximos vencimientos"
+            value={expiringKpiCount}
+            icon={CalendarClock}
+            tone={expiringKpiTone}
+            hint={expiringKpiHint}
+            href="/productos"
+          />
         </div>
       </section>
 
@@ -150,7 +200,7 @@ export default async function DashboardPage() {
                       </p>
                       <p className="truncate text-xs text-muted-foreground">
                         {pending.quantity} {pending.product.unit} ·{" "}
-                        {promiseFormatter.format(pending.promisedAt)}
+                        {formatBogotaDate(pending.promisedAt, { style: "datetime" })}
                       </p>
                     </div>
                     <StatusPill

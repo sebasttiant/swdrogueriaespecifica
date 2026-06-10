@@ -15,7 +15,11 @@ import type { Product } from "@/lib/generated/prisma/client";
 export type ProductListItem = Pick<
   Product,
   "id" | "code" | "name" | "unit" | "minStock" | "reorderQty" | "active" | "createdAt"
->;
+> & {
+  // Earliest expiry among batches with quantity > 0. Null if no active batches.
+  // Used to compute per-product worst expiry tier in the catalog list (S3).
+  worstExpiresAt: Date | null;
+};
 
 export type CreateProductData = {
   code: string;
@@ -25,6 +29,10 @@ export type CreateProductData = {
   reorderQty: number;
 };
 
+// Include the batch with the earliest expiry (quantity > 0) per product.
+// Prisma does not support aggregate subqueries in select, so we include up to
+// one batch ordered by expiresAt asc — the first result is the worst tier.
+// This avoids N+1: one query per page, not one per product row.
 const LIST_SELECT = {
   id: true,
   code: true,
@@ -34,6 +42,12 @@ const LIST_SELECT = {
   reorderQty: true,
   active: true,
   createdAt: true,
+  batches: {
+    where: { quantity: { gt: 0 } },
+    select: { expiresAt: true },
+    orderBy: { expiresAt: "asc" as const },
+    take: 1,
+  },
 } as const;
 
 export async function listProducts(params: {
@@ -52,9 +66,18 @@ export async function listProducts(params: {
   });
 
   const hasMore = rows.length > take;
-  const items = hasMore ? rows.slice(0, take) : rows;
-  const last = items.at(-1);
+  const rawItems = hasMore ? rows.slice(0, take) : rows;
+  const last = rawItems.at(-1);
   const nextCursor = hasMore && last ? encodeCursor(last.id) : null;
+
+  // Map raw rows → ProductListItem: flatten worst batch expiry to a scalar.
+  const items: ProductListItem[] = rawItems.map((row) => {
+    const { batches, ...rest } = row;
+    return {
+      ...rest,
+      worstExpiresAt: batches[0]?.expiresAt ?? null,
+    };
+  });
 
   return { items, nextCursor };
 }
