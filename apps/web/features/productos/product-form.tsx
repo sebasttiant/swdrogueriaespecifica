@@ -3,15 +3,14 @@
 import { useActionState } from "react";
 
 import { Button } from "@/app/_components/ui/button";
+import { Field } from "@/app/_components/ui/field";
+import { Input } from "@/app/_components/ui/input";
 import {
   createProductAction,
   type ProductFormState,
 } from "@/server/actions/product.actions";
 
 const INITIAL_STATE: ProductFormState = { error: null, ok: false };
-
-const inputClass =
-  "min-h-11 w-full rounded-[var(--radius-btn)] border border-border bg-muted/40 px-3 text-base text-text placeholder:text-muted-foreground";
 
 // Alta de producto. Solo se monta para SUPERADMIN/ADMIN (la página decide).
 export function ProductForm() {
@@ -23,58 +22,38 @@ export function ProductForm() {
   return (
     <form action={formAction} className="space-y-4">
       <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-1.5">
-          <label htmlFor="code" className="text-sm font-medium text-text">
-            Código
-          </label>
-          <input id="code" name="code" required className={inputClass} />
-        </div>
-        <div className="space-y-1.5">
-          <label htmlFor="name" className="text-sm font-medium text-text">
-            Nombre
-          </label>
-          <input id="name" name="name" required className={inputClass} />
-        </div>
-        <div className="space-y-1.5">
-          <label htmlFor="unit" className="text-sm font-medium text-text">
-            Unidad
-          </label>
-          <input
+        <Field label="Código" htmlFor="code">
+          <Input id="code" name="code" required />
+        </Field>
+        <Field label="Nombre" htmlFor="name">
+          <Input id="name" name="name" required />
+        </Field>
+        <Field label="Unidad" htmlFor="unit">
+          <Input
             id="unit"
             name="unit"
             required
             placeholder="caja, unidad, ml…"
-            className={inputClass}
           />
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5">
-            <label htmlFor="minStock" className="text-sm font-medium text-text">
-              Stock mín.
-            </label>
-            <input
-              id="minStock"
-              name="minStock"
-              type="number"
-              min={0}
-              defaultValue={0}
-              className={inputClass}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <label htmlFor="reorderQty" className="text-sm font-medium text-text">
-              Reorden
-            </label>
-            <input
-              id="reorderQty"
-              name="reorderQty"
-              type="number"
-              min={0}
-              defaultValue={0}
-              className={inputClass}
-            />
-          </div>
-        </div>
+        </Field>
+        <Field label="Stock mín." htmlFor="minStock">
+          <Input
+            id="minStock"
+            name="minStock"
+            type="number"
+            min={0}
+            defaultValue={0}
+          />
+        </Field>
+        <Field label="Reorden" htmlFor="reorderQty">
+          <Input
+            id="reorderQty"
+            name="reorderQty"
+            type="number"
+            min={0}
+            defaultValue={0}
+          />
+        </Field>
       </div>
 
       {state.error ? (

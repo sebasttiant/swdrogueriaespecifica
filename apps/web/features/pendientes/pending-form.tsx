@@ -3,15 +3,15 @@
 import { useActionState } from "react";
 
 import { Button } from "@/app/_components/ui/button";
+import { Field } from "@/app/_components/ui/field";
+import { Input } from "@/app/_components/ui/input";
+import { Select } from "@/app/_components/ui/select";
 import {
   createPendingAction,
   type PendingFormState,
 } from "@/server/actions/pending.actions";
 
 const INITIAL_STATE: PendingFormState = { error: null, ok: false };
-
-const fieldClass =
-  "min-h-11 w-full rounded-[var(--radius-btn)] border border-border bg-muted/40 px-3 text-base text-text placeholder:text-muted-foreground";
 
 export type ProductOption = {
   id: string;
@@ -42,24 +42,22 @@ export function PendingForm({ products }: PendingFormProps) {
   return (
     <form action={formAction} className="space-y-4">
       <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-1.5 sm:col-span-2">
-          <label htmlFor="productId" className="text-sm font-medium text-text">
-            Producto
-          </label>
-          <select id="productId" name="productId" required className={fieldClass}>
+        <Field
+          label="Producto"
+          htmlFor="productId"
+          className="sm:col-span-2"
+        >
+          <Select id="productId" name="productId" required>
             <option value="">Elegí un producto…</option>
             {products.map((product) => (
               <option key={product.id} value={product.id}>
                 {product.name} ({product.code})
               </option>
             ))}
-          </select>
-        </div>
-        <div className="space-y-1.5">
-          <label htmlFor="quantity" className="text-sm font-medium text-text">
-            Cantidad
-          </label>
-          <input
+          </Select>
+        </Field>
+        <Field label="Cantidad" htmlFor="quantity">
+          <Input
             id="quantity"
             name="quantity"
             type="number"
@@ -67,43 +65,37 @@ export function PendingForm({ products }: PendingFormProps) {
             step={1}
             required
             defaultValue={1}
-            className={fieldClass}
           />
-        </div>
-        <div className="space-y-1.5">
-          <label htmlFor="promisedAt" className="text-sm font-medium text-text">
-            Entrega prometida
-          </label>
-          <input
+        </Field>
+        <Field label="Entrega prometida" htmlFor="promisedAt">
+          <Input
             id="promisedAt"
             name="promisedAt"
             type="datetime-local"
             required
-            className={fieldClass}
           />
-        </div>
-        <div className="space-y-1.5">
-          <label htmlFor="customerName" className="text-sm font-medium text-text">
-            Cliente <span className="text-muted-foreground">(opcional)</span>
-          </label>
-          <input
+        </Field>
+        <Field
+          label="Cliente (opcional)"
+          htmlFor="customerName"
+        >
+          <Input
             id="customerName"
             name="customerName"
             placeholder="Nombre del cliente"
-            className={fieldClass}
           />
-        </div>
-        <div className="space-y-1.5 sm:col-span-2">
-          <label htmlFor="note" className="text-sm font-medium text-text">
-            Nota <span className="text-muted-foreground">(opcional)</span>
-          </label>
-          <input
+        </Field>
+        <Field
+          label="Nota (opcional)"
+          htmlFor="note"
+          className="sm:col-span-2"
+        >
+          <Input
             id="note"
             name="note"
             placeholder="Detalle de la solicitud"
-            className={fieldClass}
           />
-        </div>
+        </Field>
       </div>
 
       {state.error ? (
