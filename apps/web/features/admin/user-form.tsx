@@ -3,6 +3,9 @@
 import { useActionState } from "react";
 
 import { Button } from "@/app/_components/ui/button";
+import { Field } from "@/app/_components/ui/field";
+import { Input } from "@/app/_components/ui/input";
+import { Select } from "@/app/_components/ui/select";
 import {
   createUserAction,
   type UserFormState,
@@ -10,9 +13,6 @@ import {
 import { ASSIGNABLE_ROLES, ROLE_LABELS } from "./schema";
 
 const INITIAL_STATE: UserFormState = { error: null, ok: false };
-
-const inputClass =
-  "min-h-11 w-full rounded-[var(--radius-btn)] border border-border bg-muted/40 px-3 text-base text-text placeholder:text-muted-foreground";
 
 // Alta de usuario. Solo se monta dentro del módulo Admin (la página es ADMIN).
 export function UserForm() {
@@ -24,30 +24,20 @@ export function UserForm() {
   return (
     <form action={formAction} className="space-y-4">
       <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-1.5">
-          <label htmlFor="name" className="text-sm font-medium text-text">
-            Nombre
-          </label>
-          <input id="name" name="name" required className={inputClass} />
-        </div>
-        <div className="space-y-1.5">
-          <label htmlFor="email" className="text-sm font-medium text-text">
-            Email
-          </label>
-          <input
+        <Field label="Nombre" htmlFor="name">
+          <Input id="name" name="name" required />
+        </Field>
+        <Field label="Email" htmlFor="email">
+          <Input
             id="email"
             name="email"
             type="email"
             required
             autoComplete="off"
-            className={inputClass}
           />
-        </div>
-        <div className="space-y-1.5">
-          <label htmlFor="password" className="text-sm font-medium text-text">
-            Contraseña inicial
-          </label>
-          <input
+        </Field>
+        <Field label="Contraseña inicial" htmlFor="password">
+          <Input
             id="password"
             name="password"
             type="password"
@@ -55,21 +45,17 @@ export function UserForm() {
             minLength={8}
             autoComplete="new-password"
             placeholder="mínimo 8 caracteres"
-            className={inputClass}
           />
-        </div>
-        <div className="space-y-1.5">
-          <label htmlFor="role" className="text-sm font-medium text-text">
-            Rol
-          </label>
-          <select id="role" name="role" required className={inputClass} defaultValue="OPERADOR">
+        </Field>
+        <Field label="Rol" htmlFor="role">
+          <Select id="role" name="role" required defaultValue="OPERADOR">
             {ASSIGNABLE_ROLES.map((role) => (
               <option key={role} value={role}>
                 {ROLE_LABELS[role]}
               </option>
             ))}
-          </select>
-        </div>
+          </Select>
+        </Field>
       </div>
 
       {state.error ? (

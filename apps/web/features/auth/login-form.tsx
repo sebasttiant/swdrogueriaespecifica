@@ -3,6 +3,8 @@
 import { useActionState } from "react";
 
 import { Button } from "@/app/_components/ui/button";
+import { Field } from "@/app/_components/ui/field";
+import { Input } from "@/app/_components/ui/input";
 import { loginAction, type LoginState } from "@/server/actions/auth.actions";
 
 const INITIAL_STATE: LoginState = { error: null };
@@ -17,34 +19,26 @@ export function LoginForm() {
 
   return (
     <form action={formAction} className="space-y-4">
-      <div className="space-y-1.5">
-        <label htmlFor="email" className="text-sm font-medium text-text">
-          Correo
-        </label>
-        <input
+      <Field label="Correo" htmlFor="email">
+        <Input
           id="email"
           name="email"
           type="email"
           required
           autoComplete="email"
           placeholder="nombre@drogueriaespecifica.com"
-          className="min-h-11 w-full rounded-[var(--radius-btn)] border border-border bg-muted/40 px-3 text-base text-text placeholder:text-muted-foreground"
         />
-      </div>
-      <div className="space-y-1.5">
-        <label htmlFor="password" className="text-sm font-medium text-text">
-          Contraseña
-        </label>
-        <input
+      </Field>
+      <Field label="Contraseña" htmlFor="password">
+        <Input
           id="password"
           name="password"
           type="password"
           required
           autoComplete="current-password"
           placeholder="••••••••"
-          className="min-h-11 w-full rounded-[var(--radius-btn)] border border-border bg-muted/40 px-3 text-base text-text placeholder:text-muted-foreground"
         />
-      </div>
+      </Field>
 
       {state.error ? (
         <p role="alert" className="text-sm font-medium text-danger">
