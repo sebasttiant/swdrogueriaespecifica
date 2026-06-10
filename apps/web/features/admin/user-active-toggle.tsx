@@ -31,7 +31,7 @@ export function UserActiveToggle({ userId, active }: UserActiveToggleProps) {
       <Button
         type="submit"
         size="md"
-        variant={active ? "outline" : "primary"}
+        variant={active ? "danger" : "primary"}
         disabled={isPending}
       >
         {isPending ? "…" : active ? "Desactivar" : "Activar"}
