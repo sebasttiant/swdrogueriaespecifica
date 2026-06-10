@@ -125,8 +125,8 @@ docker compose up -d --build --force-recreate
 Orden garantizado por healthchecks:
 `postgres (healthy)` → `migrate (corre y termina)` → `seed (corre y termina)` → `web (arranca)`.
 
-- Web: http://localhost:3000
-- Healthcheck: http://localhost:3000/api/health
+- Web: http://localhost:3132 (puerto externo 3132 -> interno 3000)
+- Healthcheck: http://localhost:3132/api/health
 
 Validar la configuración del compose sin levantar nada:
 
