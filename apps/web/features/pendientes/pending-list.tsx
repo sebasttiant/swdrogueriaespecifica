@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { Badge } from "@/app/_components/ui/badge";
 import { Card } from "@/app/_components/ui/card";
+import { formatBogotaDate } from "@/lib/datetime/bogota";
 import type { PendingStatus } from "@/lib/generated/prisma/client";
 import type { PendingListItem } from "@/server/repositories/pending.repository";
 import {
@@ -35,12 +36,7 @@ const DEADLINE: Record<
   FINALIZADO: { label: "Finalizado", tone: "neutral" },
 };
 
-// Promesa en hora de Colombia: el negocio es operativo en esa zona.
-const promiseFormatter = new Intl.DateTimeFormat("es-CO", {
-  timeZone: "America/Bogota",
-  dateStyle: "short",
-  timeStyle: "short",
-});
+// Promesa en hora de Colombia: formatBogotaDate garantiza zona y locale consistentes.
 
 // Listado presentacional (server component). Mobile-first: tarjetas apiladas.
 export function PendingList({ items, nextCursor }: PendingListProps) {
@@ -74,7 +70,7 @@ export function PendingList({ items, nextCursor }: PendingListProps) {
                 {pending.customerName ? ` · ${pending.customerName}` : ""}
               </p>
               <p className="text-sm text-muted-foreground">
-                Promesa: {promiseFormatter.format(pending.promisedAt)}
+                Promesa: {formatBogotaDate(pending.promisedAt, { style: "datetime" })}
               </p>
             </div>
             <div className="flex shrink-0 flex-col items-end gap-1.5">
