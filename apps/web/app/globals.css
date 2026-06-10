@@ -65,3 +65,15 @@ a {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
+
+/* Respeto por prefers-reduced-motion: suprime toda animación y transición no
+   esencial. Cubre Tailwind animate-pulse (skeleton) y todos los transition-*
+   utilitarios. No afecta tokens de color, focus rings ni estados de borde. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
