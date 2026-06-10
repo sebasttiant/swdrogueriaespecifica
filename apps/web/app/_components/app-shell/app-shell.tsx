@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { AlertBar } from "@/features/alertas/alert-bar";
 import { getCurrentSession } from "@/lib/auth/index.node";
 
 import { MobileNav } from "./mobile-nav";
@@ -26,6 +27,9 @@ export async function AppShell({ children }: AppShellProps) {
       <Sidebar role={role} />
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar />
+        {session ? (
+          <AlertBar userId={session.user.id} role={session.user.role} />
+        ) : null}
         <main className="flex-1 px-4 pb-24 pt-5 lg:px-8 lg:pb-8">
           <div className="mx-auto w-full max-w-5xl">{children}</div>
         </main>
