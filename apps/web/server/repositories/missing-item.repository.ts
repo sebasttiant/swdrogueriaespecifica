@@ -11,7 +11,11 @@ import {
   encodeCursor,
   type Paginated,
 } from "@/lib/pagination";
-import type { MissingItemStatus, Prisma } from "@/lib/generated/prisma/client";
+import type {
+  MissingItemStatus,
+  PendingStatus,
+  Prisma,
+} from "@/lib/generated/prisma/client";
 
 export type MissingItemListItem = {
   id: string;
@@ -20,6 +24,12 @@ export type MissingItemListItem = {
   originId: string | null;
   createdAt: Date;
   product: { id: string; name: string; code: string; unit: string };
+  origin: {
+    id: string;
+    promisedAt: Date;
+    status: PendingStatus;
+    customerName: string | null;
+  } | null;
 };
 
 export type CreateMissingItemData = {
@@ -36,6 +46,9 @@ const LIST_SELECT = {
   originId: true,
   createdAt: true,
   product: { select: { id: true, name: true, code: true, unit: true } },
+  origin: {
+    select: { id: true, promisedAt: true, status: true, customerName: true },
+  },
 } as const;
 
 export async function listMissingItems(params: {
@@ -78,6 +91,16 @@ const OPEN_STATUSES: MissingItemStatus[] = ["FALTANTE", "PEDIDO"];
 
 export function countOpenMissingItems(): Promise<number> {
   return prisma.missingItem.count({ where: { status: { in: OPEN_STATUSES } } });
+}
+
+export function countOverdueMissingItems(now: Date = new Date()): Promise<number> {
+  return prisma.missingItem.count({
+    where: {
+      status: { in: OPEN_STATUSES },
+      originId: { not: null },
+      origin: { promisedAt: { lt: now } },
+    },
+  });
 }
 
 // `client` permite ejecutar dentro de una transacción (ver pending.service).
