@@ -97,6 +97,20 @@ export function countOverduePendings(now: Date = new Date()): Promise<number> {
   });
 }
 
+// Próximas = abiertos cuya promesa es >= now y <= now + 24h.
+// Spec R4/R5 boundary: exactly now + 24h counts as upcoming (lte, inclusive).
+// Disjoint with countOverduePendings by construction (overdue uses lt: now).
+const MS_24H = 24 * 60 * 60 * 1000;
+
+export function countUpcomingPendings(now: Date = new Date()): Promise<number> {
+  return prisma.pending.count({
+    where: {
+      status: { in: OPEN_STATUSES },
+      promisedAt: { gte: now, lte: new Date(now.getTime() + MS_24H) },
+    },
+  });
+}
+
 // Pendientes abiertos más urgentes: los que vencen antes, primero.
 export function listUrgentPendings(take: number): Promise<PendingListItem[]> {
   return prisma.pending.findMany({
