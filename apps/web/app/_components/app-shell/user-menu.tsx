@@ -53,7 +53,7 @@ export function UserMenu({ name, email }: UserMenuProps) {
       {open ? (
         <div
           role="menu"
-          className="absolute right-0 top-12 z-40 w-60 overflow-hidden rounded-[var(--radius-btn)] border border-border bg-surface shadow-lg"
+          className="absolute right-0 top-12 z-40 w-60 rounded-[var(--radius-btn)] border border-border bg-surface shadow-lg"
         >
           <div className="border-b border-border px-4 py-3">
             <p className="truncate font-semibold text-text">{name}</p>
