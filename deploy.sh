@@ -4,13 +4,12 @@ set -Eeuo pipefail
 # ==========================================================================
 # Droguería Específica — deploy en VPS
 #
-# Flujo:  backup -> pull -> build -> up -> wait health -> verify
+# Flujo: backup -> pull -> build -> db up -> migrate -> seed -> web up -> verify
 #
-# IMPORTANTE: la orquestación (postgres -> migrate -> seed -> web) la maneja
-# docker-compose vía healthchecks y `depends_on`. NO se corren migraciones ni
-# seed a mano: la imagen `runner` es Next.js standalone y no incluye prisma/tsx.
-# Los servicios one-shot `migrate` y `seed` (targets del Dockerfile) hacen ese
-# trabajo solos en cada `docker compose up -d`.
+# IMPORTANTE: el contenedor `web` es Next.js standalone y NO incluye Prisma/seed.
+# Por eso las migraciones y el seed se ejecutan explícitamente desde los targets
+# dedicados del Dockerfile (`migrate` y `seed`), igual que el VPS de Reservas en
+# cuanto a flujo operativo, pero respetando la arquitectura Docker de este repo.
 #
 # Acceso final:  http://<ip-vps>:3132   (externo 3132 -> interno 3000)
 # ==========================================================================
@@ -22,11 +21,13 @@ BACKUP_DIR="$APP_DIR/backups"
 BRANCH="${BRANCH:-main}"
 WEB_SERVICE="${WEB_SERVICE:-web}"
 DB_SERVICE="${DB_SERVICE:-postgres}"
+MIGRATE_SERVICE="${MIGRATE_SERVICE:-migrate}"
+SEED_SERVICE="${SEED_SERVICE:-seed}"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-180}"   # segundos a esperar a que `web` quede healthy
 
 cd "$APP_DIR"
 
-echo "==> Backup del directorio de la app..."
+echo "==> Creating backup..."
 mkdir -p "$BACKUP_DIR"
 BACKUP_FILE="$BACKUP_DIR/drogueria-before-deploy-$(date +%Y%m%d-%H%M%S).tar.gz"
 tar --exclude='./backups' \
@@ -36,9 +37,9 @@ tar --exclude='./backups' \
     --exclude='./apps/web/.next' \
     --exclude='./.git' \
     -czf "$BACKUP_FILE" .
-echo "    Backup creado: $BACKUP_FILE"
+echo "Backup created: $BACKUP_FILE"
 
-echo "==> Actualizando código (origin/$BRANCH)..."
+echo "==> Updating code..."
 git fetch origin "$BRANCH"
 git pull --ff-only origin "$BRANCH"
 
@@ -48,34 +49,41 @@ if [ ! -f "$APP_DIR/.env" ]; then
   exit 1
 fi
 
-echo "==> Building imágenes (--no-cache)..."
-# Reconstruye web/migrate/seed (comparten stages del Dockerfile). postgres usa
-# imagen, no build, así que compose lo saltea. Para deploys más rápidos podés
-# quitar --no-cache y aprovechar la cache de capas.
-docker compose build --no-cache
+echo "==> Building web image..."
+# Build the deploy images explicitly. `web` is the runtime image; `migrate` and
+# `seed` are one-shot images used below so the runtime container stays minimal.
+docker compose build "$WEB_SERVICE" "$MIGRATE_SERVICE" "$SEED_SERVICE"
 
-echo "==> Levantando servicios (postgres -> migrate -> seed -> web)..."
-# `up -d` respeta los `depends_on` con condiciones: espera a que migrate y seed
-# terminen OK antes de arrancar web. Si seed falla, este comando falla (set -e).
-docker compose up -d
+echo "==> Starting database..."
+docker compose up -d "$DB_SERVICE"
 
-echo "==> Estado de los jobs one-shot (migrate/seed deben salir con código 0)..."
-for svc in migrate seed; do
-  cid="$(docker compose ps -aq "$svc" || true)"
-  if [ -z "$cid" ]; then
-    echo "    ADVERTENCIA: no se encontró contenedor para '$svc'."
-    continue
-  fi
-  code="$(docker inspect -f '{{.State.ExitCode}}' "$cid" 2>/dev/null || echo 'n/a')"
-  echo "    $svc -> exit code $code"
-  if [ "$code" != "0" ]; then
-    echo "ERROR: '$svc' falló (exit $code). Últimos logs:"
-    docker compose logs --tail=80 "$svc"
+echo "==> Waiting for database..."
+deadline=$(( $(date +%s) + HEALTH_TIMEOUT ))
+until db_status="$(docker compose ps -q "$DB_SERVICE" | xargs -r docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' 2>/dev/null)"; [ "$db_status" = "healthy" ] || [ "$db_status" = "running" ]; do
+  if [ "$(date +%s)" -ge "$deadline" ]; then
+    echo "ERROR: '$DB_SERVICE' no llegó a 'healthy/running' (estado: ${db_status:-desconocido}). Últimos logs:"
+    docker compose logs --tail=80 "$DB_SERVICE"
     exit 1
   fi
+  sleep 2
 done
+docker compose ps
 
-echo "==> Esperando a que '$WEB_SERVICE' quede healthy (timeout ${HEALTH_TIMEOUT}s)..."
+echo "==> Running Prisma migrations..."
+docker compose run --rm --no-deps "$MIGRATE_SERVICE"
+
+echo "==> Running seed without pnpm reinstall..."
+docker compose run --rm --no-deps "$SEED_SERVICE"
+
+echo "==> Starting containers..."
+# Dependencies already ran explicitly above. `--no-deps` prevents compose from
+# re-running migrate/seed through depends_on when recreating the web container.
+docker compose up -d --no-deps "$WEB_SERVICE"
+
+echo "==> Waiting for containers..."
+docker compose ps
+
+echo "==> Waiting for '$WEB_SERVICE' health (timeout ${HEALTH_TIMEOUT}s)..."
 deadline=$(( $(date +%s) + HEALTH_TIMEOUT ))
 until status="$(docker compose ps -q "$WEB_SERVICE" | xargs -r docker inspect -f '{{.State.Health.Status}}' 2>/dev/null)"; [ "$status" = "healthy" ]; do
   if [ "$(date +%s)" -ge "$deadline" ]; then
@@ -85,16 +93,16 @@ until status="$(docker compose ps -q "$WEB_SERVICE" | xargs -r docker inspect -f
   fi
   sleep 3
 done
-echo "    '$WEB_SERVICE' está healthy."
+echo "    '$WEB_SERVICE' is healthy."
 
-echo "==> Verificando usuarios sembrados..."
+echo "==> Verifying seeded users..."
 # La tabla real es "users" (el modelo Prisma User está mapeado con @@map).
 # Verificación informativa: nunca debe abortar el deploy si ya está healthy.
 docker compose exec -T "$DB_SERVICE" sh -lc \
   'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "select email, role from \"users\" order by role;"' \
   || echo "    (verificación de usuarios omitida — el servicio web ya está healthy)"
 
-echo "==> Estado final de los contenedores:"
+echo "==> Final container status:"
 docker compose ps
 
-echo "Deploy completado con éxito -> http://<ip-vps>:3132"
+echo "Deploy completed successfully."
