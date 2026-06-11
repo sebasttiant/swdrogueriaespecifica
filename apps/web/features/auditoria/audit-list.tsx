@@ -5,9 +5,20 @@ import { Card } from "@/app/_components/ui/card";
 import type { AuditResult } from "@/lib/generated/prisma/client";
 import type { AuditLogListItem } from "@/server/repositories/audit.repository";
 
+type ActiveFilters = {
+  action?: string;
+  module?: string;
+  result?: "SUCCESS" | "FAILURE";
+  userText?: string;
+  from?: string;
+  to?: string;
+};
+
 type AuditListProps = {
   items: AuditLogListItem[];
   nextCursor: string | null;
+  hasFilters?: boolean;
+  activeFilters?: ActiveFilters;
 };
 
 const RESULT: Record<
@@ -33,15 +44,39 @@ function target(log: AuditLogListItem): string {
   return log.entityId ? `${log.entity} · ${log.entityId}` : log.entity;
 }
 
+/**
+ * Builds the "Ver más" URL carrying all active filters plus the new cursor.
+ * Changing any filter resets the cursor (handled by AuditFilterBar form submit
+ * which never includes a cursor field); "Ver más" preserves all active filters.
+ */
+function buildVerMasHref(cursor: string, filters: ActiveFilters = {}): string {
+  const params = new URLSearchParams();
+  params.set("cursor", cursor);
+  if (filters.action) params.set("action", filters.action);
+  if (filters.module) params.set("module", filters.module);
+  if (filters.result) params.set("result", filters.result);
+  if (filters.userText) params.set("userText", filters.userText);
+  if (filters.from) params.set("from", filters.from);
+  if (filters.to) params.set("to", filters.to);
+  return `/auditoria?${params.toString()}`;
+}
+
 // Listado de auditoría. Mobile-first (tarjetas apiladas) y, en desktop (lg+),
 // una tabla compacta para escanear muchos eventos rápido. Responde quién ·
 // cuándo · qué acción · sobre qué entidad · si fue exitoso.
-export function AuditList({ items, nextCursor }: AuditListProps) {
+export function AuditList({
+  items,
+  nextCursor,
+  hasFilters = false,
+  activeFilters = {},
+}: AuditListProps) {
   if (items.length === 0) {
     return (
       <Card>
         <p className="text-base text-muted-foreground">
-          No hay registros de auditoría.
+          {hasFilters
+            ? "No hay resultados para estos filtros."
+            : "No hay registros de auditoría."}
         </p>
       </Card>
     );
@@ -126,7 +161,7 @@ export function AuditList({ items, nextCursor }: AuditListProps) {
       {nextCursor ? (
         <div className="pt-1 text-center">
           <Link
-            href={`/auditoria?cursor=${encodeURIComponent(nextCursor)}`}
+            href={buildVerMasHref(nextCursor, activeFilters)}
             className="text-sm font-semibold text-primary hover:underline"
           >
             Ver más

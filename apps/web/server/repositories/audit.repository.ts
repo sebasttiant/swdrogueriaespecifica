@@ -6,13 +6,14 @@
 // --------------------------------------------------------------------------
 
 import { prisma } from "@/lib/db/prisma";
+import { bogotaDayToUtcRange } from "@/lib/datetime/bogota-date-range";
 import {
   clampTake,
   decodeCursor,
   encodeCursor,
   type Paginated,
 } from "@/lib/pagination";
-import type { AuditResult } from "@/lib/generated/prisma/client";
+import type { AuditResult, Prisma } from "@/lib/generated/prisma/client";
 
 export type AuditLogListItem = {
   id: string;
@@ -36,10 +37,26 @@ const LIST_SELECT = {
   user: { select: { id: true, name: true, email: true } },
 } as const;
 
-export async function listAuditLogs(params: {
+// Filtros aceptados por listAuditLogs. Los campos string se tratan como exacto;
+// userText es free-text que hace ILIKE en name+email del usuario relacionado
+// (JOIN — no usa el índice [userId], aceptable a escala MVP).
+export type AuditListParams = {
   cursor?: string | null;
   take?: number;
-}): Promise<Paginated<AuditLogListItem>> {
+  action?: string;
+  module?: string;
+  entity?: string;
+  result?: "SUCCESS" | "FAILURE";
+  // Free-text search sobre user.name y user.email (OR, case-insensitive).
+  userText?: string;
+  // Fechas de calendario YYYY-MM-DD interpretadas en America/Bogota.
+  from?: string;
+  to?: string;
+};
+
+export async function listAuditLogs(
+  params: AuditListParams,
+): Promise<Paginated<AuditLogListItem>> {
   const take = clampTake(params.take);
   let cursorId = params.cursor ? decodeCursor(params.cursor) : null;
 
@@ -56,10 +73,14 @@ export async function listAuditLogs(params: {
     if (!exists) cursorId = null;
   }
 
+  // Construimos el where combinado (AND implícito).
+  const where = buildWhere(params);
+
   // take + 1 para detectar página siguiente sin un count extra.
   const rows = await prisma.auditLog.findMany({
     take: take + 1,
     ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
+    ...(where ? { where } : {}),
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     select: LIST_SELECT,
   });
@@ -70,4 +91,69 @@ export async function listAuditLogs(params: {
   const nextCursor = hasMore && last ? encodeCursor(last.id) : null;
 
   return { items, nextCursor };
+}
+
+// --------------------------------------------------------------------------
+// Construcción del where
+// --------------------------------------------------------------------------
+
+function buildWhere(
+  params: AuditListParams,
+): Prisma.AuditLogWhereInput | undefined {
+  const clause: Prisma.AuditLogWhereInput = {};
+  let hasAny = false;
+
+  // Exact-match filters
+  const action = params.action?.trim();
+  if (action) {
+    clause.action = action;
+    hasAny = true;
+  }
+
+  const moduleVal = params.module?.trim();
+  if (moduleVal) {
+    clause.module = moduleVal;
+    hasAny = true;
+  }
+
+  const entity = params.entity?.trim();
+  if (entity) {
+    clause.entity = entity;
+    hasAny = true;
+  }
+
+  if (params.result) {
+    clause.result = params.result;
+    hasAny = true;
+  }
+
+  // Free-text user search (name OR email ILIKE).
+  // NOTE: This is a JOIN filter — does not use the [userId] index. Acceptable
+  // at MVP scale; revisit if the table grows large and this query becomes slow.
+  const userText = params.userText?.trim();
+  if (userText) {
+    clause.user = {
+      OR: [
+        { name: { contains: userText, mode: "insensitive" } },
+        { email: { contains: userText, mode: "insensitive" } },
+      ],
+    };
+    hasAny = true;
+  }
+
+  // Date range (YYYY-MM-DD → UTC boundaries via Bogota timezone).
+  const { from, to } = bogotaDayToUtcRange({
+    from: params.from,
+    to: params.to,
+  });
+
+  if (from !== undefined || to !== undefined) {
+    const createdAt: Prisma.DateTimeFilter<"AuditLog"> = {};
+    if (from !== undefined) createdAt.gte = from;
+    if (to !== undefined) createdAt.lt = to;
+    clause.createdAt = createdAt;
+    hasAny = true;
+  }
+
+  return hasAny ? clause : undefined;
 }
