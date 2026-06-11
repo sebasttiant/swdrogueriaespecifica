@@ -39,6 +39,29 @@
   /* Tipografía: stack del sistema (sin descargas en build, arranque confiable) */
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     Helvetica, Arial, sans-serif;
+
+  /* Entradas de overlays móviles: drawer (desliza desde la izquierda) y
+     backdrop/búsqueda (fade). prefers-reduced-motion las neutraliza abajo. */
+  --animate-drawer-in: drawer-in 0.2s ease-out;
+  --animate-fade-in: fade-in 0.15s ease-out;
+}
+
+@keyframes drawer-in {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 /* Base accesible: texto grande y legible para una persona adulta (~60 años). */
