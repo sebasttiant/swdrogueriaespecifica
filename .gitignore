@@ -36,3 +36,7 @@ coverage/
 # TypeScript
 *.tsbuildinfo
 next-env.d.ts
+
+# SDD / agent tooling artifacts — local planning only, never tracked
+.atl/
+openspec/
