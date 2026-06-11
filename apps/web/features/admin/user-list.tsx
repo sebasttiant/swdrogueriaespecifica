@@ -7,10 +7,18 @@ import type { UserListItem } from "@/server/repositories/user.repository";
 
 import { ROLE_LABELS } from "./schema";
 import { UserActiveToggle } from "./user-active-toggle";
+import { UserArchiveButton } from "./user-archive-button";
+import { UserRestoreButton } from "./user-restore-button";
 
 type UserListProps = {
   items: UserListItem[];
   nextCursor: string | null;
+  /** Role of the current viewer — drives which action controls render. */
+  currentUserRole: UserRole;
+  /** Id of the current viewer — prevents self-archive button from showing. */
+  currentUserId: string;
+  /** When true the list includes archived rows with their restore controls. */
+  showArchived: boolean;
 };
 
 const ROLE_TONE: Record<UserRole, "primary" | "warning" | "neutral"> = {
@@ -31,14 +39,28 @@ function statusBadge(active: boolean) {
   );
 }
 
+function archivedBadge() {
+  return <Badge tone="danger">Archivado</Badge>;
+}
+
 // Listado de usuarios. Mobile-first (tarjetas) y, en desktop (lg+), tabla
 // compacta para escanear. Acciones grandes y tocables para el gerente.
-export function UserList({ items, nextCursor }: UserListProps) {
+export function UserList({
+  items,
+  nextCursor,
+  currentUserRole,
+  currentUserId,
+  showArchived,
+}: UserListProps) {
+  const isSuperAdmin = currentUserRole === "SUPERADMIN";
+
   if (items.length === 0) {
     return (
       <Card>
         <p className="text-base text-muted-foreground">
-          Todavía no hay usuarios. Creá el primero arriba.
+          {showArchived
+            ? "No hay usuarios archivados."
+            : "Todavía no hay usuarios. Creá el primero arriba."}
         </p>
       </Card>
     );
@@ -48,31 +70,55 @@ export function UserList({ items, nextCursor }: UserListProps) {
     <div className="space-y-3">
       {/* Mobile / tablet: tarjetas apiladas. */}
       <div className="space-y-3 lg:hidden">
-        {items.map((user) => (
-          <Card key={user.id} className="space-y-3">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="truncate font-semibold text-text">{user.name}</p>
-                <p className="truncate text-sm text-muted-foreground">
-                  {user.email}
-                </p>
+        {items.map((user) => {
+          const isArchived = user.archivedAt !== null;
+          const isSelf = user.id === currentUserId;
+
+          return (
+            <Card
+              key={user.id}
+              className={isArchived ? "space-y-3 opacity-60" : "space-y-3"}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate font-semibold text-text">{user.name}</p>
+                  <p className="truncate text-sm text-muted-foreground">
+                    {user.email}
+                  </p>
+                </div>
+                <div className="flex shrink-0 flex-col items-end gap-1.5">
+                  {roleBadge(user.role)}
+                  {isArchived ? archivedBadge() : statusBadge(user.active)}
+                </div>
               </div>
-              <div className="flex shrink-0 flex-col items-end gap-1.5">
-                {roleBadge(user.role)}
-                {statusBadge(user.active)}
+              <div className="flex items-center justify-between gap-3">
+                {!isArchived && (
+                  <Link
+                    href={`/admin/${user.id}`}
+                    className="text-sm font-semibold text-primary hover:underline"
+                  >
+                    Editar
+                  </Link>
+                )}
+                {isArchived ? (
+                  isSuperAdmin ? (
+                    <UserRestoreButton userId={user.id} />
+                  ) : null
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <UserActiveToggle userId={user.id} active={user.active} />
+                    {isSuperAdmin && !isSelf && (
+                      <UserArchiveButton
+                        userId={user.id}
+                        userName={user.name}
+                      />
+                    )}
+                  </div>
+                )}
               </div>
-            </div>
-            <div className="flex items-center justify-between gap-3">
-              <Link
-                href={`/admin/${user.id}`}
-                className="text-sm font-semibold text-primary hover:underline"
-              >
-                Editar
-              </Link>
-              <UserActiveToggle userId={user.id} active={user.active} />
-            </div>
-          </Card>
-        ))}
+            </Card>
+          );
+        })}
       </div>
 
       {/* Desktop: tabla compacta. */}
@@ -88,25 +134,60 @@ export function UserList({ items, nextCursor }: UserListProps) {
             </tr>
           </thead>
           <tbody>
-            {items.map((user) => (
-              <tr key={user.id} className="border-b border-border last:border-0">
-                <td className="px-4 py-3 font-medium text-text">{user.name}</td>
-                <td className="px-4 py-3 text-muted-foreground">{user.email}</td>
-                <td className="px-4 py-3">{roleBadge(user.role)}</td>
-                <td className="px-4 py-3">{statusBadge(user.active)}</td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-4">
-                    <Link
-                      href={`/admin/${user.id}`}
-                      className="font-semibold text-primary hover:underline"
-                    >
-                      Editar
-                    </Link>
-                    <UserActiveToggle userId={user.id} active={user.active} />
-                  </div>
-                </td>
-              </tr>
-            ))}
+            {items.map((user) => {
+              const isArchived = user.archivedAt !== null;
+              const isSelf = user.id === currentUserId;
+
+              return (
+                <tr
+                  key={user.id}
+                  className={
+                    isArchived
+                      ? "border-b border-border opacity-60 last:border-0"
+                      : "border-b border-border last:border-0"
+                  }
+                >
+                  <td className="px-4 py-3 font-medium text-text">
+                    {user.name}
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">
+                    {user.email}
+                  </td>
+                  <td className="px-4 py-3">{roleBadge(user.role)}</td>
+                  <td className="px-4 py-3">
+                    {isArchived ? archivedBadge() : statusBadge(user.active)}
+                  </td>
+                  <td className="px-4 py-3">
+                    {isArchived ? (
+                      isSuperAdmin ? (
+                        <UserRestoreButton userId={user.id} />
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )
+                    ) : (
+                      <div className="flex items-center gap-4">
+                        <Link
+                          href={`/admin/${user.id}`}
+                          className="font-semibold text-primary hover:underline"
+                        >
+                          Editar
+                        </Link>
+                        <UserActiveToggle
+                          userId={user.id}
+                          active={user.active}
+                        />
+                        {isSuperAdmin && !isSelf && (
+                          <UserArchiveButton
+                            userId={user.id}
+                            userName={user.name}
+                          />
+                        )}
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </Card>

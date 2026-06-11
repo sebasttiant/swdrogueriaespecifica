@@ -53,6 +53,7 @@ export class UserRuleError extends Error {
 export function getUsers(params: {
   cursor?: string | null;
   take?: number;
+  includeArchived?: boolean;
 }): Promise<Paginated<UserListItem>> {
   return listUsers(params);
 }
