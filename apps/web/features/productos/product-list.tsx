@@ -8,6 +8,7 @@ import type { ProductListItem } from "@/server/repositories/product.repository";
 type ProductListProps = {
   items: ProductListItem[];
   nextCursor: string | null;
+  q?: string;
 };
 
 // Spanish labels and tones for each expiry tier.
@@ -29,7 +30,7 @@ const EXPIRY_TONE: Record<ExpiryLevel, "danger" | "warning" | "success" | "neutr
 // Listado presentacional (server component). Mobile-first: tarjetas apiladas.
 // S3: shows worst expiry tier badge per product (from worstExpiresAt).
 // Only renders the badge when expiry is NOT "ok" — reduces visual noise.
-export function ProductList({ items, nextCursor }: ProductListProps) {
+export function ProductList({ items, nextCursor, q }: ProductListProps) {
   const now = new Date();
 
   if (items.length === 0) {
@@ -76,7 +77,7 @@ export function ProductList({ items, nextCursor }: ProductListProps) {
       {nextCursor ? (
         <div className="pt-1 text-center">
           <Link
-            href={`/productos?cursor=${encodeURIComponent(nextCursor)}`}
+            href={`/productos?cursor=${encodeURIComponent(nextCursor)}${q ? `&q=${encodeURIComponent(q)}` : ""}`}
             className="text-sm font-semibold text-primary hover:underline"
           >
             Ver más

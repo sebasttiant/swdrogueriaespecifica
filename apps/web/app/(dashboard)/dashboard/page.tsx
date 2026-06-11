@@ -6,7 +6,7 @@ import {
   CalendarClock,
   ClipboardPlus,
   PackagePlus,
-  Search,
+  LayoutList,
 } from "lucide-react";
 
 import { PageHeader } from "@/app/_components/app-shell/page-header";
@@ -170,7 +170,7 @@ export default async function DashboardPage() {
           <QuickAction label="Nuevo pendiente" href="/pendientes" icon={ClipboardPlus} />
           <QuickAction label="Nuevo faltante" href="/faltantes" icon={PackageX} />
           <QuickAction label="Nueva entrada" href="/entradas" icon={PackagePlus} />
-          <QuickAction label="Buscar producto" href="/productos" icon={Search} />
+          <QuickAction label="Ver catálogo" href="/productos" icon={LayoutList} />
         </div>
       </section>
 

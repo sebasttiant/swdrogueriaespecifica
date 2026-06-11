@@ -53,14 +53,26 @@ const LIST_SELECT = {
 export async function listProducts(params: {
   cursor?: string | null;
   take?: number;
+  q?: string;
 }): Promise<Paginated<ProductListItem>> {
   const take = clampTake(params.take);
   const cursorId = params.cursor ? decodeCursor(params.cursor) : null;
+  const search = params.q?.trim() || undefined;
+
+  const where = search
+    ? {
+        OR: [
+          { name: { contains: search, mode: "insensitive" as const } },
+          { code: { contains: search, mode: "insensitive" as const } },
+        ],
+      }
+    : undefined;
 
   // Pedimos take + 1 para saber si hay página siguiente sin un count extra.
   const rows = await prisma.product.findMany({
     take: take + 1,
     ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
+    ...(where ? { where } : {}),
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     select: LIST_SELECT,
   });
