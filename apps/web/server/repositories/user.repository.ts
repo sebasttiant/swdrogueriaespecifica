@@ -49,6 +49,7 @@ export type UserListItem = {
   email: string;
   role: UserRole;
   active: boolean;
+  archivedAt: Date | null;
   createdAt: Date;
 };
 
@@ -71,14 +72,17 @@ const LIST_SELECT = {
   email: true,
   role: true,
   active: true,
+  archivedAt: true,
   createdAt: true,
 } as const;
 
 export async function listUsers(params: {
   cursor?: string | null;
   take?: number;
+  includeArchived?: boolean;
 }): Promise<Paginated<UserListItem>> {
   const take = clampTake(params.take);
+  const includeArchived = params.includeArchived ?? false;
   let cursorId = params.cursor ? decodeCursor(params.cursor) : null;
 
   // Cursor controlado por el usuario: si apunta a un id inexistente, lo
@@ -94,6 +98,9 @@ export async function listUsers(params: {
   const rows = await prisma.user.findMany({
     take: take + 1,
     ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
+    // Por defecto ocultamos los usuarios archivados; includeArchived=true los
+    // trae todos (la UI distingue con badge "Archivado").
+    ...(!includeArchived ? { where: { archivedAt: null } } : {}),
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     select: LIST_SELECT,
   });
@@ -142,6 +149,10 @@ export function setUserActive(
  * el lock serializa demociones/bajas de administradores concurrentes, evitando
  * que dos requests dejen el sistema sin ningún administrador activo.
  * `count(*)` no admite FOR UPDATE, por eso seleccionamos filas y contamos en JS.
+ *
+ * Nota: como el archivado fuerza `active=false` atómicamente, los usuarios
+ * archivados ya quedan excluidos por el filtro `active = true`. No es necesario
+ * agregar un filtro adicional de `archivedAt IS NULL`.
  */
 export async function lockActiveAdministratorIds(
   client: Prisma.TransactionClient,
@@ -150,4 +161,37 @@ export async function lockActiveAdministratorIds(
     SELECT id FROM users WHERE role IN ('SUPERADMIN', 'ADMIN') AND active = true FOR UPDATE
   `;
   return rows.map((row) => row.id);
+}
+
+/**
+ * Archiva un usuario: establece `archivedAt` (timestamp) y `active=false`
+ * de forma atómica. Debe llamarse dentro de una transacción para que el
+ * lock de administradores y este update sean una operación indivisible.
+ */
+export function archiveUser(
+  client: Prisma.TransactionClient,
+  id: string,
+  archivedAt: Date,
+): Promise<UserListItem> {
+  return client.user.update({
+    where: { id },
+    data: { archivedAt, active: false },
+    select: LIST_SELECT,
+  });
+}
+
+/**
+ * Restaura (un-archives) un usuario: limpia `archivedAt` (→ null).
+ * NO modifica `active`: el adminstrador deberá reactivar la cuenta por
+ * separado si lo necesita. Esta separación es intencional por diseño.
+ */
+export function unarchiveUser(
+  client: Prisma.TransactionClient,
+  id: string,
+): Promise<UserListItem> {
+  return client.user.update({
+    where: { id },
+    data: { archivedAt: null },
+    select: LIST_SELECT,
+  });
 }

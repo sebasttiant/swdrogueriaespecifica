@@ -41,6 +41,7 @@ describe("requireActiveRole (DB-authoritative)", () => {
     name: "A",
     role: "ADMIN" as const,
     active: true,
+    archivedAt: null,
     createdAt: new Date(),
   };
 
@@ -62,6 +63,16 @@ describe("requireActiveRole (DB-authoritative)", () => {
   it("BLOQUEA un JWT ADMIN viejo de un usuario DESACTIVADO", async () => {
     getCurrentSession.mockResolvedValue(session);
     findUserById.mockResolvedValue({ ...dbUser, active: false });
+    await expect(requireActiveRole("ADMIN")).rejects.toThrow("REDIRECT:/login");
+  });
+
+  it("BLOQUEA un usuario ARCHIVADO aunque archivedAt sea no-nulo", async () => {
+    getCurrentSession.mockResolvedValue(session);
+    findUserById.mockResolvedValue({
+      ...dbUser,
+      active: false,
+      archivedAt: new Date("2026-06-10T22:00:00.000Z"),
+    });
     await expect(requireActiveRole("ADMIN")).rejects.toThrow("REDIRECT:/login");
   });
 

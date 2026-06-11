@@ -17,11 +17,13 @@ import { prisma } from "@/lib/db/prisma";
 import type { UserRole } from "@/lib/generated/prisma/client";
 import type { Paginated } from "@/lib/pagination";
 import {
+  archiveUser as archiveUserRow,
   createUser as createUserRow,
   findUserById,
   listUsers,
   lockActiveAdministratorIds,
   setUserActive as setUserActiveRow,
+  unarchiveUser as unarchiveUserRow,
   updateUser as updateUserRow,
   type UserListItem,
 } from "@/server/repositories/user.repository";
@@ -30,7 +32,10 @@ export type UserRuleCode =
   | "NOT_FOUND"
   | "SELF_DEACTIVATION"
   | "SELF_ROLE_CHANGE"
-  | "LAST_ADMIN";
+  | "LAST_ADMIN"
+  | "SELF_ARCHIVE"
+  | "ALREADY_ARCHIVED"
+  | "NOT_ARCHIVED";
 
 // Roles administrativos: pueden gestionar usuarios y mutar el catálogo. El
 // sistema nunca puede quedar sin al menos uno activo (protección anti-lockout).
@@ -124,4 +129,68 @@ export async function setUserActive(args: {
 
     return setUserActiveRow(args.id, args.active, tx);
   });
+}
+
+/**
+ * Archiva (soft-delete) un usuario. SUPERADMIN-only por contrato de la Action.
+ *
+ * Guards (en orden):
+ *  - NOT_FOUND        → el usuario no existe.
+ *  - SELF_ARCHIVE     → un admin no puede archivarse a sí mismo.
+ *  - ALREADY_ARCHIVED → el usuario ya está archivado.
+ *  - LAST_ADMIN       → no se puede archivar al último administrador activo.
+ *
+ * El archivado es ATÓMICO: dentro de la misma transacción se toma el lock de
+ * administradores activos (si aplica) y se ejecuta el update que establece
+ * `archivedAt` + `active=false` en una sola operación.
+ */
+export async function archiveUser(args: {
+  id: string;
+  actingUserId: string;
+}): Promise<UserListItem> {
+  return prisma.$transaction(async (tx) => {
+    const target = await findUserById(args.id, tx);
+    if (!target) throw new UserRuleError("NOT_FOUND");
+
+    if (args.id === args.actingUserId) {
+      throw new UserRuleError("SELF_ARCHIVE");
+    }
+
+    if (target.archivedAt !== null) {
+      throw new UserRuleError("ALREADY_ARCHIVED");
+    }
+
+    // Protección anti-lockout: si el target es admin activo, verificar que no
+    // sea el último. El lock serializa archivados concurrentes.
+    if (isAdminRole(target.role) && target.active) {
+      const adminIds = await lockActiveAdministratorIds(tx);
+      if (adminIds.length <= 1) throw new UserRuleError("LAST_ADMIN");
+    }
+
+    return archiveUserRow(tx, args.id, new Date());
+  });
+}
+
+/**
+ * Restaura un usuario archivado: limpia `archivedAt` (→ null).
+ * NO reactiva la cuenta (`active` permanece false); el admin reactivará
+ * por separado si lo necesita. SUPERADMIN-only por contrato de la Action.
+ *
+ * Guards:
+ *  - NOT_FOUND    → el usuario no existe.
+ *  - NOT_ARCHIVED → el usuario no está archivado (operación sin sentido).
+ */
+export async function unarchiveUser(args: {
+  id: string;
+}): Promise<UserListItem> {
+  const target = await findUserById(args.id);
+  if (!target) throw new UserRuleError("NOT_FOUND");
+
+  if (target.archivedAt === null) {
+    throw new UserRuleError("NOT_ARCHIVED");
+  }
+
+  // unarchiveUser no necesita lock (restaurar no reduce el conteo de admins).
+  // Pasamos prisma como cliente base; el repositorio acepta TransactionClient.
+  return unarchiveUserRow(prisma, args.id);
 }

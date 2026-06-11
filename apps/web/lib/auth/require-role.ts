@@ -61,7 +61,9 @@ export async function requireActiveRole(
   if (!session) redirect(LOGIN_ROUTE);
 
   const user = await findUserById(session.user.id);
-  if (!user || !user.active) redirect(LOGIN_ROUTE);
+  // Rechazamos también usuarios archivados: aunque archive fuerza active=false,
+  // este chequeo explícito es una red de seguridad de defensa en profundidad.
+  if (!user || !user.active || user.archivedAt !== null) redirect(LOGIN_ROUTE);
   if (!hasRole(user.role, allowed)) redirect(DEFAULT_AUTHENTICATED_ROUTE);
 
   return {
