@@ -34,10 +34,13 @@ export function ProductList({ items, nextCursor, q }: ProductListProps) {
   const now = new Date();
 
   if (items.length === 0) {
+    const hasQuery = Boolean(q?.trim());
     return (
       <Card>
         <p className="text-base text-muted-foreground">
-          Todavía no hay productos cargados.
+          {hasQuery
+            ? "No hay productos que coincidan con tu búsqueda."
+            : "Todavía no hay productos cargados."}
         </p>
       </Card>
     );
