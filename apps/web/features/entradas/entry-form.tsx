@@ -11,7 +11,11 @@ import {
   type EntryFormState,
 } from "@/server/actions/entry.actions";
 
-const INITIAL_STATE: EntryFormState = { error: null, ok: false };
+const INITIAL_STATE: EntryFormState = {
+  error: null,
+  ok: false,
+  closedMissingCount: undefined,
+};
 
 export type ProductOption = {
   id: string;
@@ -98,7 +102,9 @@ export function EntryForm({ products }: EntryFormProps) {
       ) : null}
       {state.ok ? (
         <p role="status" className="text-sm font-medium text-success">
-          Entrada registrada correctamente.
+          {state.closedMissingCount && state.closedMissingCount > 0
+            ? `Entrada registrada. Se cerraron ${state.closedMissingCount} faltante${state.closedMissingCount === 1 ? "" : "s"} de este producto.`
+            : "Entrada registrada correctamente."}
         </p>
       ) : null}
 

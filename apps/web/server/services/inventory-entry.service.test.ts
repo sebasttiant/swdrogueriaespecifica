@@ -23,12 +23,16 @@ vi.mock("@/server/repositories/inventory-entry.repository", () => ({
   createInventoryEntry: vi.fn(),
   listInventoryEntries: vi.fn(),
 }));
+vi.mock("@/server/repositories/missing-item.repository", () => ({
+  closeMissingItemsByEntry: vi.fn(),
+}));
 
 import { upsertBatchQuantity } from "@/server/repositories/product-batch.repository";
 import {
   createInventoryEntry,
   listInventoryEntries,
 } from "@/server/repositories/inventory-entry.repository";
+import { closeMissingItemsByEntry } from "@/server/repositories/missing-item.repository";
 import {
   registerInventoryEntry,
   getInventoryEntries,
@@ -50,6 +54,7 @@ beforeEach(() => {
   );
   vi.mocked(upsertBatchQuantity).mockResolvedValue({ id: "batch_1" } as never);
   vi.mocked(createInventoryEntry).mockResolvedValue({ id: "entry_1" } as never);
+  vi.mocked(closeMissingItemsByEntry).mockResolvedValue(["m1", "m2"]);
 });
 
 describe("registerInventoryEntry", () => {
@@ -112,20 +117,48 @@ describe("registerInventoryEntry", () => {
     expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
   });
 
-  it("returns an object with the created entry id", async () => {
+  it("returns an object with the created entry id and closedMissingCount", async () => {
     const result = await registerInventoryEntry(BASE_INPUT);
 
     expect(result.entry).toEqual({ id: "entry_1" });
+    expect(result.closedMissingCount).toBe(2); // mock returns ["m1", "m2"]
   });
 
-  it("does NOT call any missing-item closing logic (slice 2 is out of scope)", async () => {
+  it("calls closeMissingItemsByEntry inside the SAME $transaction (slice 2 wired)", async () => {
     await registerInventoryEntry(BASE_INPUT);
 
-    // No missingItem.update/updateMany calls should be made in slice 1
-    expect(tx.inventoryEntry.create).not.toHaveBeenCalled(); // tx not used directly
-    // Confirm only two repo calls happened
+    // All three repo calls must happen inside the single $transaction callback
+    expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
     expect(upsertBatchQuantity).toHaveBeenCalledTimes(1);
     expect(createInventoryEntry).toHaveBeenCalledTimes(1);
+    expect(closeMissingItemsByEntry).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes the tx client to closeMissingItemsByEntry (not the prisma singleton)", async () => {
+    await registerInventoryEntry(BASE_INPUT);
+
+    const closeCall = vi.mocked(closeMissingItemsByEntry).mock.calls[0]!;
+    expect(closeCall[0]).toBe(tx);
+  });
+
+  it("passes correct productId and quantity to closeMissingItemsByEntry", async () => {
+    await registerInventoryEntry(BASE_INPUT);
+
+    expect(closeMissingItemsByEntry).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({
+        productId: "prod_1",
+        availableQuantity: 10,
+      }),
+    );
+  });
+
+  it("returns closedMissingCount=0 when no items were closed", async () => {
+    vi.mocked(closeMissingItemsByEntry).mockResolvedValue([]);
+
+    const result = await registerInventoryEntry(BASE_INPUT);
+
+    expect(result.closedMissingCount).toBe(0);
   });
 });
 
