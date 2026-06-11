@@ -17,6 +17,7 @@ import {
 export function getProducts(params: {
   cursor?: string | null;
   take?: number;
+  q?: string;
 }): Promise<Paginated<ProductListItem>> {
   return listProducts(params);
 }

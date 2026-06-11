@@ -2,6 +2,7 @@ import { getCurrentSession } from "@/lib/auth/index.node";
 
 import { BrandLogo } from "./brand-logo";
 import { NavDrawer } from "./nav-drawer";
+import { TopbarSearch } from "./topbar-search";
 import { UserMenu } from "./user-menu";
 
 // Topbar sticky. En celular muestra el logo + hamburger (el sidebar está oculto).
@@ -9,6 +10,7 @@ import { UserMenu } from "./user-menu";
 // sesión. Server component: resuelve la sesión y la pasa al menú (client).
 // NavDrawer es un client island que recibe el role como prop — no re-resuelve
 // la sesión internamente.
+// TopbarSearch es un client island: desktop inline form (lg+) + mobile overlay (<lg).
 export async function Topbar() {
   const session = await getCurrentSession();
   const role = session?.user.role ?? null;
@@ -20,7 +22,8 @@ export async function Topbar() {
         <NavDrawer role={role} />
         <BrandLogo className="h-7 w-auto lg:hidden" priority />
       </div>
-      <div className="hidden lg:block" />
+      {/* Center: desktop search (lg+). Mobile search icon rendered inside TopbarSearch (<lg). */}
+      <TopbarSearch />
       {session ? (
         <UserMenu name={session.user.name} email={session.user.email} />
       ) : null}

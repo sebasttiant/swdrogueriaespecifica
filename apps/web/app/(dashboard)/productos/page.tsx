@@ -13,15 +13,15 @@ export const metadata: Metadata = { title: "Productos" };
 export default async function ProductosPage({
   searchParams,
 }: {
-  searchParams: Promise<{ cursor?: string }>;
+  searchParams: Promise<{ cursor?: string; q?: string }>;
 }) {
-  const { cursor } = await searchParams;
+  const { cursor, q } = await searchParams;
   const session = await getCurrentSession();
   const canManage = session
     ? hasRole(session.user.role, ["SUPERADMIN", "ADMIN"])
     : false;
 
-  const { items, nextCursor } = await getProducts({ cursor });
+  const { items, nextCursor } = await getProducts({ cursor, q });
 
   return (
     <div className="space-y-6">
@@ -37,7 +37,7 @@ export default async function ProductosPage({
         </Card>
       ) : null}
 
-      <ProductList items={items} nextCursor={nextCursor} />
+      <ProductList items={items} nextCursor={nextCursor} q={q} />
     </div>
   );
 }
