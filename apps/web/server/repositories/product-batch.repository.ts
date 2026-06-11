@@ -151,6 +151,43 @@ export async function countExpiringBatches(
   return { expired, critical, warning };
 }
 
+// ---------------------------------------------------------------------------
+// Upsert de lote — solo se usa desde el service de entradas, dentro de $tx.
+// Clave única: (productId, batchCode). Si el lote no existe lo crea con
+// status DISPONIBLE; si ya existe, incrementa la cantidad sin tocar expiresAt.
+// ---------------------------------------------------------------------------
+
+export type UpsertBatchQuantityParams = {
+  productId: string;
+  batchCode: string;
+  expiresAt: Date;
+  quantity: number;
+};
+
+export async function upsertBatchQuantity(
+  client: Prisma.TransactionClient,
+  params: UpsertBatchQuantityParams,
+) {
+  return client.productBatch.upsert({
+    where: {
+      productId_batchCode: {
+        productId: params.productId,
+        batchCode: params.batchCode,
+      },
+    },
+    create: {
+      productId: params.productId,
+      batchCode: params.batchCode,
+      expiresAt: params.expiresAt,
+      quantity: params.quantity,
+      status: "DISPONIBLE",
+    },
+    update: {
+      quantity: { increment: params.quantity },
+    },
+  });
+}
+
 // Stock vendible: DISPONIBLE + con stock + no vencido. SUM por SQL, no en JS.
 // `client` permite leer el stock dentro de la misma transacción que lo consume
 // (pending.service), manteniendo la lectura consistente con las escrituras.
