@@ -7,6 +7,8 @@ import { X, Menu } from "lucide-react";
 
 import type { SessionRole } from "@/lib/auth/session";
 import { visibleNavItems } from "@/lib/constants/nav";
+import { useBodyScrollLock } from "@/lib/hooks/use-body-scroll-lock";
+import { useFocusTrap } from "@/lib/hooks/use-focus-trap";
 import { cn } from "@/lib/utils/cn";
 
 function isActive(pathname: string, href: string): boolean {
@@ -25,11 +27,17 @@ export function NavDrawer({ role }: NavDrawerProps) {
   const pathname = usePathname();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const firstLinkRef = useRef<HTMLAnchorElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   // Distinguishes the initial mount (closed) from a real close, so focus is
   // restored to the trigger only after the drawer has actually been opened.
   const hasOpenedRef = useRef(false);
 
   const items = visibleNavItems(role);
+
+  // Lock the page behind the drawer so it reads as a real overlay, not a
+  // sidebar squeezed into mobile, and keep keyboard focus inside the panel.
+  useBodyScrollLock(isOpen);
+  useFocusTrap(isOpen, panelRef);
 
   const close = useCallback(() => {
     setIsOpen(false);
@@ -88,17 +96,18 @@ export function NavDrawer({ role }: NavDrawerProps) {
       {isOpen && (
         <>
           <div
-            className="fixed inset-0 z-40 bg-black/40 lg:hidden"
+            className="fixed inset-x-0 top-0 z-40 h-dvh animate-fade-in bg-black/50 lg:hidden motion-reduce:animate-none"
             aria-hidden="true"
             onClick={close}
           />
 
           <div
+            ref={panelRef}
             id={drawerId}
             role="dialog"
             aria-modal="true"
             aria-label="Menú de navegación"
-            className="fixed inset-y-0 left-0 z-50 flex w-72 flex-col border-r border-border bg-surface shadow-lg transition-transform duration-200 ease-in-out lg:hidden"
+            className="fixed left-0 top-0 z-50 flex h-dvh w-72 max-w-[85vw] animate-drawer-in flex-col border-r border-border bg-surface shadow-xl lg:hidden motion-reduce:animate-none"
           >
             {/* Panel header */}
             <div className="flex h-16 items-center justify-between border-b border-border px-4">
@@ -117,7 +126,7 @@ export function NavDrawer({ role }: NavDrawerProps) {
 
             {/* Nav links — onClick closes drawer on navigation */}
             <nav
-              className="flex-1 overflow-y-auto p-3"
+              className="flex-1 overflow-y-auto overscroll-contain p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
               aria-label="Menú de navegación"
             >
               <ul className="space-y-1">

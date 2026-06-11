@@ -17,6 +17,10 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   themeColor: "#0b66c3",
+  // Required so env(safe-area-inset-*) resolves to real values on notched /
+  // home-indicator devices. Without it those insets are always 0 and the fixed
+  // bottom nav collides with the iOS/Android browser toolbar.
+  viewportFit: "cover",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

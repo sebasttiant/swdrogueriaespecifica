@@ -152,11 +152,11 @@ export function AlertSnoozeWrapper({
       <div className="mx-auto w-full max-w-5xl">
         {children}
         {canSnooze(role) ? (
-          <div className="mt-2 flex justify-end">
+          <div className="mt-2 flex">
             <Button
               variant="ghost"
               size="md"
-              className="min-h-11 text-sm"
+              className="min-h-11 w-full justify-center text-sm sm:ml-auto sm:w-auto"
               onClick={snoozeAlerts}
             >
               Posponer 8 h
