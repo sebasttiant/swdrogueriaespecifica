@@ -6,12 +6,14 @@
 //   1. upsertBatchQuantity: crea o incrementa el lote físico en ProductBatch.
 //   2. createInventoryEntry: escribe la fila de ledger en InventoryEntry.
 //
-// Slice 2 (futuro): añadir closeMissingItemsByEntry dentro de la misma $tx
-// para cerrar faltantes abiertos por FIFO. NO implementado en este slice.
+// Slice 2: closeMissingItemsByEntry — dentro de la MISMA transacción, cierra
+// faltantes abiertos para el producto usando FIFO. Atómico: stock, ledger y
+// reconciliación de faltantes se confirman o revierten juntos.
 // --------------------------------------------------------------------------
 
 import { prisma } from "@/lib/db/prisma";
 import type { Paginated } from "@/lib/pagination";
+import { closeMissingItemsByEntry } from "@/server/repositories/missing-item.repository";
 import { upsertBatchQuantity } from "@/server/repositories/product-batch.repository";
 import {
   createInventoryEntry,
@@ -30,14 +32,16 @@ export type RegisterInventoryEntryInput = {
 
 export type RegisterInventoryEntryResult = {
   entry: { id: string };
+  closedMissingCount: number;
 };
 
 /**
  * Registra una entrada de inventario de forma atómica:
  * 1. Upsert del lote físico (ProductBatch) por (productId, batchCode).
  * 2. Inserción del registro de ledger (InventoryEntry).
+ * 3. Cierre FIFO de faltantes abiertos para el producto (closeMissingItemsByEntry).
  *
- * Si cualquiera de las dos escrituras falla, Prisma revierte ambas.
+ * Si cualquiera de las tres escrituras falla, Prisma revierte todo.
  */
 export async function registerInventoryEntry(
   data: RegisterInventoryEntryInput,
@@ -57,7 +61,12 @@ export async function registerInventoryEntry(
       createdById: data.createdById,
     });
 
-    return { entry };
+    const closedIds = await closeMissingItemsByEntry(tx, {
+      productId: data.productId,
+      availableQuantity: data.quantity,
+    });
+
+    return { entry, closedMissingCount: closedIds.length };
   });
 }
 

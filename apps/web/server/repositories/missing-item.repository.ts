@@ -17,6 +17,11 @@ import type {
   Prisma,
 } from "@/lib/generated/prisma/client";
 
+export type CloseMissingItemsByEntryParams = {
+  productId: string;
+  availableQuantity: number;
+};
+
 export type MissingItemListItem = {
   id: string;
   quantity: number;
@@ -116,4 +121,46 @@ export async function createMissingItem(
       createdById: data.createdById ?? null,
     },
   });
+}
+
+// --------------------------------------------------------------------------
+// closeMissingItemsByEntry
+//
+// Cierra faltantes abiertos para un producto usando FIFO (createdAt ASC) dentro
+// de una transacción existente. El estado cerrado es RECIBIDO (el faltante fue
+// suplido por la entrada). La cantidad disponible se resta item a item; si el
+// siguiente item no cabe en el restante, se DETIENE (sin cierre parcial).
+//
+// Retorna el array de ids de los faltantes cerrados para que el llamador pueda
+// registrar auditoría y mostrar el conteo en la UI.
+// --------------------------------------------------------------------------
+export async function closeMissingItemsByEntry(
+  tx: Prisma.TransactionClient,
+  params: CloseMissingItemsByEntryParams,
+): Promise<string[]> {
+  const openItems = await tx.missingItem.findMany({
+    where: {
+      productId: params.productId,
+      status: { in: OPEN_STATUSES },
+    },
+    orderBy: { createdAt: "asc" },
+    select: { id: true, quantity: true },
+  });
+
+  let remaining = params.availableQuantity;
+  const closedIds: string[] = [];
+
+  for (const item of openItems) {
+    if (item.quantity > remaining) break;
+
+    await tx.missingItem.update({
+      where: { id: item.id },
+      data: { status: "RECIBIDO" },
+    });
+
+    remaining -= item.quantity;
+    closedIds.push(item.id);
+  }
+
+  return closedIds;
 }

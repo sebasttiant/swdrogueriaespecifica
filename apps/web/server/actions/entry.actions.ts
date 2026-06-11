@@ -15,10 +15,15 @@ import { inventoryEntryCreateSchema } from "@/features/entradas/schema";
 // Server Actions de entradas de inventario: Zod → requireActiveRole →
 // service (atomic $transaction) → audit best-effort → revalidate.
 // Roles permitidos: SUPERADMIN, ADMIN, OPERADOR — mismo gate que pendientes.
-// La transacción (upsert lote + ledger) vive en el service; acá solo orquestamos.
+// La transacción (upsert lote + ledger + cierre de faltantes) vive en el
+// service; acá solo orquestamos.
 // --------------------------------------------------------------------------
 
-export type EntryFormState = { error: string | null; ok: boolean };
+export type EntryFormState = {
+  error: string | null;
+  ok: boolean;
+  closedMissingCount?: number;
+};
 
 export async function createInventoryEntryAction(
   _prev: EntryFormState,
@@ -40,11 +45,15 @@ export async function createInventoryEntryAction(
     return { error: "Revisá los datos de la entrada.", ok: false };
   }
 
+  let closedMissingCount = 0;
+
   try {
     const result = await registerInventoryEntry({
       ...parsed.data,
       createdById: session.user.id,
     });
+
+    closedMissingCount = result.closedMissingCount;
 
     const context = await auditContextFromHeaders(session.user.id);
 
@@ -61,6 +70,20 @@ export async function createInventoryEntryAction(
       },
       context,
     });
+
+    // Auditoría adicional best-effort: faltantes cerrados por esta entrada.
+    if (closedMissingCount > 0) {
+      await recordAudit({
+        action: AUDIT_ACTIONS.MISSING_CLOSED_BY_ENTRY,
+        module: AUDIT_MODULES.ENTRADAS,
+        entity: "MissingItem",
+        after: {
+          productId: parsed.data.productId,
+          closedCount: closedMissingCount,
+        },
+        context,
+      });
+    }
   } catch (error) {
     console.error("[entradas] No se pudo registrar la entrada:", error);
     return {
@@ -72,5 +95,6 @@ export async function createInventoryEntryAction(
   revalidatePath("/entradas");
   revalidatePath("/productos");
   revalidatePath("/dashboard");
-  return { error: null, ok: true };
+  revalidatePath("/faltantes");
+  return { error: null, ok: true, closedMissingCount };
 }
