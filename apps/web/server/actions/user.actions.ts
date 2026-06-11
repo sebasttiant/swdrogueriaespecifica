@@ -10,8 +10,10 @@ import {
   recordAudit,
 } from "@/server/services/audit.service";
 import {
+  archiveUser,
   createUser,
   setUserActive,
+  unarchiveUser,
   updateUser,
   UserRuleError,
   type UserRuleCode,
@@ -34,6 +36,9 @@ const RULE_MESSAGES: Record<UserRuleCode, string> = {
   SELF_DEACTIVATION: "No podés desactivar tu propia cuenta.",
   SELF_ROLE_CHANGE: "No podés cambiar tu propio rol.",
   LAST_ADMIN: "No se puede dejar el sistema sin un administrador activo.",
+  SELF_ARCHIVE: "No podés archivar tu propia cuenta.",
+  ALREADY_ARCHIVED: "El usuario ya está archivado.",
+  NOT_ARCHIVED: "El usuario no está archivado.",
 };
 
 // P2002 (unique) sobre `email`: cubrimos target como array o string de constraint.
@@ -177,6 +182,88 @@ export async function setUserActiveAction(
     }
     console.error("[usuarios] No se pudo cambiar el estado del usuario:", error);
     return { error: "No se pudo cambiar el estado. Intentá de nuevo.", ok: false };
+  }
+
+  revalidatePath("/admin");
+  return { error: null, ok: true };
+}
+
+// --------------------------------------------------------------------------
+// Archivar usuario — SUPERADMIN only (soft-delete).
+// --------------------------------------------------------------------------
+
+export async function archiveUserAction(
+  _prev: UserFormState,
+  formData: FormData,
+): Promise<UserFormState> {
+  // Solo SUPERADMIN puede archivar; capturamos la sesión para el audit.
+  const session = await requireActiveRole("SUPERADMIN");
+
+  const id = formData.get("id");
+  if (typeof id !== "string" || id.length === 0) {
+    return { error: "Usuario inválido.", ok: false };
+  }
+
+  try {
+    await archiveUser({ id, actingUserId: session.user.id });
+    // Auditoría best-effort: si falla no revierte el archivado.
+    await recordAudit({
+      action: AUDIT_ACTIONS.USER_ARCHIVE,
+      module: AUDIT_MODULES.USUARIOS,
+      entity: "User",
+      entityId: id,
+      after: { archivedAt: new Date().toISOString() },
+      context: await auditContextFromHeaders(session.user.id),
+    }).catch((err) => {
+      console.error("[usuarios] No se pudo registrar auditoría de archivo:", err);
+    });
+  } catch (error) {
+    if (error instanceof UserRuleError) {
+      return { error: RULE_MESSAGES[error.code], ok: false };
+    }
+    console.error("[usuarios] No se pudo archivar el usuario:", error);
+    return { error: "No se pudo archivar el usuario. Intentá de nuevo.", ok: false };
+  }
+
+  revalidatePath("/admin");
+  return { error: null, ok: true };
+}
+
+// --------------------------------------------------------------------------
+// Restaurar usuario archivado — SUPERADMIN only.
+// --------------------------------------------------------------------------
+
+export async function unarchiveUserAction(
+  _prev: UserFormState,
+  formData: FormData,
+): Promise<UserFormState> {
+  // Solo SUPERADMIN puede restaurar; capturamos la sesión para el audit.
+  const session = await requireActiveRole("SUPERADMIN");
+
+  const id = formData.get("id");
+  if (typeof id !== "string" || id.length === 0) {
+    return { error: "Usuario inválido.", ok: false };
+  }
+
+  try {
+    await unarchiveUser({ id });
+    // Auditoría best-effort.
+    await recordAudit({
+      action: AUDIT_ACTIONS.USER_RESTORE,
+      module: AUDIT_MODULES.USUARIOS,
+      entity: "User",
+      entityId: id,
+      after: { archivedAt: null },
+      context: await auditContextFromHeaders(session.user.id),
+    }).catch((err) => {
+      console.error("[usuarios] No se pudo registrar auditoría de restauración:", err);
+    });
+  } catch (error) {
+    if (error instanceof UserRuleError) {
+      return { error: RULE_MESSAGES[error.code], ok: false };
+    }
+    console.error("[usuarios] No se pudo restaurar el usuario:", error);
+    return { error: "No se pudo restaurar el usuario. Intentá de nuevo.", ok: false };
   }
 
   revalidatePath("/admin");
