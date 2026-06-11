@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 
 import { PageHeader } from "@/app/_components/app-shell/page-header";
 import { Card, CardTitle } from "@/app/_components/ui/card";
@@ -17,12 +18,18 @@ export const dynamic = "force-dynamic";
 export default async function AdminPage({
   searchParams,
 }: {
-  searchParams: Promise<{ cursor?: string }>;
+  searchParams: Promise<{ cursor?: string; archived?: string }>;
 }) {
-  await requireActiveRole("SUPERADMIN", "ADMIN");
+  const session = await requireActiveRole("SUPERADMIN", "ADMIN");
 
-  const { cursor } = await searchParams;
-  const { items, nextCursor } = await getUsers({ cursor });
+  const { cursor, archived } = await searchParams;
+  const isSuperAdmin = session.user.role === "SUPERADMIN";
+  const showArchived = isSuperAdmin && archived === "true";
+
+  const { items, nextCursor } = await getUsers({
+    cursor,
+    includeArchived: showArchived,
+  });
 
   return (
     <div className="space-y-6">
@@ -31,12 +38,41 @@ export default async function AdminPage({
         description="Creá y administrá las cuentas del equipo. Para quitar acceso, desactivá la cuenta (no se borra)."
       />
 
-      <Card className="space-y-4">
-        <CardTitle>Nuevo usuario</CardTitle>
-        <UserForm />
-      </Card>
+      {/* Toggle "Ver archivados / Ver activos" — solo SUPERADMIN. */}
+      {isSuperAdmin ? (
+        <div className="flex items-center gap-3">
+          {showArchived ? (
+            <Link
+              href="/admin"
+              className="text-sm font-semibold text-primary hover:underline"
+            >
+              ← Ver activos
+            </Link>
+          ) : (
+            <Link
+              href="/admin?archived=true"
+              className="text-sm font-semibold text-muted-foreground hover:underline"
+            >
+              Ver archivados
+            </Link>
+          )}
+        </div>
+      ) : null}
 
-      <UserList items={items} nextCursor={nextCursor} />
+      {!showArchived && (
+        <Card className="space-y-4">
+          <CardTitle>Nuevo usuario</CardTitle>
+          <UserForm />
+        </Card>
+      )}
+
+      <UserList
+        items={items}
+        nextCursor={nextCursor}
+        currentUserRole={session.user.role}
+        currentUserId={session.user.id}
+        showArchived={showArchived}
+      />
     </div>
   );
 }
