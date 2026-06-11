@@ -88,8 +88,11 @@ done
 echo "    '$WEB_SERVICE' está healthy."
 
 echo "==> Verificando usuarios sembrados..."
+# La tabla real es "users" (el modelo Prisma User está mapeado con @@map).
+# Verificación informativa: nunca debe abortar el deploy si ya está healthy.
 docker compose exec -T "$DB_SERVICE" sh -lc \
-  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "select email, role from \"User\" order by role;"'
+  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "select email, role from \"users\" order by role;"' \
+  || echo "    (verificación de usuarios omitida — el servicio web ya está healthy)"
 
 echo "==> Estado final de los contenedores:"
 docker compose ps
