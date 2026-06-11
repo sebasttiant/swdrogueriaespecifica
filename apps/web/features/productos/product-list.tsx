@@ -1,7 +1,9 @@
 import Link from "next/link";
+import { PackageSearch, Package } from "lucide-react";
 
 import { Badge } from "@/app/_components/ui/badge";
 import { Card } from "@/app/_components/ui/card";
+import { EmptyState } from "@/app/_components/ui/empty-state";
 import { expiryLevel, type ExpiryLevel } from "@/lib/inventory/batch-status";
 import type { ProductListItem } from "@/server/repositories/product.repository";
 
@@ -37,11 +39,19 @@ export function ProductList({ items, nextCursor, q }: ProductListProps) {
     const hasQuery = Boolean(q?.trim());
     return (
       <Card>
-        <p className="text-base text-muted-foreground">
-          {hasQuery
-            ? "No hay productos que coincidan con tu búsqueda."
-            : "Todavía no hay productos cargados."}
-        </p>
+        {hasQuery ? (
+          <EmptyState
+            icon={PackageSearch}
+            title="Sin coincidencias"
+            description="No hay productos que coincidan con tu búsqueda."
+          />
+        ) : (
+          <EmptyState
+            icon={Package}
+            title="Catálogo vacío"
+            description="Todavía no hay productos cargados."
+          />
+        )}
       </Card>
     );
   }

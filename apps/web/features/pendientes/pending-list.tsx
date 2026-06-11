@@ -1,7 +1,9 @@
 import Link from "next/link";
+import { ClipboardCheck } from "lucide-react";
 
 import { Badge } from "@/app/_components/ui/badge";
 import { Card } from "@/app/_components/ui/card";
+import { EmptyState } from "@/app/_components/ui/empty-state";
 import { formatBogotaDate } from "@/lib/datetime/bogota";
 import type { PendingStatus } from "@/lib/generated/prisma/client";
 import type { PendingListItem } from "@/server/repositories/pending.repository";
@@ -43,9 +45,11 @@ export function PendingList({ items, nextCursor }: PendingListProps) {
   if (items.length === 0) {
     return (
       <Card>
-        <p className="text-base text-muted-foreground">
-          Todavía no hay pendientes registrados.
-        </p>
+        <EmptyState
+          icon={ClipboardCheck}
+          title="No hay pendientes abiertos"
+          description="Todavía no hay pendientes registrados por ahora."
+        />
       </Card>
     );
   }

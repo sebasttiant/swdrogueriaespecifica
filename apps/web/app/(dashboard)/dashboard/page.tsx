@@ -7,13 +7,17 @@ import {
   ClipboardPlus,
   PackagePlus,
   LayoutList,
+  CheckCircle2,
+  AlertTriangle,
 } from "lucide-react";
 
 import { PageHeader } from "@/app/_components/app-shell/page-header";
 import { Card, CardTitle } from "@/app/_components/ui/card";
+import { EmptyState } from "@/app/_components/ui/empty-state";
 import { KpiCard } from "@/app/_components/ui/kpi-card";
 import { QuickAction } from "@/app/_components/ui/quick-action";
 import { StatusPill } from "@/app/_components/ui/status-pill";
+import { cn } from "@/lib/utils/cn";
 import {
   computeDeadlineStatus,
   type DeadlineStatus,
@@ -107,16 +111,39 @@ export default async function DashboardPage() {
     <div className="space-y-6">
       <PageHeader title={`${getGreeting(now)} 👋`} description={dateLabel} />
 
-      {/* Estado general de la operación */}
-      <Card className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <CardTitle>Estado general de la operación</CardTitle>
-          <p className="text-sm text-muted-foreground">
-            Resumen rápido del día según los pendientes.
-          </p>
+      {/* Estado general de la operación — salud visible en 5 segundos:
+          acento + icono según el tono (verde normal / rojo crítico). */}
+      <Card
+        className={cn(
+          "flex flex-col gap-3 border-l-4 sm:flex-row sm:items-center sm:justify-between",
+          hasOverdue ? "border-l-danger" : "border-l-success",
+        )}
+      >
+        <div className="flex items-start gap-3">
+          <span
+            className={cn(
+              "flex size-10 shrink-0 items-center justify-center rounded-full",
+              hasOverdue
+                ? "bg-danger/10 text-danger"
+                : "bg-success/15 text-success",
+            )}
+          >
+            {hasOverdue ? (
+              <AlertTriangle className="size-5" aria-hidden />
+            ) : (
+              <CheckCircle2 className="size-5" aria-hidden />
+            )}
+          </span>
+          <div>
+            <CardTitle>Estado general de la operación</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Resumen rápido del día según los pendientes.
+            </p>
+          </div>
         </div>
         <StatusPill
           tone={hasOverdue ? "danger" : "success"}
+          className="sm:shrink-0"
           label={
             hasOverdue
               ? `${dashboard.overdueCount} pendiente${dashboard.overdueCount === 1 ? "" : "s"} vencido${dashboard.overdueCount === 1 ? "" : "s"}`
@@ -140,7 +167,7 @@ export default async function DashboardPage() {
             label="Faltantes abiertos"
             value={openMissingCount}
             icon={PackageX}
-            tone="danger"
+            tone={openMissingCount > 0 ? "danger" : "success"}
             hint={openMissingCount > 0 ? "Requieren gestión" : "Sin faltantes"}
             href="/faltantes"
           />
@@ -179,9 +206,12 @@ export default async function DashboardPage() {
         <Card className="space-y-3">
           <CardTitle>Urgencias del día</CardTitle>
           {dashboard.urgent.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              Sin pendientes abiertos. Todo al día.
-            </p>
+            <EmptyState
+              icon={CheckCircle2}
+              title="Todo al día"
+              description="Sin pendientes abiertos por ahora."
+              className="py-6"
+            />
           ) : (
             <ul className="space-y-2">
               {dashboard.urgent.map((pending) => {

@@ -1,6 +1,8 @@
 import Link from "next/link";
+import { PackagePlus } from "lucide-react";
 
 import { Card } from "@/app/_components/ui/card";
+import { EmptyState } from "@/app/_components/ui/empty-state";
 import { formatBogotaDate } from "@/lib/datetime/bogota";
 import type { InventoryEntryListItem } from "@/server/repositories/inventory-entry.repository";
 
@@ -14,9 +16,11 @@ export function EntryList({ items, nextCursor }: EntryListProps) {
   if (items.length === 0) {
     return (
       <Card>
-        <p className="text-base text-muted-foreground">
-          Todavía no hay entradas registradas.
-        </p>
+        <EmptyState
+          icon={PackagePlus}
+          title="Sin entradas registradas"
+          description="Todavía no se registraron entradas de inventario."
+        />
       </Card>
     );
   }

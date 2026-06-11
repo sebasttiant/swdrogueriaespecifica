@@ -1,7 +1,9 @@
 import Link from "next/link";
+import { PackageCheck } from "lucide-react";
 
 import { Badge } from "@/app/_components/ui/badge";
 import { Card } from "@/app/_components/ui/card";
+import { EmptyState } from "@/app/_components/ui/empty-state";
 import { formatBogotaDate } from "@/lib/datetime/bogota";
 import type { MissingItemStatus } from "@/lib/generated/prisma/client";
 import type { MissingItemListItem } from "@/server/repositories/missing-item.repository";
@@ -40,9 +42,11 @@ export function MissingList({ items, nextCursor }: MissingListProps) {
   if (items.length === 0) {
     return (
       <Card>
-        <p className="text-base text-muted-foreground">
-          No hay faltantes pendientes
-        </p>
+        <EmptyState
+          icon={PackageCheck}
+          title="Sin faltantes críticos"
+          description="No hay faltantes pendientes por ahora. Todo al día."
+        />
       </Card>
     );
   }
