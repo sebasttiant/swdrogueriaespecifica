@@ -6,6 +6,7 @@ import type { Prisma } from "@/lib/generated/prisma/client";
 import type { Paginated } from "@/lib/pagination";
 import {
   listAuditLogs,
+  type AuditListParams,
   type AuditLogListItem,
 } from "@/server/repositories/audit.repository";
 
@@ -22,10 +23,9 @@ import {
 
 // Boundary de LECTURA para la UI de auditoría. La página delega acá y nunca
 // toca el repositorio directo (mismo patrón que pendientes/faltantes).
-export function getAuditLogs(params: {
-  cursor?: string | null;
-  take?: number;
-}): Promise<Paginated<AuditLogListItem>> {
+export function getAuditLogs(
+  params: AuditListParams,
+): Promise<Paginated<AuditLogListItem>> {
   return listAuditLogs(params);
 }
 
