@@ -18,7 +18,7 @@ export function QuickAction({ label, href, icon: Icon, className }: QuickActionP
       className={cn(
         "flex min-h-24 flex-col items-center justify-center gap-2 rounded-[var(--radius-card)]",
         "border border-border bg-surface p-3 text-center shadow-sm transition-colors",
-        "hover:border-primary hover:bg-primary/5",
+        "hover:border-primary hover:bg-primary/5 active:bg-primary/10",
         className,
       )}
     >
