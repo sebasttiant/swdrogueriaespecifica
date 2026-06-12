@@ -3,6 +3,10 @@ import Link from "next/link";
 import { Field } from "@/app/_components/ui/field";
 import { Input } from "@/app/_components/ui/input";
 import { Select } from "@/app/_components/ui/select";
+import {
+  formatAuditAction,
+  formatAuditModule,
+} from "@/features/auditoria/audit-format";
 import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
 import type { AuditResultValue } from "@/features/auditoria/types";
 
@@ -46,7 +50,7 @@ export function AuditFilterBar({
             <option value="">Todas las acciones</option>
             {Object.entries(AUDIT_ACTIONS).map(([, value]) => (
               <option key={value} value={value}>
-                {value}
+                {formatAuditAction(value)}
               </option>
             ))}
           </Select>
@@ -58,7 +62,7 @@ export function AuditFilterBar({
             <option value="">Todos los módulos</option>
             {Object.entries(AUDIT_MODULES).map(([, value]) => (
               <option key={value} value={value}>
-                {value}
+                {formatAuditModule(value)}
               </option>
             ))}
           </Select>

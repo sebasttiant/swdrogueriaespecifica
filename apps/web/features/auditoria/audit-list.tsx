@@ -2,6 +2,12 @@ import Link from "next/link";
 
 import { Badge } from "@/app/_components/ui/badge";
 import { Card } from "@/app/_components/ui/card";
+import {
+  buildAuditSummary,
+  formatAuditAction,
+  formatAuditEntity,
+  formatAuditModule,
+} from "@/features/auditoria/audit-format";
 import type { AuditResult } from "@/lib/generated/prisma/client";
 import type { AuditLogListItem } from "@/server/repositories/audit.repository";
 
@@ -38,10 +44,6 @@ const stampFormatter = new Intl.DateTimeFormat("es-CO", {
 
 function actor(log: AuditLogListItem): string {
   return log.user ? log.user.name : "Sistema";
-}
-
-function target(log: AuditLogListItem): string {
-  return log.entityId ? `${log.entity} · ${log.entityId}` : log.entity;
 }
 
 /**
@@ -88,20 +90,31 @@ export function AuditList({
       <div className="space-y-3 lg:hidden">
         {items.map((log) => {
           const result = RESULT[log.result];
+          const who = actor(log);
+          const entity = formatAuditEntity(log.entity, log.entityId);
           return (
             <Card
               key={log.id}
               className="flex items-start justify-between gap-3"
             >
               <div className="min-w-0 space-y-1">
-                <p className="truncate font-semibold text-text">
-                  <code className="text-sm">{log.action}</code>
+                <p className="break-words font-semibold text-text">
+                  {buildAuditSummary({
+                    actor: who,
+                    action: log.action,
+                    result: log.result,
+                  })}
                 </p>
-                <p className="text-sm text-muted-foreground">
-                  {target(log)} · {log.module}
+                <p className="break-words text-sm text-muted-foreground">
+                  {formatAuditModule(log.module)} · {entity.label}
                 </p>
+                {entity.reference ? (
+                  <p className="truncate text-xs text-muted-foreground/70">
+                    Ref. {entity.reference}
+                  </p>
+                ) : null}
                 <p className="truncate text-sm text-muted-foreground">
-                  {actor(log)} · {stampFormatter.format(log.createdAt)}
+                  {stampFormatter.format(log.createdAt)}
                 </p>
               </div>
               <Badge tone={result.tone} className="shrink-0">
@@ -128,23 +141,37 @@ export function AuditList({
           <tbody>
             {items.map((log) => {
               const result = RESULT[log.result];
+              const who = actor(log);
+              const entity = formatAuditEntity(log.entity, log.entityId);
               return (
                 <tr
                   key={log.id}
                   className="border-b border-border last:border-0"
                 >
                   <td className="px-4 py-3">
-                    <code className="text-sm">{log.action}</code>
+                    <span className="font-medium text-text">
+                      {formatAuditAction(log.action)}
+                    </span>
+                    <span className="block text-xs text-muted-foreground">
+                      {buildAuditSummary({
+                        actor: who,
+                        action: log.action,
+                        result: log.result,
+                      })}
+                    </span>
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
-                    {target(log)}
+                    <span className="text-text">{entity.label}</span>
+                    {entity.reference ? (
+                      <span className="block truncate text-xs text-muted-foreground/70">
+                        Ref. {entity.reference}
+                      </span>
+                    ) : null}
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
-                    {log.module}
+                    {formatAuditModule(log.module)}
                   </td>
-                  <td className="px-4 py-3 text-muted-foreground">
-                    {actor(log)}
-                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">{who}</td>
                   <td className="px-4 py-3 text-muted-foreground">
                     {stampFormatter.format(log.createdAt)}
                   </td>
