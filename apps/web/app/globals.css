@@ -89,6 +89,30 @@ a {
   outline-offset: 2px;
 }
 
+/* Safari móvil impone un ancho intrínseco a date/datetime-local que puede
+   ignorar w-full dentro de cards angostas. Se fuerza el control y sus partes
+   internas a respetar el ancho disponible. */
+input[type="date"],
+input[type="datetime-local"] {
+  box-sizing: border-box;
+  display: block;
+  inline-size: 100%;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+  overflow: hidden;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+input[type="date"]::-webkit-date-and-time-value,
+input[type="datetime-local"]::-webkit-date-and-time-value,
+input[type="date"]::-webkit-datetime-edit,
+input[type="datetime-local"]::-webkit-datetime-edit {
+  max-inline-size: 100%;
+  min-inline-size: 0;
+  text-align: start;
+}
+
 /* Respeto por prefers-reduced-motion: suprime toda animación y transición no
    esencial. Cubre Tailwind animate-pulse (skeleton) y todos los transition-*
    utilitarios. No afecta tokens de color, focus rings ni estados de borde. */
