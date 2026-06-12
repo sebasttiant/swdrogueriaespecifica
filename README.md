@@ -4,11 +4,12 @@ Base técnica del software de gestión para **Droguería Específica**.
 100% web, responsive, **mobile-first** (el gerente opera desde el celular),
 dockerizado desde el inicio y **auditable**.
 
-> **Estado: Fase 2 en progreso.** Sobre los cimientos de Fase 1 ya hay
-> **autenticación real** (JWT stateless en cookie httpOnly, roles, auditoría de
-> login) y **catálogo de productos con lotes y control de vencimientos**
-> (semáforo derivado por fecha). Pendientes/faltantes, el loop de entradas y
-> reportes/líderes quedan para fases siguientes.
+> **Estado: Fase 2 avanzada / MVP operativo.** Ya hay autenticación real
+> (JWT stateless en cookie httpOnly, roles y auditoría), catálogo de productos
+> con lotes y control de vencimientos, pendientes/faltantes, entradas,
+> reportes, usuarios administrativos, scripts de backup/reset y auditoría
+> legible para gerencia. El foco siguiente es validar en producción/VPS,
+> pulir demo y cerrar mejoras de operación real.
 
 ---
 
@@ -215,10 +216,28 @@ texto** (nunca solo color) para accesibilidad.
 
 ---
 
+## Roadmap / estado del MVP
+
+| Área | Estado | Nota clara |
+| ---- | ------ | ---------- |
+| Autenticación y roles | ✅ Listo | Login/logout con JWT httpOnly, roles `SUPERADMIN`, `ADMIN`, `OPERADOR` y rutas protegidas. |
+| Productos y lotes | ✅ Listo | Catálogo, lotes, cantidades y semáforo de vencimiento. |
+| Pendientes y faltantes | ✅ Listo | Pendientes operativos y generación automática de faltantes cuando no hay stock vendible suficiente. |
+| Entradas de inventario | ✅ Listo | Registro de entradas y cierre automático de faltantes según stock recibido. |
+| Reportes | ✅ Listo para MVP | Vista de reportes disponible para seguimiento operativo. |
+| Usuarios administrativos | ✅ Listo | Alta, edición, archivo/restauración y permisos administrativos. |
+| Auditoría gerencial | ✅ Listo | La pantalla `/auditoria` muestra acciones, módulos, entidades y resumen por fila en lenguaje entendible para gerencia, sin exponer IDs técnicos como dato principal. |
+| Mobile / iPhone | ✅ Listo con seguimiento | Shell, búsqueda, formularios y auditoría fueron ajustados para evitar desbordes horizontales en mobile. Validar siempre en VPS después de deploy. |
+| Operación en VPS | ✅ Listo | `./deploy.sh`, migraciones/seed, healthcheck, backup y reset operativo disponibles. |
+| Próximo foco | 🔲 Pendiente | Validación real en VPS/iPhone, ajustes finos de demo y cualquier regla de negocio nueva que aparezca en operación. |
+
+---
+
 ## Auditoría
 
-El sistema es auditable desde Fase 1. Cada acción importante debe poder responder:
-**quién · cuándo · qué · sobre qué registro · qué cambió · desde dónde · si fue
+El sistema es auditable y la pantalla `/auditoria` está pensada para que también
+la entienda un gerente. Cada acción importante debe poder responder:
+**quién · cuándo · qué hizo · sobre qué módulo/registro · desde dónde · si fue
 exitoso o fallido.**
 
 Piezas ya disponibles:
@@ -229,11 +248,16 @@ Piezas ya disponibles:
   no rompe la operación si el log falla.
 - **Acciones/módulos canónicos** (`lib/constants/audit.ts`): fuente de verdad tipada.
 - **Tipos de consulta** (`features/auditoria/types.ts`): filtros para la pantalla de Fase 2.
+- **Capa de presentación gerencial** (`features/auditoria/audit-format.ts`): traduce
+  códigos técnicos (`auth.login`, `productos`, `User · id`) a etiquetas y frases
+  legibles como “Inicio de sesión”, “Productos” o “Super Admin inició sesión.”
+- **UI responsive** (`features/auditoria/audit-list.tsx`): tarjetas en mobile y tabla
+  en desktop, con referencias técnicas como dato secundario para evitar ruido visual
+  y desbordes horizontales.
 
-`recordAudit` ya está cableado en login/logout y en el alta de productos
-(`PRODUCT_CREATE`). Falta la **pantalla de consulta** (filtros: fecha, usuario,
-acción, módulo, entidad, resultado) y cablearlo en el resto de acciones de negocio,
-que llegan en fases siguientes.
+`recordAudit` ya está cableado en autenticación y acciones principales de negocio.
+Los filtros de auditoría mantienen los valores técnicos reales para consultar al
+backend, pero muestran nombres de negocio para que la pantalla sea clara.
 
 ---
 
