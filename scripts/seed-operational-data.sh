@@ -18,7 +18,7 @@ SKIP_BACKUP="${SKIP_BACKUP:-0}"
 
 usage() {
   cat <<'EOF'
-Uso: scripts/import-operational-excel-data.sh [--dry-run] [--execute] [--skip-backup]
+Uso: scripts/seed-operational-data.sh [--dry-run] [--execute] [--skip-backup]
 
 Siembra datos operativos demo seguros para VPS:
 - 10 pendientes con clientes y teléfonos distintos.
