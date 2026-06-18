@@ -16,6 +16,54 @@ CONFIRM_RESET="${CONFIRM_RESET:-}"
 SKIP_BACKUP="${SKIP_BACKUP:-0}"
 DRY_RUN="${DRY_RUN:-0}"
 
+usage() {
+  cat <<'EOF'
+Uso: scripts/reset-operational-data.sh [--dry-run] [--yes] [--skip-backup]
+
+Limpieza TOTAL de datos operativos. Deja vacías estas tablas:
+- audit_logs
+- inventory_entries
+- missing_items
+- pendings
+- product_batches
+
+Preserva usuarios/auth y catálogo de productos.
+
+Opciones:
+  --dry-run      Prueba la limpieza dentro de una transacción y revierte todo.
+  --yes          Permite ejecución no interactiva; requiere backup salvo --skip-backup.
+  --skip-backup  Omite backup previo. No recomendado.
+  --help         Muestra esta ayuda.
+
+Variables equivalentes:
+  DRY_RUN=1 CONFIRM_RESET=YES SKIP_BACKUP=1 DB_SERVICE=postgres
+EOF
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --dry-run)
+      DRY_RUN=1
+      ;;
+    --yes)
+      CONFIRM_RESET=YES
+      ;;
+    --skip-backup)
+      SKIP_BACKUP=1
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "ERROR: opción desconocida: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
+
 cd "${APP_DIR}"
 
 if ! command -v docker >/dev/null 2>&1; then
@@ -31,11 +79,12 @@ fi
 if [ "${DRY_RUN}" = "1" ]; then
   echo "DRY_RUN=1: se probará el SQL dentro de una transacción y se hará ROLLBACK."
 elif [ "${CONFIRM_RESET}" != "YES" ]; then
-  echo "ADVERTENCIA: esto BORRA datos operativos y conserva usuarios/productos."
+  echo "ADVERTENCIA: esto BORRA TODOS los datos operativos y conserva usuarios/productos."
   echo "También borra lotes/stock físico registrados en product_batches."
   echo "Tablas afectadas: audit_logs, inventory_entries, missing_items, pendings, product_batches"
-  read -r -p "Para continuar escribí exactamente BORRAR DATOS: " confirmation
-  if [ "${confirmation}" != "BORRAR DATOS" ]; then
+  echo "Se ejecutará backup previo automáticamente antes de borrar."
+  read -r -p "Para continuar escribí exactamente BORRAR DATOS OPERATIVOS: " confirmation
+  if [ "${confirmation}" != "BORRAR DATOS OPERATIVOS" ]; then
     echo "Reset cancelado."
     exit 1
   fi
