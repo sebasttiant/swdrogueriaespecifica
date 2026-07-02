@@ -92,7 +92,7 @@ export function UserList({
                 </div>
               </div>
               <div className="flex items-center justify-between gap-3">
-                {!isArchived && (
+                {!isArchived && isSuperAdmin && (
                   <Link
                     href={`/admin/${user.id}`}
                     className="text-sm font-semibold text-primary hover:underline"
@@ -166,12 +166,14 @@ export function UserList({
                       )
                     ) : (
                       <div className="flex items-center gap-4">
-                        <Link
-                          href={`/admin/${user.id}`}
-                          className="font-semibold text-primary hover:underline"
-                        >
-                          Editar
-                        </Link>
+                        {isSuperAdmin ? (
+                          <Link
+                            href={`/admin/${user.id}`}
+                            className="font-semibold text-primary hover:underline"
+                          >
+                            Editar
+                          </Link>
+                        ) : null}
                         <UserActiveToggle
                           userId={user.id}
                           active={user.active}

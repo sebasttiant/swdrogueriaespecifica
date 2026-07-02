@@ -38,11 +38,21 @@ export const userCreateSchema = z.object({
   role: roleField,
 });
 
-// Edición: datos del usuario. La contraseña no se cambia en este slice.
+const optionalPasswordField = z.preprocess(
+  (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+  z
+    .string()
+    .min(8, { error: "La contraseña debe tener al menos 8 caracteres" })
+    .max(200)
+    .optional(),
+);
+
+// Edición: la contraseña es opcional; vacío significa conservar la actual.
 export const userUpdateSchema = z.object({
   name: nameField,
   email: emailField,
   role: roleField,
+  password: optionalPasswordField,
 });
 
 export type UserCreateInput = z.infer<typeof userCreateSchema>;
