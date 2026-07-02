@@ -64,6 +64,7 @@ export type UpdateUserData = {
   name: string;
   email: string;
   role: UserRole;
+  passwordHash?: string;
 };
 
 const LIST_SELECT = {

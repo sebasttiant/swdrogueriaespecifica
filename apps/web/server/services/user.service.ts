@@ -4,7 +4,7 @@
 // ni en la Server Action (que solo orquesta Zod, permisos y auditoría).
 //
 // Reglas (slice Admin):
-//  - Crear: la contraseña inicial se hashea (argon2) antes de persistir.
+//  - Crear/editar: toda contraseña recibida se hashea (argon2) antes de persistir.
 //  - No autobloqueo: un admin no puede desactivarse ni degradarse a sí mismo.
 //  - No dejar el sistema sin admin: no se puede desactivar/degradar al último
 //    ADMIN activo.
@@ -80,7 +80,7 @@ export async function createUser(input: {
 export async function updateUser(args: {
   id: string;
   actingUserId: string;
-  input: { name: string; email: string; role: UserRole };
+  input: { name: string; email: string; role: UserRole; password?: string };
 }): Promise<UserListItem> {
   // ATÓMICO: lock de administradores activos + chequeo + update en una sola
   // transacción, para que dos demociones concurrentes no dejen el sistema sin
@@ -103,7 +103,20 @@ export async function updateUser(args: {
       }
     }
 
-    return updateUserRow(args.id, args.input, tx);
+    const passwordHash = args.input.password
+      ? await hashPassword(args.input.password)
+      : undefined;
+
+    return updateUserRow(
+      args.id,
+      {
+        name: args.input.name,
+        email: args.input.email,
+        role: args.input.role,
+        ...(passwordHash ? { passwordHash } : {}),
+      },
+      tx,
+    );
   });
 }
 

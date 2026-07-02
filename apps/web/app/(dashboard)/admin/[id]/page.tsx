@@ -17,7 +17,7 @@ export default async function AdminUserEditPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requireActiveRole("SUPERADMIN", "ADMIN");
+  await requireActiveRole("SUPERADMIN");
 
   const { id } = await params;
   const user = await getUserById(id);
@@ -27,7 +27,7 @@ export default async function AdminUserEditPage({
     <div className="space-y-6">
       <PageHeader
         title="Editar usuario"
-        description="Actualizá el nombre, el email o el rol. La contraseña no se cambia desde acá."
+        description="Actualizá el nombre, email, rol o contraseña del usuario. Dejá la contraseña vacía para conservarla."
       />
 
       <Link

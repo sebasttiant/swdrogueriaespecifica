@@ -99,7 +99,7 @@ export async function updateUserAction(
   _prev: UserFormState,
   formData: FormData,
 ): Promise<UserFormState> {
-  const session = await requireActiveRole("SUPERADMIN", "ADMIN");
+  const session = await requireActiveRole("SUPERADMIN");
 
   const id = formData.get("id");
   if (typeof id !== "string" || id.length === 0) {
@@ -110,6 +110,7 @@ export async function updateUserAction(
     name: formData.get("name"),
     email: formData.get("email"),
     role: formData.get("role"),
+    password: formData.get("password"),
   });
 
   if (!parsed.success) {
@@ -122,12 +123,20 @@ export async function updateUserAction(
       actingUserId: session.user.id,
       input: parsed.data,
     });
+    const safeAfter = {
+      name: parsed.data.name,
+      email: parsed.data.email,
+      role: parsed.data.role,
+    };
     await recordAudit({
       action: AUDIT_ACTIONS.USER_UPDATE,
       module: AUDIT_MODULES.USUARIOS,
       entity: "User",
       entityId: id,
-      after: parsed.data,
+      after: {
+        ...safeAfter,
+        ...(parsed.data.password ? { passwordUpdated: true } : {}),
+      },
       context: await auditContextFromHeaders(session.user.id),
     });
   } catch (error) {

@@ -158,6 +158,36 @@ describe("updateUser · protección de rol (atómica)", () => {
 
     expect(prismaMock.$queryRaw).not.toHaveBeenCalled();
     expect(prismaMock.user.update).toHaveBeenCalled();
+    expect(hashPassword).not.toHaveBeenCalled();
+  });
+
+  it("hashea y persiste passwordHash cuando se edita la contraseña", async () => {
+    prismaMock.user.findUnique.mockResolvedValue(operador);
+    hashPassword.mockResolvedValue("NEW_HASH");
+
+    await updateUser({
+      id: "op-1",
+      actingUserId: "admin-1",
+      input: {
+        name: "Op2",
+        email: "op@x.com",
+        role: "OPERADOR",
+        password: "new-secret-123",
+      },
+    });
+
+    expect(hashPassword).toHaveBeenCalledWith("new-secret-123");
+    expect(prismaMock.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "op-1" },
+        data: {
+          name: "Op2",
+          email: "op@x.com",
+          role: "OPERADOR",
+          passwordHash: "NEW_HASH",
+        },
+      }),
+    );
   });
 });
 

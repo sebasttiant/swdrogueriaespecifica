@@ -90,7 +90,32 @@ describe("userUpdateSchema", () => {
       name: "Ana",
       email: "ana@example.com",
       role: "ADMIN",
+      password: "",
     });
     expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.password).toBeUndefined();
+    }
+  });
+
+  it("acepta una edición válida con password nuevo", () => {
+    const result = userUpdateSchema.safeParse({
+      name: "Ana",
+      email: "ana@example.com",
+      role: "ADMIN",
+      password: "new-secret-123",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rechaza password corto en edición", () => {
+    expect(
+      userUpdateSchema.safeParse({
+        name: "Ana",
+        email: "ana@example.com",
+        role: "ADMIN",
+        password: "short",
+      }).success,
+    ).toBe(false);
   });
 });

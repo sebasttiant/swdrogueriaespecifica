@@ -11,6 +11,7 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    allowOnly: false,
     include: ["**/*.test.ts"],
     exclude: ["node_modules", ".next", "lib/generated"],
   },

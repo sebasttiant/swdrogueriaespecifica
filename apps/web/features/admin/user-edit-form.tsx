@@ -19,8 +19,8 @@ type UserEditFormProps = {
   user: { id: string; name: string; email: string; role: UserRole };
 };
 
-// Edición de datos del usuario (nombre, email, rol). La contraseña no se cambia
-// en este slice. Solo ADMIN (la página la protege).
+// Edición de datos del usuario. La contraseña es opcional: vacío conserva la
+// actual. La página/acción limitan esta operación sensible a SUPERADMIN.
 export function UserEditForm({ user }: UserEditFormProps) {
   const [state, formAction, isPending] = useActionState(
     updateUserAction,
@@ -61,6 +61,16 @@ export function UserEditForm({ user }: UserEditFormProps) {
               </option>
             ))}
           </Select>
+        </Field>
+        <Field label="Nueva contraseña (opcional)" htmlFor="password">
+          <Input
+            id="password"
+            name="password"
+            type="password"
+            minLength={8}
+            autoComplete="new-password"
+            placeholder="Dejar vacío para no cambiarla"
+          />
         </Field>
       </div>
 
