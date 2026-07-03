@@ -137,7 +137,7 @@ describe("closeMissingItemsByEntry · FIFO quantity-aware close", () => {
     expect(updateArgs.data.status).not.toBe("CANCELADO");
   });
 
-  it("queries only OPEN statuses (FALTANTE, PEDIDO) for the given productId, ordered by createdAt ASC", async () => {
+  it("queries only OPEN, unconfirmed items for the given productId, ordered by createdAt ASC", async () => {
     txMock.missingItem.findMany.mockResolvedValue([]);
 
     await closeMissingItemsByEntry(txMock as never, {
@@ -149,6 +149,7 @@ describe("closeMissingItemsByEntry · FIFO quantity-aware close", () => {
       where: {
         productId: "prod_abc",
         status: { in: ["FALTANTE", "PEDIDO"] },
+        confirmedAt: null,
       },
       orderBy: { createdAt: "asc" },
       select: { id: true, quantity: true },

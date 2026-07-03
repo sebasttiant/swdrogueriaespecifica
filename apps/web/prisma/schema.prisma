@@ -74,7 +74,8 @@ model User {
 
   // Entidades creadas por este usuario (trazabilidad de autoría)
   pendings        Pending[]
-  missingItems    MissingItem[]
+  missingItems    MissingItem[] @relation("MissingItemCreatedBy")
+  confirmedMissingItems MissingItem[] @relation("MissingItemConfirmedBy")
   inventoryEntries InventoryEntry[]
   auditLogs       AuditLog[]
 
@@ -179,12 +180,18 @@ model MissingItem {
   // Pendiente que lo originó (cuando se genera automáticamente). Null = manual.
   origin      Pending?          @relation(fields: [originId], references: [id])
   originId    String?
-  createdBy   User?             @relation(fields: [createdById], references: [id])
+  createdBy   User?             @relation("MissingItemCreatedBy", fields: [createdById], references: [id])
   createdById String?
+  confirmedAt DateTime?
+  confirmedBy User?             @relation("MissingItemConfirmedBy", fields: [confirmedById], references: [id])
+  confirmedById String?
+  confirmationNote String?
   createdAt   DateTime          @default(now())
   updatedAt   DateTime          @updatedAt
 
   @@index([status])
+  @@index([confirmedAt])
+  @@index([status, confirmedAt])
   @@index([productId])
   @@index([createdAt])
   @@map("missing_items")
