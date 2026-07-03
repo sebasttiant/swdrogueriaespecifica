@@ -27,6 +27,9 @@ export type MissingItemListItem = {
   quantity: number;
   status: MissingItemStatus;
   originId: string | null;
+  confirmedAt: Date | null;
+  confirmedById: string | null;
+  confirmationNote: string | null;
   createdAt: Date;
   product: { id: string; name: string; code: string; unit: string };
   origin: {
@@ -44,11 +47,23 @@ export type CreateMissingItemData = {
   createdById?: string | null;
 };
 
+export type MissingItemScope = "active" | "history";
+
+export type ConfirmMissingItemData = {
+  id: string;
+  confirmedById: string;
+  confirmedAt?: Date;
+  note?: string;
+};
+
 const LIST_SELECT = {
   id: true,
   quantity: true,
   status: true,
   originId: true,
+  confirmedAt: true,
+  confirmedById: true,
+  confirmationNote: true,
   createdAt: true,
   product: { select: { id: true, name: true, code: true, unit: true } },
   origin: {
@@ -59,6 +74,7 @@ const LIST_SELECT = {
 export async function listMissingItems(params: {
   cursor?: string | null;
   take?: number;
+  scope?: MissingItemScope;
 }): Promise<Paginated<MissingItemListItem>> {
   const take = clampTake(params.take);
   let cursorId = params.cursor ? decodeCursor(params.cursor) : null;
@@ -79,6 +95,9 @@ export async function listMissingItems(params: {
   const rows = await prisma.missingItem.findMany({
     take: take + 1,
     ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
+    ...(params.scope === "history"
+      ? {}
+      : { where: { confirmedAt: null, status: { in: OPEN_STATUSES } } }),
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     select: LIST_SELECT,
   });
@@ -95,13 +114,16 @@ export async function listMissingItems(params: {
 const OPEN_STATUSES: MissingItemStatus[] = ["FALTANTE", "PEDIDO"];
 
 export function countOpenMissingItems(): Promise<number> {
-  return prisma.missingItem.count({ where: { status: { in: OPEN_STATUSES } } });
+  return prisma.missingItem.count({
+    where: { confirmedAt: null, status: { in: OPEN_STATUSES } },
+  });
 }
 
 export function countOverdueMissingItems(now: Date = new Date()): Promise<number> {
   return prisma.missingItem.count({
     where: {
       status: { in: OPEN_STATUSES },
+      confirmedAt: null,
       originId: { not: null },
       origin: { promisedAt: { lt: now } },
     },
@@ -142,6 +164,7 @@ export async function closeMissingItemsByEntry(
     where: {
       productId: params.productId,
       status: { in: OPEN_STATUSES },
+      confirmedAt: null,
     },
     orderBy: { createdAt: "asc" },
     select: { id: true, quantity: true },
@@ -163,4 +186,35 @@ export async function closeMissingItemsByEntry(
   }
 
   return closedIds;
+}
+
+export function findMissingItemById(id: string) {
+  return prisma.missingItem.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      status: true,
+      confirmedAt: true,
+      confirmedById: true,
+      confirmationNote: true,
+    },
+  });
+}
+
+export function confirmMissingItem(data: ConfirmMissingItemData) {
+  return prisma.missingItem.update({
+    where: { id: data.id },
+    data: {
+      confirmedAt: data.confirmedAt ?? new Date(),
+      confirmedById: data.confirmedById,
+      confirmationNote: data.note,
+    },
+    select: {
+      id: true,
+      status: true,
+      confirmedAt: true,
+      confirmedById: true,
+      confirmationNote: true,
+    },
+  });
 }

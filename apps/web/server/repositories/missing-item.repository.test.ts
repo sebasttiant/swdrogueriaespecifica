@@ -6,6 +6,7 @@ const { prismaMock } = vi.hoisted(() => {
       count: vi.fn(),
       findUnique: vi.fn(),
       findMany: vi.fn(),
+      update: vi.fn(),
     },
   };
   return { prismaMock };
@@ -15,6 +16,7 @@ vi.mock("@/lib/db/prisma", () => ({ prisma: prismaMock }));
 
 import { encodeCursor } from "@/lib/pagination";
 import {
+  confirmMissingItem,
   countOverdueMissingItems,
   listMissingItems,
 } from "./missing-item.repository";
@@ -23,6 +25,59 @@ beforeEach(() => {
   vi.clearAllMocks();
   prismaMock.missingItem.findMany.mockResolvedValue([]);
   prismaMock.missingItem.count.mockResolvedValue(0);
+});
+
+describe("listMissingItems · active confirmation filter", () => {
+  it("lists only active missing items by default", async () => {
+    await listMissingItems({});
+
+    expect(prismaMock.missingItem.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          confirmedAt: null,
+          status: { in: ["FALTANTE", "PEDIDO"] },
+        },
+      }),
+    );
+  });
+
+  it("keeps confirmed rows queryable when history is requested", async () => {
+    await listMissingItems({ scope: "history" });
+
+    const args = prismaMock.missingItem.findMany.mock.calls[0]![0];
+    expect(args.where).toBeUndefined();
+  });
+});
+
+describe("confirmMissingItem", () => {
+  it("stores confirmation metadata without deleting the row", async () => {
+    const confirmedAt = new Date("2026-07-02T20:00:00.000Z");
+    prismaMock.missingItem.update.mockResolvedValue({
+      id: "missing-1",
+      status: "FALTANTE",
+      confirmedAt,
+      confirmedById: "admin-1",
+      confirmationNote: "Gestión OK",
+    });
+
+    const result = await confirmMissingItem({
+      id: "missing-1",
+      confirmedById: "admin-1",
+      confirmedAt,
+      note: "Gestión OK",
+    });
+
+    expect(result.confirmedAt).toEqual(confirmedAt);
+    expect(prismaMock.missingItem.update).toHaveBeenCalledWith({
+      where: { id: "missing-1" },
+      data: {
+        confirmedAt,
+        confirmedById: "admin-1",
+        confirmationNote: "Gestión OK",
+      },
+      select: expect.objectContaining({ id: true, status: true }),
+    });
+  });
 });
 
 // El cursor es input controlado por el usuario (?cursor=...): nunca debe
@@ -154,6 +209,7 @@ describe("countOverdueMissingItems", () => {
     expect(prismaMock.missingItem.count).toHaveBeenCalledWith({
       where: {
         status: { in: ["FALTANTE", "PEDIDO"] },
+        confirmedAt: null,
         originId: { not: null },
         origin: { promisedAt: { lt: now } },
       },

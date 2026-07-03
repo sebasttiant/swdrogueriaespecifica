@@ -34,6 +34,7 @@ export const AUDIT_ACTIONS = {
   MISSING_AUTO_CREATE: "missing.auto.create",
   MISSING_CREATE: "missing.create",
   MISSING_STATUS_CHANGE: "missing.status.change",
+  MISSING_CONFIRM_OK: "missing.confirm.ok",
   // Entradas
   ENTRY_CREATE: "entry.create",
   MISSING_CLOSED_BY_ENTRY: "missing.closed.by.entry",
