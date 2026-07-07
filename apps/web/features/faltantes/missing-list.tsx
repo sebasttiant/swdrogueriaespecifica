@@ -47,14 +47,21 @@ function deadlineBadge(origin: MissingItemListItem["origin"], now: Date) {
   return <Badge tone={deadline.tone}>{deadline.label}</Badge>;
 }
 
-// Botón OK gerencia/admin. Solo se renderiza cuando el viewer puede confirmar.
+// Confirmación de gerencia: un check limpio (no un botón con texto). Solo se
+// renderiza cuando el viewer puede confirmar (ADMIN/SUPERADMIN). El label
+// accesible y el title conservan el significado "OK gerencia".
 function confirmForm(id: string, className?: string) {
   return (
     <form action={confirmMissingItemFormAction} className={className}>
       <input type="hidden" name="id" value={id} />
-      <Button type="submit" variant="secondary" className="w-full sm:w-auto">
-        <CheckCircle2 aria-hidden="true" className="h-4 w-4" />
-        OK gerencia
+      <Button
+        type="submit"
+        variant="ghost"
+        aria-label="Confirmar (OK gerencia)"
+        title="OK gerencia"
+        className="px-2 text-success hover:bg-success/10"
+      >
+        <CheckCircle2 aria-hidden="true" className="h-6 w-6" />
       </Button>
     </form>
   );

@@ -103,6 +103,31 @@ export function parseBogotaWallTime(value: string): Date | null {
   return utc;
 }
 
+/**
+ * Instante UTC del comienzo del día (00:00) en hora de Colombia para el momento
+ * `now`. DST-safe: deriva Y/M/D de la hora de pared de Bogotá y ancla las 00:00
+ * con `parseBogotaWallTime`. Útil para conteos "del día" (ej. faltantes de hoy).
+ */
+export function bogotaStartOfDay(now: Date = new Date()): Date {
+  const wall = bogotaWallTime(now.getTime());
+  const mm = String(wall.month).padStart(2, "0");
+  const dd = String(wall.day).padStart(2, "0");
+  // Componentes derivados de una fecha real: el parseo nunca es null aquí.
+  return parseBogotaWallTime(`${wall.year}-${mm}-${dd}T00:00`) ?? now;
+}
+
+/**
+ * Clave de día (YYYY-MM-DD) de un instante UTC en hora de Colombia. Ordenable y
+ * estable para agrupar registros por "día de Bogotá" (ej. tendencia por día en
+ * reportería). DST-safe: deriva Y/M/D con Intl, nunca con un -5 hardcodeado.
+ */
+export function bogotaDayKey(date: Date): string {
+  const wall = bogotaWallTime(date.getTime());
+  const mm = String(wall.month).padStart(2, "0");
+  const dd = String(wall.day).padStart(2, "0");
+  return `${wall.year}-${mm}-${dd}`;
+}
+
 function wallTimeToUtcArgs(
   wall: WallTime,
 ): [number, number, number, number, number, number] {

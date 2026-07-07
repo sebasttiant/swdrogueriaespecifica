@@ -9,6 +9,7 @@ const { prismaMock, tx } = vi.hoisted(() => {
     pending: { create: vi.fn() },
     missingItem: { create: vi.fn() },
     productBatch: { aggregate: vi.fn() },
+    product: { create: vi.fn() },
   };
   const prismaMock = {
     $transaction: vi.fn((fn: (client: typeof tx) => unknown) => fn(tx)),
@@ -75,6 +76,44 @@ describe("registerPending", () => {
       }),
     );
     // Ambas escrituras en la misma transacción y sobre el mismo tx client.
+    expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("producto manual: crea el producto marcado para revisión y luego el pendiente + faltante completo", async () => {
+    const { productId: _omit, ...withoutProduct } = baseInput;
+    tx.product.create.mockResolvedValue({ id: "prod_manual", needsReview: true });
+    tx.pending.create.mockResolvedValue({ id: "pend_m", productId: "prod_manual" });
+    tx.missingItem.create.mockResolvedValue({
+      id: "miss_m",
+      productId: "prod_manual",
+      quantity: 5,
+      originId: "pend_m",
+    });
+    mockStock(0); // producto nuevo: sin lotes → stock 0 → faltante = cantidad total
+
+    const result = await registerPending({
+      ...withoutProduct,
+      manual: { name: "Ibuprofeno jarabe", unit: "frasco" },
+    });
+
+    // El producto se creó marcado para revisión, con código autogenerado.
+    expect(tx.product.create).toHaveBeenCalledTimes(1);
+    const createArg = tx.product.create.mock.calls[0]![0];
+    expect(createArg.data).toMatchObject({
+      name: "Ibuprofeno jarabe",
+      unit: "frasco",
+      needsReview: true,
+    });
+    expect(createArg.data.code).toMatch(/^MAN-/);
+    // El pendiente y el faltante quedan enlazados al producto recién creado.
+    expect(tx.pending.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ productId: "prod_manual" }),
+      }),
+    );
+    expect(result.createdProduct?.id).toBe("prod_manual");
+    expect(result.missingQuantity).toBe(5);
+    expect(result.missingItem?.id).toBe("miss_m");
     expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
   });
 

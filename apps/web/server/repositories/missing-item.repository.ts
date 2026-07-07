@@ -119,6 +119,50 @@ export function countOpenMissingItems(): Promise<number> {
   });
 }
 
+// Total histórico de faltantes (para reportería: cerrados = total - abiertos).
+export function countAllMissingItems(): Promise<number> {
+  return prisma.missingItem.count();
+}
+
+// Faltantes creados desde `since` (para el conteo "del día").
+export function countMissingItemsCreatedSince(since: Date): Promise<number> {
+  return prisma.missingItem.count({ where: { createdAt: { gte: since } } });
+}
+
+// Reportería: distribución por estado de los faltantes creados desde `since`.
+export async function groupMissingItemsByStatusSince(
+  since: Date,
+): Promise<{ status: MissingItemStatus; count: number }[]> {
+  const rows = await prisma.missingItem.groupBy({
+    by: ["status"],
+    where: { createdAt: { gte: since } },
+    _count: { _all: true },
+  });
+  return rows.map((row) => ({ status: row.status, count: row._count._all }));
+}
+
+// Reportería: fechas de creación de faltantes desde `since`, para agrupar la
+// tendencia por día en el service (bucketing en hora de Bogotá).
+export async function listMissingItemCreatedAtSince(since: Date): Promise<Date[]> {
+  const rows = await prisma.missingItem.findMany({
+    where: { createdAt: { gte: since } },
+    select: { createdAt: true },
+  });
+  return rows.map((row) => row.createdAt);
+}
+
+// Faltantes abiertos (sin confirmar) creados antes de `threshold`: los que llevan
+// demasiado tiempo sin cerrarse. Base de la alerta de gerencia "no se han cerrado".
+export function countUnclosedMissingItemsBefore(threshold: Date): Promise<number> {
+  return prisma.missingItem.count({
+    where: {
+      confirmedAt: null,
+      status: { in: OPEN_STATUSES },
+      createdAt: { lt: threshold },
+    },
+  });
+}
+
 export function countOverdueMissingItems(now: Date = new Date()): Promise<number> {
   return prisma.missingItem.count({
     where: {

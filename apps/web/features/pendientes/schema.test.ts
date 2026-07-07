@@ -41,8 +41,54 @@ describe("pendingCreateSchema", () => {
     }
   });
 
-  it("rechaza un pendiente sin producto", () => {
+  it("rechaza un pendiente sin producto (ni catálogo ni manual)", () => {
     const result = pendingCreateSchema.safeParse({ ...validInput, productId: "" });
+    expect(result.success).toBe(false);
+  });
+
+  it("normaliza el productId del catálogo y no arma producto manual", () => {
+    const result = pendingCreateSchema.safeParse(validInput);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.productId).toBe("prod_123");
+      expect(result.data.manual).toBeUndefined();
+    }
+  });
+
+  it("acepta un producto manual (sin productId) y usa la unidad indicada", () => {
+    const { productId: _omit, ...withoutProduct } = validInput;
+    const result = pendingCreateSchema.safeParse({
+      ...withoutProduct,
+      manualName: "  Ibuprofeno jarabe  ",
+      manualUnit: "  frasco ",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.productId).toBeUndefined();
+      expect(result.data.manual).toEqual({ name: "Ibuprofeno jarabe", unit: "frasco" });
+    }
+  });
+
+  it("producto manual sin unidad: usa 'unidad' por defecto", () => {
+    const { productId: _omit, ...withoutProduct } = validInput;
+    const result = pendingCreateSchema.safeParse({
+      ...withoutProduct,
+      manualName: "Ibuprofeno jarabe",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.manual).toEqual({
+        name: "Ibuprofeno jarabe",
+        unit: "unidad",
+      });
+    }
+  });
+
+  it("rechaza cargar catálogo y manual a la vez (ambiguo)", () => {
+    const result = pendingCreateSchema.safeParse({
+      ...validInput,
+      manualName: "Ibuprofeno jarabe",
+    });
     expect(result.success).toBe(false);
   });
 

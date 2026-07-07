@@ -10,7 +10,7 @@ import {
   encodeCursor,
   type Paginated,
 } from "@/lib/pagination";
-import type { Product } from "@/lib/generated/prisma/client";
+import type { Prisma, Product } from "@/lib/generated/prisma/client";
 
 export type ProductListItem = Pick<
   Product,
@@ -27,6 +27,9 @@ export type CreateProductData = {
   unit: string;
   minStock: number;
   reorderQty: number;
+  // Producto creado al vuelo desde un pendiente manual: queda marcado para que
+  // un ADMIN lo revise. Ausente/false para las altas normales del catálogo.
+  needsReview?: boolean;
 };
 
 // Include the batch with the earliest expiry (quantity > 0) per product.
@@ -98,6 +101,11 @@ export async function findProductById(id: string): Promise<Product | null> {
   return prisma.product.findUnique({ where: { id } });
 }
 
-export async function createProduct(data: CreateProductData): Promise<Product> {
-  return prisma.product.create({ data });
+// `client` permite crear el producto dentro de una transacción (ej. el alta
+// atómica de un pendiente manual); por defecto usa el singleton.
+export async function createProduct(
+  data: CreateProductData,
+  client: Prisma.TransactionClient = prisma,
+): Promise<Product> {
+  return client.product.create({ data });
 }

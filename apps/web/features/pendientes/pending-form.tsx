@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useId, useState } from "react";
 
 import { Button } from "@/app/_components/ui/button";
 import { Field } from "@/app/_components/ui/field";
@@ -23,39 +23,86 @@ type PendingFormProps = {
   products: ProductOption[];
 };
 
-// Alta de pendiente. Único client component del slice (necesita useActionState).
-// La lista de productos llega del server component que la monta.
+// Alta de pendiente. Único client component del slice (necesita useActionState y
+// el toggle catálogo/manual). La lista de productos llega del server component.
 export function PendingForm({ products }: PendingFormProps) {
   const [state, formAction, isPending] = useActionState(
     createPendingAction,
     INITIAL_STATE,
   );
 
-  if (products.length === 0) {
-    return (
-      <p className="text-base text-muted-foreground">
-        Cargá al menos un producto en el catálogo para registrar pendientes.
-      </p>
-    );
-  }
+  const canSelectExisting = products.length > 0;
+  // Modo manual: producto que no está en el catálogo. Si no hay catálogo cargado,
+  // el manual es la única vía, así que arranca activo y sin opción de togglear.
+  const [manual, setManual] = useState(!canSelectExisting);
+  const manualToggleId = useId();
 
   return (
     <form action={formAction} className="space-y-4">
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field
-          label="Producto"
-          htmlFor="productId"
-          className="sm:col-span-2"
+      {canSelectExisting ? (
+        <label
+          htmlFor={manualToggleId}
+          className="flex items-center gap-2 text-sm font-medium text-text"
         >
-          <Select id="productId" name="productId" required>
-            <option value="">Elegí un producto…</option>
-            {products.map((product) => (
-              <option key={product.id} value={product.id}>
-                {product.name} ({product.code})
-              </option>
-            ))}
-          </Select>
-        </Field>
+          <input
+            id={manualToggleId}
+            type="checkbox"
+            checked={manual}
+            onChange={(event) => setManual(event.target.checked)}
+            className="h-4 w-4 rounded border-border accent-primary"
+          />
+          El producto no está en el catálogo (cargarlo manual)
+        </label>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          No hay productos en el catálogo todavía: cargá el producto manualmente.
+          Quedará marcado para que un administrador lo revise.
+        </p>
+      )}
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        {manual ? (
+          <>
+            <Field
+              label="Producto (manual)"
+              htmlFor="manualName"
+              className="sm:col-span-2"
+              hint="No está en el catálogo. Se creará marcado para revisión de un administrador."
+            >
+              <Input
+                id="manualName"
+                name="manualName"
+                required
+                maxLength={120}
+                placeholder="Nombre del producto"
+              />
+            </Field>
+            <Field
+              label="Unidad (opcional)"
+              htmlFor="manualUnit"
+              className="sm:col-span-2"
+            >
+              <Input
+                id="manualUnit"
+                name="manualUnit"
+                maxLength={40}
+                placeholder="unidad"
+              />
+            </Field>
+          </>
+        ) : (
+          <Field label="Producto" htmlFor="productId" className="sm:col-span-2">
+            <Select id="productId" name="productId" required>
+              <option value="">Elegí un producto…</option>
+              {products.map((product) => (
+                <option key={product.id} value={product.id}>
+                  {product.name} ({product.code})
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
+
         <Field label="Cantidad" htmlFor="quantity">
           <Input
             id="quantity"
@@ -75,26 +122,15 @@ export function PendingForm({ products }: PendingFormProps) {
             required
           />
         </Field>
-        <Field
-          label="Cliente (opcional)"
-          htmlFor="customerName"
-        >
+        <Field label="Cliente (opcional)" htmlFor="customerName">
           <Input
             id="customerName"
             name="customerName"
             placeholder="Nombre del cliente"
           />
         </Field>
-        <Field
-          label="Nota (opcional)"
-          htmlFor="note"
-          className="sm:col-span-2"
-        >
-          <Input
-            id="note"
-            name="note"
-            placeholder="Detalle de la solicitud"
-          />
+        <Field label="Nota (opcional)" htmlFor="note" className="sm:col-span-2">
+          <Input id="note" name="note" placeholder="Detalle de la solicitud" />
         </Field>
       </div>
 

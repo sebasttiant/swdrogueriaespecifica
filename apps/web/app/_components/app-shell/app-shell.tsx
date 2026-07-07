@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import { AlertBar } from "@/features/alertas/alert-bar";
+import { ManagementMissingAlert } from "@/features/reportes/management-missing-alert";
 import { getCurrentSession } from "@/lib/auth/index.node";
 
 import { MobileNav } from "./mobile-nav";
@@ -28,6 +29,9 @@ export async function AppShell({ children }: AppShellProps) {
       <Sidebar role={role} />
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar />
+        {session ? (
+          <ManagementMissingAlert role={session.user.role} />
+        ) : null}
         {session ? (
           <AlertBar userId={session.user.id} role={session.user.role} />
         ) : null}
