@@ -30,6 +30,9 @@ export async function createPendingAction(
 
   const parsed = pendingCreateSchema.safeParse({
     productId: formData.get("productId"),
+    // Producto manual (opcional): cuando el operador carga uno fuera del catálogo.
+    manualName: formData.get("manualName") ?? undefined,
+    manualUnit: formData.get("manualUnit") ?? undefined,
     quantity: formData.get("quantity"),
     // FormData devuelve null cuando el campo no viene; lo normalizamos a
     // undefined para que el schema aplique sus reglas (texto opcional / fecha
@@ -51,13 +54,39 @@ export async function createPendingAction(
 
     const context = await auditContextFromHeaders(session.user.id);
 
+    // Producto manual creado al vuelo: lo auditamos como efecto propio para que
+    // quede trazado quién metió un producto fuera del catálogo (needsReview).
+    if (result.createdProduct) {
+      await recordAudit({
+        action: AUDIT_ACTIONS.PRODUCT_CREATE,
+        module: AUDIT_MODULES.PRODUCTOS,
+        entity: "Product",
+        entityId: result.createdProduct.id,
+        after: {
+          code: result.createdProduct.code,
+          name: result.createdProduct.name,
+          unit: result.createdProduct.unit,
+          needsReview: true,
+          source: "pendiente-manual",
+        },
+        context,
+      });
+    }
+
     await recordAudit({
       action: AUDIT_ACTIONS.PENDING_CREATE,
       module: AUDIT_MODULES.PENDIENTES,
       entity: "Pending",
       entityId: result.pending.id,
       // `after` debe ser JSON: el Date de la promesa se guarda como ISO.
-      after: { ...parsed.data, promisedAt: parsed.data.promisedAt.toISOString() },
+      after: {
+        productId: result.pending.productId,
+        quantity: parsed.data.quantity,
+        promisedAt: parsed.data.promisedAt.toISOString(),
+        customerName: parsed.data.customerName ?? null,
+        note: parsed.data.note ?? null,
+        manual: parsed.data.manual ?? null,
+      },
       context,
     });
 

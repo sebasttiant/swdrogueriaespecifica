@@ -90,6 +90,33 @@ export function countOpenPendings(): Promise<number> {
   return prisma.pending.count({ where: { status: { in: OPEN_STATUSES } } });
 }
 
+// Total histórico de pendientes (para reportería: cerrados = total - abiertos).
+export function countAllPendings(): Promise<number> {
+  return prisma.pending.count();
+}
+
+// Reportería: distribución por estado de los pendientes creados desde `since`.
+export async function groupPendingsByStatusSince(
+  since: Date,
+): Promise<{ status: PendingStatus; count: number }[]> {
+  const rows = await prisma.pending.groupBy({
+    by: ["status"],
+    where: { createdAt: { gte: since } },
+    _count: { _all: true },
+  });
+  return rows.map((row) => ({ status: row.status, count: row._count._all }));
+}
+
+// Reportería: fechas de creación de pendientes desde `since`, para agrupar la
+// tendencia por día en el service (bucketing en hora de Bogotá).
+export async function listPendingCreatedAtSince(since: Date): Promise<Date[]> {
+  const rows = await prisma.pending.findMany({
+    where: { createdAt: { gte: since } },
+    select: { createdAt: true },
+  });
+  return rows.map((row) => row.createdAt);
+}
+
 // Vencidos = abiertos cuya promesa ya pasó.
 export function countOverduePendings(now: Date = new Date()): Promise<number> {
   return prisma.pending.count({
