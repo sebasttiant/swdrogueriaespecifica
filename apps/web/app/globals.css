@@ -124,3 +124,21 @@ input[type="datetime-local"]::-webkit-datetime-edit {
     scroll-behavior: auto !important;
   }
 }
+
+/* Impresión / "Guardar como PDF". El chrome de la app (sidebar, topbar, barra
+   inferior, alertas y controles) se oculta con la utilidad `print:hidden`; acá
+   forzamos que los colores de los gráficos SVG se impriman (por defecto el
+   navegador los descarta) y dejamos márgenes de página cómodos. En iPhone:
+   Compartir → Imprimir → guardar como PDF. */
+@media print {
+  html, body {
+    background: #ffffff !important;
+  }
+  :root {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  @page {
+    margin: 12mm;
+  }
+}

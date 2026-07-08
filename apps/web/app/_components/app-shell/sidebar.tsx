@@ -23,7 +23,7 @@ export function Sidebar({ role }: SidebarProps) {
   const navItems = visibleNavItems(role);
 
   return (
-    <aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-surface lg:flex">
+    <aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-surface lg:flex print:hidden">
       <div className="flex h-16 items-center border-b border-border px-5">
         <BrandLogo className="h-8 w-auto" priority />
       </div>

@@ -15,6 +15,10 @@ function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
+// Evento para abrir el drawer desde afuera (ej. el tab "Más" de la barra inferior
+// móvil). Mismo patrón de window-event que usa el snooze de alertas.
+export const OPEN_NAV_DRAWER_EVENT = "open-nav-drawer";
+
 type NavDrawerProps = {
   role: SessionRole | null;
 };
@@ -57,6 +61,16 @@ export function NavDrawer({ role }: NavDrawerProps) {
       triggerRef.current?.focus();
     }
   }, [isOpen]);
+
+  // Abrir el drawer cuando otro componente emite el evento (ej. tab "Más" de la
+  // barra inferior). Siempre activo: es el canal externo de apertura.
+  useEffect(() => {
+    function handleOpen() {
+      setIsOpen(true);
+    }
+    window.addEventListener(OPEN_NAV_DRAWER_EVENT, handleOpen);
+    return () => window.removeEventListener(OPEN_NAV_DRAWER_EVENT, handleOpen);
+  }, []);
 
   // Close on Esc keydown — only while open. setState runs inside the event
   // callback, not synchronously in the effect body.
