@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { AlertBar } from "@/features/alertas/alert-bar";
 import { ManagementMissingAlert } from "@/features/reportes/management-missing-alert";
 import { getCurrentSession } from "@/lib/auth/index.node";
+import { IL_ASESORIAS } from "@/lib/constants/app";
 
 import { MobileNav } from "./mobile-nav";
 import { Sidebar } from "./sidebar";
@@ -37,6 +38,10 @@ export async function AppShell({ children }: AppShellProps) {
         ) : null}
         <main className="flex-1 px-4 pb-[calc(6rem+env(safe-area-inset-bottom))] pt-5 lg:px-8 lg:pb-8">
           <div className="mx-auto w-full max-w-5xl">{children}</div>
+          {/* Atribución institucional discreta (solo texto, sin logo). */}
+          <footer className="mx-auto mt-10 w-full max-w-5xl border-t border-border pt-4 text-center text-xs text-muted-foreground print:hidden">
+            {IL_ASESORIAS.copyright}
+          </footer>
         </main>
       </div>
       <MobileNav role={role} />
