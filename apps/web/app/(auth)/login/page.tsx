@@ -10,7 +10,7 @@ export const metadata: Metadata = { title: "Ingresar" };
 
 export default function LoginPage() {
   return (
-    <main className="flex min-h-dvh flex-col items-center justify-center gap-6 px-4 py-10">
+    <main className="flex min-h-dvh flex-col items-center justify-center gap-4 px-4 py-10">
       <Card className="w-full max-w-sm space-y-6">
         <div className="flex justify-center">
           <BrandLogo className="h-12 w-auto" priority />
@@ -26,16 +26,17 @@ export default function LoginPage() {
         <LoginForm />
       </Card>
 
-      {/* Sello institucional del proveedor tecnológico (discreto, sobrio). */}
-      <div className="flex w-full max-w-sm flex-col items-center gap-2 text-center">
+      {/* Sello institucional del proveedor tecnológico: pequeño y sobrio, el
+          texto pesa más que el logo. No compite con la marca principal. */}
+      <div className="flex w-full max-w-sm flex-col items-center gap-1.5 text-center">
         <a
           href={IL_ASESORIAS.url}
           target="_blank"
           rel="noreferrer"
           aria-label={`${IL_ASESORIAS.name} — sitio web`}
-          className="inline-block rounded-[var(--radius-btn)]"
+          className="inline-block rounded-[var(--radius-btn)] opacity-90 transition-opacity hover:opacity-100"
         >
-          <IlAsesoriasLogo className="h-auto w-32 sm:w-36" />
+          <IlAsesoriasLogo className="h-auto w-16 sm:w-20" />
         </a>
         <p className="text-xs text-muted-foreground">{IL_ASESORIAS.developedBy}</p>
         <p className="text-xs text-muted-foreground">{IL_ASESORIAS.tic}</p>
