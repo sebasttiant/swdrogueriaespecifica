@@ -16,7 +16,7 @@ export async function Topbar() {
   const role = session?.user.role ?? null;
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border bg-surface/95 px-4 backdrop-blur lg:px-6">
+    <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border bg-surface/95 px-4 backdrop-blur lg:px-6 print:hidden">
       {/* Left side: hamburger (<lg) + logo (<lg) */}
       <div className="flex items-center gap-2">
         <NavDrawer role={role} />

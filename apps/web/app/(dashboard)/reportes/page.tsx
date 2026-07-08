@@ -14,6 +14,7 @@ import { requireActiveRole } from "@/lib/auth/require-role";
 import { Card, CardTitle } from "@/app/_components/ui/card";
 import { KpiCard } from "@/app/_components/ui/kpi-card";
 import { PeriodFilter } from "@/features/reportes/period-filter";
+import { ReportActions } from "@/features/reportes/report-actions";
 import { StatusDonut } from "@/features/reportes/status-donut";
 import { TrendBars } from "@/features/reportes/trend-bars";
 import {
@@ -55,11 +56,14 @@ export default async function ReportesPage({ searchParams }: ReportesPageProps) 
         description="KPIs de la operación: estado, distribución y tendencia."
       />
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
         <p className="text-sm text-muted-foreground">
           Distribución y tendencia de los últimos {periodLabel}.
         </p>
-        <PeriodFilter active={period} />
+        <div className="flex flex-wrap items-center gap-2">
+          <PeriodFilter active={period} />
+          <ReportActions period={period} />
+        </div>
       </div>
 
       <section className="space-y-3">

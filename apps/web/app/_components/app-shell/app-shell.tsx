@@ -30,10 +30,10 @@ export async function AppShell({ children }: AppShellProps) {
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar />
         {session ? (
-          <ManagementMissingAlert role={session.user.role} />
-        ) : null}
-        {session ? (
-          <AlertBar userId={session.user.id} role={session.user.role} />
+          <div className="print:hidden">
+            <ManagementMissingAlert role={session.user.role} />
+            <AlertBar userId={session.user.id} role={session.user.role} />
+          </div>
         ) : null}
         <main className="flex-1 px-4 pb-[calc(6rem+env(safe-area-inset-bottom))] pt-5 lg:px-8 lg:pb-8">
           <div className="mx-auto w-full max-w-5xl">{children}</div>
