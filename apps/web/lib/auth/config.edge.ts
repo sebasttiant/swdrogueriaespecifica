@@ -4,7 +4,7 @@
 // Reglas (Fase 1):
 //  - NO importar Prisma.
 //  - NO importar nada Node-only.
-//  - Solo datos/funciones puras que pueda usar `middleware.ts` (runtime Edge).
+//  - Solo datos/funciones puras que pueda usar `proxy.ts` (runtime Edge).
 //
 // La lógica real de verificación de sesión vive en `index.node.ts` (Node-only).
 // --------------------------------------------------------------------------

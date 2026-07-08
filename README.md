@@ -22,15 +22,15 @@ dockerizado desde el inicio y **auditable**.
 | ----------- | --------------------- | -------------- |
 | Runtime     | Node.js               | 24.18.0        |
 | Package mgr | pnpm (vía Corepack)   | 11.10.0         |
-| Framework   | Next.js (App Router)  | 16.2.7         |
+| Framework   | Next.js (App Router)  | 16.2.10        |
 | UI          | React / react-dom     | 19.2.7         |
-| Estilos     | Tailwind CSS          | 4.3.0          |
+| Estilos     | Tailwind CSS          | 4.3.2          |
 | Lenguaje    | TypeScript (strict)   | 6.0.3          |
 | ORM         | Prisma + @prisma/client | 7.8.0        |
 | Driver DB   | @prisma/adapter-pg    | 7.8.0          |
 | Base datos  | PostgreSQL (Docker)   | 18.4-alpine    |
 | Validación  | Zod                   | 4.4.3          |
-| Gráficas    | Recharts              | 3.8.1          |
+| Gráficas    | Recharts              | 3.9.2          |
 | Auth (JWT)  | jose                  | 6.2.3          |
 | Hash passwd | @node-rs/argon2       | 2.0.2          |
 | App runtime | Debian 13 "trixie"    | node:24.18.0-trixie |

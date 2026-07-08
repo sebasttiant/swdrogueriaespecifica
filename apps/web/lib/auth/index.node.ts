@@ -3,7 +3,7 @@
 //
 // Slice 1a: lee la cookie httpOnly de sesión y verifica el JWT (stateless, sin
 // tocar la base). Es el ÚNICO lugar server-side donde se resuelve la sesión.
-// NUNCA debe importarse desde `middleware.ts` (Edge) ni desde componentes
+// NUNCA debe importarse desde `proxy.ts` (Edge) ni desde componentes
 // cliente. El middleware verifica el token con `jwt.edge.ts` directamente.
 // --------------------------------------------------------------------------
 
