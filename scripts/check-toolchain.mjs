@@ -7,8 +7,8 @@
 // ==========================================================================
 import { execSync } from "node:child_process";
 
-const REQUIRED_NODE = "24.16.0";
-const REQUIRED_PNPM = "11.5.2";
+const REQUIRED_NODE = "24.18.0";
+const REQUIRED_PNPM = "11.10.0";
 
 const green = (s) => `\x1b[32m${s}\x1b[0m`;
 const red = (s) => `\x1b[31m${s}\x1b[0m`;
@@ -50,7 +50,7 @@ if (problems > 0) {
       "",
       "O directamente:  ./scripts/bootstrap.sh",
       "",
-      "Por qué pasa: un pnpm global más viejo intenta auto-provisionar 11.5.2 con la",
+      "Por qué pasa: un pnpm global más viejo intenta auto-provisionar 11.10.0 con la",
       "config GLOBAL (minimumReleaseAge) y puede quedar bloqueado. Corepack lo evita.",
     ].join("\n"),
   );

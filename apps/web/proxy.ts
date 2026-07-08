@@ -11,18 +11,19 @@ import {
 import { verifySession } from "@/lib/auth/jwt.edge";
 
 // --------------------------------------------------------------------------
-// Middleware EDGE-SAFE.
+// Proxy (antes `middleware`, renombrado en Next 16). Runtime: nodejs.
 //
 // Reglas:
 //  - SIN Prisma, SIN imports Node-only.
-//  - Verifica la sesión SOLO con la firma del JWT (`jose`), nunca toca la base.
+//  - Verifica la sesión SOLO con la firma del JWT (`jose`, Web Crypto), nunca
+//    toca la base.
 //
 // Slice 1b: enforcement real.
 //  - Ruta pública + sesión válida → redirige al dashboard (no relogear).
 //  - Ruta privada sin sesión válida → redirige al login.
 // --------------------------------------------------------------------------
 
-export async function middleware(request: NextRequest): Promise<NextResponse> {
+export async function proxy(request: NextRequest): Promise<NextResponse> {
   const { pathname } = request.nextUrl;
 
   // Static assets from /public (logo, favicon, etc.) are public: never gate them

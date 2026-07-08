@@ -20,20 +20,20 @@ dockerizado desde el inicio y **auditable**.
 
 | Capa        | Tecnología            | Versión        |
 | ----------- | --------------------- | -------------- |
-| Runtime     | Node.js               | 24.16.0        |
-| Package mgr | pnpm (vía Corepack)   | 11.5.2         |
-| Framework   | Next.js (App Router)  | 16.2.7         |
+| Runtime     | Node.js               | 24.18.0        |
+| Package mgr | pnpm (vía Corepack)   | 11.10.0         |
+| Framework   | Next.js (App Router)  | 16.2.10        |
 | UI          | React / react-dom     | 19.2.7         |
-| Estilos     | Tailwind CSS          | 4.3.0          |
+| Estilos     | Tailwind CSS          | 4.3.2          |
 | Lenguaje    | TypeScript (strict)   | 6.0.3          |
 | ORM         | Prisma + @prisma/client | 7.8.0        |
 | Driver DB   | @prisma/adapter-pg    | 7.8.0          |
 | Base datos  | PostgreSQL (Docker)   | 18.4-alpine    |
 | Validación  | Zod                   | 4.4.3          |
-| Gráficas    | Recharts              | 3.8.1          |
+| Gráficas    | Recharts              | 3.9.2          |
 | Auth (JWT)  | jose                  | 6.2.3          |
 | Hash passwd | @node-rs/argon2       | 2.0.2          |
-| App runtime | Debian 13 "trixie"    | node:24.16.0-trixie |
+| App runtime | Debian 13 "trixie"    | node:24.18.0-trixie |
 
 > **Auth (Fase 2):** sesión **JWT stateless** en cookie httpOnly — `jose` (firma
 > Edge-safe, verificable en el middleware sin tocar la DB) + `@node-rs/argon2`
@@ -43,31 +43,31 @@ dockerizado desde el inicio y **auditable**.
 
 ## Requisitos
 
-- Node.js 24.16.0 (ver `.nvmrc`).
-- Corepack (incluido en Node) para activar pnpm 11.5.2.
+- Node.js 24.18.0 (ver `.nvmrc`).
+- Corepack (incluido en Node) para activar pnpm 11.10.0.
 - Docker + Docker Compose (para levantar la base y la app).
 
-### Bootstrap del toolchain (pnpm 11.5.2) — IMPORTANTE
+### Bootstrap del toolchain (pnpm 11.10.0) — IMPORTANTE
 
-Este proyecto **exige pnpm 11.5.2** (campo `packageManager`). Hay un detalle de
+Este proyecto **exige pnpm 11.10.0** (campo `packageManager`). Hay un detalle de
 entorno a tener en cuenta:
 
-> Si en tu máquina existe un pnpm global "standalone" más viejo que 11.5.2, ese
-> pnpm intenta auto-provisionar 11.5.2 usando tu config **global** (p. ej.
+> Si en tu máquina existe un pnpm global "standalone" más viejo que 11.10.0, ese
+> pnpm intenta auto-provisionar 11.10.0 usando tu config **global** (p. ej.
 > `minimumReleaseAge`) y puede quedar **bloqueado** antes de aplicar el `.npmrc`
 > del proyecto. La solución limpia es usar el pnpm de **Corepack** directo.
 
 **Solución reproducible (no toca ninguna config global):**
 
 ```bash
-# Opción A — un solo comando (recomendado): activa pnpm 11.5.2 + instala
+# Opción A — un solo comando (recomendado): activa pnpm 11.10.0 + instala
 ./scripts/bootstrap.sh
 
 # Opción B — manual:
 corepack enable
-corepack prepare pnpm@11.5.2 --activate
+corepack prepare pnpm@11.10.0 --activate
 export PATH="$(dirname "$(command -v corepack)"):$PATH"   # prioriza el pnpm de Corepack
-pnpm -v   # debe imprimir 11.5.2
+pnpm -v   # debe imprimir 11.10.0
 pnpm install
 ```
 
@@ -88,12 +88,12 @@ pnpm check:toolchain   # o: node scripts/check-toolchain.mjs
 ## Puesta en marcha (local, sin Docker)
 
 ```bash
-./scripts/bootstrap.sh     # activa pnpm 11.5.2 + instala (ver "Bootstrap del toolchain")
+./scripts/bootstrap.sh     # activa pnpm 11.10.0 + instala (ver "Bootstrap del toolchain")
 cp env.example .env        # completá los valores (ver nota de .env más abajo)
 pnpm dev                   # http://localhost:3000  ->  /login (rutas privadas protegidas)
 ```
 
-> Si ya tenés pnpm 11.5.2 activo, podés usar `pnpm install` directamente en vez
+> Si ya tenés pnpm 11.10.0 activo, podés usar `pnpm install` directamente en vez
 > del bootstrap.
 
 > **Nota sobre `.env`:** el archivo de ejemplo se llama **`env.example`** (sin
@@ -199,7 +199,7 @@ apps/web/
   prisma/
     schema.prisma            # User, Product, ProductBatch, Pending, MissingItem, InventoryEntry, AuditLog
     migrations/ seed.ts
-  middleware.ts              # Edge-safe: protege rutas privadas (verifica JWT con jose)
+  proxy.ts              # Edge-safe: protege rutas privadas (verifica JWT con jose)
   Dockerfile                 # multi-stage (base/deps/builder/migrate/runner)
 docker-compose.yml
 .github/workflows/           # ci-pr, ci-main, codeql, gitleaks
@@ -267,7 +267,7 @@ Sesión **JWT stateless** en cookie httpOnly. Elegida por escala (~300 usuarios
 concurrentes): el middleware verifica la firma en el Edge **sin consultar la DB**.
 
 - `lib/auth/config.edge.ts` / `lib/auth/jwt.edge.ts` — **Edge-safe**: firma y
-  verificación con `jose` (Web Crypto). Los usa `middleware.ts`. Sin Prisma.
+  verificación con `jose` (Web Crypto). Los usa `proxy.ts`. Sin Prisma.
 - `lib/auth/index.node.ts` — **Node-only**: `getCurrentSession()` (lee la cookie).
 - `lib/auth/require-role.ts` — guards `requireSession` / `requireRole`; `hasRole` puro.
 - `lib/auth/password.ts` — hash/verify con `@node-rs/argon2`.
@@ -276,7 +276,7 @@ concurrentes): el middleware verifica la firma en el Edge **sin consultar la DB*
 Roles: `SUPERADMIN`, `ADMIN`, `OPERADOR`. Las **mutaciones** (p. ej. alta de
 productos) y los módulos administrativos (Usuarios, Auditoría) exigen
 `SUPERADMIN`/`ADMIN`; la **lectura** operativa es para cualquier sesión válida. El
-`middleware.ts` protege todas las rutas privadas y redirige a `/login` sin sesión.
+`proxy.ts` protege todas las rutas privadas y redirige a `/login` sin sesión.
 Login/logout quedan auditados (`auth.login` / `auth.login.failed` / `auth.logout`).
 
 > El JWT lleva solo `sub`, `role`, `name`/`email`; expiración corta (2h) sin
@@ -288,7 +288,7 @@ Login/logout quedan auditados (`auth.login` / `auth.login.failed` / `auth.logout
 ## Seguridad
 
 - Secrets obligatorios con **fail-fast** (`lib/env.ts`, validación Zod perezosa).
-- `middleware.ts` **no** usa Prisma ni nada Node-only (Edge-safe).
+- `proxy.ts` **no** usa Prisma ni nada Node-only (Edge-safe).
 - `.env` ignorado por git; el ejemplo es `env.example` (sin secretos reales).
 - CI: **Gitleaks** (secret scan) + **CodeQL** (análisis estático).
 
@@ -299,7 +299,7 @@ Login/logout quedan auditados (`auth.login` / `auth.login.failed` / `auth.logout
 - **`minimumReleaseAge`**: el `.npmrc` del proyecto lo fija en `0` porque el stack
   usa versiones recién publicadas. Mitigación: versiones exactas + lockfile.
   Recomendado subirlo (p. ej. a 1 día) cuando el stack madure.
-- **pnpm**: si en tu máquina hay un pnpm global más viejo que 11.5.2, su
+- **pnpm**: si en tu máquina hay un pnpm global más viejo que 11.10.0, su
   auto-provisión puede quedar bloqueada por `minimumReleaseAge`. Usá
   `./scripts/bootstrap.sh` (o el fix de PATH de la sección _Bootstrap del
   toolchain_) y verificá con `pnpm check:toolchain`.

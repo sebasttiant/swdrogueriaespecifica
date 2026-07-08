@@ -18,12 +18,12 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "24.16.0"
+          node-version: "24.18.0"
 
-      - name: Activar pnpm 11.5.2 (Corepack)
+      - name: Activar pnpm 11.10.0 (Corepack)
         run: |
           corepack enable
-          corepack prepare pnpm@11.5.2 --activate
+          corepack prepare pnpm@11.10.0 --activate
           pnpm -v
 
       - name: Instalar dependencias

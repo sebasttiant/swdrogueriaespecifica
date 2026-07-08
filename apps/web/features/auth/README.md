@@ -4,7 +4,7 @@ Lógica de autenticación por feature. **Fase 1: solo estructura.**
 
 La separación Edge-safe / Node-only vive en `lib/auth/`:
 
-- `lib/auth/config.edge.ts` — edge-safe (sin Prisma), usado por `middleware.ts`.
+- `lib/auth/config.edge.ts` — edge-safe (sin Prisma), usado por `proxy.ts`.
 - `lib/auth/index.node.ts` — Node-only (placeholder), futuro punto único de sesión.
 - `lib/auth/session.ts` — tipos compartidos.
 
