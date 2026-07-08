@@ -30,15 +30,15 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { label: "Faltantes", href: "/faltantes", icon: PackageX, primaryMobile: true },
   { label: "Entradas", href: "/entradas", icon: PackagePlus, primaryMobile: true },
   { label: "Productos", href: "/productos", icon: Package },
-  { label: "Reportes", href: "/reportes", icon: BarChart3 },
+  { label: "Reportes", href: "/reportes", icon: BarChart3, adminOnly: true },
   { label: "Usuarios", href: "/admin", icon: Users, adminOnly: true },
   { label: "Auditoría", href: "/auditoria", icon: ShieldCheck, adminOnly: true },
 ] as const;
 
-// Items visibles según el rol de la sesión. Los módulos `adminOnly` (Usuarios,
-// Auditoría) solo aparecen para administradores (SUPERADMIN/ADMIN); sin sesión o
-// con otro rol quedan ocultos. Espeja el guard de ruta de la página: ocultar el
-// link sin dejar de proteger el acceso.
+// Items visibles según el rol de la sesión. Los módulos `adminOnly` (Reportes,
+// Usuarios, Auditoría) solo aparecen para administradores (SUPERADMIN/ADMIN); sin
+// sesión o con otro rol quedan ocultos. Espeja el guard de ruta de la página:
+// ocultar el link sin dejar de proteger el acceso.
 const ADMIN_ROLES: readonly SessionRole[] = ["SUPERADMIN", "ADMIN"];
 
 export function visibleNavItems(
