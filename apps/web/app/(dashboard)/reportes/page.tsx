@@ -50,7 +50,7 @@ export default async function ReportesPage({ searchParams }: ReportesPageProps) 
   const periodLabel = REPORT_PERIOD_LABEL[period];
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <PageHeader
         title="Reportes"
         description="KPIs de la operación: estado, distribución y tendencia."
@@ -67,7 +67,7 @@ export default async function ReportesPage({ searchParams }: ReportesPageProps) 
       </div>
 
       <section className="space-y-3">
-        <CardTitle>Pendientes</CardTitle>
+        <h2 className="text-lg font-semibold text-text">Pendientes</h2>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <KpiCard
             label="Total"
@@ -101,7 +101,7 @@ export default async function ReportesPage({ searchParams }: ReportesPageProps) 
       </section>
 
       <section className="space-y-3">
-        <CardTitle>Faltantes</CardTitle>
+        <h2 className="text-lg font-semibold text-text">Faltantes</h2>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <KpiCard
             label="Total"
@@ -141,7 +141,7 @@ export default async function ReportesPage({ searchParams }: ReportesPageProps) 
       </section>
 
       <section className="space-y-3">
-        <CardTitle>Tendencia de creación por día</CardTitle>
+        <h2 className="text-lg font-semibold text-text">Tendencia de creación por día</h2>
         <Card className="space-y-3">
           <CardTitle className="text-sm">
             Pendientes vs faltantes ({periodLabel})
