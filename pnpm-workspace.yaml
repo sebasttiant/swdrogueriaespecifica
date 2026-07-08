@@ -2,6 +2,17 @@ packages:
   - "apps/*"
   - "packages/*"
 
+# Overrides de seguridad: fuerzan versiones parcheadas de dependencias
+# TRANSITIVAS reportadas por `pnpm audit --prod`. Todas dentro del mismo major
+# (patch/minor), scopeadas SOLO a las versiones vulnerables:
+#   hono <4.12.25            -> GHSA-* (CORS wildcard con credenciales, etc.)
+#   @hono/node-server <1.19.13 -> serveStatic middleware bypass
+#   postcss <8.5.10          -> XSS en el stringify de CSS
+overrides:
+  "hono@<4.12.25": "^4.12.25"
+  "@hono/node-server@<1.19.13": "^1.19.13"
+  "postcss@<8.5.10": "^8.5.10"
+
 allowBuilds:
   "@node-rs/argon2": true
   "@prisma/engines": true
