@@ -3,21 +3,21 @@
 # Bootstrap reproducible del toolchain — Droguería Específica
 #
 # Por qué existe: en entornos donde hay un pnpm global "standalone" más viejo
-# que 11.5.2, ese pnpm intenta auto-provisionar 11.5.2 usando la config GLOBAL
+# que 11.10.0, ese pnpm intenta auto-provisionar 11.10.0 usando la config GLOBAL
 # (p. ej. `minimumReleaseAge`), y puede quedar BLOQUEADO antes de aplicar el
 # `.npmrc` del proyecto. La solución limpia es usar el pnpm de Corepack directo,
 # priorizando su directorio en el PATH. NO toca ninguna config global.
 #
 # Uso:
-#   ./scripts/bootstrap.sh            # activa pnpm 11.5.2 + pnpm install
+#   ./scripts/bootstrap.sh            # activa pnpm 11.10.0 + pnpm install
 #   ./scripts/bootstrap.sh --prod     # pasa flags extra a pnpm install
 # ==========================================================================
 set -euo pipefail
 
-PNPM_VERSION="11.5.2"
+PNPM_VERSION="11.10.0"
 
 if ! command -v corepack >/dev/null 2>&1; then
-  echo "ERROR: corepack no está disponible. Viene con Node >= 16.9; instalá Node 24.16.0 (ver .nvmrc)." >&2
+  echo "ERROR: corepack no está disponible. Viene con Node >= 16.9; instalá Node 24.18.0 (ver .nvmrc)." >&2
   exit 1
 fi
 
