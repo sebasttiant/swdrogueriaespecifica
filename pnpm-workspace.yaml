@@ -3,15 +3,19 @@ packages:
   - "packages/*"
 
 # Overrides de seguridad: fuerzan versiones parcheadas de dependencias
-# TRANSITIVAS reportadas por `pnpm audit --prod`. Todas dentro del mismo major
-# (patch/minor), scopeadas SOLO a las versiones vulnerables:
+# TRANSITIVAS reportadas por `pnpm audit --prod`, scopeadas SOLO a las versiones
+# vulnerables. hono/@hono/node-server/postcss quedan dentro del mismo major.
 #   hono <4.12.25            -> GHSA-* (CORS wildcard con credenciales, etc.)
 #   @hono/node-server <1.19.13 -> serveStatic middleware bypass
 #   postcss <8.5.10          -> XSS en el stringify de CSS
+#   uuid <11.1.1             -> bounds check (vía exceljs). MAJOR 8->11: exceljs
+#     4.4.0 usa solo `uuidv4()` (no v3/v5/v6 con buf), verificado con smoke test
+#     + prueba E2E del export .xlsx antes de mergear.
 overrides:
   "hono@<4.12.25": "^4.12.25"
   "@hono/node-server@<1.19.13": "^1.19.13"
   "postcss@<8.5.10": "^8.5.10"
+  "uuid@<11.1.1": "^11.1.1"
 
 allowBuilds:
   "@node-rs/argon2": true
