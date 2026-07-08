@@ -303,3 +303,12 @@ Login/logout quedan auditados (`auth.login` / `auth.login.failed` / `auth.logout
   auto-provisión puede quedar bloqueada por `minimumReleaseAge`. Usá
   `./scripts/bootstrap.sh` (o el fix de PATH de la sección _Bootstrap del
   toolchain_) y verificá con `pnpm check:toolchain`.
+
+---
+
+## Créditos
+
+Sistema desarrollado por IL Asesorías
+Dirección TIC — Sebastián Amaya
+© 2026 IL Asesorías. Todos los derechos reservados.
+https://www.ilasesorias.com/
