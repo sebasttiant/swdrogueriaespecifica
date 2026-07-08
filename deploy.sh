@@ -102,6 +102,34 @@ docker compose exec -T "$DB_SERVICE" sh -lc \
   'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "select email, role from \"users\" order by role;"' \
   || echo "    (verificación de usuarios omitida — el servicio web ya está healthy)"
 
+# --------------------------------------------------------------------------
+# Chequeos post-deploy (informativos: nunca abortan un deploy ya healthy, pero
+# avisan fuerte si algo quedó mal). Cubren lo que un healthcheck genérico no ve:
+#   1) que la última migración realmente quedó aplicada en la base;
+#   2) que /reportes renderiza sin 5xx (el SSR de recharts es el riesgo real).
+# --------------------------------------------------------------------------
+echo "==> Post-deploy: verificando migración products.needsReview..."
+if docker compose exec -T "$DB_SERVICE" sh -lc \
+     'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "\d products"' 2>/dev/null \
+     | grep -q 'needsReview'; then
+  echo "    ✓ Migración aplicada: columna products.needsReview presente."
+else
+  echo "    ⚠ No se encontró products.needsReview — revisá el paso de migración arriba."
+fi
+
+echo "==> Post-deploy: verificando que /reportes responda sin 5xx..."
+# /reportes está tras auth: sin sesión redirige a /login (2xx/3xx = OK). Solo un
+# 5xx o un fallo de fetch indican que la página crasheó al renderizar. Usamos el
+# fetch de Node dentro del contenedor (mismo mecanismo que el healthcheck).
+if reportes_status="$(docker compose exec -T "$WEB_SERVICE" node -e \
+     "fetch('http://127.0.0.1:3000/reportes',{redirect:'manual'}).then(r=>{console.log(r.status);process.exit(r.status>=500?1:0)}).catch(()=>{console.log('sin-respuesta');process.exit(1)})" \
+     2>/dev/null)"; then
+  echo "    ✓ /reportes responde (HTTP $reportes_status)."
+else
+  echo "    ⚠ /reportes devolvió un problema (HTTP ${reportes_status:-sin-respuesta}). Últimos logs de '$WEB_SERVICE':"
+  docker compose logs --tail=40 "$WEB_SERVICE"
+fi
+
 echo "==> Final container status:"
 docker compose ps
 
