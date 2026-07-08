@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { useSyncExternalStore } from "react";
+import { Clock } from "lucide-react";
 
 import { Button } from "@/app/_components/ui/button";
 import { formatBogotaDate } from "@/lib/datetime/bogota";
@@ -152,13 +153,14 @@ export function AlertSnoozeWrapper({
       <div className="mx-auto w-full max-w-5xl">
         {children}
         {canSnooze(role) ? (
-          <div className="mt-2 flex">
+          <div className="mt-2 flex sm:justify-end">
             <Button
-              variant="ghost"
+              variant="outline"
               size="md"
-              className="min-h-11 w-full justify-center text-sm sm:ml-auto sm:w-auto"
+              className="w-full justify-center gap-2 text-sm sm:w-auto"
               onClick={snoozeAlerts}
             >
+              <Clock className="size-4" aria-hidden />
               Posponer 8 h
             </Button>
           </div>

@@ -4,7 +4,7 @@ import { Alert, type AlertTone } from "@/app/_components/ui/alert";
 import { alertSignature, type AlertCounts } from "@/lib/alertas/signature";
 import type { SessionRole } from "@/lib/auth/session";
 import { cn } from "@/lib/utils/cn";
-import { getOperationalAlerts } from "@/server/services/operational-alerts.service";
+import { getOperationalAlertsCached } from "@/server/services/operational-alerts.service";
 
 import {
   AlertSnoozeWrapper,
@@ -24,7 +24,6 @@ type AlertChip = AlertSnoozeChip;
 type AlertBarProps = {
   userId: string;
   role: SessionRole;
-  now?: Date;
 };
 
 function totalAlerts(counts: AlertCounts): number {
@@ -142,8 +141,8 @@ function OperationalAlertContent({
   );
 }
 
-export async function AlertBar({ userId, role, now = new Date() }: AlertBarProps) {
-  const counts = await getOperationalAlerts(now);
+export async function AlertBar({ userId, role }: AlertBarProps) {
+  const counts = await getOperationalAlertsCached();
   const totalCount = totalAlerts(counts);
 
   if (totalCount === 0) return null;
