@@ -2,7 +2,7 @@ import Link from "next/link";
 import { AlertTriangle } from "lucide-react";
 
 import { Alert } from "@/app/_components/ui/alert";
-import { hasRole } from "@/lib/auth/require-role";
+import { isAdminRole } from "@/lib/auth/permissions";
 import type { SessionRole } from "@/lib/auth/session";
 import {
   UNCLOSED_MISSING_ALERT_HOURS,
@@ -21,7 +21,7 @@ export async function ManagementMissingAlert({
   role,
   now = new Date(),
 }: ManagementMissingAlertProps) {
-  if (!hasRole(role, ["SUPERADMIN", "ADMIN"])) return null;
+  if (!isAdminRole(role)) return null;
 
   const alert = await getManagementMissingAlert(now);
   if (!alert.active) return null;

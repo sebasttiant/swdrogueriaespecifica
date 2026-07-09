@@ -12,6 +12,8 @@ import {
 } from "lucide-react";
 
 import { PageHeader } from "@/app/_components/app-shell/page-header";
+import { can } from "@/lib/auth/permissions";
+import { requireCapability } from "@/lib/auth/require-role";
 import { Card, CardTitle } from "@/app/_components/ui/card";
 import { EmptyState } from "@/app/_components/ui/empty-state";
 import { KpiCard } from "@/app/_components/ui/kpi-card";
@@ -64,9 +66,12 @@ function capitalize(value: string): string {
 }
 
 export default async function DashboardPage() {
+  const session = await requireCapability("canViewDashboard");
+  const canViewCustomerIdentity = can(session.user.role, "canViewCustomerIdentity");
+
   const now = new Date();
   const [dashboard, openMissingCount, expiringCounts] = await Promise.all([
-    getPendingDashboard(now),
+    getPendingDashboard({ canViewCustomerIdentity, now }),
     getOpenMissingCount(),
     getExpiringBatchCounts(now),
   ]);

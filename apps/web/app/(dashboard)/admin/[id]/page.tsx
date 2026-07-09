@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 
 import { PageHeader } from "@/app/_components/app-shell/page-header";
 import { Card, CardTitle } from "@/app/_components/ui/card";
+import { canManageUserWithRole } from "@/lib/auth/permissions";
 import { requireActiveRole } from "@/lib/auth/require-role";
 import { UserEditForm } from "@/features/admin/user-edit-form";
 import { getUserById } from "@/server/services/user.service";
@@ -17,11 +18,12 @@ export default async function AdminUserEditPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requireActiveRole("SUPERADMIN");
+  const session = await requireActiveRole("SUPERADMIN", "ADMIN");
 
   const { id } = await params;
   const user = await getUserById(id);
   if (!user) notFound();
+  if (!canManageUserWithRole(session.user.role, user.role)) notFound();
 
   return (
     <div className="space-y-6">
@@ -46,6 +48,8 @@ export default async function AdminUserEditPage({
             email: user.email,
             role: user.role,
           }}
+          actorRole={session.user.role}
+          currentUserId={session.user.id}
         />
       </Card>
     </div>

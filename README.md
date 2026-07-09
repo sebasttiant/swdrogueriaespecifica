@@ -220,7 +220,7 @@ texto** (nunca solo color) para accesibilidad.
 
 | Área | Estado | Nota clara |
 | ---- | ------ | ---------- |
-| Autenticación y roles | ✅ Listo | Login/logout con JWT httpOnly, roles `SUPERADMIN`, `ADMIN`, `OPERADOR` y rutas protegidas. |
+| Autenticación y roles | ✅ Listo | Login/logout con JWT httpOnly, roles `SUPERADMIN`, `ADMIN`, `SUPERVISOR`, `OPERADOR` y rutas protegidas. |
 | Productos y lotes | ✅ Listo | Catálogo, lotes, cantidades y semáforo de vencimiento. |
 | Pendientes y faltantes | ✅ Listo | Pendientes operativos y generación automática de faltantes cuando no hay stock vendible suficiente. |
 | Entradas de inventario | ✅ Listo | Registro de entradas y cierre automático de faltantes según stock recibido. |
@@ -273,11 +273,24 @@ concurrentes): el middleware verifica la firma en el Edge **sin consultar la DB*
 - `lib/auth/password.ts` — hash/verify con `@node-rs/argon2`.
 - `lib/auth/session.ts` — tipos compartidos.
 
-Roles: `SUPERADMIN`, `ADMIN`, `OPERADOR`. Las **mutaciones** (p. ej. alta de
-productos) y los módulos administrativos (Usuarios, Auditoría) exigen
-`SUPERADMIN`/`ADMIN`; la **lectura** operativa es para cualquier sesión válida. El
-`proxy.ts` protege todas las rutas privadas y redirige a `/login` sin sesión.
-Login/logout quedan auditados (`auth.login` / `auth.login.failed` / `auth.logout`).
+Roles: `SUPERADMIN`, `ADMIN`, `SUPERVISOR`, `OPERADOR`. El acceso fino se decide
+por capabilities (`lib/auth/permissions.ts`): `SUPERADMIN`/`ADMIN` conservan la
+administración completa; `SUPERVISOR` es el rol operativo intermedio; `OPERADOR`
+mantiene el subset operativo básico. El `proxy.ts` protege todas las rutas
+privadas y redirige a `/login` sin sesión. Login/logout quedan auditados
+(`auth.login` / `auth.login.failed` / `auth.logout`).
+
+### Checklist post-deploy de roles
+
+- Validar en `/admin` que exista al menos un `SUPERADMIN` o `ADMIN` activo antes
+  y después de crear usuarios `SUPERVISOR`.
+- Monitorear durante los primeros minutos redirecciones inesperadas o fallos de
+  acciones en `/dashboard`, `/pendientes`, `/faltantes`, `/productos` y
+  `/entradas` para sesiones `SUPERVISOR`.
+- Fix-forward preferido: corregir la fila del usuario desde `/admin` o ajustar la
+  matriz de capabilities si el acceso esperado quedó incompleto.
+- Rollback operativo: degradar temporalmente el usuario afectado a `OPERADOR` o
+  promoverlo a `ADMIN` solo si la operación lo exige y queda auditado.
 
 > El JWT lleva solo `sub`, `role`, `name`/`email`; expiración corta (2h) sin
 > refresh en esta fase. Revocación instantánea (sesiones en DB / blacklist) queda

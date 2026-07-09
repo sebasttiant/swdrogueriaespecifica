@@ -1,0 +1,201 @@
+// --------------------------------------------------------------------------
+// Role & permission logic — PURE and CLIENT-SAFE.
+//
+// This is the single source of truth for what each role is allowed to do. It
+// imports ONLY the `SessionRole` type (no Prisma, no server code, no next/*),
+// so it can be shared verbatim between client components and server code.
+//
+// TWO INDEPENDENT AXES — never derive one from the other:
+//
+//  1. CAPABILITIES answer "what may this role DO" (view a module, run an
+//     action). Module access is driven exclusively by named capabilities via
+//     the `ROLE_CAPABILITIES` matrix below — never by rank arithmetic. Adding a
+//     new role means adding ONE row to that matrix; no page or action changes.
+//
+//  2. The RANK CEILING answers "whom may this role TOUCH" in user management.
+//     An actor must NEVER create, assign, or mutate an account that outranks it,
+//     or it could escalate by proxy and take over the system.
+//
+// Rank ceiling rule ("same tier or below, but the SUPERADMIN tier is reachable
+// only from SUPERADMIN"):
+//  - SUPERADMIN may manage/assign everything: SUPERADMIN, ADMIN, SUPERVISOR,
+//    OPERADOR.
+//  - ADMIN may manage/assign its own tier and below (ADMIN, SUPERVISOR, OPERADOR): an ADMIN
+//    is a full administrator of the operational tier and may staff its own
+//    level, so it CAN create/edit another ADMIN. It may NEVER create, edit,
+//    deactivate, archive, or assign SUPERADMIN. WHY: the SUPERADMIN tier is
+//    reserved for the technical owner of the system and must stay unreachable
+//    from below — that is the one hard line the ceiling protects.
+//  - Non-administrative roles (SUPERVISOR, OPERADOR) manage nobody.
+// --------------------------------------------------------------------------
+
+import type { SessionRole } from "./session";
+
+// The single mirror of the Prisma `UserRole` enum. Any code that needs to
+// enumerate roles (forms, filters, tests) should read this tuple.
+export const USER_ROLES = [
+  "SUPERADMIN",
+  "ADMIN",
+  "SUPERVISOR",
+  "OPERADOR",
+] as const satisfies readonly SessionRole[];
+
+// Administrative roles: may manage users and mutate the catalog. The system
+// must never be left without at least one active (anti-lockout protection).
+export const ADMIN_ROLES: readonly SessionRole[] = ["SUPERADMIN", "ADMIN"];
+
+export function isAdminRole(role: SessionRole): boolean {
+  return ADMIN_ROLES.includes(role);
+}
+
+export function isSuperAdminRole(role: SessionRole): boolean {
+  return role === "SUPERADMIN";
+}
+
+// Whether this role is allowed to manage users AT ALL (the entry gate for the
+// rank ceiling). Kept as its own function so callers express intent and the
+// mapping can evolve without a find-and-replace. NOTE: this is distinct from
+// the `"canManageUsers"` capability string used for module VIEW access — this
+// predicate gates the user-management ceiling, not page visibility.
+export function isUserManager(role: SessionRole): boolean {
+  return isAdminRole(role);
+}
+
+// Rank ladder: higher number = more authority. This drives every ceiling check
+// below. SUPERADMIN outranks ADMIN outranks SUPERVISOR outranks OPERADOR.
+const ROLE_RANK: Record<SessionRole, number> = {
+  SUPERADMIN: 4,
+  ADMIN: 3,
+  SUPERVISOR: 2,
+  OPERADOR: 1,
+};
+
+/**
+ * The one predicate behind the whole rank ceiling. Both public ceiling
+ * functions delegate to it so the rule lives in exactly one place.
+ *
+ *  - A non-manager (SUPERVISOR, OPERADOR) acts on nobody.
+ *  - A manager may act on its own tier and below; the SUPERADMIN tier is
+ *    reachable only from SUPERADMIN, since `<=` never lets ADMIN reach it.
+ */
+function canActOnRole(actor: SessionRole, target: SessionRole): boolean {
+  if (!isUserManager(actor)) return false; // SUPERVISOR/OPERADOR manage nobody
+  return ROLE_RANK[target] <= ROLE_RANK[actor]; // your tier or below; SUPERADMIN is out of reach for ADMIN
+}
+
+/**
+ * Whether `actor` may assign `target` as a role. Delegates to the ceiling: an
+ * ADMIN can assign ADMIN, SUPERVISOR, or OPERADOR but NOT SUPERADMIN; a SUPERADMIN can assign
+ * any role. This is the role you STAMP on an account.
+ */
+export function canAssignRole(actor: SessionRole, target: SessionRole): boolean {
+  return canActOnRole(actor, target);
+}
+
+/** The roles `actor` is allowed to assign, preserving USER_ROLES order. */
+export function assignableRolesFor(actor: SessionRole): readonly SessionRole[] {
+  return USER_ROLES.filter((role) => canAssignRole(actor, role));
+}
+
+/**
+ * Whether `actor` may manage (edit/deactivate/archive) an account whose current
+ * role is `targetRole`. Delegates to the same ceiling: an ADMIN may manage
+ * another ADMIN, a SUPERVISOR, or an OPERADOR, but never a SUPERADMIN account. This is the
+ * account you TOUCH.
+ */
+export function canManageUserWithRole(
+  actor: SessionRole,
+  targetRole: SessionRole,
+): boolean {
+  return canActOnRole(actor, targetRole);
+}
+
+/**
+ * Whether `actor` may reset/change the password of an account with `targetRole`.
+ * This is intentionally stricter than profile edits: same-tier ADMIN edits are
+ * allowed, but peer credential control is not.
+ */
+export function canResetPasswordOf(
+  actor: SessionRole,
+  targetRole: SessionRole,
+  isSelf: boolean,
+): boolean {
+  if (isSelf) return true;
+  if (!canActOnRole(actor, targetRole)) return false;
+  if (actor === "SUPERADMIN") return true;
+  return ROLE_RANK[targetRole] < ROLE_RANK[actor];
+}
+
+// --------------------------------------------------------------------------
+// Capability layer — the "what may this role DO" axis.
+//
+// Module access and per-action gates are driven exclusively by these named
+// capabilities. When a new role (e.g. SUPERVISOR) is introduced, it becomes a
+// single new row in `ROLE_CAPABILITIES`; no page, action, or nav entry needs to
+// change. NEVER derive a capability from a rank comparison, or vice versa.
+// --------------------------------------------------------------------------
+
+export const CAPABILITIES = [
+  "canViewDashboard",
+  "canViewPendientes",
+  "canViewFaltantes",
+  "canViewProductos",
+  "canViewEntradas",
+  "canViewReports",
+  "canViewAudit",
+  "canManageUsers",
+  "canConfirmMissingItems",
+  "canSnoozeAlerts",
+  "canManageProducts",
+  "canCreatePendientes",
+  "canCreateEntries",
+  // Gates exposure of customer PII (the pending's `customerName`) wherever that
+  // identity is reused: Pendientes, Faltantes, and Dashboard. Data minimization
+  // default: the lowest operational role (OPERADOR) does NOT get it; SUPERVISOR
+  // and above do.
+  "canViewCustomerIdentity",
+] as const;
+
+export type Capability = (typeof CAPABILITIES)[number];
+
+// Exhaustive capability matrix — the authoritative mapping of role → what it
+// may do. SUPERADMIN and ADMIN currently share the full set; SUPERVISOR is the
+// operational middle tier with missing-item confirmation; OPERADOR is the basic
+// operational subset. Neither operational role gets reports/audit/user-management,
+// snooze, or catalog management.
+const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
+  SUPERADMIN: [...CAPABILITIES],
+  ADMIN: [...CAPABILITIES],
+  SUPERVISOR: [
+    "canViewDashboard",
+    "canViewPendientes",
+    "canViewFaltantes",
+    "canViewProductos",
+    "canViewEntradas",
+    "canCreatePendientes",
+    "canCreateEntries",
+    "canConfirmMissingItems",
+    "canViewCustomerIdentity",
+  ],
+  OPERADOR: [
+    "canViewDashboard",
+    "canViewPendientes",
+    "canViewFaltantes",
+    "canViewProductos",
+    "canViewEntradas",
+    "canCreatePendientes",
+    "canCreateEntries",
+  ],
+};
+
+/** Whether `role` holds `capability`. The single check for module/action access. */
+export function can(role: SessionRole, capability: Capability): boolean {
+  return ROLE_CAPABILITIES[role].includes(capability);
+}
+
+/** The roles that hold `capability`, preserving USER_ROLES order. */
+export function rolesWithCapability(
+  capability: Capability,
+): readonly SessionRole[] {
+  return USER_ROLES.filter((role) => can(role, capability));
+}

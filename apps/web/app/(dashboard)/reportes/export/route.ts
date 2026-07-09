@@ -1,9 +1,9 @@
-// Descarga del reporte en Excel (.xlsx). Solo ADMIN/SUPERADMIN (mismo guard que
-// la página). Respeta el filtro de período (?period=). Se sirve desde una ruta
-// de servidor —no un blob en el cliente— porque Safari iOS maneja mucho mejor las
-// descargas con Content-Disposition que los blobs generados en el navegador.
+// Descarga del reporte en Excel (.xlsx). Requiere la capability de reportes
+// (mismo guard que la página). Respeta el filtro de período (?period=). Se sirve
+// desde una ruta de servidor —no un blob en el cliente— porque Safari iOS maneja
+// mucho mejor las descargas con Content-Disposition que los blobs del navegador.
 
-import { requireActiveRole } from "@/lib/auth/require-role";
+import { requireCapability } from "@/lib/auth/require-role";
 import {
   getReportsAnalytics,
   parseReportsPeriod,
@@ -13,7 +13,7 @@ import { buildReportsWorkbookBuffer } from "@/server/services/reports-export.ser
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request): Promise<Response> {
-  await requireActiveRole("SUPERADMIN", "ADMIN");
+  await requireCapability("canViewReports");
 
   const period = parseReportsPeriod(
     new URL(request.url).searchParams.get("period") ?? undefined,

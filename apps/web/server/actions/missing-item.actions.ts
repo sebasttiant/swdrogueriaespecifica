@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
-import { requireActiveRole } from "@/lib/auth/require-role";
+import { requireCapability } from "@/lib/auth/require-role";
 import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
 import {
   auditContextFromHeaders,
@@ -16,7 +16,7 @@ export async function confirmMissingItemAction(
   _prev: MissingItemActionState,
   formData: FormData,
 ): Promise<MissingItemActionState> {
-  const session = await requireActiveRole("SUPERADMIN", "ADMIN");
+  const session = await requireCapability("canConfirmMissingItems");
   const id = formData.get("id");
   const rawNote = formData.get("note");
   const note = typeof rawNote === "string" && rawNote.trim() ? rawNote.trim() : undefined;

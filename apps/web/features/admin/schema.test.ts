@@ -72,6 +72,17 @@ describe("userCreateSchema", () => {
     ).toBe(true);
   });
 
+  it("acepta SUPERVISOR como rol asignable", () => {
+    expect(
+      userCreateSchema.safeParse({
+        name: "Supervisor",
+        email: "supervisor@example.com",
+        password: "secret-123",
+        role: "SUPERVISOR",
+      }).success,
+    ).toBe(true);
+  });
+
   it("rechaza LIDER (rol eliminado del modelo)", () => {
     expect(
       userCreateSchema.safeParse({
@@ -106,6 +117,17 @@ describe("userUpdateSchema", () => {
       password: "new-secret-123",
     });
     expect(result.success).toBe(true);
+  });
+
+  it("acepta SUPERVISOR en edición", () => {
+    expect(
+      userUpdateSchema.safeParse({
+        name: "Supervisor",
+        email: "supervisor@example.com",
+        role: "SUPERVISOR",
+        password: "",
+      }).success,
+    ).toBe(true);
   });
 
   it("rechaza password corto en edición", () => {

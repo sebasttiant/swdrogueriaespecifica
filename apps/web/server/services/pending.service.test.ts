@@ -19,7 +19,33 @@ const { prismaMock, tx } = vi.hoisted(() => {
 
 vi.mock("@/lib/db/prisma", () => ({ prisma: prismaMock }));
 
-import { registerPending } from "./pending.service";
+// Mock parcial del repositorio de pendientes para `getPendings`/`getPendingDashboard`:
+// `createPending` queda REAL (delega a `importOriginal`) porque los tests de
+// `registerPending` de arriba dependen de que corra contra el `tx` mockeado de
+// Prisma. Solo las funciones de lectura se mockean, igual que
+// `missing-item.service.test.ts` mockea su repositorio.
+const { repo } = vi.hoisted(() => ({
+  repo: {
+    countOpenPendings: vi.fn(),
+    countOverduePendings: vi.fn(),
+    countUpcomingPendings: vi.fn(),
+    listPendings: vi.fn(),
+    listUrgentPendings: vi.fn(),
+  },
+}));
+
+vi.mock("@/server/repositories/pending.repository", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/server/repositories/pending.repository")>();
+  return { ...actual, ...repo };
+});
+
+import {
+  getPendingDashboard,
+  getPendings,
+  registerPending,
+} from "./pending.service";
+import type { PendingListItem } from "@/server/repositories/pending.repository";
 
 const baseInput = {
   productId: "prod_1",
@@ -30,6 +56,23 @@ const baseInput = {
 
 function mockStock(quantity: number) {
   tx.productBatch.aggregate.mockResolvedValue({ _sum: { quantity } });
+}
+
+// Typed fixture for `listPendings`/`listUrgentPendings` rows — mirrors
+// `PendingListItem` exactly so tests catch accidental field drops/renames,
+// not just a missing PII null-out.
+function pendingRow(overrides: Partial<PendingListItem> = {}): PendingListItem {
+  return {
+    id: "pending-1",
+    quantity: 5,
+    status: "PENDIENTE",
+    promisedAt: new Date("2026-07-10T10:00:00.000Z"),
+    customerName: "Juan Pérez",
+    note: null,
+    createdAt: new Date("2026-07-09T10:00:00.000Z"),
+    product: { id: "prod-1", name: "Paracetamol", code: "P-001", unit: "unidad" },
+    ...overrides,
+  };
 }
 
 beforeEach(() => {
@@ -130,5 +173,137 @@ describe("registerPending", () => {
     expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
     expect(tx.pending.create).toHaveBeenCalledTimes(1);
     expect(tx.missingItem.create).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("getPendings", () => {
+  it("nulls customerName for every item when canViewCustomerIdentity is false, keeping every other field intact", async () => {
+    const row = pendingRow();
+    repo.listPendings.mockResolvedValue({ items: [row], nextCursor: null });
+
+    const result = await getPendings({ canViewCustomerIdentity: false });
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]!.customerName).toBeNull();
+    expect(result.items[0]).toEqual({ ...row, customerName: null });
+  });
+
+  it("returns customerName verbatim when canViewCustomerIdentity is true", async () => {
+    const row = pendingRow();
+    repo.listPendings.mockResolvedValue({ items: [row], nextCursor: null });
+
+    const result = await getPendings({ canViewCustomerIdentity: true });
+
+    expect(result.items[0]!.customerName).toBe("Juan Pérez");
+    expect(result.items[0]).toEqual(row);
+  });
+
+  it("does not mutate the repository row in place when minimizing", async () => {
+    const row = pendingRow();
+    repo.listPendings.mockResolvedValue({ items: [row], nextCursor: null });
+
+    await getPendings({ canViewCustomerIdentity: false });
+
+    // The object handed back by the mocked repo must still hold the
+    // original customerName — the service must return NEW objects.
+    expect(row.customerName).toBe("Juan Pérez");
+  });
+
+  it("passes items with customerName === null through unchanged under both flags", async () => {
+    const row = pendingRow({ customerName: null });
+    repo.listPendings.mockResolvedValue({ items: [row], nextCursor: null });
+
+    const resultDenied = await getPendings({ canViewCustomerIdentity: false });
+    expect(resultDenied.items[0]).toEqual(row);
+
+    const resultAllowed = await getPendings({ canViewCustomerIdentity: true });
+    expect(resultAllowed.items[0]).toEqual(row);
+  });
+
+  it("forwards cursor/take to listPendings and passes nextCursor through unchanged", async () => {
+    const row = pendingRow();
+    repo.listPendings.mockResolvedValue({ items: [row], nextCursor: "cursor-abc" });
+
+    const result = await getPendings({
+      cursor: "cursor-in",
+      take: 20,
+      canViewCustomerIdentity: true,
+    });
+
+    expect(repo.listPendings).toHaveBeenCalledWith({
+      cursor: "cursor-in",
+      take: 20,
+    });
+    expect(result.nextCursor).toBe("cursor-abc");
+  });
+});
+
+describe("getPendingDashboard", () => {
+  const now = new Date("2026-07-09T10:00:00.000Z");
+
+  beforeEach(() => {
+    repo.countOpenPendings.mockResolvedValue(4);
+    repo.countOverduePendings.mockResolvedValue(1);
+    repo.countUpcomingPendings.mockResolvedValue(2);
+  });
+
+  it("nulls customerName for every item in `urgent` when canViewCustomerIdentity is false, counts unchanged", async () => {
+    const row = pendingRow();
+    repo.listUrgentPendings.mockResolvedValue([row]);
+
+    const result = await getPendingDashboard({ canViewCustomerIdentity: false, now });
+
+    expect(result.urgent[0]!.customerName).toBeNull();
+    expect(result.urgent[0]).toEqual({ ...row, customerName: null });
+    expect(result.openCount).toBe(4);
+    expect(result.overdueCount).toBe(1);
+    expect(result.upcomingCount).toBe(2);
+  });
+
+  it("keeps customerName verbatim in `urgent` when canViewCustomerIdentity is true", async () => {
+    const row = pendingRow();
+    repo.listUrgentPendings.mockResolvedValue([row]);
+
+    const result = await getPendingDashboard({ canViewCustomerIdentity: true, now });
+
+    expect(result.urgent[0]!.customerName).toBe("Juan Pérez");
+    expect(result.urgent[0]).toEqual(row);
+  });
+
+  it("does not mutate the repository row in place when minimizing", async () => {
+    const row = pendingRow();
+    repo.listUrgentPendings.mockResolvedValue([row]);
+
+    await getPendingDashboard({ canViewCustomerIdentity: false, now });
+
+    expect(row.customerName).toBe("Juan Pérez");
+  });
+
+  it("passes items with customerName === null through unchanged under both flags", async () => {
+    const row = pendingRow({ customerName: null });
+    repo.listUrgentPendings.mockResolvedValue([row]);
+
+    const resultDenied = await getPendingDashboard({
+      canViewCustomerIdentity: false,
+      now,
+    });
+    expect(resultDenied.urgent[0]).toEqual(row);
+
+    const resultAllowed = await getPendingDashboard({
+      canViewCustomerIdentity: true,
+      now,
+    });
+    expect(resultAllowed.urgent[0]).toEqual(row);
+  });
+
+  it("forwards `now` verbatim to countOverduePendings and countUpcomingPendings", async () => {
+    repo.listUrgentPendings.mockResolvedValue([]);
+
+    await getPendingDashboard({ canViewCustomerIdentity: true, now });
+
+    // Exact reference/value check: a stray `new Date()` inside the service
+    // would not equal the injected `now` and must fail this assertion.
+    expect(repo.countOverduePendings).toHaveBeenCalledWith(now);
+    expect(repo.countUpcomingPendings).toHaveBeenCalledWith(now);
   });
 });

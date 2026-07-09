@@ -1,18 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Aislamos la action: el foco es el guard. `requireActiveRole` es
+// Aislamos la action: el foco es el guard. `requireCapability` es
 // DB-authoritative (relee rol/estado de la base), así que un JWT viejo de un
 // usuario degradado/desactivado se traduce en un redirect que corta el flujo
 // ANTES de cualquier mutación. Mockeamos cada borde.
 const {
-  requireActiveRole,
+  requireCapability,
   addProduct,
   recordAudit,
   auditContextFromHeaders,
   revalidatePath,
   safeParse,
 } = vi.hoisted(() => ({
-  requireActiveRole: vi.fn(),
+  requireCapability: vi.fn(),
   addProduct: vi.fn(),
   recordAudit: vi.fn(),
   auditContextFromHeaders: vi.fn(),
@@ -21,7 +21,7 @@ const {
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath }));
-vi.mock("@/lib/auth/require-role", () => ({ requireActiveRole }));
+vi.mock("@/lib/auth/require-role", () => ({ requireCapability }));
 vi.mock("@/lib/generated/prisma/client", () => ({
   Prisma: { PrismaClientKnownRequestError: class {} },
 }));
@@ -45,8 +45,8 @@ beforeEach(() => {
 });
 
 describe("createProductAction · guard DB-authoritative", () => {
-  it("usa requireActiveRole('SUPERADMIN','ADMIN'), no el rol del JWT", async () => {
-    requireActiveRole.mockResolvedValue(session);
+  it("usa requireCapability('canManageProducts'), no el rol del JWT", async () => {
+    requireCapability.mockResolvedValue(session);
     safeParse.mockReturnValue({
       success: true,
       data: { code: "P1", name: "Prod", unit: "u", minStock: 0, reorderQty: 0 },
@@ -55,13 +55,13 @@ describe("createProductAction · guard DB-authoritative", () => {
 
     await createProductAction(PREV, new FormData());
 
-    expect(requireActiveRole).toHaveBeenCalledWith("SUPERADMIN", "ADMIN");
+    expect(requireCapability).toHaveBeenCalledWith("canManageProducts");
   });
 
   it("un usuario degradado/desactivado (guard redirige) NO llega a mutar", async () => {
-    // requireActiveRole detecta el estado real en la base y corta con redirect
+    // requireCapability detecta el estado real en la base y corta con redirect
     // (que en Next lanza). El JWT stale no alcanza para crear productos.
-    requireActiveRole.mockRejectedValue(new Error("REDIRECT:/login"));
+    requireCapability.mockRejectedValue(new Error("REDIRECT:/login"));
 
     await expect(
       createProductAction(PREV, new FormData()),

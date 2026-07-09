@@ -6,25 +6,37 @@ import { Button } from "@/app/_components/ui/button";
 import { Field } from "@/app/_components/ui/field";
 import { Input } from "@/app/_components/ui/input";
 import { Select } from "@/app/_components/ui/select";
+import { assignableRolesFor, canResetPasswordOf } from "@/lib/auth/permissions";
+import type { SessionRole } from "@/lib/auth/session";
 import {
   updateUserAction,
   type UserFormState,
 } from "@/server/actions/user.actions";
 import type { UserRole } from "@/lib/generated/prisma/client";
-import { ASSIGNABLE_ROLES, ROLE_LABELS } from "./schema";
+import { ROLE_LABELS } from "./schema";
 
 const INITIAL_STATE: UserFormState = { error: null, ok: false };
 
 type UserEditFormProps = {
   user: { id: string; name: string; email: string; role: UserRole };
+  actorRole: SessionRole;
+  currentUserId: string;
 };
 
 // Edición de datos del usuario. La contraseña es opcional: vacío conserva la
-// actual. La página/acción limitan esta operación sensible a SUPERADMIN.
-export function UserEditForm({ user }: UserEditFormProps) {
+// actual. La página/acción limitan esta operación sensible a SUPERADMIN. El
+// actor solo puede asignar roles a su altura o por debajo (techo por rango).
+export function UserEditForm({ user, actorRole, currentUserId }: UserEditFormProps) {
   const [state, formAction, isPending] = useActionState(
     updateUserAction,
     INITIAL_STATE,
+  );
+
+  const assignableRoles = assignableRolesFor(actorRole);
+  const canResetPassword = canResetPasswordOf(
+    actorRole,
+    user.role,
+    user.id === currentUserId,
   );
 
   return (
@@ -55,23 +67,25 @@ export function UserEditForm({ user }: UserEditFormProps) {
             required
             defaultValue={user.role}
           >
-            {ASSIGNABLE_ROLES.map((role) => (
+            {assignableRoles.map((role) => (
               <option key={role} value={role}>
                 {ROLE_LABELS[role]}
               </option>
             ))}
           </Select>
         </Field>
-        <Field label="Nueva contraseña (opcional)" htmlFor="password">
-          <Input
-            id="password"
-            name="password"
-            type="password"
-            minLength={8}
-            autoComplete="new-password"
-            placeholder="Dejar vacío para no cambiarla"
-          />
-        </Field>
+        {canResetPassword ? (
+          <Field label="Nueva contraseña (opcional)" htmlFor="password">
+            <Input
+              id="password"
+              name="password"
+              type="password"
+              minLength={8}
+              autoComplete="new-password"
+              placeholder="Dejar vacío para no cambiarla"
+            />
+          </Field>
+        ) : null}
       </div>
 
       {state.error ? (

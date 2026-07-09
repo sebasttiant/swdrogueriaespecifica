@@ -1,7 +1,7 @@
 // Tipos de sesión — compartidos entre capa Edge y Node.
 // Sin dependencias de runtime: seguro de importar en cualquier contexto.
 
-export type SessionRole = "SUPERADMIN" | "ADMIN" | "OPERADOR";
+export type SessionRole = "SUPERADMIN" | "ADMIN" | "SUPERVISOR" | "OPERADOR";
 
 export type SessionUser = {
   id: string;

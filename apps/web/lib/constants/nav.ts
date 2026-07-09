@@ -10,6 +10,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+import { can, type Capability } from "@/lib/auth/permissions";
 import type { SessionRole } from "@/lib/auth/session";
 
 export type NavItem = {
@@ -18,32 +19,31 @@ export type NavItem = {
   icon: LucideIcon;
   // Si true, se muestra en la barra inferior móvil (espacio limitado).
   primaryMobile?: boolean;
-  // Si true, solo lo ven los administradores (SUPERADMIN/ADMIN); módulos
-  // sensibles, p. ej. Auditoría.
-  adminOnly?: boolean;
+  // Capability que habilita el item. La visibilidad del nav se decide por lo que
+  // un rol PUEDE HACER, nunca por rango: agregar un rol nuevo es una fila en la
+  // matriz de capabilities, sin tocar esta lista.
+  capability: Capability;
 };
 
 // Navegación principal del AppShell. Orden = importancia operativa.
 export const NAV_ITEMS: readonly NavItem[] = [
-  { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard, primaryMobile: true },
-  { label: "Pendientes", href: "/pendientes", icon: ClipboardList, primaryMobile: true },
-  { label: "Faltantes", href: "/faltantes", icon: PackageX, primaryMobile: true },
-  { label: "Entradas", href: "/entradas", icon: PackagePlus, primaryMobile: true },
-  { label: "Productos", href: "/productos", icon: Package },
-  { label: "Reportes", href: "/reportes", icon: BarChart3, adminOnly: true },
-  { label: "Usuarios", href: "/admin", icon: Users, adminOnly: true },
-  { label: "Auditoría", href: "/auditoria", icon: ShieldCheck, adminOnly: true },
+  { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard, primaryMobile: true, capability: "canViewDashboard" },
+  { label: "Pendientes", href: "/pendientes", icon: ClipboardList, primaryMobile: true, capability: "canViewPendientes" },
+  { label: "Faltantes", href: "/faltantes", icon: PackageX, primaryMobile: true, capability: "canViewFaltantes" },
+  { label: "Entradas", href: "/entradas", icon: PackagePlus, primaryMobile: true, capability: "canViewEntradas" },
+  { label: "Productos", href: "/productos", icon: Package, capability: "canViewProductos" },
+  { label: "Reportes", href: "/reportes", icon: BarChart3, capability: "canViewReports" },
+  { label: "Usuarios", href: "/admin", icon: Users, capability: "canManageUsers" },
+  { label: "Auditoría", href: "/auditoria", icon: ShieldCheck, capability: "canViewAudit" },
 ] as const;
 
-// Items visibles según el rol de la sesión. Los módulos `adminOnly` (Reportes,
-// Usuarios, Auditoría) solo aparecen para administradores (SUPERADMIN/ADMIN); sin
-// sesión o con otro rol quedan ocultos. Espeja el guard de ruta de la página:
-// ocultar el link sin dejar de proteger el acceso.
-const ADMIN_ROLES: readonly SessionRole[] = ["SUPERADMIN", "ADMIN"];
-
+// Items visibles según el rol de la sesión. Cada item se muestra solo si el rol
+// tiene su capability (fuente única de verdad en `@/lib/auth/permissions`).
+// Espeja el guard de la página: ocultar el link sin dejar de proteger el acceso.
+// Sin sesión (role null/undefined) no se muestra nada que requiera capability.
 export function visibleNavItems(
   role: SessionRole | null | undefined,
 ): readonly NavItem[] {
-  const isAdmin = role != null && ADMIN_ROLES.includes(role);
-  return NAV_ITEMS.filter((item) => !item.adminOnly || isAdmin);
+  if (role == null) return [];
+  return NAV_ITEMS.filter((item) => can(role, item.capability));
 }
