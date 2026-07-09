@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
-import { requireActiveRole } from "@/lib/auth/require-role";
+import { requireCapability } from "@/lib/auth/require-role";
 import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
 import { Prisma } from "@/lib/generated/prisma/client";
 import {
@@ -13,7 +13,7 @@ import { addProduct } from "@/server/services/product.service";
 import { productCreateSchema } from "@/features/productos/schema";
 
 // --------------------------------------------------------------------------
-// Server Actions de productos (finas): Zod → requireActiveRole → service →
+// Server Actions de productos (finas): Zod → requireCapability → service →
 // audit. Mutaciones restringidas a SUPERADMIN/ADMIN; la lectura es para
 // cualquier sesión. El guard es DB-authoritative: un JWT viejo de un usuario
 // degradado o desactivado no alcanza para mutar (se revalida rol/estado contra
@@ -42,10 +42,10 @@ export async function createProductAction(
   _prev: ProductFormState,
   formData: FormData,
 ): Promise<ProductFormState> {
-  // Enforcement de rol antes de cualquier validación o efecto. DB-authoritative:
-  // relee rol/estado de la base, no confía en el payload del JWT (puede estar
-  // stale si degradaron/desactivaron al usuario).
-  const session = await requireActiveRole("SUPERADMIN", "ADMIN");
+  // Enforcement por capability antes de cualquier validación o efecto.
+  // DB-authoritative: relee rol/estado de la base, no confía en el payload del
+  // JWT (puede estar stale si degradaron/desactivaron al usuario).
+  const session = await requireCapability("canManageProducts");
 
   const parsed = productCreateSchema.safeParse({
     code: formData.get("code"),

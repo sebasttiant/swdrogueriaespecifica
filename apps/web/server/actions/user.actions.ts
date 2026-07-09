@@ -39,6 +39,11 @@ const RULE_MESSAGES: Record<UserRuleCode, string> = {
   SELF_ARCHIVE: "No podés archivar tu propia cuenta.",
   ALREADY_ARCHIVED: "El usuario ya está archivado.",
   NOT_ARCHIVED: "El usuario no está archivado.",
+  PASSWORD_RESET_NOT_ALLOWED:
+    "No podés cambiar la contraseña de otro administrador.",
+  ROLE_NOT_ASSIGNABLE: "No podés asignar un rol superior al tuyo.",
+  TARGET_OUTRANKS_ACTOR:
+    "No podés modificar un usuario con un rol superior al tuyo.",
 };
 
 // P2002 (unique) sobre `email`: cubrimos target como array o string de constraint.
@@ -73,7 +78,10 @@ export async function createUserAction(
   }
 
   try {
-    const user = await createUser(parsed.data);
+    const user = await createUser({
+      ...parsed.data,
+      actorRole: session.user.role,
+    });
     await recordAudit({
       action: AUDIT_ACTIONS.USER_CREATE,
       module: AUDIT_MODULES.USUARIOS,
@@ -84,6 +92,9 @@ export async function createUserAction(
       context: await auditContextFromHeaders(session.user.id),
     });
   } catch (error) {
+    if (error instanceof UserRuleError) {
+      return { error: RULE_MESSAGES[error.code], ok: false };
+    }
     if (isDuplicateEmailError(error)) {
       return { error: "Ya existe un usuario con ese email.", ok: false };
     }
@@ -99,7 +110,7 @@ export async function updateUserAction(
   _prev: UserFormState,
   formData: FormData,
 ): Promise<UserFormState> {
-  const session = await requireActiveRole("SUPERADMIN");
+  const session = await requireActiveRole("SUPERADMIN", "ADMIN");
 
   const id = formData.get("id");
   if (typeof id !== "string" || id.length === 0) {
@@ -118,24 +129,29 @@ export async function updateUserAction(
   }
 
   try {
-    await updateUser({
+    const result = await updateUser({
       id,
       actingUserId: session.user.id,
+      actorRole: session.user.role,
       input: parsed.data,
     });
-    const safeAfter = {
-      name: parsed.data.name,
-      email: parsed.data.email,
-      role: parsed.data.role,
-    };
     await recordAudit({
       action: AUDIT_ACTIONS.USER_UPDATE,
       module: AUDIT_MODULES.USUARIOS,
       entity: "User",
       entityId: id,
+      before: {
+        name: result.before.name,
+        email: result.before.email,
+        role: result.before.role,
+        active: result.before.active,
+      },
       after: {
-        ...safeAfter,
-        ...(parsed.data.password ? { passwordUpdated: true } : {}),
+        name: result.after.name,
+        email: result.after.email,
+        role: result.after.role,
+        active: result.after.active,
+        ...(result.passwordUpdated ? { passwordUpdated: true } : {}),
       },
       context: await auditContextFromHeaders(session.user.id),
     });
@@ -174,7 +190,12 @@ export async function setUserActiveAction(
   const active = activeRaw === "true";
 
   try {
-    await setUserActive({ id, actingUserId: session.user.id, active });
+    await setUserActive({
+      id,
+      actingUserId: session.user.id,
+      actorRole: session.user.role,
+      active,
+    });
     await recordAudit({
       action: active
         ? AUDIT_ACTIONS.USER_ACTIVATE
@@ -214,7 +235,11 @@ export async function archiveUserAction(
   }
 
   try {
-    await archiveUser({ id, actingUserId: session.user.id });
+    await archiveUser({
+      id,
+      actingUserId: session.user.id,
+      actorRole: session.user.role,
+    });
     // Auditoría best-effort: si falla no revierte el archivado.
     await recordAudit({
       action: AUDIT_ACTIONS.USER_ARCHIVE,
@@ -255,7 +280,7 @@ export async function unarchiveUserAction(
   }
 
   try {
-    await unarchiveUser({ id });
+    await unarchiveUser({ id, actorRole: session.user.role });
     // Auditoría best-effort.
     await recordAudit({
       action: AUDIT_ACTIONS.USER_RESTORE,

@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { PageHeader } from "@/app/_components/app-shell/page-header";
 import { Card, CardTitle } from "@/app/_components/ui/card";
 import { MAX_PAGE_SIZE } from "@/lib/pagination";
-import { requireActiveRole } from "@/lib/auth/require-role";
+import { requireCapability } from "@/lib/auth/require-role";
 import { EntryForm, type ProductOption } from "@/features/entradas/entry-form";
 import { EntryList } from "@/features/entradas/entry-list";
 import { getProducts } from "@/server/services/product.service";
@@ -16,7 +16,7 @@ export default async function EntradasPage({
 }: {
   searchParams: Promise<{ cursor?: string }>;
 }) {
-  await requireActiveRole("SUPERADMIN", "ADMIN", "OPERADOR");
+  await requireCapability("canViewEntradas");
 
   const { cursor } = await searchParams;
 

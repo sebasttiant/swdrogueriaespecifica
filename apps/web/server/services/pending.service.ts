@@ -69,11 +69,30 @@ export type CreatePendingResult = {
   missingQuantity: number;
 };
 
-export function getPendings(params: {
+// Minimización server-side: el nombre del cliente nunca llega al cliente (ni
+// siquiera serializado en el HTML) para roles sin `canViewCustomerIdentity`.
+// Nunca mutamos las filas del repositorio; devolvemos objetos nuevos. Helper
+// compartido por `getPendings` y `getPendingDashboard` para que la regla viva
+// en un solo lugar.
+function minimizeCustomerIdentity(
+  items: PendingListItem[],
+  canViewCustomerIdentity: boolean,
+): PendingListItem[] {
+  return canViewCustomerIdentity
+    ? items
+    : items.map((item) => ({ ...item, customerName: null }));
+}
+
+export async function getPendings(params: {
   cursor?: string | null;
   take?: number;
+  // Requerido (sin default): que falte el flag debe ser un error de tipos,
+  // nunca una fuga silenciosa de PII. `false` fuerza la minimización abajo.
+  canViewCustomerIdentity: boolean;
 }): Promise<Paginated<PendingListItem>> {
-  return listPendings(params);
+  const { canViewCustomerIdentity, ...listParams } = params;
+  const { items, nextCursor } = await listPendings(listParams);
+  return { items: minimizeCustomerIdentity(items, canViewCustomerIdentity), nextCursor };
 }
 
 export type PendingDashboard = {
@@ -83,18 +102,31 @@ export type PendingDashboard = {
   urgent: PendingListItem[];
 };
 
+const DASHBOARD_URGENT_PENDING_LIMIT = 5;
+
 // Resumen para el dashboard: cuántos pendientes abiertos hay, cuántos vencidos,
 // cuántos próximos (24h) y los más urgentes. Las cuatro consultas van en paralelo.
-export async function getPendingDashboard(
-  now: Date = new Date(),
-): Promise<PendingDashboard> {
+//
+// `urgent` hoy no se renderiza con el nombre del cliente, pero entregarle PII
+// a un caller que mañana podría renderizarlo es cómo las fugas pasan por
+// costumbre — minimizamos en el boundary, igual que en `getPendings`.
+export async function getPendingDashboard(params: {
+  canViewCustomerIdentity: boolean;
+  now?: Date;
+}): Promise<PendingDashboard> {
+  const { canViewCustomerIdentity, now = new Date() } = params;
   const [openCount, overdueCount, upcomingCount, urgent] = await Promise.all([
     countOpenPendings(),
     countOverduePendings(now),
     countUpcomingPendings(now),
-    listUrgentPendings(5),
+    listUrgentPendings(DASHBOARD_URGENT_PENDING_LIMIT),
   ]);
-  return { openCount, overdueCount, upcomingCount, urgent };
+  return {
+    openCount,
+    overdueCount,
+    upcomingCount,
+    urgent: minimizeCustomerIdentity(urgent, canViewCustomerIdentity),
+  };
 }
 
 /**

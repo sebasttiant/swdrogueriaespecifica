@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
-import { requireActiveRole } from "@/lib/auth/require-role";
+import { requireCapability } from "@/lib/auth/require-role";
 import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
 import {
   auditContextFromHeaders,
@@ -12,7 +12,7 @@ import { registerInventoryEntry } from "@/server/services/inventory-entry.servic
 import { inventoryEntryCreateSchema } from "@/features/entradas/schema";
 
 // --------------------------------------------------------------------------
-// Server Actions de entradas de inventario: Zod → requireActiveRole →
+// Server Actions de entradas de inventario: Zod → requireCapability →
 // service (atomic $transaction) → audit best-effort → revalidate.
 // Roles permitidos: SUPERADMIN, ADMIN, OPERADOR — mismo gate que pendientes.
 // La transacción (upsert lote + ledger + cierre de faltantes) vive en el
@@ -29,7 +29,7 @@ export async function createInventoryEntryAction(
   _prev: EntryFormState,
   formData: FormData,
 ): Promise<EntryFormState> {
-  const session = await requireActiveRole("SUPERADMIN", "ADMIN", "OPERADOR");
+  const session = await requireCapability("canCreateEntries");
 
   const parsed = inventoryEntryCreateSchema.safeParse({
     productId: formData.get("productId"),

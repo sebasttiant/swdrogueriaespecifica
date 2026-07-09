@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 
 import { PageHeader } from "@/app/_components/app-shell/page-header";
-import { requireActiveRole } from "@/lib/auth/require-role";
+import { requireCapability } from "@/lib/auth/require-role";
 import { Card, CardTitle } from "@/app/_components/ui/card";
 import { KpiCard } from "@/app/_components/ui/kpi-card";
 import { PeriodFilter } from "@/features/reportes/period-filter";
@@ -38,9 +38,9 @@ type ReportesPageProps = {
 };
 
 export default async function ReportesPage({ searchParams }: ReportesPageProps) {
-  // Módulo sensible: solo ADMIN/SUPERADMIN. El nav ya oculta el link; este guard
-  // protege el acceso directo a la ruta (un no-admin va a su home).
-  await requireActiveRole("SUPERADMIN", "ADMIN");
+  // Módulo sensible: requiere la capability de reportes. El nav ya oculta el link;
+  // este guard protege el acceso directo a la ruta (sin la capability va a su home).
+  await requireCapability("canViewReports");
 
   const { period: periodParam } = await searchParams;
   const period = parseReportsPeriod(periodParam);

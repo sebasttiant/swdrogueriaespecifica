@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { Badge } from "@/app/_components/ui/badge";
 import { Card } from "@/app/_components/ui/card";
+import { canManageUserWithRole } from "@/lib/auth/permissions";
 import type { UserRole } from "@/lib/generated/prisma/client";
 import type { UserListItem } from "@/server/repositories/user.repository";
 
@@ -24,6 +25,7 @@ type UserListProps = {
 const ROLE_TONE: Record<UserRole, "primary" | "warning" | "neutral"> = {
   SUPERADMIN: "primary",
   ADMIN: "warning",
+  SUPERVISOR: "warning",
   OPERADOR: "neutral",
 };
 
@@ -73,6 +75,7 @@ export function UserList({
         {items.map((user) => {
           const isArchived = user.archivedAt !== null;
           const isSelf = user.id === currentUserId;
+          const canManage = canManageUserWithRole(currentUserRole, user.role);
 
           return (
             <Card
@@ -92,21 +95,23 @@ export function UserList({
                 </div>
               </div>
               <div className="flex items-center justify-between gap-3">
-                {!isArchived && isSuperAdmin && (
+                {!isArchived && canManage ? (
                   <Link
                     href={`/admin/${user.id}`}
                     className="text-sm font-semibold text-primary hover:underline"
                   >
                     Editar
                   </Link>
-                )}
+                ) : null}
                 {isArchived ? (
                   isSuperAdmin ? (
                     <UserRestoreButton userId={user.id} />
                   ) : null
-                ) : (
+                ) : canManage || (isSuperAdmin && !isSelf) ? (
                   <div className="flex items-center gap-2">
-                    <UserActiveToggle userId={user.id} active={user.active} />
+                    {canManage && (
+                      <UserActiveToggle userId={user.id} active={user.active} />
+                    )}
                     {isSuperAdmin && !isSelf && (
                       <UserArchiveButton
                         userId={user.id}
@@ -114,6 +119,8 @@ export function UserList({
                       />
                     )}
                   </div>
+                ) : (
+                  <span className="text-xs text-muted-foreground">—</span>
                 )}
               </div>
             </Card>
@@ -137,6 +144,7 @@ export function UserList({
             {items.map((user) => {
               const isArchived = user.archivedAt !== null;
               const isSelf = user.id === currentUserId;
+              const canManage = canManageUserWithRole(currentUserRole, user.role);
 
               return (
                 <tr
@@ -164,9 +172,9 @@ export function UserList({
                       ) : (
                         <span className="text-xs text-muted-foreground">—</span>
                       )
-                    ) : (
+                    ) : canManage || (isSuperAdmin && !isSelf) ? (
                       <div className="flex items-center gap-4">
-                        {isSuperAdmin ? (
+                        {canManage ? (
                           <Link
                             href={`/admin/${user.id}`}
                             className="font-semibold text-primary hover:underline"
@@ -174,10 +182,12 @@ export function UserList({
                             Editar
                           </Link>
                         ) : null}
-                        <UserActiveToggle
-                          userId={user.id}
-                          active={user.active}
-                        />
+                        {canManage && (
+                          <UserActiveToggle
+                            userId={user.id}
+                            active={user.active}
+                          />
+                        )}
                         {isSuperAdmin && !isSelf && (
                           <UserArchiveButton
                             userId={user.id}
@@ -185,6 +195,8 @@ export function UserList({
                           />
                         )}
                       </div>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
                     )}
                   </td>
                 </tr>

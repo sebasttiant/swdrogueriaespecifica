@@ -17,7 +17,7 @@ export type UserCredentials = {
   id: string;
   email: string;
   name: string;
-  role: "SUPERADMIN" | "ADMIN" | "OPERADOR";
+  role: UserRole;
   active: boolean;
   passwordHash: string | null;
 };

@@ -1,0 +1,225 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  assignableRolesFor,
+  can,
+  canAssignRole,
+  canManageUserWithRole,
+  canResetPasswordOf,
+  isAdminRole,
+  isSuperAdminRole,
+  isUserManager,
+  rolesWithCapability,
+  USER_ROLES,
+} from "./permissions";
+
+describe("assignableRolesFor", () => {
+  it("SUPERADMIN puede asignar todos los roles", () => {
+    expect(assignableRolesFor("SUPERADMIN")).toEqual([
+      "SUPERADMIN",
+      "ADMIN",
+      "SUPERVISOR",
+      "OPERADOR",
+    ]);
+  });
+
+  it("ADMIN puede asignar ADMIN, SUPERVISOR y OPERADOR, pero NO SUPERADMIN", () => {
+    const roles = assignableRolesFor("ADMIN");
+    expect(roles).toEqual(["ADMIN", "SUPERVISOR", "OPERADOR"]);
+    expect(roles).not.toContain("SUPERADMIN");
+  });
+
+  it("SUPERVISOR no puede asignar ningún rol (no gestiona usuarios)", () => {
+    expect(assignableRolesFor("SUPERVISOR")).toEqual([]);
+  });
+
+  it("OPERADOR no puede asignar ningún rol (no gestiona usuarios)", () => {
+    expect(assignableRolesFor("OPERADOR")).toEqual([]);
+  });
+});
+
+describe("canAssignRole", () => {
+  it("permite que un ADMIN asigne el rol ADMIN (su propia tier)", () => {
+    expect(canAssignRole("ADMIN", "ADMIN")).toBe(true);
+  });
+
+  it("permite que un ADMIN asigne SUPERVISOR (tier inferior)", () => {
+    expect(canAssignRole("ADMIN", "SUPERVISOR")).toBe(true);
+  });
+
+  it("rechaza que un ADMIN asigne SUPERADMIN (tier reservada al dueño técnico)", () => {
+    expect(canAssignRole("ADMIN", "SUPERADMIN")).toBe(false);
+  });
+
+  it("permite que un SUPERADMIN asigne SUPERADMIN", () => {
+    expect(canAssignRole("SUPERADMIN", "SUPERADMIN")).toBe(true);
+  });
+
+  it("un OPERADOR no puede asignar ningún rol (no gestiona usuarios)", () => {
+    expect(canAssignRole("OPERADOR", "OPERADOR")).toBe(false);
+  });
+
+  it("un SUPERVISOR no puede asignar roles aunque supere a OPERADOR", () => {
+    expect(canAssignRole("SUPERVISOR", "OPERADOR")).toBe(false);
+  });
+});
+
+describe("canManageUserWithRole", () => {
+  it("permite que un ADMIN gestione a otro ADMIN (su propia tier)", () => {
+    expect(canManageUserWithRole("ADMIN", "ADMIN")).toBe(true);
+  });
+
+  it("rechaza que un ADMIN gestione a un SUPERADMIN", () => {
+    expect(canManageUserWithRole("ADMIN", "SUPERADMIN")).toBe(false);
+  });
+
+  it("permite que un SUPERADMIN gestione a otro SUPERADMIN", () => {
+    expect(canManageUserWithRole("SUPERADMIN", "SUPERADMIN")).toBe(true);
+  });
+
+  it("permite que un SUPERADMIN gestione a un ADMIN", () => {
+    expect(canManageUserWithRole("SUPERADMIN", "ADMIN")).toBe(true);
+  });
+
+  it("permite que un ADMIN gestione a un SUPERVISOR", () => {
+    expect(canManageUserWithRole("ADMIN", "SUPERVISOR")).toBe(true);
+  });
+
+  it("rechaza que un SUPERVISOR gestione usuarios", () => {
+    expect(canManageUserWithRole("SUPERVISOR", "OPERADOR")).toBe(false);
+    expect(canManageUserWithRole("SUPERVISOR", "SUPERVISOR")).toBe(false);
+  });
+});
+
+describe("canResetPasswordOf", () => {
+  it("permite cambiar la contraseña propia", () => {
+    expect(canResetPasswordOf("ADMIN", "ADMIN", true)).toBe(true);
+    expect(canResetPasswordOf("OPERADOR", "OPERADOR", true)).toBe(true);
+  });
+
+  it("permite que SUPERADMIN cambie la contraseña de cualquier rol", () => {
+    expect(canResetPasswordOf("SUPERADMIN", "SUPERADMIN", false)).toBe(true);
+    expect(canResetPasswordOf("SUPERADMIN", "ADMIN", false)).toBe(true);
+    expect(canResetPasswordOf("SUPERADMIN", "SUPERVISOR", false)).toBe(true);
+    expect(canResetPasswordOf("SUPERADMIN", "OPERADOR", false)).toBe(true);
+  });
+
+  it("permite que ADMIN cambie contraseñas de roles inferiores, no de pares", () => {
+    expect(canResetPasswordOf("ADMIN", "SUPERVISOR", false)).toBe(true);
+    expect(canResetPasswordOf("ADMIN", "OPERADOR", false)).toBe(true);
+    expect(canResetPasswordOf("ADMIN", "ADMIN", false)).toBe(false);
+  });
+
+  it("rechaza que SUPERVISOR cambie contraseñas de otros usuarios", () => {
+    expect(canResetPasswordOf("SUPERVISOR", "OPERADOR", false)).toBe(false);
+  });
+
+  it("rechaza objetivos fuera del techo de gestión", () => {
+    expect(canResetPasswordOf("ADMIN", "SUPERADMIN", false)).toBe(false);
+    expect(canResetPasswordOf("OPERADOR", "ADMIN", false)).toBe(false);
+  });
+});
+
+describe("isAdminRole / isSuperAdminRole / isUserManager", () => {
+  it("reconoce SUPERADMIN y ADMIN como administrativos, no a SUPERVISOR/OPERADOR", () => {
+    expect(isAdminRole("SUPERADMIN")).toBe(true);
+    expect(isAdminRole("ADMIN")).toBe(true);
+    expect(isAdminRole("SUPERVISOR")).toBe(false);
+    expect(isAdminRole("OPERADOR")).toBe(false);
+  });
+
+  it("isSuperAdminRole solo reconoce a SUPERADMIN", () => {
+    expect(isSuperAdminRole("SUPERADMIN")).toBe(true);
+    expect(isSuperAdminRole("ADMIN")).toBe(false);
+    expect(isSuperAdminRole("SUPERVISOR")).toBe(false);
+    expect(isSuperAdminRole("OPERADOR")).toBe(false);
+  });
+
+  it("isUserManager gatea a los roles administrativos", () => {
+    expect(isUserManager("SUPERADMIN")).toBe(true);
+    expect(isUserManager("ADMIN")).toBe(true);
+    expect(isUserManager("SUPERVISOR")).toBe(false);
+    expect(isUserManager("OPERADOR")).toBe(false);
+  });
+});
+
+describe("capabilities · can()", () => {
+  it("SUPERADMIN y ADMIN pueden ver usuarios (capability canManageUsers)", () => {
+    expect(can("SUPERADMIN", "canManageUsers")).toBe(true);
+    expect(can("ADMIN", "canManageUsers")).toBe(true);
+  });
+
+  it("OPERADOR tiene solo las capabilities operativas", () => {
+    expect(can("OPERADOR", "canViewDashboard")).toBe(true);
+    expect(can("OPERADOR", "canViewPendientes")).toBe(true);
+    expect(can("OPERADOR", "canViewFaltantes")).toBe(true);
+    expect(can("OPERADOR", "canViewProductos")).toBe(true);
+    expect(can("OPERADOR", "canViewEntradas")).toBe(true);
+    expect(can("OPERADOR", "canCreatePendientes")).toBe(true);
+    expect(can("OPERADOR", "canCreateEntries")).toBe(true);
+  });
+
+  it("OPERADOR NO tiene las capabilities sensibles", () => {
+    expect(can("OPERADOR", "canViewReports")).toBe(false);
+    expect(can("OPERADOR", "canViewAudit")).toBe(false);
+    expect(can("OPERADOR", "canManageUsers")).toBe(false);
+    expect(can("OPERADOR", "canConfirmMissingItems")).toBe(false);
+    expect(can("OPERADOR", "canSnoozeAlerts")).toBe(false);
+    expect(can("OPERADOR", "canManageProducts")).toBe(false);
+  });
+
+  it("SUPERVISOR tiene capabilities operativas y puede confirmar faltantes", () => {
+    expect(can("SUPERVISOR", "canViewDashboard")).toBe(true);
+    expect(can("SUPERVISOR", "canViewPendientes")).toBe(true);
+    expect(can("SUPERVISOR", "canViewFaltantes")).toBe(true);
+    expect(can("SUPERVISOR", "canViewProductos")).toBe(true);
+    expect(can("SUPERVISOR", "canViewEntradas")).toBe(true);
+    expect(can("SUPERVISOR", "canCreatePendientes")).toBe(true);
+    expect(can("SUPERVISOR", "canCreateEntries")).toBe(true);
+    expect(can("SUPERVISOR", "canConfirmMissingItems")).toBe(true);
+  });
+
+  it("SUPERVISOR NO tiene capabilities administrativas, reportes, auditoría ni catálogo", () => {
+    expect(can("SUPERVISOR", "canManageUsers")).toBe(false);
+    expect(can("SUPERVISOR", "canViewReports")).toBe(false);
+    expect(can("SUPERVISOR", "canViewAudit")).toBe(false);
+    expect(can("SUPERVISOR", "canManageProducts")).toBe(false);
+    expect(can("SUPERVISOR", "canSnoozeAlerts")).toBe(false);
+  });
+
+  it("canViewCustomerIdentity: OPERADOR no la tiene; SUPERVISOR/ADMIN/SUPERADMIN sí", () => {
+    expect(can("OPERADOR", "canViewCustomerIdentity")).toBe(false);
+    expect(can("SUPERVISOR", "canViewCustomerIdentity")).toBe(true);
+    expect(can("ADMIN", "canViewCustomerIdentity")).toBe(true);
+    expect(can("SUPERADMIN", "canViewCustomerIdentity")).toBe(true);
+  });
+});
+
+describe("rolesWithCapability", () => {
+  it("preserva el orden de USER_ROLES", () => {
+    expect(rolesWithCapability("canViewDashboard")).toEqual([...USER_ROLES]);
+  });
+
+  it("canViewReports solo la tienen los administradores", () => {
+    expect(rolesWithCapability("canViewReports")).toEqual([
+      "SUPERADMIN",
+      "ADMIN",
+    ]);
+  });
+
+  it("canConfirmMissingItems incluye SUPERVISOR sin incluir OPERADOR", () => {
+    expect(rolesWithCapability("canConfirmMissingItems")).toEqual([
+      "SUPERADMIN",
+      "ADMIN",
+      "SUPERVISOR",
+    ]);
+  });
+
+  it("canViewCustomerIdentity incluye SUPERVISOR sin incluir OPERADOR", () => {
+    expect(rolesWithCapability("canViewCustomerIdentity")).toEqual([
+      "SUPERADMIN",
+      "ADMIN",
+      "SUPERVISOR",
+    ]);
+  });
+});

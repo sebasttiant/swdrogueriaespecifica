@@ -5,6 +5,7 @@ import { useSyncExternalStore } from "react";
 import { Clock } from "lucide-react";
 
 import { Button } from "@/app/_components/ui/button";
+import { can } from "@/lib/auth/permissions";
 import { formatBogotaDate } from "@/lib/datetime/bogota";
 import type { SessionRole } from "@/lib/auth/session";
 
@@ -72,7 +73,7 @@ function parseSnoozeEntry(raw: string | null): SnoozeEntry | null {
 }
 
 function canSnooze(role: SessionRole): boolean {
-  return role === "ADMIN" || role === "SUPERADMIN";
+  return can(role, "canSnoozeAlerts");
 }
 
 function subscribeToSnoozeChanges(onStoreChange: () => void): () => void {

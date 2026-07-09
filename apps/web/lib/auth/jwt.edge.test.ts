@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it } from "vitest";
+import { SignJWT } from "jose";
 
 import { signSession, verifySession } from "./jwt.edge";
 import type { SessionUser } from "./session";
@@ -22,6 +23,28 @@ describe("jwt.edge", () => {
 
     expect(session).not.toBeNull();
     expect(session?.user).toEqual(user);
+  });
+
+  it("acepta SUPERVISOR como rol válido de sesión", async () => {
+    const supervisor: SessionUser = { ...user, id: "sup-1", role: "SUPERVISOR" };
+    const token = await signSession(supervisor);
+
+    await expect(verifySession(token)).resolves.toEqual({ user: supervisor });
+  });
+
+  it("rechaza roles inválidos al verificar el token", async () => {
+    const token = await new SignJWT({
+      email: user.email,
+      name: user.name,
+      role: "LIDER",
+    })
+      .setProtectedHeader({ alg: "HS256" })
+      .setSubject(user.id)
+      .setIssuedAt()
+      .setExpirationTime("2h")
+      .sign(new TextEncoder().encode(process.env.AUTH_SECRET));
+
+    expect(await verifySession(token)).toBeNull();
   });
 
   it("devuelve null ante un token malformado", async () => {

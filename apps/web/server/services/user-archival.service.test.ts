@@ -72,7 +72,7 @@ describe("archiveUser · NOT_FOUND", () => {
     prismaMock.user.findUnique.mockResolvedValue(null);
 
     await expect(
-      archiveUser({ id: "ghost", actingUserId: "sa-1" }),
+      archiveUser({ id: "ghost", actingUserId: "sa-1", actorRole: "SUPERADMIN" }),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
 
     expect(prismaMock.user.update).not.toHaveBeenCalled();
@@ -84,7 +84,7 @@ describe("archiveUser · SELF_ARCHIVE", () => {
     prismaMock.user.findUnique.mockResolvedValue(superAdmin);
 
     await expect(
-      archiveUser({ id: "sa-1", actingUserId: "sa-1" }),
+      archiveUser({ id: "sa-1", actingUserId: "sa-1", actorRole: "SUPERADMIN" }),
     ).rejects.toMatchObject({ code: "SELF_ARCHIVE" });
 
     expect(prismaMock.user.update).not.toHaveBeenCalled();
@@ -96,7 +96,7 @@ describe("archiveUser · ALREADY_ARCHIVED", () => {
     prismaMock.user.findUnique.mockResolvedValue(archivedUser);
 
     await expect(
-      archiveUser({ id: "op-arch", actingUserId: "sa-1" }),
+      archiveUser({ id: "op-arch", actingUserId: "sa-1", actorRole: "SUPERADMIN" }),
     ).rejects.toMatchObject({ code: "ALREADY_ARCHIVED" });
 
     expect(prismaMock.user.update).not.toHaveBeenCalled();
@@ -110,7 +110,7 @@ describe("archiveUser · LAST_ADMIN", () => {
     prismaMock.$queryRaw.mockResolvedValue([{ id: "sa-2" }]);
 
     await expect(
-      archiveUser({ id: "sa-2", actingUserId: "sa-1" }),
+      archiveUser({ id: "sa-2", actingUserId: "sa-1", actorRole: "SUPERADMIN" }),
     ).rejects.toMatchObject({ code: "LAST_ADMIN" });
 
     expect(prismaMock.$queryRaw).toHaveBeenCalled();
@@ -122,7 +122,7 @@ describe("archiveUser · LAST_ADMIN", () => {
     // Two active admins
     prismaMock.$queryRaw.mockResolvedValue([{ id: "sa-1" }, { id: "sa-2" }]);
 
-    await archiveUser({ id: "sa-2", actingUserId: "sa-1" });
+    await archiveUser({ id: "sa-2", actingUserId: "sa-1", actorRole: "SUPERADMIN" });
 
     expect(prismaMock.user.update).toHaveBeenCalled();
   });
@@ -130,7 +130,7 @@ describe("archiveUser · LAST_ADMIN", () => {
   it("does NOT acquire lock when archiving a non-admin user", async () => {
     prismaMock.user.findUnique.mockResolvedValue(operador);
 
-    await archiveUser({ id: "op-1", actingUserId: "sa-1" });
+    await archiveUser({ id: "op-1", actingUserId: "sa-1", actorRole: "SUPERADMIN" });
 
     expect(prismaMock.$queryRaw).not.toHaveBeenCalled();
     expect(prismaMock.user.update).toHaveBeenCalled();
@@ -141,7 +141,7 @@ describe("archiveUser · happy path", () => {
   it("runs inside a $transaction", async () => {
     prismaMock.user.findUnique.mockResolvedValue(operador);
 
-    await archiveUser({ id: "op-1", actingUserId: "sa-1" });
+    await archiveUser({ id: "op-1", actingUserId: "sa-1", actorRole: "SUPERADMIN" });
 
     expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
   });
@@ -149,7 +149,7 @@ describe("archiveUser · happy path", () => {
   it("calls update with archivedAt AND active=false", async () => {
     prismaMock.user.findUnique.mockResolvedValue(operador);
 
-    await archiveUser({ id: "op-1", actingUserId: "sa-1" });
+    await archiveUser({ id: "op-1", actingUserId: "sa-1", actorRole: "SUPERADMIN" });
 
     expect(prismaMock.user.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -172,7 +172,7 @@ describe("unarchiveUser · NOT_FOUND", () => {
     prismaMock.user.findUnique.mockResolvedValue(null);
 
     await expect(
-      unarchiveUser({ id: "ghost" }),
+      unarchiveUser({ id: "ghost", actorRole: "SUPERADMIN" }),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
 
     expect(prismaMock.user.update).not.toHaveBeenCalled();
@@ -184,7 +184,7 @@ describe("unarchiveUser · NOT_ARCHIVED", () => {
     prismaMock.user.findUnique.mockResolvedValue(operador); // archivedAt: null
 
     await expect(
-      unarchiveUser({ id: "op-1" }),
+      unarchiveUser({ id: "op-1", actorRole: "SUPERADMIN" }),
     ).rejects.toMatchObject({ code: "NOT_ARCHIVED" });
 
     expect(prismaMock.user.update).not.toHaveBeenCalled();
@@ -201,7 +201,7 @@ describe("unarchiveUser · happy path", () => {
       active: false,
     });
 
-    const result = await unarchiveUser({ id: "op-arch" });
+    const result = await unarchiveUser({ id: "op-arch", actorRole: "SUPERADMIN" });
 
     expect(prismaMock.user.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -219,7 +219,7 @@ describe("unarchiveUser · happy path", () => {
     prismaMock.user.findUnique.mockResolvedValue(archivedUser);
     prismaMock.user.update.mockResolvedValue({ ...archivedUser, archivedAt: null });
 
-    await unarchiveUser({ id: "op-arch" });
+    await unarchiveUser({ id: "op-arch", actorRole: "SUPERADMIN" });
 
     expect(prismaMock.$queryRaw).not.toHaveBeenCalled();
   });

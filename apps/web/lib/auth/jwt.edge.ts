@@ -11,13 +11,16 @@
 
 import { jwtVerify, SignJWT } from "jose";
 
+import { USER_ROLES } from "./permissions";
 import type { Session, SessionRole, SessionUser } from "./session";
 
 // Expiración corta (sesión stateless: sin refresh en esta fase).
 const TOKEN_TTL = "2h";
 const ALG = "HS256";
 
-const ROLES: readonly SessionRole[] = ["SUPERADMIN", "ADMIN", "OPERADOR"];
+// Única fuente de verdad de los roles: `lib/auth/permissions.ts` (puro, sin
+// imports Node-only, así que es seguro importarlo desde el runtime Edge).
+const ROLES: readonly SessionRole[] = USER_ROLES;
 
 // Se lee en runtime (no al cargar el módulo) para que el Edge y los tests
 // puedan inyectar el valor sin reordenar imports.

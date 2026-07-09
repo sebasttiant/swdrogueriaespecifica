@@ -13,6 +13,13 @@
 // --------------------------------------------------------------------------
 
 import { hashPassword } from "@/lib/auth/password";
+import {
+  canAssignRole,
+  canManageUserWithRole,
+  canResetPasswordOf,
+  isAdminRole,
+} from "@/lib/auth/permissions";
+import type { SessionRole } from "@/lib/auth/session";
 import { prisma } from "@/lib/db/prisma";
 import type { UserRole } from "@/lib/generated/prisma/client";
 import type { Paginated } from "@/lib/pagination";
@@ -35,12 +42,16 @@ export type UserRuleCode =
   | "LAST_ADMIN"
   | "SELF_ARCHIVE"
   | "ALREADY_ARCHIVED"
-  | "NOT_ARCHIVED";
+  | "NOT_ARCHIVED"
+  | "PASSWORD_RESET_NOT_ALLOWED"
+  | "ROLE_NOT_ASSIGNABLE"
+  | "TARGET_OUTRANKS_ACTOR";
 
-// Roles administrativos: pueden gestionar usuarios y mutar el catálogo. El
-// sistema nunca puede quedar sin al menos uno activo (protección anti-lockout).
-const ADMIN_ROLES: readonly UserRole[] = ["SUPERADMIN", "ADMIN"];
-const isAdminRole = (role: UserRole): boolean => ADMIN_ROLES.includes(role);
+export type UpdateUserResult = {
+  before: UserListItem;
+  after: UserListItem;
+  passwordUpdated: boolean;
+};
 
 // Error de regla de negocio: la Server Action lo mapea a un mensaje claro.
 export class UserRuleError extends Error {
@@ -67,7 +78,13 @@ export async function createUser(input: {
   email: string;
   password: string;
   role: UserRole;
+  actorRole: SessionRole;
 }): Promise<UserListItem> {
+  // Techo de rango: nadie puede crear una cuenta que lo supere. Falla ANTES del
+  // hash para que un pedido rechazado no pague el costo de argon2.
+  if (!canAssignRole(input.actorRole, input.role)) {
+    throw new UserRuleError("ROLE_NOT_ASSIGNABLE");
+  }
   const passwordHash = await hashPassword(input.password);
   return createUserRow({
     name: input.name,
@@ -80,8 +97,9 @@ export async function createUser(input: {
 export async function updateUser(args: {
   id: string;
   actingUserId: string;
+  actorRole: SessionRole;
   input: { name: string; email: string; role: UserRole; password?: string };
-}): Promise<UserListItem> {
+}): Promise<UpdateUserResult> {
   // ATÓMICO: lock de administradores activos + chequeo + update en una sola
   // transacción, para que dos demociones concurrentes no dejen el sistema sin
   // ningún administrador activo.
@@ -89,12 +107,29 @@ export async function updateUser(args: {
     const target = await findUserById(args.id, tx);
     if (!target) throw new UserRuleError("NOT_FOUND");
 
+    // Ceiling: no puede editar una cuenta que lo supera en rango, ni asignar un
+    // rol superior al suyo (escalada por proxy).
+    if (!canManageUserWithRole(args.actorRole, target.role)) {
+      throw new UserRuleError("TARGET_OUTRANKS_ACTOR");
+    }
+    if (!canAssignRole(args.actorRole, args.input.role)) {
+      throw new UserRuleError("ROLE_NOT_ASSIGNABLE");
+    }
+    const isSelf = args.id === args.actingUserId;
+    const passwordUpdated = Boolean(args.input.password);
+    if (
+      passwordUpdated &&
+      !canResetPasswordOf(args.actorRole, target.role, isSelf)
+    ) {
+      throw new UserRuleError("PASSWORD_RESET_NOT_ALLOWED");
+    }
+
     // Degradación = pasar de un rol administrativo a uno no administrativo.
     const demotingFromAdmin =
       isAdminRole(target.role) && !isAdminRole(args.input.role);
 
     if (demotingFromAdmin) {
-      if (args.id === args.actingUserId) {
+      if (isSelf) {
         throw new UserRuleError("SELF_ROLE_CHANGE");
       }
       if (target.active) {
@@ -107,7 +142,7 @@ export async function updateUser(args: {
       ? await hashPassword(args.input.password)
       : undefined;
 
-    return updateUserRow(
+    const after = await updateUserRow(
       args.id,
       {
         name: args.input.name,
@@ -117,12 +152,14 @@ export async function updateUser(args: {
       },
       tx,
     );
+    return { before: target, after, passwordUpdated };
   });
 }
 
 export async function setUserActive(args: {
   id: string;
   actingUserId: string;
+  actorRole: SessionRole;
   active: boolean;
 }): Promise<UserListItem> {
   // ATÓMICO: ver updateUser. La baja del último admin se serializa con el lock.
@@ -130,11 +167,21 @@ export async function setUserActive(args: {
     const target = await findUserById(args.id, tx);
     if (!target) throw new UserRuleError("NOT_FOUND");
 
-    // Solo las desactivaciones disparan reglas de protección.
+    // El autobloqueo va ANTES del techo de rango porque una acción sobre la
+    // propia cuenta merece el mensaje específico (SELF_DEACTIVATION), no el
+    // genérico del techo.
+    if (!args.active && args.id === args.actingUserId) {
+      throw new UserRuleError("SELF_DEACTIVATION");
+    }
+
+    // Ceiling: un actor no puede cambiar el estado de una cuenta que lo supera
+    // en rango (cierra el agujero "ADMIN desactiva al SUPERADMIN").
+    if (!canManageUserWithRole(args.actorRole, target.role)) {
+      throw new UserRuleError("TARGET_OUTRANKS_ACTOR");
+    }
+
+    // Solo las desactivaciones disparan la protección anti-lockout.
     if (!args.active) {
-      if (args.id === args.actingUserId) {
-        throw new UserRuleError("SELF_DEACTIVATION");
-      }
       if (isAdminRole(target.role) && target.active) {
         const adminIds = await lockActiveAdministratorIds(tx);
         if (adminIds.length <= 1) throw new UserRuleError("LAST_ADMIN");
@@ -161,13 +208,24 @@ export async function setUserActive(args: {
 export async function archiveUser(args: {
   id: string;
   actingUserId: string;
+  actorRole: SessionRole;
 }): Promise<UserListItem> {
   return prisma.$transaction(async (tx) => {
     const target = await findUserById(args.id, tx);
     if (!target) throw new UserRuleError("NOT_FOUND");
 
+    // El autobloqueo va ANTES del techo de rango para dar el mensaje específico
+    // (SELF_ARCHIVE) en vez del genérico del techo cuando la acción es sobre la
+    // propia cuenta.
     if (args.id === args.actingUserId) {
       throw new UserRuleError("SELF_ARCHIVE");
+    }
+
+    // Ceiling: no puede archivar una cuenta que lo supera en rango. Hoy es
+    // SUPERADMIN-only por la Action, así que es un no-op; queda como defensa en
+    // profundidad si el guard de ruta se afloja.
+    if (!canManageUserWithRole(args.actorRole, target.role)) {
+      throw new UserRuleError("TARGET_OUTRANKS_ACTOR");
     }
 
     if (target.archivedAt !== null) {
@@ -196,9 +254,17 @@ export async function archiveUser(args: {
  */
 export async function unarchiveUser(args: {
   id: string;
+  actorRole: SessionRole;
 }): Promise<UserListItem> {
   const target = await findUserById(args.id);
   if (!target) throw new UserRuleError("NOT_FOUND");
+
+  // Ceiling: no puede restaurar una cuenta que lo supera en rango. Igual que
+  // archiveUser, hoy es un no-op (SUPERADMIN-only) pero cierra la puerta si el
+  // guard de ruta se afloja.
+  if (!canManageUserWithRole(args.actorRole, target.role)) {
+    throw new UserRuleError("TARGET_OUTRANKS_ACTOR");
+  }
 
   if (target.archivedAt === null) {
     throw new UserRuleError("NOT_ARCHIVED");

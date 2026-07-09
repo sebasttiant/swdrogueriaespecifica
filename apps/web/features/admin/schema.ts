@@ -1,13 +1,17 @@
 import { z } from "zod";
 
-// Roles asignables por el admin. Espeja el enum UserRole de Prisma; esta lista
-// es la fuente de verdad para los formularios (no hay permisos granulares aún).
-export const ASSIGNABLE_ROLES = ["SUPERADMIN", "ADMIN", "OPERADOR"] as const;
+import { USER_ROLES } from "@/lib/auth/permissions";
+
+// Roles del modelo, re-exportados desde la fuente única de verdad
+// (`@/lib/auth/permissions`). La validación de forma (Zod) acepta los roles; el
+// techo por rango del actor es una regla del servicio, no del esquema.
+export const ASSIGNABLE_ROLES = USER_ROLES;
 
 // Etiquetas legibles para un gerente no técnico (nunca mostramos el enum crudo).
 export const ROLE_LABELS: Record<(typeof ASSIGNABLE_ROLES)[number], string> = {
   SUPERADMIN: "Super Admin",
   ADMIN: "Administrador",
+  SUPERVISOR: "Supervisor",
   OPERADOR: "Operador",
 };
 

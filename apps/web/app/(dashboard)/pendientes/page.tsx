@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 
 import { PageHeader } from "@/app/_components/app-shell/page-header";
+import { can } from "@/lib/auth/permissions";
+import { requireCapability } from "@/lib/auth/require-role";
 import { Card, CardTitle } from "@/app/_components/ui/card";
 import { MAX_PAGE_SIZE } from "@/lib/pagination";
 import {
@@ -18,13 +20,16 @@ export default async function PendientesPage({
 }: {
   searchParams: Promise<{ cursor?: string }>;
 }) {
+  const session = await requireCapability("canViewPendientes");
+  const canViewCustomerIdentity = can(session.user.role, "canViewCustomerIdentity");
+
   const { cursor } = await searchParams;
 
   // Opciones para el selector del formulario. Slice MVP: primera página de
   // productos activos (ver README — selector sin búsqueda todavía).
   const [products, pendings] = await Promise.all([
     getProducts({ take: MAX_PAGE_SIZE }),
-    getPendings({ cursor }),
+    getPendings({ cursor, canViewCustomerIdentity }),
   ]);
 
   const productOptions: ProductOption[] = products.items
