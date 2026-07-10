@@ -14,12 +14,142 @@ const { prismaMock } = vi.hoisted(() => {
 vi.mock("@/lib/db/prisma", () => ({ prisma: prismaMock }));
 
 import { encodeCursor } from "@/lib/pagination";
-import { listPendings, countUpcomingPendings } from "./pending.repository";
+import {
+  cancelPending,
+  countUpcomingPendings,
+  listPendings,
+  lockPendingForUpdate,
+  updatePendingAfterDelivery,
+} from "./pending.repository";
 
 beforeEach(() => {
   vi.clearAllMocks();
   prismaMock.pending.findMany.mockResolvedValue([]);
   prismaMock.pending.count.mockResolvedValue(0);
+});
+
+// Cliente de transacción falso: lock y CAS solo corren dentro de una
+// transacción interactiva, así que reciben `tx`, nunca el prisma default.
+function txClient() {
+  return {
+    $queryRaw: vi.fn().mockResolvedValue([]),
+    pending: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+  };
+}
+
+// SQL emitido por el tagged template de `$queryRaw`.
+function sqlFrom(call: readonly unknown[]): string {
+  return (call[0] as readonly string[]).join("?");
+}
+
+// ---------------------------------------------------------------------------
+// Concurrencia: lock de fila + compare-and-set. Es lo que impide que dos
+// operadores sobre-entreguen o que una cancelación pise una entrega.
+// ---------------------------------------------------------------------------
+
+describe("lockPendingForUpdate", () => {
+  it("emits SELECT ... FOR UPDATE on pendings with the id bound as a parameter", async () => {
+    const tx = txClient();
+    const row = { id: "pend-1", quantity: 10, deliveredQuantity: 0, status: "PENDIENTE" };
+    tx.$queryRaw.mockResolvedValue([row]);
+
+    await expect(lockPendingForUpdate(tx as never, "pend-1")).resolves.toEqual(row);
+
+    const call = tx.$queryRaw.mock.calls[0]!;
+    const sql = sqlFrom(call);
+    // Una lectura plana dentro de la transacción NO bloquea bajo READ COMMITTED.
+    expect(sql).toContain("FOR UPDATE");
+    expect(sql).toContain("FROM pendings");
+    // Trae los campos que las reglas de entrega necesitan.
+    expect(sql).toContain('"deliveredQuantity"');
+    // El id viaja como parámetro del template, nunca interpolado en el SQL.
+    expect(call.slice(1)).toEqual(["pend-1"]);
+    expect(sql).not.toContain("pend-1");
+  });
+
+  it("returns null when the row does not exist", async () => {
+    const tx = txClient();
+
+    await expect(lockPendingForUpdate(tx as never, "ghost")).resolves.toBeNull();
+  });
+});
+
+describe("updatePendingAfterDelivery", () => {
+  it("only writes when status and deliveredQuantity still match the locked read", async () => {
+    const tx = txClient();
+    const completedAt = new Date("2026-07-09T12:00:00.000Z");
+
+    const written = await updatePendingAfterDelivery(tx as never, {
+      id: "pend-1",
+      expectedStatus: "PARCIAL",
+      expectedDeliveredQuantity: 4,
+      deliveredQuantity: 10,
+      status: "ENTREGADO",
+      completedAt,
+    });
+
+    expect(written).toBe(1);
+    expect(tx.pending.updateMany).toHaveBeenCalledWith({
+      where: { id: "pend-1", status: "PARCIAL", deliveredQuantity: 4 },
+      data: { deliveredQuantity: 10, status: "ENTREGADO", completedAt },
+    });
+  });
+
+  it("reports zero rows written when the compare-and-set misses", async () => {
+    const tx = txClient();
+    tx.pending.updateMany.mockResolvedValue({ count: 0 });
+
+    const written = await updatePendingAfterDelivery(tx as never, {
+      id: "pend-1",
+      expectedStatus: "PENDIENTE",
+      expectedDeliveredQuantity: 0,
+      deliveredQuantity: 3,
+      status: "PARCIAL",
+      completedAt: null,
+    });
+
+    expect(written).toBe(0);
+  });
+});
+
+describe("cancelPending", () => {
+  it("only cancels when the status still matches the locked read", async () => {
+    const tx = txClient();
+    const cancelledAt = new Date("2026-07-09T12:00:00.000Z");
+
+    const written = await cancelPending(tx as never, {
+      id: "pend-1",
+      expectedStatus: "PARCIAL",
+      cancelledById: "sup-1",
+      cancelledAt,
+      cancelReason: "Cliente desistió",
+    });
+
+    expect(written).toBe(1);
+    expect(tx.pending.updateMany).toHaveBeenCalledWith({
+      where: { id: "pend-1", status: "PARCIAL" },
+      data: {
+        status: "CANCELADO",
+        cancelledAt,
+        cancelledById: "sup-1",
+        cancelReason: "Cliente desistió",
+      },
+    });
+  });
+
+  it("normalizes a missing reason to null", async () => {
+    const tx = txClient();
+
+    await cancelPending(tx as never, {
+      id: "pend-1",
+      expectedStatus: "PENDIENTE",
+      cancelledById: "sup-1",
+      cancelledAt: new Date(),
+    });
+
+    const args = tx.pending.updateMany.mock.calls[0]![0];
+    expect(args.data.cancelReason).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------

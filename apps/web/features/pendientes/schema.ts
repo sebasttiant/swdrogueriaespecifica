@@ -85,3 +85,24 @@ export const pendingCreateSchema = z
   });
 
 export type PendingCreateInput = z.infer<typeof pendingCreateSchema>;
+
+// --------------------------------------------------------------------------
+// Ciclo de vida de entrega (Slice A): entregas parciales + cancelación.
+// --------------------------------------------------------------------------
+
+export const pendingDeliverSchema = z.object({
+  id: z.string().trim().min(1, "Falta el id del pendiente"),
+  quantity: z.coerce
+    .number()
+    .int("La cantidad debe ser un número entero")
+    .min(1, "La cantidad debe ser al menos 1"),
+});
+
+export type PendingDeliverInput = z.infer<typeof pendingDeliverSchema>;
+
+export const pendingCancelSchema = z.object({
+  id: z.string().trim().min(1, "Falta el id del pendiente"),
+  reason: optionalText(280),
+});
+
+export type PendingCancelInput = z.infer<typeof pendingCancelSchema>;

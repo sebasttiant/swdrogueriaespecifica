@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { pendingCreateSchema } from "./schema";
+import { pendingCancelSchema, pendingCreateSchema, pendingDeliverSchema } from "./schema";
 
 // Base válida reutilizable; cada test sobreescribe lo que necesita probar.
 const validInput = {
@@ -144,5 +144,53 @@ describe("pendingCreateSchema", () => {
         "2027-01-01T04:59:00.000Z",
       );
     }
+  });
+});
+
+describe("pendingDeliverSchema", () => {
+  it("coerciona la cantidad a número entero", () => {
+    const result = pendingDeliverSchema.safeParse({ id: "pend-1", quantity: "6" });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.quantity).toBe(6);
+  });
+
+  it("rechaza id vacío", () => {
+    const result = pendingDeliverSchema.safeParse({ id: "", quantity: "6" });
+    expect(result.success).toBe(false);
+  });
+
+  it("rechaza cantidad menor a 1", () => {
+    const result = pendingDeliverSchema.safeParse({ id: "pend-1", quantity: "0" });
+    expect(result.success).toBe(false);
+  });
+
+  it("rechaza cantidad no entera", () => {
+    const result = pendingDeliverSchema.safeParse({ id: "pend-1", quantity: "1.5" });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("pendingCancelSchema", () => {
+  it("acepta un id sin motivo", () => {
+    const result = pendingCancelSchema.safeParse({ id: "pend-1" });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.reason).toBeUndefined();
+  });
+
+  it("acepta y recorta un motivo", () => {
+    const result = pendingCancelSchema.safeParse({ id: "pend-1", reason: "  Cliente desistió  " });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.reason).toBe("Cliente desistió");
+  });
+
+  it("normaliza un motivo vacío a undefined", () => {
+    const result = pendingCancelSchema.safeParse({ id: "pend-1", reason: "   " });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.reason).toBeUndefined();
+  });
+
+  it("rechaza id vacío", () => {
+    const result = pendingCancelSchema.safeParse({ id: "" });
+    expect(result.success).toBe(false);
   });
 });
