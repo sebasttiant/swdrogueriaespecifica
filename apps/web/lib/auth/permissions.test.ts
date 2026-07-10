@@ -168,6 +168,20 @@ describe("capabilities · can()", () => {
     expect(can("OPERADOR", "canManageProducts")).toBe(false);
   });
 
+  it("canDeliverPendings: todos los roles operativos lo tienen", () => {
+    expect(can("SUPERADMIN", "canDeliverPendings")).toBe(true);
+    expect(can("ADMIN", "canDeliverPendings")).toBe(true);
+    expect(can("SUPERVISOR", "canDeliverPendings")).toBe(true);
+    expect(can("OPERADOR", "canDeliverPendings")).toBe(true);
+  });
+
+  it("canCancelPendings: OPERADOR queda excluido (cancelar rompe un compromiso con el cliente)", () => {
+    expect(can("SUPERADMIN", "canCancelPendings")).toBe(true);
+    expect(can("ADMIN", "canCancelPendings")).toBe(true);
+    expect(can("SUPERVISOR", "canCancelPendings")).toBe(true);
+    expect(can("OPERADOR", "canCancelPendings")).toBe(false);
+  });
+
   it("SUPERVISOR tiene capabilities operativas y puede confirmar faltantes", () => {
     expect(can("SUPERVISOR", "canViewDashboard")).toBe(true);
     expect(can("SUPERVISOR", "canViewPendientes")).toBe(true);
@@ -177,6 +191,8 @@ describe("capabilities · can()", () => {
     expect(can("SUPERVISOR", "canCreatePendientes")).toBe(true);
     expect(can("SUPERVISOR", "canCreateEntries")).toBe(true);
     expect(can("SUPERVISOR", "canConfirmMissingItems")).toBe(true);
+    expect(can("SUPERVISOR", "canDeliverPendings")).toBe(true);
+    expect(can("SUPERVISOR", "canCancelPendings")).toBe(true);
   });
 
   it("SUPERVISOR NO tiene capabilities administrativas, reportes, auditoría ni catálogo", () => {
@@ -192,6 +208,24 @@ describe("capabilities · can()", () => {
     expect(can("SUPERVISOR", "canViewCustomerIdentity")).toBe(true);
     expect(can("ADMIN", "canViewCustomerIdentity")).toBe(true);
     expect(can("SUPERADMIN", "canViewCustomerIdentity")).toBe(true);
+  });
+});
+
+describe("canOrderMissingItems (capability)", () => {
+  it("permite ordenar faltantes solo a SUPERADMIN y ADMIN", () => {
+    expect(can("SUPERADMIN", "canOrderMissingItems")).toBe(true);
+    expect(can("ADMIN", "canOrderMissingItems")).toBe(true);
+    expect(can("SUPERVISOR", "canOrderMissingItems")).toBe(false);
+    expect(can("OPERADOR", "canOrderMissingItems")).toBe(false);
+  });
+});
+
+describe("canManageSuppliers (capability)", () => {
+  it("permite crear proveedores nuevos solo a SUPERADMIN y ADMIN", () => {
+    expect(can("SUPERADMIN", "canManageSuppliers")).toBe(true);
+    expect(can("ADMIN", "canManageSuppliers")).toBe(true);
+    expect(can("SUPERVISOR", "canManageSuppliers")).toBe(false);
+    expect(can("OPERADOR", "canManageSuppliers")).toBe(false);
   });
 });
 
@@ -217,6 +251,18 @@ describe("rolesWithCapability", () => {
 
   it("canViewCustomerIdentity incluye SUPERVISOR sin incluir OPERADOR", () => {
     expect(rolesWithCapability("canViewCustomerIdentity")).toEqual([
+      "SUPERADMIN",
+      "ADMIN",
+      "SUPERVISOR",
+    ]);
+  });
+
+  it("canDeliverPendings incluye a los cuatro roles (el mostrador entrega)", () => {
+    expect(rolesWithCapability("canDeliverPendings")).toEqual([...USER_ROLES]);
+  });
+
+  it("canCancelPendings excluye a OPERADOR (cancelar necesita firma superior)", () => {
+    expect(rolesWithCapability("canCancelPendings")).toEqual([
       "SUPERADMIN",
       "ADMIN",
       "SUPERVISOR",
