@@ -30,14 +30,24 @@ export type MissingItemListItem = {
   confirmedAt: Date | null;
   confirmedById: string | null;
   confirmationNote: string | null;
+  orderedAt: Date | null;
+  orderedById: string | null;
+  supplierId: string | null;
   createdAt: Date;
-  product: { id: string; name: string; code: string; unit: string };
+  product: {
+    id: string;
+    name: string;
+    code: string;
+    unit: string;
+    laboratory: { id: string; name: string } | null;
+  };
   origin: {
     id: string;
     promisedAt: Date;
     status: PendingStatus;
     customerName: string | null;
   } | null;
+  supplier: { id: string; name: string } | null;
 };
 
 export type CreateMissingItemData = {
@@ -56,6 +66,12 @@ export type ConfirmMissingItemData = {
   note?: string;
 };
 
+export type OrderMissingItemData = {
+  supplierId: string;
+  orderedById: string;
+  orderedAt: Date;
+};
+
 const LIST_SELECT = {
   id: true,
   quantity: true,
@@ -64,11 +80,23 @@ const LIST_SELECT = {
   confirmedAt: true,
   confirmedById: true,
   confirmationNote: true,
+  orderedAt: true,
+  orderedById: true,
+  supplierId: true,
   createdAt: true,
-  product: { select: { id: true, name: true, code: true, unit: true } },
+  product: {
+    select: {
+      id: true,
+      name: true,
+      code: true,
+      unit: true,
+      laboratory: { select: { id: true, name: true } },
+    },
+  },
   origin: {
     select: { id: true, promisedAt: true, status: true, customerName: true },
   },
+  supplier: { select: { id: true, name: true } },
 } as const;
 
 export async function listMissingItems(params: {
@@ -232,33 +260,87 @@ export async function closeMissingItemsByEntry(
   return closedIds;
 }
 
-export function findMissingItemById(id: string) {
-  return prisma.missingItem.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      status: true,
-      confirmedAt: true,
-      confirmedById: true,
-      confirmationNote: true,
-    },
-  });
+export type MissingItemForUpdate = {
+  id: string;
+  status: MissingItemStatus;
+  confirmedAt: Date | null;
+  confirmedById: string | null;
+  confirmationNote: string | null;
+  orderedAt: Date | null;
+  orderedById: string | null;
+  supplierId: string | null;
+  productId: string;
+};
+
+/**
+ * Bloquea (FOR UPDATE) la fila del faltante. DEBE llamarse dentro de una
+ * transacción interactiva.
+ *
+ * Es lo que serializa las transiciones de estado del faltante: sin el lock, dos
+ * gerentes pidiendo el mismo faltante a proveedores distintos leen ambos
+ * `FALTANTE` y la última escritura gana, dejando la auditoría contradiciendo la
+ * realidad. `orderMissingItem` y `confirmMissingItemOk` toman ESTE MISMO lock,
+ * así que tampoco pueden cruzarse para producir el estado imposible
+ * PEDIDO + confirmedAt.
+ *
+ * `productId` se incluye porque el pedido enlaza el producto con el proveedor.
+ * Devuelve `null` si el faltante no existe.
+ */
+export async function lockMissingItemForUpdate(
+  client: Prisma.TransactionClient,
+  id: string,
+): Promise<MissingItemForUpdate | null> {
+  const rows = await client.$queryRaw<MissingItemForUpdate[]>`
+    SELECT id, status, "confirmedAt", "confirmedById", "confirmationNote",
+           "orderedAt", "orderedById", "supplierId", "productId"
+    FROM missing_items WHERE id = ${id} FOR UPDATE
+  `;
+  return rows[0] ?? null;
 }
 
-export function confirmMissingItem(data: ConfirmMissingItemData) {
-  return prisma.missingItem.update({
-    where: { id: data.id },
+/**
+ * Compare-and-set del pedido: escribe solo si el faltante sigue FALTANTE y sin
+ * confirmar, tal como se leyó bajo el lock. Devuelve las filas escritas (0 o 1).
+ * `tx` es obligatorio: esta escritura corre SIEMPRE dentro de la transacción del
+ * pedido (lock + upserts + este update en un solo átomo), nunca suelta.
+ */
+export async function orderMissingItem(
+  tx: Prisma.TransactionClient,
+  id: string,
+  data: OrderMissingItemData,
+): Promise<number> {
+  const { count } = await tx.missingItem.updateMany({
+    where: { id, status: "FALTANTE", confirmedAt: null },
+    data: {
+      status: "PEDIDO",
+      orderedAt: data.orderedAt,
+      orderedById: data.orderedById,
+      supplierId: data.supplierId,
+    },
+  });
+  return count;
+}
+
+/**
+ * Compare-and-set de la confirmación ("OK gerencia"): escribe solo si el
+ * faltante sigue FALTANTE y sin confirmar. Refuerza la invariante del service:
+ * un faltante que un pedido concurrente pasó a PEDIDO no coincide, así que la
+ * confirmación no puede colarse y producir el estado imposible
+ * PEDIDO + confirmedAt — incluso si un llamador futuro se saltea el lock de
+ * fila. Devuelve las filas escritas (0 o 1). `tx` es obligatorio: corre bajo
+ * el mismo lock que `orderMissingItem`.
+ */
+export async function confirmMissingItem(
+  tx: Prisma.TransactionClient,
+  data: ConfirmMissingItemData,
+): Promise<number> {
+  const { count } = await tx.missingItem.updateMany({
+    where: { id: data.id, status: "FALTANTE", confirmedAt: null },
     data: {
       confirmedAt: data.confirmedAt ?? new Date(),
       confirmedById: data.confirmedById,
-      confirmationNote: data.note,
-    },
-    select: {
-      id: true,
-      status: true,
-      confirmedAt: true,
-      confirmedById: true,
-      confirmationNote: true,
+      confirmationNote: data.note ?? null,
     },
   });
+  return count;
 }

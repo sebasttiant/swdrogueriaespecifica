@@ -19,7 +19,23 @@ import {
   confirmMissingItem,
   countOverdueMissingItems,
   listMissingItems,
+  lockMissingItemForUpdate,
+  orderMissingItem,
 } from "./missing-item.repository";
+
+// Cliente de transacción falso: las funciones de lock/CAS solo corren dentro de
+// una transacción interactiva, así que reciben `tx`, nunca el prisma default.
+function txClient() {
+  return {
+    $queryRaw: vi.fn().mockResolvedValue([]),
+    missingItem: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+  };
+}
+
+// SQL emitido por el tagged template de `$queryRaw`.
+function sqlFrom(call: readonly unknown[]): string {
+  return (call[0] as readonly string[]).join("?");
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -49,34 +65,108 @@ describe("listMissingItems · active confirmation filter", () => {
   });
 });
 
-describe("confirmMissingItem", () => {
-  it("stores confirmation metadata without deleting the row", async () => {
-    const confirmedAt = new Date("2026-07-02T20:00:00.000Z");
-    prismaMock.missingItem.update.mockResolvedValue({
-      id: "missing-1",
-      status: "FALTANTE",
-      confirmedAt,
-      confirmedById: "admin-1",
-      confirmationNote: "Gestión OK",
+describe("lockMissingItemForUpdate", () => {
+  it("emits SELECT ... FOR UPDATE on missing_items with the id bound as a parameter", async () => {
+    const tx = txClient();
+    tx.$queryRaw.mockResolvedValue([{ id: "missing-1", status: "FALTANTE" }]);
+
+    const row = await lockMissingItemForUpdate(tx as never, "missing-1");
+
+    const call = tx.$queryRaw.mock.calls[0]!;
+    const sql = sqlFrom(call);
+    // `FOR UPDATE` es la garantía real de serialización. Sin él, dos gerentes
+    // leen `FALTANTE` a la vez y el último pedido pisa al primero.
+    expect(sql).toContain("FOR UPDATE");
+    expect(sql).toContain("FROM missing_items");
+    // El id viaja como parámetro del template, nunca interpolado en el SQL.
+    expect(call.slice(1)).toEqual(["missing-1"]);
+    expect(sql).not.toContain("missing-1");
+    expect(row).toEqual({ id: "missing-1", status: "FALTANTE" });
+  });
+
+  it("returns null when the row does not exist", async () => {
+    const tx = txClient();
+
+    await expect(lockMissingItemForUpdate(tx as never, "ghost")).resolves.toBeNull();
+  });
+});
+
+describe("orderMissingItem", () => {
+  it("only writes when the row is still FALTANTE and unconfirmed, returning the row count", async () => {
+    const tx = txClient();
+    const orderedAt = new Date("2026-07-09T12:00:00.000Z");
+
+    const written = await orderMissingItem(tx as never, "missing-1", {
+      supplierId: "sup-1",
+      orderedById: "admin-1",
+      orderedAt,
     });
 
-    const result = await confirmMissingItem({
+    expect(written).toBe(1);
+    // El `where` es el compare-and-set: un faltante ya PEDIDO o ya confirmado
+    // no coincide, así que la escritura no aplica en vez de pisar el estado.
+    expect(tx.missingItem.updateMany).toHaveBeenCalledWith({
+      where: { id: "missing-1", status: "FALTANTE", confirmedAt: null },
+      data: {
+        status: "PEDIDO",
+        orderedAt,
+        orderedById: "admin-1",
+        supplierId: "sup-1",
+      },
+    });
+  });
+
+  it("reports zero rows written when the compare-and-set misses", async () => {
+    const tx = txClient();
+    tx.missingItem.updateMany.mockResolvedValue({ count: 0 });
+
+    const written = await orderMissingItem(tx as never, "missing-1", {
+      supplierId: "sup-1",
+      orderedById: "admin-1",
+      orderedAt: new Date(),
+    });
+
+    expect(written).toBe(0);
+  });
+});
+
+describe("confirmMissingItem", () => {
+  it("stores confirmation metadata guarded by status FALTANTE + confirmedAt: null, without deleting the row", async () => {
+    const tx = txClient();
+    const confirmedAt = new Date("2026-07-02T20:00:00.000Z");
+
+    const written = await confirmMissingItem(tx as never, {
       id: "missing-1",
       confirmedById: "admin-1",
       confirmedAt,
       note: "Gestión OK",
     });
 
-    expect(result.confirmedAt).toEqual(confirmedAt);
-    expect(prismaMock.missingItem.update).toHaveBeenCalledWith({
-      where: { id: "missing-1" },
+    expect(written).toBe(1);
+    expect(tx.missingItem.updateMany).toHaveBeenCalledWith({
+      // El CAS refuerza la invariante del service: confirmar dos veces, o
+      // confirmar sobre un faltante que un pedido concurrente pasó a PEDIDO,
+      // no coincide y no reescribe la confirmación (evita PEDIDO + confirmedAt).
+      where: { id: "missing-1", status: "FALTANTE", confirmedAt: null },
       data: {
         confirmedAt,
         confirmedById: "admin-1",
         confirmationNote: "Gestión OK",
       },
-      select: expect.objectContaining({ id: true, status: true }),
     });
+  });
+
+  it("normalizes a missing note to null", async () => {
+    const tx = txClient();
+
+    await confirmMissingItem(tx as never, {
+      id: "missing-1",
+      confirmedById: "admin-1",
+      confirmedAt: new Date(),
+    });
+
+    const args = tx.missingItem.updateMany.mock.calls[0]![0];
+    expect(args.data.confirmationNote).toBeNull();
   });
 });
 
