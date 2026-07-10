@@ -10,14 +10,23 @@
 // No descuenta stock ni cambia estados: eso es de fases siguientes.
 // --------------------------------------------------------------------------
 
-import type { Pending, MissingItem, Product } from "@/lib/generated/prisma/client";
+import type {
+  Pending,
+  MissingItem,
+  PendingStatus,
+  Product,
+} from "@/lib/generated/prisma/client";
 import {
+  cancelPending,
   countOpenPendings,
   countOverduePendings,
   countUpcomingPendings,
   createPending,
+  createPendingDelivery,
+  lockPendingForUpdate,
   listPendings,
   listUrgentPendings,
+  updatePendingAfterDelivery,
   type PendingListItem,
 } from "@/server/repositories/pending.repository";
 import { createProduct } from "@/server/repositories/product.repository";
@@ -25,6 +34,12 @@ import { createMissingItem } from "@/server/repositories/missing-item.repository
 import { stockByProduct } from "@/server/repositories/product-batch.repository";
 import { prisma } from "@/lib/db/prisma";
 import type { Paginated } from "@/lib/pagination";
+import {
+  nextPendingStatus,
+  validateCancellation,
+  validateDelivery,
+  type DeliveryRejection,
+} from "@/features/pendientes/delivery-rules";
 
 // Producto manual: no está en el catálogo, se crea al vuelo desde el pendiente.
 export type ManualProductInput = { name: string; unit: string };
@@ -197,5 +212,169 @@ export async function registerPending(
     }
 
     return { pending, missingItem, createdProduct, sellableStock, missingQuantity };
+  });
+}
+
+// --------------------------------------------------------------------------
+// Ciclo de vida de entrega (Slice A): entregas parciales + cancelación.
+//
+// IMPORTANTE — LÍMITE DE DOMINIO: entregar un pendiente NUNCA toca
+// `MissingItem` (eso es exclusivamente stock de estantería) ni descuenta stock
+// (decisión ya tomada, ver cabecera del archivo). Estas funciones solo
+// gestionan el compromiso con el cliente.
+// --------------------------------------------------------------------------
+
+export type DeliverPendingInput = {
+  id: string;
+  quantity: number;
+  deliveredById: string;
+};
+
+export type DeliverPendingResult = {
+  pending: {
+    id: string;
+    status: PendingStatus;
+    deliveredQuantity: number;
+    completedAt: Date | null;
+  } | null;
+  rejection: DeliveryRejection | null;
+};
+
+// Se lanza cuando el compare-and-set no escribe ninguna fila. Con el lock de
+// fila tomado esto es inalcanzable: existe para que una regresión (un llamador
+// que se saltee `lockPendingForUpdate`) aborte la transacción en vez de
+// corromper el estado en silencio.
+class PendingConcurrentModificationError extends Error {
+  constructor(id: string) {
+    super(`Pending ${id} changed concurrently; transaction rolled back`);
+    this.name = "PendingConcurrentModificationError";
+  }
+}
+
+/**
+ * Registra una entrega (parcial o total) sobre un pendiente.
+ *
+ * CONCURRENCIA: `lockPendingForUpdate` toma un lock de fila (SELECT ... FOR
+ * UPDATE) al entrar en la transacción. Dos operadores que entreguen el mismo
+ * pendiente en simultáneo se serializan ahí: el segundo espera, relee el
+ * `deliveredQuantity` ya confirmado por el primero y su entrega se rechaza con
+ * EXCEEDS_REMAINING en vez de sobre-entregar. El compare-and-set del update
+ * final es una guarda extra de invariante.
+ *
+ * Rechazos de negocio (ya entregado, cancelado, cantidad inválida o mayor a lo
+ * que resta) NO lanzan: se devuelven para que la Server Action los traduzca a
+ * un mensaje. Solo se lanza si el pendiente no existe o si el CAS no escribe.
+ */
+export async function deliverPending(
+  input: DeliverPendingInput,
+  now: Date = new Date(),
+): Promise<DeliverPendingResult> {
+  return prisma.$transaction(async (tx) => {
+    const current = await lockPendingForUpdate(tx, input.id);
+    if (!current) {
+      throw new Error("Pending not found");
+    }
+
+    const rejection = validateDelivery({
+      status: current.status,
+      quantity: current.quantity,
+      deliveredQuantity: current.deliveredQuantity,
+      deliverQuantity: input.quantity,
+    });
+    if (rejection) {
+      return { pending: null, rejection };
+    }
+
+    await createPendingDelivery(tx, {
+      pendingId: current.id,
+      quantity: input.quantity,
+      deliveredById: input.deliveredById,
+    });
+
+    const deliveredQuantity = current.deliveredQuantity + input.quantity;
+    const status = nextPendingStatus(current.quantity, deliveredQuantity);
+    // `completedAt` solo se completa en la transición a ENTREGADO: un
+    // pendiente ya ENTREGADO fue rechazado arriba, así que llegar acá con
+    // status ENTREGADO significa que la transición ocurre recién ahora.
+    const completedAt = status === "ENTREGADO" ? now : null;
+
+    const written = await updatePendingAfterDelivery(tx, {
+      id: current.id,
+      expectedStatus: current.status,
+      expectedDeliveredQuantity: current.deliveredQuantity,
+      deliveredQuantity,
+      status,
+      completedAt,
+    });
+    // Rollback: la fila de `PendingDelivery` creada arriba se revierte con la
+    // transacción, así que el historial de entregas nunca queda inconsistente.
+    if (written !== 1) {
+      throw new PendingConcurrentModificationError(current.id);
+    }
+
+    return {
+      pending: { id: current.id, status, deliveredQuantity, completedAt },
+      rejection: null,
+    };
+  });
+}
+
+export type CancelPendingInput = {
+  id: string;
+  cancelledById: string;
+  reason?: string;
+};
+
+export type CancelPendingResult = {
+  pending: {
+    id: string;
+    status: PendingStatus;
+    cancelledAt: Date | null;
+  } | null;
+  rejection: "ALREADY_DELIVERED" | "ALREADY_CANCELLED" | null;
+};
+
+/**
+ * Cancela el compromiso de un pendiente. Un pendiente ya ENTREGADO no puede
+ * cancelarse retroactivamente (`ALREADY_DELIVERED`); uno ya CANCELADO no se
+ * vuelve a cancelar (`ALREADY_CANCELLED`). Ambos casos son rechazos de
+ * negocio, no errores: solo se lanza si el pendiente no existe o si el CAS no
+ * escribe.
+ *
+ * CONCURRENCIA: toma el MISMO lock de fila que `deliverPending`, así que ambos
+ * flujos se serializan sobre el pendiente. Si una entrega concurrente lo
+ * completó, esta transacción espera, relee ENTREGADO y devuelve
+ * `ALREADY_DELIVERED` en vez de pisar la entrega.
+ */
+export async function cancelPendingCommitment(
+  input: CancelPendingInput,
+  now: Date = new Date(),
+): Promise<CancelPendingResult> {
+  return prisma.$transaction(async (tx) => {
+    const current = await lockPendingForUpdate(tx, input.id);
+    if (!current) {
+      throw new Error("Pending not found");
+    }
+
+    const rejection = validateCancellation(current.status);
+    if (rejection) {
+      return { pending: null, rejection };
+    }
+
+    const written = await cancelPending(tx, {
+      id: current.id,
+      expectedStatus: current.status,
+      cancelledById: input.cancelledById,
+      cancelledAt: now,
+      cancelReason: input.reason,
+    });
+    if (written !== 1) {
+      throw new PendingConcurrentModificationError(current.id);
+    }
+
+    return {
+      pending: { id: current.id, status: "CANCELADO", cancelledAt: now },
+      rejection: null,
+    };
   });
 }
