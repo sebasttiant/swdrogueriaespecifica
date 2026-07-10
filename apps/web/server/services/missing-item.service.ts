@@ -5,16 +5,24 @@
 // pendiente" (ver computeMissingQuantity).
 // --------------------------------------------------------------------------
 
+import { prisma } from "@/lib/db/prisma";
 import type { Paginated } from "@/lib/pagination";
 import {
   confirmMissingItem,
   countOpenMissingItems,
   countOverdueMissingItems,
-  findMissingItemById,
   listMissingItems,
+  lockMissingItemForUpdate,
+  orderMissingItem as persistOrderedMissingItem,
   type MissingItemListItem,
 } from "@/server/repositories/missing-item.repository";
 import type { MissingItemStatus } from "@/lib/generated/prisma/client";
+import { canTransitionToOrdered } from "@/features/faltantes/order-rules";
+import {
+  findSupplierById,
+  upsertProductSupplierLink,
+  upsertSupplierByName,
+} from "@/server/repositories/supplier.repository";
 
 export type ConfirmMissingItemInput = {
   id: string;
@@ -34,7 +42,37 @@ export type ConfirmMissingItemResult = {
   changed: boolean;
 };
 
-const CONFIRMABLE_STATUSES: MissingItemStatus[] = ["FALTANTE", "PEDIDO"];
+// Rechazos de negocio esperados del pedido: se DEVUELVEN (no se lanzan), igual
+// que `deliverPending`. La UI los mapea a un mensaje; nunca son un error 500.
+export type OrderRejection =
+  | "ALREADY_ORDERED"
+  | "ALREADY_CONFIRMED"
+  | "NOT_ORDERABLE"
+  | "SUPPLIER_NOT_FOUND";
+
+export type OrderMissingItemInput = {
+  missingItemId: string;
+  userId: string;
+  supplier:
+    | { kind: "existing"; supplierId: string }
+    | { kind: "new"; name: string; phone?: string; address?: string; email?: string };
+};
+
+export type OrderMissingItemResult = {
+  item: {
+    id: string;
+    status: MissingItemStatus;
+    orderedAt: Date | null;
+    supplierId: string | null;
+  } | null;
+  rejection: OrderRejection | null;
+};
+
+// Invariante: la confirmación ("OK gerencia") SOLO aplica a un faltante que
+// sigue FALTANTE y sin confirmar. Una vez que el faltante pasó a PEDIDO, la
+// confirmación NO debe setear `confirmedAt` (produciría el estado imposible
+// PEDIDO + confirmedAt). El repositorio refuerza este mismo filtro en su CAS.
+const CONFIRMABLE_STATUSES: MissingItemStatus[] = ["FALTANTE"];
 
 export async function getMissingItems(params: {
   cursor?: string | null;
@@ -83,19 +121,138 @@ export async function getMissingItemsSummary(
   return { open, overdue };
 }
 
+// Se lanza cuando el compare-and-set no escribe ninguna fila. Con el lock de
+// fila tomado es inalcanzable: existe para que un llamador futuro que se saltee
+// `lockMissingItemForUpdate` aborte la transacción en vez de pisar el estado.
+class MissingItemConcurrentModificationError extends Error {
+  constructor(id: string) {
+    super(`Missing item ${id} changed concurrently; transaction rolled back`);
+    this.name = "MissingItemConcurrentModificationError";
+  }
+}
+
+/**
+ * Confirma un faltante ("OK gerencia"). Corre bajo el MISMO lock de fila que
+ * `orderMissingItem`: sin él, una confirmación cuya lectura quedó obsoleta
+ * escribiría `confirmedAt` sobre un faltante que un pedido concurrente acaba de
+ * pasar a PEDIDO, produciendo el estado imposible PEDIDO + confirmedAt.
+ *
+ * Invariante: solo se confirma un faltante que sigue FALTANTE y sin confirmar.
+ * Un PEDIDO (o cualquier estado cerrado) vuelve con `changed: false` y sin
+ * escrituras, incluso si `confirmedAt` aún es null — justamente la carrera en
+ * la que el pedido ganó el lock y dejó la fila en PEDIDO + confirmedAt: null.
+ * El CAS del repositorio vuelve a reforzar `status: "FALTANTE"` por si un
+ * llamador futuro se saltea el lock.
+ *
+ * Idempotente: un faltante ya confirmado (o en un estado no confirmable) vuelve
+ * con `changed: false` y sin escrituras.
+ */
 export async function confirmMissingItemOk(
   input: ConfirmMissingItemInput,
 ): Promise<ConfirmMissingItemResult> {
-  const current = await findMissingItemById(input.id);
-  if (!current) throw new Error("Missing item not found");
+  return prisma.$transaction(async (tx): Promise<ConfirmMissingItemResult> => {
+    const current = await lockMissingItemForUpdate(tx, input.id);
+    if (!current) throw new Error("Missing item not found");
 
-  if (
-    current.confirmedAt !== null ||
-    !CONFIRMABLE_STATUSES.includes(current.status)
-  ) {
-    return { item: current, changed: false };
-  }
+    if (
+      current.confirmedAt !== null ||
+      !CONFIRMABLE_STATUSES.includes(current.status)
+    ) {
+      return { item: current, changed: false };
+    }
 
-  const item = await confirmMissingItem(input);
-  return { item, changed: true };
+    const confirmedAt = input.confirmedAt ?? new Date();
+    const written = await confirmMissingItem(tx, { ...input, confirmedAt });
+    if (written !== 1) {
+      throw new MissingItemConcurrentModificationError(current.id);
+    }
+
+    return {
+      item: {
+        id: current.id,
+        status: current.status,
+        confirmedAt,
+        confirmedById: input.confirmedById,
+        confirmationNote: input.note ?? null,
+      },
+      changed: true,
+    };
+  });
+}
+
+// Pide un faltante a un proveedor. TODO el caso de uso (lock + resolución del
+// proveedor + enlace producto↔proveedor + escritura del pedido) corre en UNA
+// sola transacción interactiva, igual que `deliverPending`. `now` inyectable
+// para tests deterministas. Solo lanza si el faltante no existe o si el CAS no
+// escribe; los rechazos de negocio se devuelven.
+export async function orderMissingItem(
+  input: OrderMissingItemInput,
+  now: Date = new Date(),
+): Promise<OrderMissingItemResult> {
+  return prisma.$transaction(async (tx): Promise<OrderMissingItemResult> => {
+    // El lock de fila serializa dos gerentes pidiendo el mismo faltante: el
+    // segundo espera, relee PEDIDO y se lleva ALREADY_ORDERED en vez de pisar
+    // el proveedor del primero.
+    const current = await lockMissingItemForUpdate(tx, input.missingItemId);
+    if (!current) throw new Error("Missing item not found");
+
+    // Precedencia de rechazo, determinística cuando aplica más de una regla:
+    //   1) ALREADY_ORDERED   — status ya es PEDIDO (el pedido ya se registró).
+    //   2) ALREADY_CONFIRMED — confirmedAt tiene valor: es la señal de CIERRE
+    //      ("OK gerencia"), independiente del status. Un faltante confirmado
+    //      queda fuera del scope "active" de `listMissingItems` pero puede
+    //      llegar acá por un formulario obsoleto o reenviado; sin este check
+    //      terminaría en el estado imposible PEDIDO + confirmedAt seteado.
+    //   3) NOT_ORDERABLE     — cualquier otro estado no ordenable (RECIBIDO,
+    //      CANCELADO).
+    if (current.status === "PEDIDO") {
+      return { item: null, rejection: "ALREADY_ORDERED" };
+    }
+    if (current.confirmedAt !== null) {
+      return { item: null, rejection: "ALREADY_CONFIRMED" };
+    }
+    if (!canTransitionToOrdered(current.status)) {
+      return { item: null, rejection: "NOT_ORDERABLE" };
+    }
+
+    // Resolvemos el proveedor: existente (lookup) o nuevo (upsert por nombre).
+    let supplierId: string;
+    if (input.supplier.kind === "existing") {
+      const supplier = await findSupplierById(input.supplier.supplierId, tx);
+      if (!supplier) {
+        return { item: null, rejection: "SUPPLIER_NOT_FOUND" };
+      }
+      supplierId = supplier.id;
+    } else {
+      const created = await upsertSupplierByName(tx, {
+        name: input.supplier.name.trim(),
+        phone: input.supplier.phone ?? null,
+        address: input.supplier.address ?? null,
+        email: input.supplier.email ?? null,
+      });
+      supplierId = created.id;
+    }
+
+    // Enlazamos producto↔proveedor (idempotente por la unique compuesta).
+    await upsertProductSupplierLink(tx, {
+      productId: current.productId,
+      supplierId,
+    });
+
+    const written = await persistOrderedMissingItem(tx, input.missingItemId, {
+      supplierId,
+      orderedById: input.userId,
+      orderedAt: now,
+    });
+    // Rollback: el proveedor creado al vuelo y el enlace producto↔proveedor se
+    // revierten con la transacción, así que no queda un proveedor huérfano.
+    if (written !== 1) {
+      throw new MissingItemConcurrentModificationError(current.id);
+    }
+
+    return {
+      item: { id: current.id, status: "PEDIDO", orderedAt: now, supplierId },
+      rejection: null,
+    };
+  });
 }
