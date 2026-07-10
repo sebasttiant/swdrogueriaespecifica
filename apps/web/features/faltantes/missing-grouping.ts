@@ -1,6 +1,6 @@
 // --------------------------------------------------------------------------
-// Agrupación pura de faltantes por urgencia operativa, dentro de la página
-// actual (el listado es cursor-paginado; esto NO agrupa el total global).
+// Agrupación pura de faltantes por urgencia, dentro de la página actual (el
+// listado es cursor-paginado; esto NO agrupa el total global).
 // Función pura, `now` inyectable, sin dependencias de Prisma más allá de los
 // tipos ya expuestos por el repositorio.
 // --------------------------------------------------------------------------
@@ -8,24 +8,19 @@
 import { computeDeadlineStatus } from "../pendientes/deadline-status";
 import type { MissingItemListItem } from "@/server/repositories/missing-item.repository";
 
-export type MissingGroupKey = "VENCIDO" | "VENCE_PRONTO" | "EN_CURSO";
+const URGENCY_ORDER = {
+  VENCIDO: 0,
+  VENCE_PRONTO: 1,
+  EN_CURSO: 2,
+} as const;
+
+export type MissingGroupKey = keyof typeof URGENCY_ORDER;
 
 export type MissingGroup = {
   key: MissingGroupKey;
   items: MissingItemListItem[];
 };
 
-// Orden fijo de prioridad operativa: lo vencido primero, lo que ya no
-// requiere vigilancia (EN_CURSO) al final.
-const GROUP_ORDER: readonly MissingGroupKey[] = [
-  "VENCIDO",
-  "VENCE_PRONTO",
-  "EN_CURSO",
-];
-
-// Extractor de la clave de agrupación. Este es el ÚNICO punto que una futura
-// agrupación por proveedor/laboratorio necesitaría reemplazar: el resto del
-// pipeline (`groupMissingItems`) no depende de cómo se deriva la clave.
 function missingGroupKey(item: MissingItemListItem, now: Date): MissingGroupKey {
   if (!item.origin) return "EN_CURSO";
 
@@ -39,18 +34,19 @@ export function groupMissingItems(
   items: readonly MissingItemListItem[],
   now: Date = new Date(),
 ): MissingGroup[] {
-  const buckets: Record<MissingGroupKey, MissingItemListItem[]> = {
-    VENCIDO: [],
-    VENCE_PRONTO: [],
-    EN_CURSO: [],
-  };
+  const buckets = new Map<MissingGroupKey, MissingItemListItem[]>();
 
   for (const item of items) {
-    buckets[missingGroupKey(item, now)].push(item);
+    const key = missingGroupKey(item, now);
+    const bucket = buckets.get(key);
+    if (bucket) {
+      bucket.push(item);
+    } else {
+      buckets.set(key, [item]);
+    }
   }
 
-  return GROUP_ORDER.filter((key) => buckets[key].length > 0).map((key) => ({
-    key,
-    items: buckets[key],
-  }));
+  return Array.from(buckets.entries())
+    .map(([key, groupItems]) => ({ key, items: groupItems }))
+    .sort((left, right) => URGENCY_ORDER[left.key] - URGENCY_ORDER[right.key]);
 }
