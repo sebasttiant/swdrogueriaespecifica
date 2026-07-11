@@ -110,20 +110,36 @@ beforeEach(() => {
 });
 
 describe("MissingList render contract", () => {
-  it("renders page overview tiles with loaded, open, and confirmed counts", () => {
-    const confirmedAt = new Date("2026-06-06T12:00:00.000Z");
+  // `/faltantes` es una cola operativa: lo primero que el gerente ve al abrirla
+  // desde el celular tiene que ser un faltante accionable, no un tablero. Los
+  // indicadores de página (tiles grandes con su título y su párrafo explicativo)
+  // empujaban la primera tarjeta fuera de la pantalla.
+  it("renders no page-overview dashboard, leading with the actionable item instead", () => {
     const html = renderMissingList([
       item({ id: "open-missing", product: product("Open missing", "OPEN-1") }),
-      item({ id: "open-ordered", status: "PEDIDO", product: product("Open ordered", "OPEN-2") }),
-      item({ id: "confirmed", status: "RECIBIDO", confirmedAt, product: product("Confirmed", "CONF-1") }),
-      item({ id: "cancelled", status: "CANCELADO", product: product("Cancelled", "CANC-1") }),
     ]);
 
-    expect(html).toContain("Vista de la página");
-    expect(html).toContain("Seguimiento operativo");
-    expect(html).toMatch(/En esta página[\s\S]*<p[^>]*>4<\/p>[\s\S]*Registros cargados ahora/);
-    expect(html).toMatch(/Abiertos[\s\S]*<p[^>]*>2<\/p>[\s\S]*Faltante o pedido sin confirmar/);
-    expect(html).toMatch(/Confirmados[\s\S]*<p[^>]*>1<\/p>[\s\S]*Con OK gerencia/);
+    expect(html).not.toContain("Vista de la página");
+    expect(html).not.toContain("Seguimiento operativo");
+    expect(html).not.toContain("Registros cargados ahora");
+    expect(html).not.toContain("Faltante o pedido sin confirmar");
+    expect(html).toContain("Open missing");
+  });
+
+  // El detalle secundario (origen, promesa, confirmación) sigue disponible, pero
+  // colapsado: en la cola no se lee contexto, se actúa.
+  it("keeps the secondary detail collapsed behind a disclosure", () => {
+    const html = renderMissingList([
+      item({
+        id: "open-missing",
+        product: product("Open missing", "OPEN-1"),
+        originId: "pending-id",
+        origin: origin({}),
+      }),
+    ]);
+
+    expect(html).toContain("<details");
+    expect(html).toContain("Ver detalle");
   });
 
   it("renders confirmation metadata in the card and table markup", () => {

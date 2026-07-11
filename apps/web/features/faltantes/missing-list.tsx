@@ -18,7 +18,6 @@ import { MissingConfirmForm } from "./missing-confirm-form";
 import {
   getConfirmationMetadata,
   getOrderMetadata,
-  getPageOverview,
 } from "./missing-list-helpers";
 import { MissingOrderForm } from "./missing-order-form";
 
@@ -65,16 +64,6 @@ const DEADLINE: Record<
   A_TIEMPO: { label: "A tiempo", tone: "success" },
   FINALIZADO: { label: "Finalizado", tone: "neutral" },
 };
-
-function overviewTile(label: string, value: number, description: string) {
-  return (
-    <div className="rounded-xl border border-border bg-muted/30 p-4">
-      <p className="text-sm font-medium text-muted-foreground">{label}</p>
-      <p className="mt-1 text-2xl font-bold text-text">{value}</p>
-      <p className="mt-1 text-xs text-muted-foreground">{description}</p>
-    </div>
-  );
-}
 
 // Etiqueta de vencimiento del pendiente que originó el faltante (null = manual).
 function deadlineBadge(origin: MissingItemListItem["origin"], now: Date) {
@@ -188,41 +177,57 @@ function missingCard(
 ) {
   const status = STATUS[missing.status];
   const origin = missing.origin;
+
+  // Jerarquía operativa: producto y cantidad arriba, estado como chip, acción
+  // siempre visible. Todo lo demás (origen, promesa, confirmación, pedido) es
+  // contexto secundario y va colapsado: en la cola no se lee, se actúa.
   return (
-    <Card key={missing.id} className="space-y-3">
+    <Card key={missing.id} className="space-y-3 p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-base font-semibold text-text sm:text-lg">
+          <p className="truncate text-base font-semibold text-text">
             {missing.product.name}
           </p>
-          <p className="text-sm font-medium text-muted-foreground">
-            Código {missing.product.code}
+          <p className="text-xs text-muted-foreground">
+            {missing.product.code}
             {missing.originId ? " · auto" : ""}
           </p>
         </div>
-        <div className="flex shrink-0 flex-col items-end gap-1.5">
-          {deadlineBadge(origin, now)}
-          <Badge tone={status.tone}>{status.label}</Badge>
-        </div>
+        <p className="shrink-0 text-lg font-bold tabular-nums text-text">
+          {missing.quantity}
+          <span className="ml-1 text-xs font-normal text-muted-foreground">
+            {missing.product.unit}
+          </span>
+        </p>
       </div>
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div className="space-y-1 text-sm text-muted-foreground">
-          <p>
-            Cantidad: {missing.quantity} {missing.product.unit}
-          </p>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {deadlineBadge(origin, now)}
+        <Badge tone={status.tone}>{status.label}</Badge>
+      </div>
+
+      {missingActions(missing, actions)}
+
+      <details className="group">
+        <summary className="cursor-pointer list-none text-xs font-medium text-muted-foreground hover:text-text">
+          Ver detalle
+        </summary>
+        <div className="mt-2 space-y-1 text-xs text-muted-foreground">
           <p>Confirmación: {confirmationMetadata(missing)}</p>
           {orderDetails(missing)}
           {origin ? (
             <>
-              <p>Origen: pendiente{origin.customerName ? ` · ${origin.customerName}` : ""}</p>
-              <p>Promesa: {formatBogotaDate(origin.promisedAt, { style: "datetime" })}</p>
+              <p>
+                Origen: pendiente
+                {origin.customerName ? ` · ${origin.customerName}` : ""}
+              </p>
+              <p>
+                Promesa: {formatBogotaDate(origin.promisedAt, { style: "datetime" })}
+              </p>
             </>
           ) : null}
         </div>
-
-        {missingActions(missing, actions, "sm:self-end")}
-      </div>
+      </details>
     </Card>
   );
 }
@@ -237,26 +242,26 @@ function missingRow(
   const hasActions = actions.canConfirm || actions.canOrder;
   return (
     <tr key={missing.id} className="border-b border-border last:border-0">
-      <td className="px-4 py-3 font-medium text-text">
+      <td className="px-3 py-2 font-medium text-text">
         {missing.product.name}
         {missing.originId ? (
           <span className="ml-2 text-xs font-normal text-muted-foreground">auto</span>
         ) : null}
       </td>
-      <td className="px-4 py-3 text-muted-foreground">{missing.product.code}</td>
-      <td className="px-4 py-3 text-muted-foreground">
+      <td className="px-3 py-2 text-muted-foreground">{missing.product.code}</td>
+      <td className="px-3 py-2 text-muted-foreground">
         {missing.quantity} {missing.product.unit}
       </td>
-      <td className="px-4 py-3 text-sm">{confirmationMetadata(missing)}</td>
-      <td className="px-4 py-3">
+      <td className="px-3 py-2 text-sm">{confirmationMetadata(missing)}</td>
+      <td className="px-3 py-2">
         <div className="flex items-center gap-1.5">
           {deadlineBadge(missing.origin, now)}
           <Badge tone={status.tone}>{status.label}</Badge>
         </div>
       </td>
-      <td className="px-4 py-3 text-sm">{orderCell(missing)}</td>
+      <td className="px-3 py-2 text-sm">{orderCell(missing)}</td>
       {hasActions ? (
-        <td className="px-4 py-3">{missingActions(missing, actions)}</td>
+        <td className="px-3 py-2">{missingActions(missing, actions)}</td>
       ) : null}
     </tr>
   );
@@ -295,31 +300,9 @@ export function MissingList({
   }
 
   const groups = groupMissingItems(items, now);
-  const overview = getPageOverview(items);
 
   return (
-    <div className="space-y-6">
-      <section className="space-y-3" aria-labelledby="faltantes-page-overview-title">
-        <div className="space-y-1">
-          <p className="text-sm font-semibold uppercase tracking-wide text-primary">
-            Vista de la página
-          </p>
-          <h2 id="faltantes-page-overview-title" className="text-lg font-bold text-text">
-            Seguimiento operativo
-          </h2>
-          <p className="text-sm text-muted-foreground">
-            Estos indicadores usan solo los faltantes cargados en esta página. El
-            resumen superior refleja el total global.
-          </p>
-        </div>
-
-        <div className="grid gap-3 sm:grid-cols-3">
-          {overviewTile("En esta página", overview.total, "Registros cargados ahora")}
-          {overviewTile("Abiertos", overview.open, "Faltante o pedido sin confirmar")}
-          {overviewTile("Confirmados", overview.confirmed, "Con OK gerencia")}
-        </div>
-      </section>
-
+    <div className="space-y-4">
       {groups.map((group) => {
         const label = GROUP_LABEL[group.key];
         const headingId = `faltantes-grupo-${group.key.toLowerCase()}`;
@@ -343,14 +326,14 @@ export function MissingList({
               <table className="w-full min-w-[56rem] text-left text-sm">
                 <thead className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
                   <tr>
-                    <th className="px-4 py-3 font-medium">Producto</th>
-                    <th className="px-4 py-3 font-medium">Código</th>
-                    <th className="px-4 py-3 font-medium">Cantidad</th>
-                    <th className="px-4 py-3 font-medium">Confirmación</th>
-                    <th className="px-4 py-3 font-medium">Estado</th>
-                    <th className="px-4 py-3 font-medium">Pedido</th>
+                    <th className="px-3 py-2 font-medium">Producto</th>
+                    <th className="px-3 py-2 font-medium">Código</th>
+                    <th className="px-3 py-2 font-medium">Cantidad</th>
+                    <th className="px-3 py-2 font-medium">Confirmación</th>
+                    <th className="px-3 py-2 font-medium">Estado</th>
+                    <th className="px-3 py-2 font-medium">Pedido</th>
                     {canConfirm || canOrder ? (
-                      <th className="px-4 py-3 text-right font-medium">Acción</th>
+                      <th className="px-3 py-2 text-right font-medium">Acción</th>
                     ) : null}
                   </tr>
                 </thead>

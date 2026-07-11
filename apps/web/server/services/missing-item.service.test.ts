@@ -17,7 +17,9 @@ vi.mock("@/lib/db/prisma", () => ({ prisma: prismaMock }));
 const { repo } = vi.hoisted(() => ({
   repo: {
     confirmMissingItem: vi.fn(),
+    countConfirmedMissingItems: vi.fn(),
     countOpenMissingItems: vi.fn(),
+    countOrderedMissingItems: vi.fn(),
     countOverdueMissingItems: vi.fn(),
     // `lockMissingItemForUpdate` (SELECT ... FOR UPDATE) reemplaza la lectura
     // plana: es lo que serializa pedidos/confirmaciones sobre el mismo
@@ -288,19 +290,36 @@ describe("getMissingItems", () => {
 describe("getMissingItemsSummary", () => {
   const now = new Date("2026-07-09T10:00:00.000Z");
 
-  it("returns { open, overdue } built from the two repository counts", async () => {
-    repo.countOpenMissingItems.mockResolvedValue(7);
-    repo.countOverdueMissingItems.mockResolvedValue(2);
+  // Los cuatro contadores alimentan la franja de chips de la cola operativa.
+  // Son métricas GLOBALES: mezclarlas con las de la página paginada daría
+  // números que no comparan entre sí.
+  function mockCounts(
+    counts: Partial<{
+      open: number;
+      overdue: number;
+      ordered: number;
+      confirmed: number;
+    }> = {},
+  ) {
+    repo.countOpenMissingItems.mockResolvedValue(counts.open ?? 0);
+    repo.countOverdueMissingItems.mockResolvedValue(counts.overdue ?? 0);
+    repo.countOrderedMissingItems.mockResolvedValue(counts.ordered ?? 0);
+    repo.countConfirmedMissingItems.mockResolvedValue(counts.confirmed ?? 0);
+  }
+
+  it("returns { open, overdue, ordered, confirmed } built from the repository counts", async () => {
+    mockCounts({ open: 7, overdue: 2, ordered: 3, confirmed: 4 });
 
     await expect(getMissingItemsSummary(now)).resolves.toEqual({
       open: 7,
       overdue: 2,
+      ordered: 3,
+      confirmed: 4,
     });
   });
 
   it("propagates the injected `now` verbatim to countOverdueMissingItems", async () => {
-    repo.countOpenMissingItems.mockResolvedValue(0);
-    repo.countOverdueMissingItems.mockResolvedValue(0);
+    mockCounts();
 
     await getMissingItemsSummary(now);
 
@@ -310,53 +329,65 @@ describe("getMissingItemsSummary", () => {
     expect(repo.countOverdueMissingItems).toHaveBeenCalledTimes(1);
   });
 
-  it("calls countOpenMissingItems with no arguments (no now-dependency)", async () => {
-    repo.countOpenMissingItems.mockResolvedValue(0);
-    repo.countOverdueMissingItems.mockResolvedValue(0);
+  it("calls the now-independent counts with no arguments", async () => {
+    mockCounts();
 
     await getMissingItemsSummary(now);
 
     expect(repo.countOpenMissingItems).toHaveBeenCalledWith();
     expect(repo.countOpenMissingItems).toHaveBeenCalledTimes(1);
+    expect(repo.countOrderedMissingItems).toHaveBeenCalledWith();
+    expect(repo.countConfirmedMissingItems).toHaveBeenCalledWith();
   });
 
-  it("runs both counts concurrently, matching Promise.all semantics", async () => {
+  it("runs every count concurrently, matching Promise.all semantics", async () => {
     const openDeferred = createDeferred<number>();
     const overdueDeferred = createDeferred<number>();
     repo.countOpenMissingItems.mockReturnValue(openDeferred.promise);
     repo.countOverdueMissingItems.mockReturnValue(overdueDeferred.promise);
+    repo.countOrderedMissingItems.mockResolvedValue(0);
+    repo.countConfirmedMissingItems.mockResolvedValue(0);
 
     const resultPromise = getMissingItemsSummary(now);
 
-    // Both repository calls must already have happened before either
-    // promise resolves — a sequential `await a(); await b();` would only
-    // have invoked the first one at this point.
+    // Every repository call must already have happened before either promise
+    // resolves — a sequential `await a(); await b();` would only have invoked
+    // the first one at this point.
     expect(repo.countOpenMissingItems).toHaveBeenCalledTimes(1);
     expect(repo.countOverdueMissingItems).toHaveBeenCalledTimes(1);
+    expect(repo.countOrderedMissingItems).toHaveBeenCalledTimes(1);
+    expect(repo.countConfirmedMissingItems).toHaveBeenCalledTimes(1);
 
     openDeferred.resolve(4);
     overdueDeferred.resolve(1);
 
-    await expect(resultPromise).resolves.toEqual({ open: 4, overdue: 1 });
+    await expect(resultPromise).resolves.toEqual({
+      open: 4,
+      overdue: 1,
+      ordered: 0,
+      confirmed: 0,
+    });
   });
 
   it("returns zeros without throwing when there are no missing items", async () => {
-    repo.countOpenMissingItems.mockResolvedValue(0);
-    repo.countOverdueMissingItems.mockResolvedValue(0);
+    mockCounts();
 
     await expect(getMissingItemsSummary(now)).resolves.toEqual({
       open: 0,
       overdue: 0,
+      ordered: 0,
+      confirmed: 0,
     });
   });
 
   it("returns overdue === open faithfully when every open item is overdue", async () => {
-    repo.countOpenMissingItems.mockResolvedValue(5);
-    repo.countOverdueMissingItems.mockResolvedValue(5);
+    mockCounts({ open: 5, overdue: 5 });
 
     await expect(getMissingItemsSummary(now)).resolves.toEqual({
       open: 5,
       overdue: 5,
+      ordered: 0,
+      confirmed: 0,
     });
   });
 });

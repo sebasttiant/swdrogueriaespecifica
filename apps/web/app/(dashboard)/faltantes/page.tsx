@@ -54,12 +54,12 @@ export default async function FaltantesPage({
     hasSuppliers: suppliers.length > 0,
   });
 
+  // Orden deliberado y compacto: título → chips → cola. Todo lo que se
+  // interponga entre abrir la página y tocar una acción es peso muerto en el
+  // celular del gerente. El análisis vive en `/reportes`.
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Faltantes"
-        description="Lo que hay que conseguir. Se generan automáticamente desde un pendiente sin stock suficiente."
-      />
+    <div className="space-y-4">
+      <PageHeader title="Faltantes" description="Lo que hay que conseguir." />
 
       <MissingSummary summary={summary} />
 

@@ -1,52 +1,59 @@
-import { Badge } from "@/app/_components/ui/badge";
-import { Card } from "@/app/_components/ui/card";
+import { cn } from "@/lib/utils/cn";
 import type { MissingItemsSummary } from "@/server/services/missing-item.service";
 
 type MissingSummaryProps = {
   summary: MissingItemsSummary;
 };
 
-// Resumen global de faltantes (server component presentacional, sin fetch
-// propio: recibe las métricas ya calculadas). Mobile-first: tarjetas
-// apiladas, sm:grid-cols-2. Sigue el lenguaje visual de `admin-overview.tsx`
-// (tiles bordeados rounded-xl, bg-muted/30, texto 3xl bold, labels muted).
+// Franja compacta de indicadores globales (server component presentacional, sin
+// fetch propio).
+//
+// Antes esto era una tarjeta con tiles de texto 3xl que se comía la mitad de la
+// pantalla del celular antes del primer faltante accionable. `/faltantes` es una
+// cola operativa, no un tablero: los números orientan, no son el contenido. El
+// análisis vive en `/reportes`.
+//
+// Scrollea horizontal en pantallas angostas en vez de envolver y crecer en alto:
+// el alto es justamente lo que hay que proteger.
 export function MissingSummary({ summary }: MissingSummaryProps) {
-  const hasOverdue = summary.overdue > 0;
+  // `alerts` marca el único chip que exige reacción. Un cero nunca es alarma:
+  // pintar "Vencidos: 0" de rojo entrena al operador a ignorar el color.
+  const chips = [
+    { label: "Abiertos", value: summary.open, alerts: false },
+    { label: "Vencidos", value: summary.overdue, alerts: summary.overdue > 0 },
+    { label: "Pedidos", value: summary.ordered, alerts: false },
+    { label: "OK gerencia", value: summary.confirmed, alerts: false },
+  ];
 
   return (
-    <section className="space-y-4" aria-labelledby="faltantes-summary-title">
-      <Card className="space-y-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-wide text-primary">
-              Resumen global
-            </p>
-            <h2 id="faltantes-summary-title" className="mt-1 text-xl font-bold text-text">
-              Faltantes
-            </h2>
-          </div>
-          <Badge tone={hasOverdue ? "danger" : "success"}>
-            {hasOverdue ? "Requiere atención" : "Al día"}
-          </Badge>
-        </div>
+    <section aria-labelledby="faltantes-summary-title">
+      <h2 id="faltantes-summary-title" className="sr-only">
+        Resumen global de faltantes
+      </h2>
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="rounded-xl border border-border bg-muted/30 p-4">
-            <p className="text-sm text-muted-foreground">Faltantes abiertos</p>
-            <p className="mt-1 text-3xl font-bold text-text">{summary.open}</p>
-          </div>
-          <div className="rounded-xl border border-border bg-muted/30 p-4">
-            <p className="text-sm text-muted-foreground">
-              Vencidos <span className="font-normal">(subconjunto de los abiertos)</span>
-            </p>
-            <p
-              className={`mt-1 text-3xl font-bold ${hasOverdue ? "text-danger" : "text-text"}`}
+      <ul className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+        {chips.map((chip) => (
+          <li
+            key={chip.label}
+            className={cn(
+              "flex shrink-0 items-baseline gap-1.5 rounded-full border px-3 py-1.5 text-sm",
+              chip.alerts
+                ? "border-danger/30 bg-danger/10 text-danger"
+                : "border-border bg-muted/30 text-muted-foreground",
+            )}
+          >
+            <span
+              className={cn(
+                "font-bold tabular-nums",
+                chip.alerts ? "text-danger" : "text-text",
+              )}
             >
-              {summary.overdue}
-            </p>
-          </div>
-        </div>
-      </Card>
+              {chip.value}
+            </span>
+            <span>{chip.label}</span>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

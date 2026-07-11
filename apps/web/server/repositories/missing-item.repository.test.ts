@@ -17,6 +17,8 @@ vi.mock("@/lib/db/prisma", () => ({ prisma: prismaMock }));
 import { encodeCursor } from "@/lib/pagination";
 import {
   confirmMissingItem,
+  countConfirmedMissingItems,
+  countOrderedMissingItems,
   countOverdueMissingItems,
   listMissingItems,
   lockMissingItemForUpdate,
@@ -316,5 +318,32 @@ describe("countOverdueMissingItems", () => {
     expect(where.status.in).toEqual(["FALTANTE", "PEDIDO"]);
     expect(where.status.in).not.toContain("RECIBIDO");
     expect(where.status.in).not.toContain("CANCELADO");
+  });
+});
+
+// Los chips de la cola operativa cuentan el estado GLOBAL, no el de la página
+// paginada: mezclar ambas escalas en una misma franja daría números que no
+// comparan entre sí.
+describe("countOrderedMissingItems", () => {
+  it("cuenta los faltantes en estado PEDIDO", async () => {
+    prismaMock.missingItem.count.mockResolvedValue(3);
+
+    await expect(countOrderedMissingItems()).resolves.toBe(3);
+    expect(prismaMock.missingItem.count).toHaveBeenCalledWith({
+      where: { status: "PEDIDO" },
+    });
+  });
+});
+
+describe("countConfirmedMissingItems", () => {
+  // "OK gerencia" es la confirmación, y el service garantiza que un PEDIDO nunca
+  // queda confirmado. Se cuenta por `confirmedAt`, que es el hecho registrado.
+  it("cuenta los faltantes con OK gerencia por su fecha de confirmación", async () => {
+    prismaMock.missingItem.count.mockResolvedValue(7);
+
+    await expect(countConfirmedMissingItems()).resolves.toBe(7);
+    expect(prismaMock.missingItem.count).toHaveBeenCalledWith({
+      where: { confirmedAt: { not: null } },
+    });
   });
 });
