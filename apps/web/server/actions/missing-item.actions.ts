@@ -54,10 +54,20 @@ export async function confirmMissingItemAction(
 
   // `changed: false` significa que la confirmación ya NO aplica: el faltante
   // fue pedido/confirmado/cambiado de forma concurrente (o el formulario estaba
-  // obsoleto). NO es un éxito: no lo auditamos como `MISSING_CONFIRM_OK` ni
-  // pretendemos éxito. Devolvemos un error visible en español para que el
+  // obsoleto). NO es un éxito, así que se audita como FAILURE —nunca como una
+  // confirmación exitosa— y devolvemos un error visible en español para que el
   // gerente refresque y revise el estado actual antes de actuar de nuevo.
   if (!result.changed) {
+    await recordAudit({
+      action: AUDIT_ACTIONS.MISSING_CONFIRM_OK,
+      module: AUDIT_MODULES.FALTANTES,
+      entity: "MissingItem",
+      entityId: result.item.id,
+      result: "FAILURE",
+      after: { reason: "STALE_STATE", status: result.item.status },
+      context: await auditContextFromHeaders(session.user.id),
+    });
+
     revalidatePath("/faltantes");
     revalidatePath("/dashboard");
     return {
@@ -140,7 +150,21 @@ export async function orderMissingItemAction(
       supplier,
     });
 
+		// Intento real de pedir sobre un faltante que no lo admitía: se audita como
+		// FAILURE con el código de rechazo. `supplierKind` deja ver si se intentó
+		// con un proveedor existente o creando uno nuevo, sin guardar sus datos de
+		// contacto (nombre/teléfono/dirección/mail vienen del formulario).
 		if (result.rejection) {
+			await recordAudit({
+				action: AUDIT_ACTIONS.MISSING_ITEM_ORDERED,
+				module: AUDIT_MODULES.FALTANTES,
+				entity: "MissingItem",
+				entityId: data.missingItemId,
+				result: "FAILURE",
+				after: { reason: result.rejection, supplierKind: supplier.kind },
+				context: await auditContextFromHeaders(session.user.id),
+			});
+
 			revalidatePath("/faltantes");
 			revalidatePath("/dashboard");
 			return { error: ORDER_REJECTION_MESSAGES[result.rejection], ok: false };
