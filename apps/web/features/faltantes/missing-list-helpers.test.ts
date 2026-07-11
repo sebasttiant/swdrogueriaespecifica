@@ -5,7 +5,6 @@ import type { MissingItemListItem } from "@/server/repositories/missing-item.rep
 import {
   getConfirmationMetadata,
   getOrderMetadata,
-  getPageOverview,
 } from "./missing-list-helpers";
 
 function item(overrides: Partial<MissingItemListItem>): MissingItemListItem {
@@ -33,27 +32,6 @@ function item(overrides: Partial<MissingItemListItem>): MissingItemListItem {
     ...overrides,
   };
 }
-
-describe("getPageOverview", () => {
-  it("cuenta totales, abiertos y confirmados para la página visible", () => {
-    const confirmedAt = new Date("2026-06-06T12:00:00");
-    const items = [
-      item({ id: "open-missing", status: "FALTANTE" }),
-      item({ id: "open-ordered", status: "PEDIDO" }),
-      item({ id: "confirmed", status: "RECIBIDO", confirmedAt }),
-      item({ id: "cancelled", status: "CANCELADO" }),
-    ];
-
-    expect(getPageOverview(items)).toEqual({ total: 4, open: 2, confirmed: 1 });
-  });
-
-  it("no cuenta como abierto un faltante confirmado aunque conserve estado abierto", () => {
-    const confirmedAt = new Date("2026-06-06T12:00:00");
-    const items = [item({ id: "confirmed-open", status: "FALTANTE", confirmedAt })];
-
-    expect(getPageOverview(items)).toEqual({ total: 1, open: 0, confirmed: 1 });
-  });
-});
 
 describe("getConfirmationMetadata", () => {
   it("expone metadata pendiente cuando no hay fecha de confirmación", () => {

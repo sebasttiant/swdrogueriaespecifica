@@ -9,7 +9,9 @@ import { prisma } from "@/lib/db/prisma";
 import type { Paginated } from "@/lib/pagination";
 import {
   confirmMissingItem,
+  countConfirmedMissingItems,
   countOpenMissingItems,
+  countOrderedMissingItems,
   countOverdueMissingItems,
   listMissingItems,
   lockMissingItemForUpdate,
@@ -105,6 +107,8 @@ export function getOpenMissingCount(): Promise<number> {
 export type MissingItemsSummary = {
   open: number;
   overdue: number;
+  ordered: number;
+  confirmed: number;
 };
 
 // Métricas GLOBALES (no derivadas de la página actual, que está paginada por
@@ -114,11 +118,13 @@ export type MissingItemsSummary = {
 export async function getMissingItemsSummary(
   now: Date = new Date(),
 ): Promise<MissingItemsSummary> {
-  const [open, overdue] = await Promise.all([
+  const [open, overdue, ordered, confirmed] = await Promise.all([
     countOpenMissingItems(),
     countOverdueMissingItems(now),
+    countOrderedMissingItems(),
+    countConfirmedMissingItems(),
   ]);
-  return { open, overdue };
+  return { open, overdue, ordered, confirmed };
 }
 
 // Se lanza cuando el compare-and-set no escribe ninguna fila. Con el lock de

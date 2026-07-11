@@ -152,6 +152,17 @@ export function countAllMissingItems(): Promise<number> {
   return prisma.missingItem.count();
 }
 
+// Faltantes ya pedidos a un proveedor (chip "Pedidos" de la cola operativa).
+export function countOrderedMissingItems(): Promise<number> {
+  return prisma.missingItem.count({ where: { status: "PEDIDO" } });
+}
+
+// Faltantes con "OK gerencia". Se cuenta por `confirmedAt` —el hecho registrado—
+// y no por estado: el service garantiza que un PEDIDO nunca queda confirmado.
+export function countConfirmedMissingItems(): Promise<number> {
+  return prisma.missingItem.count({ where: { confirmedAt: { not: null } } });
+}
+
 // Faltantes creados desde `since` (para el conteo "del día").
 export function countMissingItemsCreatedSince(since: Date): Promise<number> {
   return prisma.missingItem.count({ where: { createdAt: { gte: since } } });
