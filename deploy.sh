@@ -105,16 +105,74 @@ docker compose exec -T "$DB_SERVICE" sh -lc \
 # --------------------------------------------------------------------------
 # Chequeos post-deploy (informativos: nunca abortan un deploy ya healthy, pero
 # avisan fuerte si algo quedó mal). Cubren lo que un healthcheck genérico no ve:
-#   1) que la última migración realmente quedó aplicada en la base;
+#   1) que las migraciones del ciclo operativo quedaron aplicadas en la base;
 #   2) que /reportes renderiza sin 5xx (el SSR de recharts es el riesgo real).
+#
+# Se consulta `information_schema` en vez de parsear la salida de `\d`: los
+# nombres de columna de Prisma son camelCase y el formato de los meta-comandos
+# de psql no es un contrato estable.
 # --------------------------------------------------------------------------
-echo "==> Post-deploy: verificando migración products.needsReview..."
-if docker compose exec -T "$DB_SERVICE" sh -lc \
-     'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "\d products"' 2>/dev/null \
-     | grep -q 'needsReview'; then
-  echo "    ✓ Migración aplicada: columna products.needsReview presente."
+
+# Ejecuta una query y devuelve el resultado sin formato (-tA). Falla con estado
+# distinto de cero si no se puede consultar la base.
+db_query() {
+  docker compose exec -T "$DB_SERVICE" sh -lc \
+    "psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -tAc \"$1\"" 2>/dev/null
+}
+
+schema_ok=1
+
+check_table() {
+  local table="$1"
+  local exists
+  if ! exists="$(db_query "select to_regclass('public.$table') is not null;")"; then
+    echo "    ⚠ No se pudo verificar la tabla '$table'."
+    schema_ok=0
+    return
+  fi
+  if [ "$exists" = "t" ]; then
+    echo "    ✓ Tabla '$table' presente."
+  else
+    echo "    ⚠ Falta la tabla '$table' — revisá el paso de migración de arriba."
+    schema_ok=0
+  fi
+}
+
+# $2 es una lista de literales SQL: 'colA','colB'. Reporta las que falten.
+check_columns() {
+  local table="$1"
+  local expected="$2"
+  local missing
+  if ! missing="$(db_query "select coalesce(string_agg(c, ', '), '') from unnest(array[$expected]) as c where c not in (select column_name from information_schema.columns where table_schema = 'public' and table_name = '$table');")"; then
+    echo "    ⚠ No se pudieron verificar las columnas de '$table'."
+    schema_ok=0
+    return
+  fi
+  if [ -z "$missing" ]; then
+    echo "    ✓ '$table' tiene todas las columnas esperadas."
+  else
+    echo "    ⚠ '$table' no tiene: $missing — revisá el paso de migración de arriba."
+    schema_ok=0
+  fi
+}
+
+echo "==> Post-deploy: verificando el esquema del ciclo operativo..."
+if ! db_query "select 1;" >/dev/null; then
+  echo "    (verificación de esquema omitida — no se pudo consultar la base; '$WEB_SERVICE' ya está healthy)"
 else
-  echo "    ⚠ No se encontró products.needsReview — revisá el paso de migración arriba."
+  check_table "pending_deliveries"
+  check_table "suppliers"
+  check_table "laboratories"
+  check_columns "pendings" "'deliveredQuantity','completedAt','cancelledAt','cancelledById','cancelReason'"
+  check_columns "missing_items" "'confirmedAt','confirmedById','confirmationNote','orderedAt','orderedById','supplierId'"
+  check_columns "products" "'needsReview'"
+
+  if [ "$schema_ok" -eq 1 ]; then
+    echo "    ✓ Esquema del ciclo operativo aplicado por completo."
+  else
+    echo "    ⚠ El esquema quedó incompleto. El deploy sigue porque '$WEB_SERVICE' está healthy,"
+    echo "      pero las funciones de entrega/pedido pueden fallar en runtime."
+  fi
 fi
 
 echo "==> Post-deploy: verificando que /reportes responda sin 5xx..."
