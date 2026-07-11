@@ -121,10 +121,10 @@ describe("confirmMissingItemAction", () => {
   });
 
   // `changed: false` es un rechazo de negocio (faltante pedido/confirmado/cambiado
-  // de forma concurrente, o formulario obsoleto): NO es un éxito. No debe
-  // auditarse como `MISSING_CONFIRM_OK`, no debe pretender éxito, y debe
-  // devolver un error visible en español para que el gerente refresque.
-  it("treats changed:false as a business rejection: ok false + Spanish error, no MISSING_CONFIRM_OK audit, no fake success", async () => {
+  // de forma concurrente, o formulario obsoleto): NO es un éxito. Se audita como
+  // FAILURE (nunca como una confirmación exitosa), no debe pretender éxito, y
+  // debe devolver un error visible en español para que el gerente refresque.
+  it("treats changed:false as a business rejection: ok false + Spanish error, FAILURE audit, no fake success", async () => {
     mocks.requireCapability.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
     // El faltante ya fue pedido en otra sesión: el CAS del repositorio no escribe
     // y `confirmMissingItemOk` devuelve `changed: false` con el estado actual.
@@ -149,7 +149,21 @@ describe("confirmMissingItemAction", () => {
     expect(mocks.confirmMissingItemOk).toHaveBeenCalledWith(
       expect.objectContaining({ id: "missing-1", confirmedById: "admin-1" }),
     );
-    expect(mocks.recordAudit).not.toHaveBeenCalled();
+
+    // Perder el CAS es un intento real de confirmar sobre un estado que ya no lo
+    // admitía: se audita como FAILURE, nunca como MISSING_CONFIRM_OK exitoso.
+    expect(mocks.recordAudit).toHaveBeenCalledTimes(1);
+    expect(mocks.recordAudit.mock.calls[0]![0]).toEqual(
+      expect.objectContaining({
+        action: AUDIT_ACTIONS.MISSING_CONFIRM_OK,
+        module: AUDIT_MODULES.FALTANTES,
+        entity: "MissingItem",
+        entityId: "missing-1",
+        result: "FAILURE",
+        after: { reason: "STALE_STATE", status: "PEDIDO" },
+      }),
+    );
+
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/faltantes");
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard");
   });
@@ -288,64 +302,64 @@ describe("orderMissingItemAction", () => {
     );
   });
 
-	it("maps an ALREADY_ORDERED rejection to a Spanish message, revalidates, and skips audit", async () => {
-    grant("ADMIN", ["canOrderMissingItems"]);
-    mocks.orderMissingItem.mockResolvedValue({ item: null, rejection: "ALREADY_ORDERED" });
+	const orderRejectionCases = [
+		["ALREADY_ORDERED", "Este faltante ya fue pedido."],
+		[
+			"ALREADY_CONFIRMED",
+			"Este faltante ya fue confirmado (OK gerencia) y no se puede pedir.",
+		],
+		["NOT_ORDERABLE", "Este faltante no se puede pedir desde su estado actual."],
+		["SUPPLIER_NOT_FOUND", "No se encontró el proveedor seleccionado."],
+	] as const;
 
-    await expect(
-      orderMissingItemAction(PREV, orderExistingFormData()),
-    ).resolves.toEqual({ error: "Este faltante ya fue pedido.", ok: false });
+	// Cada rechazo es un intento real de pedir sobre un faltante que no lo
+	// admitía: se audita como FAILURE con el código de rechazo, sin datos de
+	// contacto del proveedor.
+	it.each(orderRejectionCases)(
+		"maps %s to the exact Spanish message, audits it as FAILURE, and revalidates",
+		async (rejection, error) => {
+			grant("ADMIN", ["canOrderMissingItems"]);
+			mocks.orderMissingItem.mockResolvedValue({ item: null, rejection });
 
-	expect(mocks.recordAudit).not.toHaveBeenCalled();
-	expect(mocks.revalidatePath).toHaveBeenCalledWith("/faltantes");
-	expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard");
-	});
+			await expect(
+				orderMissingItemAction(PREV, orderExistingFormData()),
+			).resolves.toEqual({ error, ok: false });
 
-	it("maps an ALREADY_CONFIRMED rejection to a Spanish message without throwing, revalidates, and skips audit", async () => {
-		grant("ADMIN", ["canOrderMissingItems"]);
-		mocks.orderMissingItem.mockResolvedValue({ item: null, rejection: "ALREADY_CONFIRMED" });
+			expect(mocks.recordAudit).toHaveBeenCalledTimes(1);
+			expect(mocks.recordAudit.mock.calls[0]![0]).toEqual(
+				expect.objectContaining({
+					action: AUDIT_ACTIONS.MISSING_ITEM_ORDERED,
+					module: AUDIT_MODULES.FALTANTES,
+					entity: "MissingItem",
+					entityId: "missing-1",
+					result: "FAILURE",
+					after: { reason: rejection, supplierKind: "existing" },
+				}),
+			);
 
-    await expect(
-      orderMissingItemAction(PREV, orderExistingFormData()),
-    ).resolves.toEqual({
-      error: "Este faltante ya fue confirmado (OK gerencia) y no se puede pedir.",
-      ok: false,
-    });
+			expect(mocks.revalidatePath).toHaveBeenCalledWith("/faltantes");
+			expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard");
+		},
+	);
 
-	expect(mocks.recordAudit).not.toHaveBeenCalled();
-		expect(mocks.revalidatePath).toHaveBeenCalledWith("/faltantes");
-		expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard");
-	});
-
-	it("maps NOT_ORDERABLE to a Spanish message, revalidates, and skips audit", async () => {
-		grant("ADMIN", ["canOrderMissingItems"]);
+	// Al pedir con proveedor NUEVO el formulario trae nombre/teléfono/mail. Si el
+	// pedido se rechaza, ese contacto no debe quedar en el log de auditoría.
+	it("keeps new-supplier contact details out of the failure audit", async () => {
+		grant("ADMIN", ["canOrderMissingItems", "canManageSuppliers"]);
 		mocks.orderMissingItem.mockResolvedValue({ item: null, rejection: "NOT_ORDERABLE" });
 
-		await expect(
-			orderMissingItemAction(PREV, orderExistingFormData()),
-		).resolves.toEqual({
-			error: "Este faltante no se puede pedir desde su estado actual.",
-			ok: false,
-		});
+		await orderMissingItemAction(PREV, orderNewSupplierFormData());
 
-		expect(mocks.recordAudit).not.toHaveBeenCalled();
-		expect(mocks.revalidatePath).toHaveBeenCalledWith("/faltantes");
-		expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard");
-	});
+		const auditCall = mocks.recordAudit.mock.calls[0]![0];
+		expect(auditCall).toEqual(
+			expect.objectContaining({
+				result: "FAILURE",
+				after: { reason: "NOT_ORDERABLE", supplierKind: "new" },
+			}),
+		);
 
-	it("maps SUPPLIER_NOT_FOUND to a Spanish message, revalidates, and skips audit", async () => {
-		grant("ADMIN", ["canOrderMissingItems"]);
-		mocks.orderMissingItem.mockResolvedValue({ item: null, rejection: "SUPPLIER_NOT_FOUND" });
-
-		await expect(
-			orderMissingItemAction(PREV, orderExistingFormData("missing-supplier")),
-		).resolves.toEqual({
-			error: "No se encontró el proveedor seleccionado.",
-			ok: false,
-		});
-
-		expect(mocks.recordAudit).not.toHaveBeenCalled();
-		expect(mocks.revalidatePath).toHaveBeenCalledWith("/faltantes");
-		expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard");
+		const serialized = JSON.stringify(auditCall);
+		expect(serialized).not.toContain("Droguería Central");
+		expect(serialized).not.toContain("555");
 	});
 });

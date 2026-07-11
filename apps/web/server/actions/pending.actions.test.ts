@@ -105,8 +105,11 @@ describe("deliverPendingAction", () => {
 		["EXCEEDS_REMAINING", "La cantidad supera lo que resta por entregar."],
 	] as const;
 
+	// Un rechazo de negocio es un intento real contra una invariante: quién quiso
+	// entregar qué sobre un pendiente que no lo admitía. Se audita como FAILURE
+	// para que quede la traza forense, sin `customerName`.
 	it.each(deliveryRejectionCases)(
-		"maps %s to the exact Spanish message, revalidates, and skips audit",
+		"maps %s to the exact Spanish message, audits it as FAILURE, and revalidates",
 		async (rejection, error) => {
 			mocks.requireCapability.mockResolvedValue({ user: { id: "op-1", role: "OPERADOR" } });
 			mocks.deliverPending.mockResolvedValue({ rejection, pending: null });
@@ -114,7 +117,21 @@ describe("deliverPendingAction", () => {
 			const result = await deliverPendingAction(PREV, deliverFormData());
 
 			expect(result).toEqual({ error, ok: false });
-			expect(mocks.recordAudit).not.toHaveBeenCalled();
+
+			expect(mocks.recordAudit).toHaveBeenCalledTimes(1);
+			const auditCall = mocks.recordAudit.mock.calls[0]![0];
+			expect(auditCall).toEqual(
+				expect.objectContaining({
+					action: AUDIT_ACTIONS.PENDING_DELIVERED,
+					module: AUDIT_MODULES.PENDIENTES,
+					entity: "Pending",
+					entityId: "pend-1",
+					result: "FAILURE",
+					after: { reason: rejection, attemptedQuantity: 3 },
+				}),
+			);
+			expect(JSON.stringify(auditCall)).not.toContain("customerName");
+
 			expect(mocks.revalidatePath).toHaveBeenCalledWith("/pendientes");
 			expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard");
 		},
@@ -180,7 +197,7 @@ describe("cancelPendingAction", () => {
 	] as const;
 
 	it.each(cancelRejectionCases)(
-		"maps %s to the exact Spanish message, revalidates, and skips audit",
+		"maps %s to the exact Spanish message, audits it as FAILURE, and revalidates",
 		async (rejection, error) => {
 			mocks.requireCapability.mockResolvedValue({ user: { id: "sup-1", role: "SUPERVISOR" } });
 			mocks.cancelPendingCommitment.mockResolvedValue({ rejection, pending: null });
@@ -188,9 +205,42 @@ describe("cancelPendingAction", () => {
 			const result = await cancelPendingAction(PREV, cancelFormData());
 
 			expect(result).toEqual({ error, ok: false });
-			expect(mocks.recordAudit).not.toHaveBeenCalled();
+
+			expect(mocks.recordAudit).toHaveBeenCalledTimes(1);
+			const auditCall = mocks.recordAudit.mock.calls[0]![0];
+			expect(auditCall).toEqual(
+				expect.objectContaining({
+					action: AUDIT_ACTIONS.PENDING_CANCELLED,
+					module: AUDIT_MODULES.PENDIENTES,
+					entity: "Pending",
+					entityId: "pend-1",
+					result: "FAILURE",
+					after: { reason: rejection },
+				}),
+			);
+			expect(JSON.stringify(auditCall)).not.toContain("customerName");
+
 			expect(mocks.revalidatePath).toHaveBeenCalledWith("/pendientes");
 			expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard");
 		},
 	);
+
+	// El motivo de cancelación es texto libre del operador: puede nombrar al
+	// cliente. En un rechazo la cancelación no ocurrió, así que el intento se
+	// audita con el código de rechazo y nunca con ese texto.
+	it("keeps the operator's free-text cancel reason out of the failure audit", async () => {
+		mocks.requireCapability.mockResolvedValue({ user: { id: "sup-1", role: "SUPERVISOR" } });
+		mocks.cancelPendingCommitment.mockResolvedValue({
+			rejection: "ALREADY_DELIVERED",
+			pending: null,
+		});
+
+		await cancelPendingAction(
+			PREV,
+			cancelFormData({ reason: "El cliente Juan Pérez ya lo retiró" }),
+		);
+
+		const auditCall = mocks.recordAudit.mock.calls[0]![0];
+		expect(JSON.stringify(auditCall)).not.toContain("Juan Pérez");
+	});
 });

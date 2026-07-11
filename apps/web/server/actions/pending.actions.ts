@@ -171,7 +171,21 @@ export async function deliverPendingAction(
       deliveredById: session.user.id,
     });
 
+		// Un rechazo de negocio no es ruido de formulario: alguien con la capacidad
+		// intentó entregar sobre un pendiente que no lo admitía. Queda auditado como
+		// FAILURE para que la traza forense exista, con el código de rechazo y la
+		// cantidad intentada. Nunca el `customerName`.
 		if (result.rejection) {
+			await recordAudit({
+				action: AUDIT_ACTIONS.PENDING_DELIVERED,
+				module: AUDIT_MODULES.PENDIENTES,
+				entity: "Pending",
+				entityId: parsed.data.id,
+				result: "FAILURE",
+				after: { reason: result.rejection, attemptedQuantity: parsed.data.quantity },
+				context: await auditContextFromHeaders(session.user.id),
+			});
+
 			revalidatePath("/pendientes");
 			revalidatePath("/dashboard");
 			return { error: DELIVERY_REJECTION_MESSAGES[result.rejection], ok: false };
@@ -224,7 +238,20 @@ export async function cancelPendingAction(
       reason: parsed.data.reason,
     });
 
+		// Mismo criterio que la entrega. El `reason` que tipea el operador es texto
+		// libre y puede nombrar al cliente: en un rechazo la cancelación no ocurrió,
+		// así que solo se guarda el código de rechazo, no ese texto.
 		if (result.rejection) {
+			await recordAudit({
+				action: AUDIT_ACTIONS.PENDING_CANCELLED,
+				module: AUDIT_MODULES.PENDIENTES,
+				entity: "Pending",
+				entityId: parsed.data.id,
+				result: "FAILURE",
+				after: { reason: result.rejection },
+				context: await auditContextFromHeaders(session.user.id),
+			});
+
 			revalidatePath("/pendientes");
 			revalidatePath("/dashboard");
 			return { error: CANCEL_REJECTION_MESSAGES[result.rejection], ok: false };
