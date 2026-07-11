@@ -69,3 +69,16 @@ export const orderMissingItemSchema = z
   });
 
 export type OrderMissingItemFormInput = z.infer<typeof orderMissingItemSchema>;
+
+export const manualMissingItemCreateSchema = z.object({
+  productId: z.string().trim().min(1, { error: "Elegí un producto." }),
+  quantity: z.coerce
+    .number()
+    .int({ error: "La cantidad debe ser un número entero." })
+    .positive({ error: "Ingresá una cantidad mayor a cero." }),
+  note: optionalText(300),
+});
+
+export type ManualMissingItemCreateInput = z.infer<
+  typeof manualMissingItemCreateSchema
+>;

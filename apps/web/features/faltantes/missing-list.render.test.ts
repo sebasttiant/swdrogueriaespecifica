@@ -32,6 +32,7 @@ function item(overrides: Partial<MissingItemListItem>): MissingItemListItem {
   return {
     id: "missing-id",
     quantity: 1,
+    note: null,
     status: "FALTANTE",
     originId: null,
     confirmedAt: null,

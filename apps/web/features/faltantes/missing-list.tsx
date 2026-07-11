@@ -214,6 +214,7 @@ function missingCard(
         </summary>
         <div className="mt-2 space-y-1 text-xs text-muted-foreground">
           <p>Confirmación: {confirmationMetadata(missing)}</p>
+          {missing.note ? <p>Nota: {missing.note}</p> : null}
           {orderDetails(missing)}
           {origin ? (
             <>

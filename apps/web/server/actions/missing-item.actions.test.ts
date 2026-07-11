@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   auditContextFromHeaders: vi.fn(),
   confirmMissingItemOk: vi.fn(),
+  createManualMissingItem: vi.fn(),
   orderMissingItem: vi.fn(),
   recordAudit: vi.fn(),
   requireCapability: vi.fn(),
@@ -17,12 +18,14 @@ vi.mock("@/server/services/audit.service", () => ({
 }));
 vi.mock("@/server/services/missing-item.service", () => ({
   confirmMissingItemOk: mocks.confirmMissingItemOk,
+  createManualMissingItem: mocks.createManualMissingItem,
   orderMissingItem: mocks.orderMissingItem,
 }));
 
 import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
 import {
   confirmMissingItemAction,
+  createMissingItemAction,
   orderMissingItemAction,
 } from "./missing-item.actions";
 
@@ -49,6 +52,14 @@ function orderNewSupplierFormData() {
   data.set("supplierId", "");
   data.set("name", "Droguería Central");
   data.set("phone", "555");
+  return data;
+}
+
+function manualMissingFormData() {
+  const data = new FormData();
+  data.set("productId", "prod-1");
+  data.set("quantity", "3");
+  data.set("note", "Prioridad mostrador");
   return data;
 }
 
@@ -362,4 +373,61 @@ describe("orderMissingItemAction", () => {
 		expect(serialized).not.toContain("Droguería Central");
 		expect(serialized).not.toContain("555");
 	});
+});
+
+describe("createMissingItemAction", () => {
+  it("guards manual creation with canCreateMissingItems before validation or mutation", async () => {
+    grant("SUPERVISOR", ["canConfirmMissingItems"]);
+
+    await expect(
+      createMissingItemAction(PREV, manualMissingFormData()),
+    ).rejects.toThrow("REDIRECT:/dashboard");
+
+    expect(mocks.requireCapability).toHaveBeenCalledWith("canCreateMissingItems");
+    expect(mocks.createManualMissingItem).not.toHaveBeenCalled();
+    expect(mocks.recordAudit).not.toHaveBeenCalled();
+  });
+
+  it("ADMIN creates a manual missing item, audits no PII, and revalidates operational views", async () => {
+    grant("ADMIN", ["canCreateMissingItems"]);
+    mocks.createManualMissingItem.mockResolvedValue({
+      id: "missing-manual",
+      productId: "prod-1",
+      quantity: 3,
+      originId: null,
+      note: "Prioridad mostrador",
+      status: "FALTANTE",
+    });
+
+    await expect(
+      createMissingItemAction(PREV, manualMissingFormData()),
+    ).resolves.toEqual({ error: null, ok: true });
+
+    expect(mocks.createManualMissingItem).toHaveBeenCalledWith({
+      productId: "prod-1",
+      quantity: 3,
+      note: "Prioridad mostrador",
+      createdById: "admin-1",
+    });
+    expect(mocks.recordAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: AUDIT_ACTIONS.MISSING_CREATE,
+        module: AUDIT_MODULES.FALTANTES,
+        entity: "MissingItem",
+        entityId: "missing-manual",
+        after: {
+          productId: "prod-1",
+          quantity: 3,
+          originId: null,
+          source: "manual",
+          hasNote: true,
+        },
+      }),
+    );
+    expect(JSON.stringify(mocks.recordAudit.mock.calls[0]![0])).not.toContain(
+      "Prioridad mostrador",
+    );
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/faltantes");
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard");
+  });
 });

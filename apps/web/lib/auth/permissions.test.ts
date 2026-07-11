@@ -229,6 +229,15 @@ describe("canManageSuppliers (capability)", () => {
   });
 });
 
+describe("canCreateMissingItems (capability)", () => {
+  it("permite cargar faltantes manuales solo a SUPERADMIN y ADMIN", () => {
+    expect(can("SUPERADMIN", "canCreateMissingItems")).toBe(true);
+    expect(can("ADMIN", "canCreateMissingItems")).toBe(true);
+    expect(can("SUPERVISOR", "canCreateMissingItems")).toBe(false);
+    expect(can("OPERADOR", "canCreateMissingItems")).toBe(false);
+  });
+});
+
 describe("rolesWithCapability", () => {
   it("preserva el orden de USER_ROLES", () => {
     expect(rolesWithCapability("canViewDashboard")).toEqual([...USER_ROLES]);
@@ -266,6 +275,13 @@ describe("rolesWithCapability", () => {
       "SUPERADMIN",
       "ADMIN",
       "SUPERVISOR",
+    ]);
+  });
+
+  it("canCreateMissingItems solo incluye a gerencia", () => {
+    expect(rolesWithCapability("canCreateMissingItems")).toEqual([
+      "SUPERADMIN",
+      "ADMIN",
     ]);
   });
 });

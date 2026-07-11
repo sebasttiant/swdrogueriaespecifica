@@ -13,6 +13,7 @@ import {
   countOpenMissingItems,
   countOrderedMissingItems,
   countOverdueMissingItems,
+  createMissingItem,
   listMissingItems,
   lockMissingItemForUpdate,
   orderMissingItem as persistOrderedMissingItem,
@@ -25,6 +26,7 @@ import {
   upsertProductSupplierLink,
   upsertSupplierByName,
 } from "@/server/repositories/supplier.repository";
+import { findProductById } from "@/server/repositories/product.repository";
 
 export type ConfirmMissingItemInput = {
   id: string;
@@ -70,6 +72,13 @@ export type OrderMissingItemResult = {
   rejection: OrderRejection | null;
 };
 
+export type CreateManualMissingItemInput = {
+  productId: string;
+  quantity: number;
+  createdById?: string | null;
+  note?: string;
+};
+
 // Invariante: la confirmación ("OK gerencia") SOLO aplica a un faltante que
 // sigue FALTANTE y sin confirmar. Una vez que el faltante pasó a PEDIDO, la
 // confirmación NO debe setear `confirmedAt` (produciría el estado imposible
@@ -97,6 +106,19 @@ export async function getMissingItems(params: {
       }));
 
   return { items: minimizedItems, nextCursor };
+}
+
+export async function createManualMissingItem(input: CreateManualMissingItemInput) {
+  const product = await findProductById(input.productId);
+  if (!product || !product.active) throw new Error("Product not found");
+
+  return createMissingItem({
+    productId: input.productId,
+    quantity: input.quantity,
+    originId: null,
+    createdById: input.createdById ?? null,
+    note: input.note,
+  });
 }
 
 // Conteo de faltantes abiertos para el KPI del dashboard.

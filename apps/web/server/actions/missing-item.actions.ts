@@ -4,13 +4,17 @@ import { revalidatePath } from "next/cache";
 
 import { requireCapability } from "@/lib/auth/require-role";
 import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
-import { orderMissingItemSchema } from "@/features/faltantes/schema";
+import {
+  manualMissingItemCreateSchema,
+  orderMissingItemSchema,
+} from "@/features/faltantes/schema";
 import {
   auditContextFromHeaders,
   recordAudit,
 } from "@/server/services/audit.service";
 import {
   confirmMissingItemOk,
+  createManualMissingItem,
   orderMissingItem,
   type ConfirmMissingItemResult,
   type OrderMissingItemInput,
@@ -18,6 +22,52 @@ import {
 } from "@/server/services/missing-item.service";
 
 export type MissingItemActionState = { error: string | null; ok: boolean };
+
+export async function createMissingItemAction(
+  _prev: MissingItemActionState,
+  formData: FormData,
+): Promise<MissingItemActionState> {
+  const session = await requireCapability("canCreateMissingItems");
+
+  const parsed = manualMissingItemCreateSchema.safeParse({
+    productId: formData.get("productId"),
+    quantity: formData.get("quantity"),
+    note: formData.get("note") ?? undefined,
+  });
+
+  if (!parsed.success) {
+    return { error: "Revisá los datos del faltante.", ok: false };
+  }
+
+  try {
+    const item = await createManualMissingItem({
+      ...parsed.data,
+      createdById: session.user.id,
+    });
+
+    await recordAudit({
+      action: AUDIT_ACTIONS.MISSING_CREATE,
+      module: AUDIT_MODULES.FALTANTES,
+      entity: "MissingItem",
+      entityId: item.id,
+      after: {
+        productId: item.productId,
+        quantity: item.quantity,
+        originId: null,
+        source: "manual",
+        hasNote: Boolean(parsed.data.note),
+      },
+      context: await auditContextFromHeaders(session.user.id),
+    });
+  } catch (error) {
+    console.error("[faltantes] No se pudo registrar el faltante manual:", error);
+    return { error: "No se pudo registrar el faltante. Intentá de nuevo.", ok: false };
+  }
+
+  revalidatePath("/faltantes");
+  revalidatePath("/dashboard");
+  return { error: null, ok: true };
+}
 
 // Rechazos de negocio del pedido → mensaje en español para el gerente.
 const ORDER_REJECTION_MESSAGES: Record<OrderRejection, string> = {
