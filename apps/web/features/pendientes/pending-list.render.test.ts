@@ -49,14 +49,21 @@ function pending(overrides: Partial<PendingListItem> = {}): PendingListItem {
 }
 
 function renderList(
-  props: Partial<{ canDeliver: boolean; canCancel: boolean; items: PendingListItem[] }> = {},
+  props: Partial<{
+    canDeliver: boolean;
+    canCancel: boolean;
+    items: PendingListItem[];
+    nextCursor: string | null;
+    scope: "active" | "history";
+  }> = {},
 ): string {
   return renderToStaticMarkup(
     createElement(PendingList, {
       items: props.items ?? [pending()],
-      nextCursor: null,
+      nextCursor: props.nextCursor ?? null,
       canDeliver: props.canDeliver ?? true,
       canCancel: props.canCancel ?? true,
+      scope: props.scope ?? "active",
     }),
   );
 }
@@ -64,6 +71,25 @@ function renderList(
 beforeEach(() => {
   vi.clearAllMocks();
   mockActionState(IDLE);
+});
+
+describe("PendingList · scope-aware pagination", () => {
+  // Si el link "Ver más" solo llevara el cursor, paginar dentro del historial
+  // devolvería al usuario a la vista activa sin avisar: la página siguiente se
+  // resolvería con el scope por defecto y mostraría otro conjunto de filas.
+  it("carries the history scope into the next-page link", () => {
+    const html = renderList({ nextCursor: "cursor-2", scope: "history" });
+
+    expect(html).toContain("scope=history");
+    expect(html).toContain("cursor=cursor-2");
+  });
+
+  it("omits the scope from the next-page link in the default active view", () => {
+    const html = renderList({ nextCursor: "cursor-2", scope: "active" });
+
+    expect(html).toContain("cursor=cursor-2");
+    expect(html).not.toContain("scope=");
+  });
 });
 
 describe("PendingList · action error contract", () => {

@@ -46,9 +46,17 @@ const LIST_SELECT = {
   product: { select: { id: true, name: true, code: true, unit: true } },
 } as const;
 
+// Mismo eje que `MissingItemScope`: "active" es la vista operativa (lo que
+// todavía se trabaja) e "history" abre los estados cerrados. El default es
+// "active" porque un ENTREGADO/CANCELADO ya no requiere atención y, mezclado en
+// la vista por defecto, llena la primera página y empuja los abiertos detrás de
+// la paginación.
+export type PendingScope = "active" | "history";
+
 export async function listPendings(params: {
   cursor?: string | null;
   take?: number;
+  scope?: PendingScope;
 }): Promise<Paginated<PendingListItem>> {
   const take = clampTake(params.take);
   let cursorId = params.cursor ? decodeCursor(params.cursor) : null;
@@ -70,6 +78,9 @@ export async function listPendings(params: {
   const rows = await prisma.pending.findMany({
     take: take + 1,
     ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
+    ...(params.scope === "history"
+      ? {}
+      : { where: { status: { in: OPEN_STATUSES } } }),
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     select: LIST_SELECT,
   });
