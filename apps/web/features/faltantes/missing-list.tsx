@@ -8,6 +8,7 @@ import { formatBogotaDate } from "@/lib/datetime/bogota";
 import type { MissingItemStatus } from "@/lib/generated/prisma/client";
 import { cn } from "@/lib/utils/cn";
 import type { MissingItemListItem } from "@/server/repositories/missing-item.repository";
+import type { SupplierOption } from "@/server/repositories/supplier.repository";
 import {
   computeDeadlineStatus,
   type DeadlineStatus,
@@ -26,6 +27,10 @@ type MissingListProps = {
   nextCursor: string | null;
   canConfirm: boolean;
   canOrder: boolean;
+  // Proveedores elegibles para el pedido. Vacío = todavía no hay ninguno, así
+  // que la única rama posible es crear uno nuevo.
+  suppliers: SupplierOption[];
+  canCreateSupplier: boolean;
   // Instante compartido con `MissingSummary` para que ambas piezas hablen del
   // mismo momento (deadline badges + agrupación de urgencia).
   now: Date;
@@ -91,21 +96,35 @@ function canOrderItem(missing: MissingItemListItem): boolean {
   return missing.status === "FALTANTE" && missing.confirmedAt === null;
 }
 
+// Contexto de las acciones de una fila. Agrupado para no arrastrar cuatro
+// booleanos posicionales por cada helper de render.
+type ActionContext = {
+  canConfirm: boolean;
+  canOrder: boolean;
+  suppliers: SupplierOption[];
+  canCreateSupplier: boolean;
+};
+
 function missingActions(
   missing: MissingItemListItem,
-  canConfirm: boolean,
-  canOrder: boolean,
+  actions: ActionContext,
   className?: string,
 ) {
-  const showConfirm = canConfirm && canConfirmItem(missing);
-  const showOrder = canOrder && canOrderItem(missing);
+  const showConfirm = actions.canConfirm && canConfirmItem(missing);
+  const showOrder = actions.canOrder && canOrderItem(missing);
 
   if (!showConfirm && !showOrder) return null;
 
   return (
     <div className={cn("flex flex-col items-end gap-2", className)}>
       {showConfirm ? <MissingConfirmForm id={missing.id} /> : null}
-      {showOrder ? <MissingOrderForm id={missing.id} /> : null}
+      {showOrder ? (
+        <MissingOrderForm
+          id={missing.id}
+          suppliers={actions.suppliers}
+          canCreateSupplier={actions.canCreateSupplier}
+        />
+      ) : null}
     </div>
   );
 }
@@ -165,8 +184,7 @@ function orderCell(missing: MissingItemListItem) {
 function missingCard(
   missing: MissingItemListItem,
   now: Date,
-  canConfirm: boolean,
-  canOrder: boolean,
+  actions: ActionContext,
 ) {
   const status = STATUS[missing.status];
   const origin = missing.origin;
@@ -203,7 +221,7 @@ function missingCard(
           ) : null}
         </div>
 
-        {missingActions(missing, canConfirm, canOrder, "sm:self-end")}
+        {missingActions(missing, actions, "sm:self-end")}
       </div>
     </Card>
   );
@@ -213,11 +231,10 @@ function missingCard(
 function missingRow(
   missing: MissingItemListItem,
   now: Date,
-  canConfirm: boolean,
-  canOrder: boolean,
+  actions: ActionContext,
 ) {
   const status = STATUS[missing.status];
-  const hasActions = canConfirm || canOrder;
+  const hasActions = actions.canConfirm || actions.canOrder;
   return (
     <tr key={missing.id} className="border-b border-border last:border-0">
       <td className="px-4 py-3 font-medium text-text">
@@ -239,9 +256,7 @@ function missingRow(
       </td>
       <td className="px-4 py-3 text-sm">{orderCell(missing)}</td>
       {hasActions ? (
-        <td className="px-4 py-3">
-          {missingActions(missing, canConfirm, canOrder)}
-        </td>
+        <td className="px-4 py-3">{missingActions(missing, actions)}</td>
       ) : null}
     </tr>
   );
@@ -256,8 +271,17 @@ export function MissingList({
   nextCursor,
   canConfirm,
   canOrder,
+  suppliers,
+  canCreateSupplier,
   now,
 }: MissingListProps) {
+  const actions: ActionContext = {
+    canConfirm,
+    canOrder,
+    suppliers,
+    canCreateSupplier,
+  };
+
   if (items.length === 0) {
     return (
       <Card>
@@ -310,7 +334,7 @@ export function MissingList({
             {/* Mobile / tablet: tarjetas apiladas y tocables. */}
             <div className="space-y-3 lg:hidden">
               {group.items.map((missing) =>
-                missingCard(missing, now, canConfirm, canOrder),
+                missingCard(missing, now, actions),
               )}
             </div>
 
@@ -332,7 +356,7 @@ export function MissingList({
                 </thead>
                 <tbody>
                   {group.items.map((missing) =>
-                    missingRow(missing, now, canConfirm, canOrder),
+                    missingRow(missing, now, actions),
                   )}
                 </tbody>
               </table>

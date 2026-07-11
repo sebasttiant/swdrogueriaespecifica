@@ -13,6 +13,22 @@ export type ProductSupplierLinkData = {
   supplierId: string;
 };
 
+export type SupplierOption = {
+  id: string;
+  name: string;
+};
+
+// Proveedores para el selector del pedido. Solo `id` y `name`: los datos de
+// contacto (teléfono/dirección/email) no tienen por qué viajar al cliente solo
+// para elegir a quién pedirle. Se ordena por nombre porque así es como el
+// operador lo busca en el desplegable.
+export function listSuppliers(): Promise<SupplierOption[]> {
+  return prisma.supplier.findMany({
+    orderBy: { name: "asc" },
+    select: { id: true, name: true },
+  });
+}
+
 // `client` permite ejecutar la lectura dentro de una transacción (ver
 // `orderMissingItem` en el service): así la relectura ve lo que escribió una
 // operación concurrente que ya confirmó en su propia tx.

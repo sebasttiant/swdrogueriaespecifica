@@ -78,6 +78,10 @@ function renderMissingList(
 	items: MissingItemListItem[],
 	canConfirm = false,
 	canOrder = false,
+	options: {
+		suppliers?: { id: string; name: string }[];
+		canCreateSupplier?: boolean;
+	} = {},
 ): string {
 	return renderToStaticMarkup(
 		createElement(MissingList, {
@@ -86,6 +90,8 @@ function renderMissingList(
 			canConfirm,
 			canOrder,
 			now,
+			suppliers: options.suppliers ?? [],
+			canCreateSupplier: options.canCreateSupplier ?? true,
 		}),
 	);
 }
@@ -283,10 +289,26 @@ describe("MissingList · confirmation gating", () => {
 		);
 
 		expect(html).toContain('name="missingItemId" value="faltante-1"');
-		expect(html).toContain("Nombre del proveedor");
 		expect(html).toContain("Pedir");
 		expect(html).not.toContain('name="missingItemId" value="pedido-1"');
 		expect(html).not.toContain('name="missingItemId" value="confirmado-1"');
+	});
+
+	// El formulario de pedido nace colapsado: la fila ofrece el disparador
+	// "Pedir", no un formulario abierto que empuje la lista fuera de pantalla.
+	it("renders the order form collapsed, mounting no supplier fields in the list", () => {
+		mockActionState(IDLE);
+		const html = renderMissingList(
+			[item({ id: "faltante-1", product: product("Faltante", "FALT-1") })],
+			false,
+			true,
+			{ suppliers: [{ id: "sup-1", name: "Distribuidora Norte" }] },
+		);
+
+		expect(html).toContain("Pedir");
+		expect(html).not.toContain('name="supplierId"');
+		expect(html).not.toContain("Nombre del proveedor");
+		expect(html).not.toContain("Distribuidora Norte");
 	});
 });
 
