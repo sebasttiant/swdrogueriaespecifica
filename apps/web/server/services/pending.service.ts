@@ -28,6 +28,7 @@ import {
   listUrgentPendings,
   updatePendingAfterDelivery,
   type PendingListItem,
+  type PendingScope,
 } from "@/server/repositories/pending.repository";
 import { createProduct } from "@/server/repositories/product.repository";
 import { createMissingItem } from "@/server/repositories/missing-item.repository";
@@ -101,6 +102,7 @@ function minimizeCustomerIdentity(
 export async function getPendings(params: {
   cursor?: string | null;
   take?: number;
+  scope?: PendingScope;
   // Requerido (sin default): que falte el flag debe ser un error de tipos,
   // nunca una fuga silenciosa de PII. `false` fuerza la minimización abajo.
   canViewCustomerIdentity: boolean;

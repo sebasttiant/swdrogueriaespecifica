@@ -485,6 +485,31 @@ describe("cancelPendingCommitment", () => {
   });
 });
 
+describe("getPendings · scope", () => {
+  // `canViewCustomerIdentity` es del service (minimización de PII) y no debe
+  // filtrarse al repositorio; `scope` sí tiene que llegar entero.
+  it("forwards the scope to the repository without leaking the PII flag", async () => {
+    repo.listPendings.mockResolvedValue({ items: [], nextCursor: null });
+
+    await getPendings({ canViewCustomerIdentity: false, scope: "history" });
+
+    expect(repo.listPendings).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: "history" }),
+    );
+    expect(repo.listPendings.mock.calls[0]![0]).not.toHaveProperty(
+      "canViewCustomerIdentity",
+    );
+  });
+
+  it("leaves the scope undefined when the caller does not ask for history", async () => {
+    repo.listPendings.mockResolvedValue({ items: [], nextCursor: null });
+
+    await getPendings({ canViewCustomerIdentity: true });
+
+    expect(repo.listPendings.mock.calls[0]![0].scope).toBeUndefined();
+  });
+});
+
 describe("getPendings", () => {
   it("nulls customerName for every item when canViewCustomerIdentity is false, keeping every other field intact", async () => {
     const row = pendingRow();

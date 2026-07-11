@@ -6,7 +6,10 @@ import { Card } from "@/app/_components/ui/card";
 import { EmptyState } from "@/app/_components/ui/empty-state";
 import { formatBogotaDate } from "@/lib/datetime/bogota";
 import type { PendingStatus } from "@/lib/generated/prisma/client";
-import type { PendingListItem } from "@/server/repositories/pending.repository";
+import type {
+  PendingListItem,
+  PendingScope,
+} from "@/server/repositories/pending.repository";
 import {
   computeDeadlineStatus,
   type DeadlineStatus,
@@ -22,6 +25,9 @@ type PendingListProps = {
   // Action re-chequea la capability del lado del server siempre.
   canDeliver: boolean;
   canCancel: boolean;
+  // El scope viaja en el link de la página siguiente: sin esto, paginar dentro
+  // del historial devolvería al usuario a la vista activa sin avisar.
+  scope: PendingScope;
 };
 
 // Estados terminales: ya no hay nada operativo que hacer sobre el pendiente.
@@ -58,14 +64,23 @@ export function PendingList({
   nextCursor,
   canDeliver,
   canCancel,
+  scope,
 }: PendingListProps) {
   if (items.length === 0) {
     return (
       <Card>
         <EmptyState
           icon={ClipboardCheck}
-          title="No hay pendientes abiertos"
-          description="Todavía no hay pendientes registrados por ahora."
+          title={
+            scope === "history"
+              ? "No hay pendientes en el historial"
+              : "No hay pendientes abiertos"
+          }
+          description={
+            scope === "history"
+              ? "Todavía no se entregó ni canceló ningún pendiente."
+              : "Todo al día: no queda ningún pendiente por atender."
+          }
         />
       </Card>
     );
@@ -123,7 +138,9 @@ export function PendingList({
       {nextCursor ? (
         <div className="pt-1 text-center">
           <Link
-            href={`/pendientes?cursor=${encodeURIComponent(nextCursor)}`}
+            href={`/pendientes?cursor=${encodeURIComponent(nextCursor)}${
+              scope === "history" ? "&scope=history" : ""
+            }`}
             className="text-sm font-semibold text-primary hover:underline"
           >
             Ver más

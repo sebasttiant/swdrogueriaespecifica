@@ -217,6 +217,33 @@ describe("countUpcomingPendings", () => {
 // romper la consulta ni filtrarse a Prisma si apunta a un id inexistente.
 // ---------------------------------------------------------------------------
 
+describe("listPendings · scope", () => {
+  // La vista operativa por defecto muestra lo que todavía requiere atención. Un
+  // ENTREGADO/CANCELADO ya no se trabaja: si entra en el listado por defecto,
+  // llena la primera página y empuja los abiertos detrás de la paginación.
+  it("filtra a estados abiertos por defecto (sin scope)", async () => {
+    await listPendings({});
+
+    const args = prismaMock.pending.findMany.mock.calls[0]![0];
+    expect(args.where).toEqual({ status: { in: ["PENDIENTE", "PARCIAL"] } });
+  });
+
+  it("filtra a estados abiertos con scope active explícito", async () => {
+    await listPendings({ scope: "active" });
+
+    const args = prismaMock.pending.findMany.mock.calls[0]![0];
+    expect(args.where).toEqual({ status: { in: ["PENDIENTE", "PARCIAL"] } });
+  });
+
+  // El historial es una vista aparte, no la operativa: ahí sí entran los cerrados.
+  it("no filtra por estado con scope history", async () => {
+    await listPendings({ scope: "history" });
+
+    const args = prismaMock.pending.findMany.mock.calls[0]![0];
+    expect(args.where).toBeUndefined();
+  });
+});
+
 describe("listPendings · seguridad del cursor", () => {
   it("ignora un cursor malformado y sirve la primera página", async () => {
     await listPendings({ cursor: "###no-es-base64###" });
