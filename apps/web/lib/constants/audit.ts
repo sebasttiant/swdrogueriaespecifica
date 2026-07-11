@@ -30,11 +30,14 @@ export const AUDIT_ACTIONS = {
   // Pendientes
   PENDING_CREATE: "pending.create",
   PENDING_STATUS_CHANGE: "pending.status.change",
+  PENDING_DELIVERED: "pending.delivered",
+  PENDING_CANCELLED: "pending.cancelled",
   // Faltantes
   MISSING_AUTO_CREATE: "missing.auto.create",
   MISSING_CREATE: "missing.create",
   MISSING_STATUS_CHANGE: "missing.status.change",
   MISSING_CONFIRM_OK: "missing.confirm.ok",
+  MISSING_ITEM_ORDERED: "missing.ordered",
   // Entradas
   ENTRY_CREATE: "entry.create",
   MISSING_CLOSED_BY_ENTRY: "missing.closed.by.entry",

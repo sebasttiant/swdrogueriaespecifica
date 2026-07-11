@@ -16,9 +16,19 @@ function item(overrides: Partial<MissingItemListItem>): MissingItemListItem {
     confirmedAt: null,
     confirmedById: null,
     confirmationNote: null,
+    orderedAt: null,
+    orderedById: null,
+    supplierId: null,
     createdAt: new Date("2026-06-01T00:00:00"),
-    product: { id: "product-id", name: "Producto", code: "COD-1", unit: "unidad" },
+    product: {
+      id: "product-id",
+      name: "Producto",
+      code: "COD-1",
+      unit: "unidad",
+      laboratory: null,
+    },
     origin: null,
+    supplier: null,
     ...overrides,
   };
 }
@@ -36,36 +46,12 @@ function origin(
 }
 
 describe("groupMissingItems", () => {
-  it("agrupa como EN_CURSO un faltante manual (origin null)", () => {
+  it("agrupa como EN_CURSO un faltante manual", () => {
     const manual = item({ id: "manual", origin: null, originId: null });
 
-    const groups = groupMissingItems([manual], now);
-
-    expect(groups).toEqual([{ key: "EN_CURSO", items: [manual] }]);
-  });
-
-  it("agrupa como VENCIDO cuando la promesa del origen ya pasó", () => {
-    const overdue = item({
-      id: "overdue",
-      originId: "pending-id",
-      origin: origin({ promisedAt: new Date("2026-06-06T11:00:00") }), // -1h
-    });
-
-    const groups = groupMissingItems([overdue], now);
-
-    expect(groups).toEqual([{ key: "VENCIDO", items: [overdue] }]);
-  });
-
-  it("agrupa como VENCE_PRONTO dentro de la ventana crítica de 2h", () => {
-    const soon = item({
-      id: "soon",
-      originId: "pending-id",
-      origin: origin({ promisedAt: new Date("2026-06-06T13:30:00") }), // +1h30
-    });
-
-    const groups = groupMissingItems([soon], now);
-
-    expect(groups).toEqual([{ key: "VENCE_PRONTO", items: [soon] }]);
+    expect(groupMissingItems([manual], now)).toEqual([
+      { key: "EN_CURSO", items: [manual] },
+    ]);
   });
 
   it("agrupa como EN_CURSO un origen ENTREGADO/CANCELADO aunque la promesa esté vencida", () => {
@@ -73,7 +59,7 @@ describe("groupMissingItems", () => {
       id: "delivered",
       originId: "pending-id",
       origin: origin({
-        promisedAt: new Date("2026-06-06T08:00:00"), // vencida, pero...
+        promisedAt: new Date("2026-06-06T08:00:00"),
         status: "ENTREGADO",
       }),
     });
@@ -86,37 +72,38 @@ describe("groupMissingItems", () => {
       }),
     });
 
-    const groups = groupMissingItems([delivered, cancelled], now);
-
-    expect(groups).toEqual([
+    expect(groupMissingItems([delivered, cancelled], now)).toEqual([
       { key: "EN_CURSO", items: [delivered, cancelled] },
     ]);
   });
 
-  it("omite grupos vacíos y respeta el orden fijo VENCIDO -> VENCE_PRONTO -> EN_CURSO", () => {
-    const enCurso = item({ id: "en-curso", origin: null });
-    const venceProto = item({
+  it("agrupa por urgencia operativa", () => {
+    const onTime = item({
+      id: "en-curso",
+      originId: "pending-id",
+      origin: origin({ promisedAt: new Date(now.getTime() + SOON_WINDOW_MS + 1) }),
+    });
+    const soon = item({
       id: "vence-pronto",
       originId: "pending-id",
-      origin: origin({ promisedAt: new Date("2026-06-06T13:00:00") }), // +1h
+      origin: origin({ promisedAt: new Date("2026-06-06T13:30:00") }),
     });
-    const vencido = item({
+    const overdue = item({
       id: "vencido",
       originId: "pending-id",
-      origin: origin({ promisedAt: new Date("2026-06-06T10:00:00") }), // -2h
+      origin: origin({ promisedAt: new Date("2026-06-06T11:00:00") }),
     });
 
-    // Orden de entrada intencionalmente mezclado.
-    const groups = groupMissingItems([enCurso, venceProto, vencido], now);
+    const groups = groupMissingItems([onTime, soon, overdue], now);
 
-    expect(groups.map((group) => group.key)).toEqual([
-      "VENCIDO",
-      "VENCE_PRONTO",
-      "EN_CURSO",
+    expect(groups).toEqual([
+      { key: "VENCIDO", items: [overdue] },
+      { key: "VENCE_PRONTO", items: [soon] },
+      { key: "EN_CURSO", items: [onTime] },
     ]);
   });
 
-  it("preserva el orden dentro de cada grupo tal como llegó", () => {
+  it("preserva el orden relativo dentro de la misma urgencia", () => {
     const first = item({
       id: "first",
       originId: "pending-id",
@@ -146,9 +133,9 @@ describe("groupMissingItems — límites exactos de computeDeadlineStatus", () =
       origin: origin({ promisedAt: new Date(now.getTime()) }),
     });
 
-    const groups = groupMissingItems([boundary], now);
-
-    expect(groups).toEqual([{ key: "VENCE_PRONTO", items: [boundary] }]);
+    expect(groupMissingItems([boundary], now)).toEqual([
+      { key: "VENCE_PRONTO", items: [boundary] },
+    ]);
   });
 
   it("remainingMs === 1ms (un ms en el futuro) agrupa como VENCE_PRONTO", () => {
@@ -158,9 +145,9 @@ describe("groupMissingItems — límites exactos de computeDeadlineStatus", () =
       origin: origin({ promisedAt: new Date(now.getTime() + 1) }),
     });
 
-    const groups = groupMissingItems([boundary], now);
-
-    expect(groups).toEqual([{ key: "VENCE_PRONTO", items: [boundary] }]);
+    expect(groupMissingItems([boundary], now)).toEqual([
+      { key: "VENCE_PRONTO", items: [boundary] },
+    ]);
   });
 
   it("remainingMs === -1ms (un ms en el pasado) agrupa como VENCIDO", () => {
@@ -170,9 +157,9 @@ describe("groupMissingItems — límites exactos de computeDeadlineStatus", () =
       origin: origin({ promisedAt: new Date(now.getTime() - 1) }),
     });
 
-    const groups = groupMissingItems([boundary], now);
-
-    expect(groups).toEqual([{ key: "VENCIDO", items: [boundary] }]);
+    expect(groupMissingItems([boundary], now)).toEqual([
+      { key: "VENCIDO", items: [boundary] },
+    ]);
   });
 
   it("remainingMs === SOON_WINDOW_MS exacto agrupa como VENCE_PRONTO (límite inclusivo)", () => {
@@ -182,9 +169,9 @@ describe("groupMissingItems — límites exactos de computeDeadlineStatus", () =
       origin: origin({ promisedAt: new Date(now.getTime() + SOON_WINDOW_MS) }),
     });
 
-    const groups = groupMissingItems([boundary], now);
-
-    expect(groups).toEqual([{ key: "VENCE_PRONTO", items: [boundary] }]);
+    expect(groupMissingItems([boundary], now)).toEqual([
+      { key: "VENCE_PRONTO", items: [boundary] },
+    ]);
   });
 
   it("remainingMs === SOON_WINDOW_MS + 1ms agrupa como EN_CURSO (ruta A_TIEMPO)", () => {
@@ -196,23 +183,23 @@ describe("groupMissingItems — límites exactos de computeDeadlineStatus", () =
       }),
     });
 
-    const groups = groupMissingItems([boundary], now);
-
-    expect(groups).toEqual([{ key: "EN_CURSO", items: [boundary] }]);
+    expect(groupMissingItems([boundary], now)).toEqual([
+      { key: "EN_CURSO", items: [boundary] },
+    ]);
   });
 
-  it("un item A_TIEMPO con origin NO nulo agrupa como EN_CURSO (ruta A_TIEMPO real, no origin:null ni FINALIZADO)", () => {
+  it("un item A_TIEMPO con origin NO nulo agrupa como EN_CURSO", () => {
     const onTime = item({
       id: "on-time-with-origin",
       originId: "pending-id",
       origin: origin({
-        promisedAt: new Date(now.getTime() + SOON_WINDOW_MS + 60 * 60 * 1000), // +1h más allá de la ventana crítica
+        promisedAt: new Date(now.getTime() + SOON_WINDOW_MS + 60 * 60 * 1000),
         status: "PENDIENTE",
       }),
     });
 
-    const groups = groupMissingItems([onTime], now);
-
-    expect(groups).toEqual([{ key: "EN_CURSO", items: [onTime] }]);
+    expect(groupMissingItems([onTime], now)).toEqual([
+      { key: "EN_CURSO", items: [onTime] },
+    ]);
   });
 });

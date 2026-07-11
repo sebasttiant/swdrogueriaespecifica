@@ -1,24 +1,30 @@
 import Link from "next/link";
-import { CheckCircle2, PackageCheck } from "lucide-react";
+import { PackageCheck } from "lucide-react";
 
 import { Badge } from "@/app/_components/ui/badge";
-import { Button } from "@/app/_components/ui/button";
 import { Card } from "@/app/_components/ui/card";
 import { EmptyState } from "@/app/_components/ui/empty-state";
 import { formatBogotaDate } from "@/lib/datetime/bogota";
 import type { MissingItemStatus } from "@/lib/generated/prisma/client";
-import { confirmMissingItemFormAction } from "@/server/actions/missing-item.actions";
+import { cn } from "@/lib/utils/cn";
 import type { MissingItemListItem } from "@/server/repositories/missing-item.repository";
 import {
   computeDeadlineStatus,
   type DeadlineStatus,
 } from "../pendientes/deadline-status";
 import { groupMissingItems, type MissingGroupKey } from "./missing-grouping";
+import { MissingConfirmForm } from "./missing-confirm-form";
+import {
+  getConfirmationMetadata,
+  getPageOverview,
+} from "./missing-list-helpers";
+import { MissingOrderForm } from "./missing-order-form";
 
 type MissingListProps = {
   items: MissingItemListItem[];
   nextCursor: string | null;
   canConfirm: boolean;
+  canOrder: boolean;
   // Instante compartido con `MissingSummary` para que ambas piezas hablen del
   // mismo momento (deadline badges + agrupación de urgencia).
   now: Date;
@@ -54,6 +60,16 @@ const DEADLINE: Record<
   FINALIZADO: { label: "Finalizado", tone: "neutral" },
 };
 
+function overviewTile(label: string, value: number, description: string) {
+  return (
+    <div className="rounded-xl border border-border bg-muted/30 p-4">
+      <p className="text-sm font-medium text-muted-foreground">{label}</p>
+      <p className="mt-1 text-2xl font-bold text-text">{value}</p>
+      <p className="mt-1 text-xs text-muted-foreground">{description}</p>
+    </div>
+  );
+}
+
 // Etiqueta de vencimiento del pendiente que originó el faltante (null = manual).
 function deadlineBadge(origin: MissingItemListItem["origin"], now: Date) {
   if (!origin) return null;
@@ -61,29 +77,60 @@ function deadlineBadge(origin: MissingItemListItem["origin"], now: Date) {
   return <Badge tone={deadline.tone}>{deadline.label}</Badge>;
 }
 
-// Confirmación de gerencia: un check limpio (no un botón con texto). Solo se
-// renderiza cuando el viewer puede confirmar (SUPERVISOR/ADMIN/SUPERADMIN). El label
-// accesible y el title conservan el significado "OK gerencia".
-function confirmForm(id: string, className?: string) {
+// La confirmación ("OK gerencia") solo aplica a un faltante que sigue
+// FALTANTE y sin confirmar. Un PEDIDO ya no se confirma (invariante del
+// service: nunca PEDIDO + confirmedAt), y los estados cerrados tampoco. El
+// botón no se ofrece sobre estados muertos, así que no quedan caminos
+// obsoletos que disparen un submit sin destino válido.
+function canConfirmItem(missing: MissingItemListItem): boolean {
+  return missing.status === "FALTANTE" && missing.confirmedAt === null;
+}
+
+function canOrderItem(missing: MissingItemListItem): boolean {
+  return missing.status === "FALTANTE" && missing.confirmedAt === null;
+}
+
+function missingActions(
+  missing: MissingItemListItem,
+  canConfirm: boolean,
+  canOrder: boolean,
+  className?: string,
+) {
+  const showConfirm = canConfirm && canConfirmItem(missing);
+  const showOrder = canOrder && canOrderItem(missing);
+
+  if (!showConfirm && !showOrder) return null;
+
   return (
-    <form action={confirmMissingItemFormAction} className={className}>
-      <input type="hidden" name="id" value={id} />
-      <Button
-        type="submit"
-        variant="ghost"
-        aria-label="Confirmar (OK gerencia)"
-        title="OK gerencia"
-        className="px-2 text-success hover:bg-success/10"
-      >
-        <CheckCircle2 aria-hidden="true" className="h-6 w-6" />
-      </Button>
-    </form>
+    <div className={cn("flex flex-col items-end gap-2", className)}>
+      {showConfirm ? <MissingConfirmForm id={missing.id} /> : null}
+      {showOrder ? <MissingOrderForm id={missing.id} /> : null}
+    </div>
+  );
+}
+
+function confirmationMetadata(missing: MissingItemListItem) {
+  const metadata = getConfirmationMetadata(missing);
+
+  if (!metadata.confirmedAt) {
+    return <span className="text-muted-foreground">{metadata.label}</span>;
+  }
+
+  return (
+    <span className="text-success">
+      {metadata.label}: {formatBogotaDate(metadata.confirmedAt, { style: "datetime" })}
+    </span>
   );
 }
 
 // Tarjeta mobile de un faltante. Extraída para reusarse dentro de cada
 // sección de grupo sin duplicar el markup.
-function missingCard(missing: MissingItemListItem, now: Date, canConfirm: boolean) {
+function missingCard(
+  missing: MissingItemListItem,
+  now: Date,
+  canConfirm: boolean,
+  canOrder: boolean,
+) {
   const status = STATUS[missing.status];
   const origin = missing.origin;
   return (
@@ -109,6 +156,7 @@ function missingCard(missing: MissingItemListItem, now: Date, canConfirm: boolea
           <p>
             Cantidad: {missing.quantity} {missing.product.unit}
           </p>
+          <p>Confirmación: {confirmationMetadata(missing)}</p>
           {origin ? (
             <>
               <p>Origen: pendiente{origin.customerName ? ` · ${origin.customerName}` : ""}</p>
@@ -117,15 +165,21 @@ function missingCard(missing: MissingItemListItem, now: Date, canConfirm: boolea
           ) : null}
         </div>
 
-        {canConfirm ? confirmForm(missing.id, "sm:self-end") : null}
+        {missingActions(missing, canConfirm, canOrder, "sm:self-end")}
       </div>
     </Card>
   );
 }
 
 // Fila desktop de un faltante. Misma razón de ser que `missingCard`.
-function missingRow(missing: MissingItemListItem, now: Date, canConfirm: boolean) {
+function missingRow(
+  missing: MissingItemListItem,
+  now: Date,
+  canConfirm: boolean,
+  canOrder: boolean,
+) {
   const status = STATUS[missing.status];
+  const hasActions = canConfirm || canOrder;
   return (
     <tr key={missing.id} className="border-b border-border last:border-0">
       <td className="px-4 py-3 font-medium text-text">
@@ -138,15 +192,16 @@ function missingRow(missing: MissingItemListItem, now: Date, canConfirm: boolean
       <td className="px-4 py-3 text-muted-foreground">
         {missing.quantity} {missing.product.unit}
       </td>
+      <td className="px-4 py-3 text-sm">{confirmationMetadata(missing)}</td>
       <td className="px-4 py-3">
         <div className="flex items-center gap-1.5">
           {deadlineBadge(missing.origin, now)}
           <Badge tone={status.tone}>{status.label}</Badge>
         </div>
       </td>
-      {canConfirm ? (
+      {hasActions ? (
         <td className="px-4 py-3">
-          <div className="flex justify-end">{confirmForm(missing.id)}</div>
+          {missingActions(missing, canConfirm, canOrder)}
         </td>
       ) : null}
     </tr>
@@ -157,7 +212,13 @@ function missingRow(missing: MissingItemListItem, now: Date, canConfirm: boolean
 // Desktop (lg+): tabla simple tipo checklist con scroll horizontal. Los items
 // de la página actual se agrupan por urgencia operativa (ver
 // `missing-grouping.ts`); el resumen global vive en `MissingSummary`.
-export function MissingList({ items, nextCursor, canConfirm, now }: MissingListProps) {
+export function MissingList({
+  items,
+  nextCursor,
+  canConfirm,
+  canOrder,
+  now,
+}: MissingListProps) {
   if (items.length === 0) {
     return (
       <Card>
@@ -171,13 +232,30 @@ export function MissingList({ items, nextCursor, canConfirm, now }: MissingListP
   }
 
   const groups = groupMissingItems(items, now);
+  const overview = getPageOverview(items);
 
   return (
     <div className="space-y-6">
-      <p className="text-xs text-muted-foreground">
-        Las secciones agrupan solo los faltantes de esta página. El resumen de arriba
-        refleja el total global.
-      </p>
+      <section className="space-y-3" aria-labelledby="faltantes-page-overview-title">
+        <div className="space-y-1">
+          <p className="text-sm font-semibold uppercase tracking-wide text-primary">
+            Vista de la página
+          </p>
+          <h2 id="faltantes-page-overview-title" className="text-lg font-bold text-text">
+            Seguimiento operativo
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            Estos indicadores usan solo los faltantes cargados en esta página. El
+            resumen superior refleja el total global.
+          </p>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-3">
+          {overviewTile("En esta página", overview.total, "Registros cargados ahora")}
+          {overviewTile("Abiertos", overview.open, "Faltante o pedido sin confirmar")}
+          {overviewTile("Confirmados", overview.confirmed, "Con OK gerencia")}
+        </div>
+      </section>
 
       {groups.map((group) => {
         const label = GROUP_LABEL[group.key];
@@ -192,7 +270,9 @@ export function MissingList({ items, nextCursor, canConfirm, now }: MissingListP
 
             {/* Mobile / tablet: tarjetas apiladas y tocables. */}
             <div className="space-y-3 lg:hidden">
-              {group.items.map((missing) => missingCard(missing, now, canConfirm))}
+              {group.items.map((missing) =>
+                missingCard(missing, now, canConfirm, canOrder),
+              )}
             </div>
 
             {/* Desktop: tabla simple tipo checklist. Scroll horizontal si no entra. */}
@@ -203,14 +283,17 @@ export function MissingList({ items, nextCursor, canConfirm, now }: MissingListP
                     <th className="px-4 py-3 font-medium">Producto</th>
                     <th className="px-4 py-3 font-medium">Código</th>
                     <th className="px-4 py-3 font-medium">Cantidad</th>
+                    <th className="px-4 py-3 font-medium">Confirmación</th>
                     <th className="px-4 py-3 font-medium">Estado</th>
-                    {canConfirm ? (
+                    {canConfirm || canOrder ? (
                       <th className="px-4 py-3 text-right font-medium">Acción</th>
                     ) : null}
                   </tr>
                 </thead>
                 <tbody>
-                  {group.items.map((missing) => missingRow(missing, now, canConfirm))}
+                  {group.items.map((missing) =>
+                    missingRow(missing, now, canConfirm, canOrder),
+                  )}
                 </tbody>
               </table>
             </Card>

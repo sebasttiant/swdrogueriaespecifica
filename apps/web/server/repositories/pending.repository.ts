@@ -21,6 +21,7 @@ export type PendingListItem = {
   customerName: string | null;
   note: string | null;
   createdAt: Date;
+  deliveredQuantity: number;
   product: { id: string; name: string; code: string; unit: string };
 };
 
@@ -41,6 +42,7 @@ const LIST_SELECT = {
   customerName: true,
   note: true,
   createdAt: true,
+  deliveredQuantity: true,
   product: { select: { id: true, name: true, code: true, unit: true } },
 } as const;
 
@@ -162,4 +164,126 @@ export async function createPending(
       createdById: data.createdById ?? null,
     },
   });
+}
+
+// --------------------------------------------------------------------------
+// Ciclo de vida de entrega (Slice A): entregas parciales + cancelación.
+// --------------------------------------------------------------------------
+
+export type PendingForDelivery = {
+  id: string;
+  quantity: number;
+  deliveredQuantity: number;
+  status: PendingStatus;
+};
+
+/**
+ * Bloquea (FOR UPDATE) la fila del pendiente y devuelve los campos que las
+ * reglas de entrega/cancelación necesitan. DEBE llamarse dentro de una
+ * transacción interactiva.
+ *
+ * El lock de fila —no la transacción por sí sola— es lo que serializa dos
+ * requests concurrentes sobre el mismo pendiente: bajo READ COMMITTED (el
+ * default de Postgres) una lectura plana no bloquea nada y ambos operadores
+ * verían el mismo `deliveredQuantity`. Con FOR UPDATE la segunda transacción
+ * espera acá hasta que la primera confirme, y recién entonces lee el estado ya
+ * escrito. Así la sobre-entrega y la cancelación contra un estado obsoleto las
+ * rechazan las reglas de negocio normales, en vez de pisarse en silencio.
+ *
+ * Devuelve `null` si el pendiente no existe.
+ */
+export async function lockPendingForUpdate(
+  client: Prisma.TransactionClient,
+  id: string,
+): Promise<PendingForDelivery | null> {
+  const rows = await client.$queryRaw<PendingForDelivery[]>`
+    SELECT id, quantity, "deliveredQuantity", status
+    FROM pendings WHERE id = ${id} FOR UPDATE
+  `;
+  return rows[0] ?? null;
+}
+
+export type CreatePendingDeliveryData = {
+  pendingId: string;
+  quantity: number;
+  deliveredById: string;
+};
+
+export function createPendingDelivery(
+  tx: Prisma.TransactionClient,
+  data: CreatePendingDeliveryData,
+) {
+  return tx.pendingDelivery.create({
+    data: {
+      pendingId: data.pendingId,
+      quantity: data.quantity,
+      deliveredById: data.deliveredById,
+    },
+  });
+}
+
+export type UpdatePendingAfterDeliveryData = {
+  id: string;
+  // Estado leído bajo el lock. La escritura solo aplica si la fila sigue igual.
+  expectedStatus: PendingStatus;
+  expectedDeliveredQuantity: number;
+  deliveredQuantity: number;
+  status: PendingStatus;
+  completedAt: Date | null;
+};
+
+/**
+ * Compare-and-set: escribe solo si `status` y `deliveredQuantity` siguen siendo
+ * los que se leyeron bajo el lock. Devuelve la cantidad de filas escritas (0 o
+ * 1). Con `lockPendingForUpdate` tomado el CAS nunca falla; queda como guarda
+ * de invariante para que un llamador futuro que se saltee el lock falle ruidoso
+ * en vez de sobre-entregar en silencio.
+ */
+export async function updatePendingAfterDelivery(
+  tx: Prisma.TransactionClient,
+  data: UpdatePendingAfterDeliveryData,
+): Promise<number> {
+  const { count } = await tx.pending.updateMany({
+    where: {
+      id: data.id,
+      status: data.expectedStatus,
+      deliveredQuantity: data.expectedDeliveredQuantity,
+    },
+    data: {
+      deliveredQuantity: data.deliveredQuantity,
+      status: data.status,
+      completedAt: data.completedAt,
+    },
+  });
+  return count;
+}
+
+export type CancelPendingData = {
+  id: string;
+  // Estado leído bajo el lock: solo cancelamos si la fila no cambió desde ahí.
+  expectedStatus: PendingStatus;
+  cancelledById: string;
+  cancelledAt: Date;
+  cancelReason?: string;
+};
+
+/**
+ * Compare-and-set de la cancelación: escribe solo si el pendiente sigue en el
+ * estado leído bajo `lockPendingForUpdate`. Devuelve las filas escritas (0 o 1).
+ * Impide que una cancelación pise una entrega concurrente que ya confirmó.
+ */
+export async function cancelPending(
+  tx: Prisma.TransactionClient,
+  data: CancelPendingData,
+): Promise<number> {
+  const { count } = await tx.pending.updateMany({
+    where: { id: data.id, status: data.expectedStatus },
+    data: {
+      status: "CANCELADO",
+      cancelledAt: data.cancelledAt,
+      cancelledById: data.cancelledById,
+      cancelReason: data.cancelReason ?? null,
+    },
+  });
+  return count;
 }

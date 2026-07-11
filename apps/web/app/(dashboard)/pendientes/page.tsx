@@ -22,6 +22,8 @@ export default async function PendientesPage({
 }) {
   const session = await requireCapability("canViewPendientes");
   const canViewCustomerIdentity = can(session.user.role, "canViewCustomerIdentity");
+  const canDeliver = can(session.user.role, "canDeliverPendings");
+  const canCancel = can(session.user.role, "canCancelPendings");
 
   const { cursor } = await searchParams;
 
@@ -52,7 +54,12 @@ export default async function PendientesPage({
         <PendingForm products={productOptions} />
       </Card>
 
-      <PendingList items={pendings.items} nextCursor={pendings.nextCursor} />
+      <PendingList
+        items={pendings.items}
+        nextCursor={pendings.nextCursor}
+        canDeliver={canDeliver}
+        canCancel={canCancel}
+      />
     </div>
   );
 }

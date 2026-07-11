@@ -154,6 +154,24 @@ export const CAPABILITIES = [
   // default: the lowest operational role (OPERADOR) does NOT get it; SUPERVISOR
   // and above do.
   "canViewCustomerIdentity",
+  // Delivery lifecycle (Slice A). Asymmetric on purpose: delivering is the
+  // counter operator's everyday job, so OPERADOR gets it too. Cancelling
+  // breaks a commitment already made to a customer and needs a higher
+  // signature, so OPERADOR is deliberately excluded — only SUPERVISOR and up.
+  "canDeliverPendings",
+  "canCancelPendings",
+  // Gatea el pedido de un faltante a un proveedor. Hoy solo los gerentes
+  // (ADMIN/SUPERADMIN) compran; llevar esta capacidad a otro rol es un
+  // cambio de matriz (esta lista + `ROLE_CAPABILITIES`), nunca un cambio de código.
+  "canOrderMissingItems",
+  // Gatea la CREACIÓN de un proveedor nuevo al vuelo mientras se pide un
+  // faltante. Es un eje DISTINTO de `canOrderMissingItems`: pedir a un
+  // proveedor ya conocido e inventar uno nuevo son decisiones separadas. Hoy
+  // ambas viven en la gerencia (ADMIN/SUPERADMIN), pero mantenerlas como dos
+  // capacidades permite que en el futuro un SUPERVISOR pueda "pedir a
+  // proveedores conocidos" SIN poder inventar proveedores nuevos: sería un
+  // cambio de una línea en `ROLE_CAPABILITIES`, jamás un cambio de código.
+  "canManageSuppliers",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -176,6 +194,8 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     "canCreateEntries",
     "canConfirmMissingItems",
     "canViewCustomerIdentity",
+    "canDeliverPendings",
+    "canCancelPendings",
   ],
   OPERADOR: [
     "canViewDashboard",
@@ -185,6 +205,7 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     "canViewEntradas",
     "canCreatePendientes",
     "canCreateEntries",
+    "canDeliverPendings",
   ],
 };
 

@@ -74,11 +74,17 @@ model User {
   updatedAt    DateTime  @updatedAt
 
   // Entidades creadas por este usuario (trazabilidad de autoría)
-  pendings        Pending[]
+  pendings        Pending[] @relation("PendingCreatedBy")
+  // Pendientes cancelados / entregas registradas por este usuario (Slice A:
+  // ciclo de vida de entrega). Relaciones nombradas porque `Pending` ahora
+  // tiene más de una relación con `User`.
+  pendingsCancelled Pending[] @relation("PendingCancelledBy")
+  pendingDeliveries PendingDelivery[] @relation("PendingDeliveredBy")
   missingItems    MissingItem[] @relation("MissingItemCreatedBy")
   confirmedMissingItems MissingItem[] @relation("MissingItemConfirmedBy")
   inventoryEntries InventoryEntry[]
   auditLogs       AuditLog[]
+  orderedMissingItems MissingItem[] @relation("MissingItemOrderedBy")
 
   @@index([active])
   @@index([archivedAt])
@@ -109,11 +115,48 @@ model Product {
   missingItems     MissingItem[]
   inventoryEntries InventoryEntry[]
   batches          ProductBatch[]
+  laboratoryId     String?
+  laboratory       Laboratory? @relation(fields: [laboratoryId], references: [id])
+  suppliers        ProductSupplier[]
 
   @@index([active])
   @@index([name])
   @@index([needsReview])
   @@map("products")
+}
+
+model Laboratory {
+  id       String    @id @default(cuid())
+  name     String    @unique
+  phone    String?
+  email    String?
+  products Product[]
+
+  @@map("laboratories")
+}
+
+model Supplier {
+  id       String            @id @default(cuid())
+  name     String            @unique
+  phone    String?
+  address  String?
+  email    String?
+  products ProductSupplier[]
+  items    MissingItem[]
+
+  @@map("suppliers")
+}
+
+model ProductSupplier {
+  id          String   @id @default(cuid())
+  productId   String
+  supplierId  String
+  isRecurrent Boolean  @default(false)
+  product     Product  @relation(fields: [productId], references: [id])
+  supplier    Supplier @relation(fields: [supplierId], references: [id])
+
+  @@unique([productId, supplierId])
+  @@map("product_suppliers")
 }
 
 // --------------------------------------------------------------------------
@@ -158,10 +201,24 @@ model Pending {
   promisedAt   DateTime
   customerName String?
   note         String?
-  createdBy    User?         @relation(fields: [createdById], references: [id])
+  createdBy    User?         @relation("PendingCreatedBy", fields: [createdById], references: [id])
   createdById  String?
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
+
+  // --------------------------------------------------------------------
+  // Ciclo de vida de entrega (Slice A): entregas parciales + cancelación.
+  // `deliveredQuantity` es la SUMA desnormalizada de sus `PendingDelivery`,
+  // mantenida por el service dentro de la misma transacción que crea la
+  // entrega. `completedAt` solo se completa en la transición a ENTREGADO.
+  // --------------------------------------------------------------------
+  deliveredQuantity Int              @default(0)
+  completedAt       DateTime?
+  cancelledAt       DateTime?
+  cancelledBy       User?            @relation("PendingCancelledBy", fields: [cancelledById], references: [id])
+  cancelledById     String?
+  cancelReason      String?
+  deliveries        PendingDelivery[]
 
   // Faltantes generados a partir de este pendiente (lógica de Fase 2)
   missingItems MissingItem[]
@@ -170,6 +227,26 @@ model Pending {
   @@index([productId])
   @@index([createdAt])
   @@map("pendings")
+}
+
+// --------------------------------------------------------------------------
+// Entregas de un pendiente (Slice A). Cada fila es UNA entrega parcial o
+// total registrada por un operador. La entrega NUNCA descuenta stock ni toca
+// `MissingItem` — ver el comentario de cabecera de `pending.service.ts`.
+// --------------------------------------------------------------------------
+
+model PendingDelivery {
+  id            String   @id @default(cuid())
+  pending       Pending  @relation(fields: [pendingId], references: [id])
+  pendingId     String
+  quantity      Int
+  deliveredAt   DateTime @default(now())
+  deliveredBy   User?    @relation("PendingDeliveredBy", fields: [deliveredById], references: [id])
+  deliveredById String?
+  createdAt     DateTime @default(now())
+
+  @@index([pendingId])
+  @@map("pending_deliveries")
 }
 
 // --------------------------------------------------------------------------
@@ -191,6 +268,11 @@ model MissingItem {
   confirmedBy User?             @relation("MissingItemConfirmedBy", fields: [confirmedById], references: [id])
   confirmedById String?
   confirmationNote String?
+  orderedAt DateTime?
+  orderedBy User? @relation("MissingItemOrderedBy", fields: [orderedById], references: [id])
+  orderedById String?
+  supplier Supplier? @relation(fields: [supplierId], references: [id])
+  supplierId String?
   createdAt   DateTime          @default(now())
   updatedAt   DateTime          @updatedAt
 

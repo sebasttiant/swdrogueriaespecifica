@@ -6,16 +6,32 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // escrituras viven en UNA sola transacción y que el error no se traga.
 const { prismaMock, tx } = vi.hoisted(() => {
   const tx = {
-    pending: { create: vi.fn() },
+    pending: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
+    pendingDelivery: { create: vi.fn() },
     missingItem: { create: vi.fn() },
     productBatch: { aggregate: vi.fn() },
     product: { create: vi.fn() },
+    // `lockPendingForUpdate` usa `$queryRaw` (SELECT ... FOR UPDATE), no
+    // `findUnique`: bajo READ COMMITTED una relectura plana dentro de la
+    // transacción no bloquea nada. Los tests afirman el SQL del lock, no solo
+    // que "se usó el tx".
+    $queryRaw: vi.fn(),
   };
   const prismaMock = {
     $transaction: vi.fn((fn: (client: typeof tx) => unknown) => fn(tx)),
+    // Nada del ciclo de entrega debe correr fuera de la transacción: tanto
+    // `deliverPending` como `cancelPendingCommitment` toman el lock y escriben
+    // con el `tx`. Los tests verifican que estas llamadas queden en cero.
+    pending: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
+    $queryRaw: vi.fn(),
   };
   return { prismaMock, tx };
 });
+
+// El SQL del lock, tal como lo emite el tagged template de `$queryRaw`.
+function lockSqlFrom(call: readonly unknown[]): string {
+  return (call[0] as readonly string[]).join("?");
+}
 
 vi.mock("@/lib/db/prisma", () => ({ prisma: prismaMock }));
 
@@ -41,6 +57,8 @@ vi.mock("@/server/repositories/pending.repository", async (importOriginal) => {
 });
 
 import {
+  cancelPendingCommitment,
+  deliverPending,
   getPendingDashboard,
   getPendings,
   registerPending,
@@ -70,6 +88,7 @@ function pendingRow(overrides: Partial<PendingListItem> = {}): PendingListItem {
     customerName: "Juan Pérez",
     note: null,
     createdAt: new Date("2026-07-09T10:00:00.000Z"),
+    deliveredQuantity: 0,
     product: { id: "prod-1", name: "Paracetamol", code: "P-001", unit: "unidad" },
     ...overrides,
   };
@@ -173,6 +192,296 @@ describe("registerPending", () => {
     expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
     expect(tx.pending.create).toHaveBeenCalledTimes(1);
     expect(tx.missingItem.create).toHaveBeenCalledTimes(1);
+  });
+});
+
+type PendingRow = {
+  id: string;
+  quantity: number;
+  deliveredQuantity: number;
+  status: "PENDIENTE" | "PARCIAL" | "ENTREGADO" | "CANCELADO";
+};
+
+function pendingForDelivery(overrides: Partial<PendingRow> = {}): PendingRow {
+  return {
+    id: "pend-1",
+    quantity: 10,
+    deliveredQuantity: 0,
+    status: "PENDIENTE",
+    ...overrides,
+  };
+}
+
+// `lockPendingForUpdate` devuelve la fila bloqueada; `$queryRaw` devuelve un array.
+function mockLockedPending(row: PendingRow | null) {
+  tx.$queryRaw.mockResolvedValue(row ? [row] : []);
+}
+
+// El CAS escribió la fila (caso normal, con el lock tomado).
+function mockCasWrote(count: number) {
+  tx.pending.updateMany.mockResolvedValue({ count });
+}
+
+describe("deliverPending", () => {
+  const input = { id: "pend-1", quantity: 6, deliveredById: "op-1" };
+  const now = new Date("2026-07-09T12:00:00.000Z");
+
+  it("locks the pending row FOR UPDATE before any write", async () => {
+    mockLockedPending(pendingForDelivery());
+    mockCasWrote(1);
+
+    await deliverPending(input, now);
+
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    const sql = lockSqlFrom(tx.$queryRaw.mock.calls[0]!);
+    // El lock de fila es LA garantía de serialización: sin `FOR UPDATE` dos
+    // operadores leen el mismo `deliveredQuantity` y sobre-entregan.
+    expect(sql).toContain("FOR UPDATE");
+    expect(sql).toContain("FROM pendings");
+    // Nunca `findUnique`: esa lectura no bloquea nada bajo READ COMMITTED.
+    expect(tx.pending.findUnique).not.toHaveBeenCalled();
+    // Y nada corre fuera de la transacción.
+    expect(prismaMock.$queryRaw).not.toHaveBeenCalled();
+    expect(prismaMock.pending.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("full delivery sets ENTREGADO and completedAt", async () => {
+    mockLockedPending(pendingForDelivery({ deliveredQuantity: 0 }));
+    mockCasWrote(1);
+
+    const result = await deliverPending({ ...input, quantity: 10 }, now);
+
+    expect(result.rejection).toBeNull();
+    expect(result.pending).toEqual({
+      id: "pend-1",
+      status: "ENTREGADO",
+      deliveredQuantity: 10,
+      completedAt: now,
+    });
+    expect(tx.pending.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          deliveredQuantity: 10,
+          status: "ENTREGADO",
+          completedAt: now,
+        }),
+      }),
+    );
+    expect(tx.missingItem.create).not.toHaveBeenCalled();
+  });
+
+  it("partial delivery sets PARCIAL and leaves completedAt null", async () => {
+    mockLockedPending(pendingForDelivery({ deliveredQuantity: 0 }));
+    mockCasWrote(1);
+
+    const result = await deliverPending(input, now);
+
+    expect(result.rejection).toBeNull();
+    expect(result.pending).toEqual({
+      id: "pend-1",
+      status: "PARCIAL",
+      deliveredQuantity: 6,
+      completedAt: null,
+    });
+    expect(tx.missingItem.create).not.toHaveBeenCalled();
+  });
+
+  it("guards the write with a compare-and-set on the state read under the lock", async () => {
+    mockLockedPending(pendingForDelivery({ status: "PARCIAL", deliveredQuantity: 4 }));
+    mockCasWrote(1);
+
+    await deliverPending(input, now);
+
+    // El `where` del update repite el estado leído bajo el lock: si otra tx lo
+    // cambió, la escritura no aplica en vez de pisarla.
+    expect(tx.pending.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "pend-1", status: "PARCIAL", deliveredQuantity: 4 },
+      }),
+    );
+  });
+
+  it("two sequential partials that sum to quantity end ENTREGADO", async () => {
+    // First partial: 4 of 10.
+    tx.$queryRaw.mockResolvedValueOnce([pendingForDelivery({ deliveredQuantity: 0 })]);
+    tx.pending.updateMany.mockResolvedValueOnce({ count: 1 });
+    const first = await deliverPending({ ...input, quantity: 4 }, now);
+    expect(first.pending?.status).toBe("PARCIAL");
+
+    // Second partial: remaining 6, completes the pending.
+    tx.$queryRaw.mockResolvedValueOnce([
+      pendingForDelivery({ status: "PARCIAL", deliveredQuantity: 4 }),
+    ]);
+    tx.pending.updateMany.mockResolvedValueOnce({ count: 1 });
+    const second = await deliverPending({ ...input, quantity: 6 }, now);
+
+    expect(second.rejection).toBeNull();
+    expect(second.pending).toEqual({
+      id: "pend-1",
+      status: "ENTREGADO",
+      deliveredQuantity: 10,
+      completedAt: now,
+    });
+  });
+
+  it("race: the lock returns the state a concurrent delivery already committed — over-delivery is rejected", async () => {
+    // Dos operadores entregan 6 sobre un pendiente de 10. El primero confirma;
+    // el segundo despierta del lock y lee `deliveredQuantity: 6`, no 0. Su
+    // entrega de 6 excede lo que resta (4) y se rechaza sin escribir nada.
+    mockLockedPending(pendingForDelivery({ status: "PARCIAL", deliveredQuantity: 6 }));
+
+    const result = await deliverPending(input, now);
+
+    expect(result.rejection).toBe("EXCEEDS_REMAINING");
+    expect(result.pending).toBeNull();
+    expect(tx.pendingDelivery.create).not.toHaveBeenCalled();
+    expect(tx.pending.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("over-delivery returns EXCEEDS_REMAINING and writes NOTHING", async () => {
+    mockLockedPending(pendingForDelivery({ deliveredQuantity: 4 }));
+
+    const result = await deliverPending({ ...input, quantity: 7 }, now);
+
+    expect(result.rejection).toBe("EXCEEDS_REMAINING");
+    expect(result.pending).toBeNull();
+    expect(tx.pendingDelivery.create).not.toHaveBeenCalled();
+    expect(tx.pending.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("delivering a CANCELADO pending returns ALREADY_CANCELLED and writes nothing", async () => {
+    mockLockedPending(pendingForDelivery({ status: "CANCELADO" }));
+
+    const result = await deliverPending(input, now);
+
+    expect(result.rejection).toBe("ALREADY_CANCELLED");
+    expect(result.pending).toBeNull();
+    expect(tx.pendingDelivery.create).not.toHaveBeenCalled();
+    expect(tx.pending.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("aborts the transaction when the compare-and-set writes no row", async () => {
+    // Guarda de invariante: un llamador que se saltee el lock debe abortar (la
+    // fila de PendingDelivery creada antes se revierte con la transacción),
+    // nunca devolver una entrega que no se escribió.
+    mockLockedPending(pendingForDelivery({ deliveredQuantity: 0 }));
+    mockCasWrote(0);
+
+    await expect(deliverPending(input, now)).rejects.toThrow(/concurrently/);
+    expect(tx.pendingDelivery.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws when the pending does not exist", async () => {
+    mockLockedPending(null);
+
+    await expect(deliverPending(input, now)).rejects.toThrow();
+    expect(tx.pendingDelivery.create).not.toHaveBeenCalled();
+  });
+
+  it("runs inside a single $transaction and never touches MissingItem", async () => {
+    mockLockedPending(pendingForDelivery({ deliveredQuantity: 0 }));
+    mockCasWrote(1);
+
+    await deliverPending(input, now);
+
+    expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
+    expect(tx.missingItem.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("cancelPendingCommitment", () => {
+  const now = new Date("2026-07-09T12:00:00.000Z");
+
+  it("takes the same row lock as deliverPending and writes only with the tx client", async () => {
+    mockLockedPending(pendingForDelivery({ status: "PENDIENTE" }));
+    mockCasWrote(1);
+
+    await cancelPendingCommitment({ id: "pend-1", cancelledById: "sup-1" }, now);
+
+    expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
+    // El mismo `FOR UPDATE` sobre `pendings`: entregar y cancelar se serializan
+    // sobre la misma fila, así que no pueden pisarse.
+    expect(lockSqlFrom(tx.$queryRaw.mock.calls[0]!)).toContain("FOR UPDATE");
+    expect(tx.pending.updateMany).toHaveBeenCalledTimes(1);
+    expect(tx.pending.findUnique).not.toHaveBeenCalled();
+    expect(prismaMock.$queryRaw).not.toHaveBeenCalled();
+    expect(prismaMock.pending.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("cancels an open pending and sets cancelledAt/cancelledById/cancelReason", async () => {
+    mockLockedPending(pendingForDelivery({ status: "PENDIENTE" }));
+    mockCasWrote(1);
+
+    const result = await cancelPendingCommitment(
+      { id: "pend-1", cancelledById: "sup-1", reason: "Cliente desistió" },
+      now,
+    );
+
+    expect(result.rejection).toBeNull();
+    expect(result.pending).toEqual({
+      id: "pend-1",
+      status: "CANCELADO",
+      cancelledAt: now,
+    });
+    expect(tx.pending.updateMany).toHaveBeenCalledWith({
+      // CAS sobre el estado leído bajo el lock.
+      where: { id: "pend-1", status: "PENDIENTE" },
+      data: {
+        status: "CANCELADO",
+        cancelledAt: now,
+        cancelledById: "sup-1",
+        cancelReason: "Cliente desistió",
+      },
+    });
+  });
+
+  it("rejects cancelling an ENTREGADO pending", async () => {
+    mockLockedPending(pendingForDelivery({ status: "ENTREGADO" }));
+
+    const result = await cancelPendingCommitment({ id: "pend-1", cancelledById: "sup-1" }, now);
+
+    expect(result.rejection).toBe("ALREADY_DELIVERED");
+    expect(result.pending).toBeNull();
+    expect(tx.pending.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects cancelling an already CANCELADO pending", async () => {
+    mockLockedPending(pendingForDelivery({ status: "CANCELADO" }));
+
+    const result = await cancelPendingCommitment({ id: "pend-1", cancelledById: "sup-1" }, now);
+
+    expect(result.rejection).toBe("ALREADY_CANCELLED");
+    expect(tx.pending.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("aborts the transaction when the compare-and-set writes no row", async () => {
+    mockLockedPending(pendingForDelivery({ status: "PENDIENTE" }));
+    mockCasWrote(0);
+
+    await expect(
+      cancelPendingCommitment({ id: "pend-1", cancelledById: "sup-1" }, now),
+    ).rejects.toThrow(/concurrently/);
+  });
+
+  it("throws when the pending does not exist", async () => {
+    mockLockedPending(null);
+
+    await expect(
+      cancelPendingCommitment({ id: "missing", cancelledById: "sup-1" }, now),
+    ).rejects.toThrow();
+  });
+
+  it("race: a concurrent delivery completed the pending — cancel rejects ALREADY_DELIVERED and never writes", async () => {
+    // La segunda transacción espera en el `FOR UPDATE` y, al despertar, lee el
+    // ENTREGADO que la entrega concurrente acaba de confirmar. Sin el lock
+    // habría leído PARCIAL y cancelado una entrega ya cumplida.
+    mockLockedPending(pendingForDelivery({ status: "ENTREGADO", deliveredQuantity: 10 }));
+
+    const result = await cancelPendingCommitment({ id: "pend-1", cancelledById: "sup-1" }, now);
+
+    expect(result.rejection).toBe("ALREADY_DELIVERED");
+    expect(result.pending).toBeNull();
+    expect(tx.pending.updateMany).not.toHaveBeenCalled();
   });
 });
 

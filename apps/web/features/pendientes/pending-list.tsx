@@ -11,11 +11,21 @@ import {
   computeDeadlineStatus,
   type DeadlineStatus,
 } from "./deadline-status";
+import { remainingQuantity } from "./delivery-rules";
+import { PendingCancelForm } from "./pending-cancel-form";
+import { PendingDeliverForm } from "./pending-deliver-form";
 
 type PendingListProps = {
   items: PendingListItem[];
   nextCursor: string | null;
+  // Booleanos explícitos (no un prop de rol): la UI es cosmética, la Server
+  // Action re-chequea la capability del lado del server siempre.
+  canDeliver: boolean;
+  canCancel: boolean;
 };
+
+// Estados terminales: ya no hay nada operativo que hacer sobre el pendiente.
+const CLOSED_STATUSES: readonly PendingStatus[] = ["ENTREGADO", "CANCELADO"];
 
 const STATUS: Record<
   PendingStatus,
@@ -41,7 +51,14 @@ const DEADLINE: Record<
 // Promesa en hora de Colombia: formatBogotaDate garantiza zona y locale consistentes.
 
 // Listado presentacional (server component). Mobile-first: tarjetas apiladas.
-export function PendingList({ items, nextCursor }: PendingListProps) {
+// Las acciones de entrega/cancelación son client components: necesitan
+// `useActionState` para mostrar el rechazo que devuelve la Server Action.
+export function PendingList({
+  items,
+  nextCursor,
+  canDeliver,
+  canCancel,
+}: PendingListProps) {
   if (items.length === 0) {
     return (
       <Card>
@@ -63,24 +80,42 @@ export function PendingList({ items, nextCursor }: PendingListProps) {
         const status = STATUS[pending.status];
         const deadline =
           DEADLINE[computeDeadlineStatus(pending.promisedAt, pending.status, now)];
+        const isOpen = !CLOSED_STATUSES.includes(pending.status);
+        const remaining = remainingQuantity(pending.quantity, pending.deliveredQuantity);
+
         return (
-          <Card key={pending.id} className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="truncate font-semibold text-text">
-                {pending.product.name}
-              </p>
-              <p className="text-sm text-muted-foreground">
-                {pending.quantity} {pending.product.unit} · {pending.product.code}
-                {pending.customerName ? ` · ${pending.customerName}` : ""}
-              </p>
-              <p className="text-sm text-muted-foreground">
-                Promesa: {formatBogotaDate(pending.promisedAt, { style: "datetime" })}
-              </p>
+          <Card key={pending.id} className="space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate font-semibold text-text">
+                  {pending.product.name}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {pending.quantity} {pending.product.unit} · {pending.product.code}
+                  {pending.customerName ? ` · ${pending.customerName}` : ""}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  Promesa: {formatBogotaDate(pending.promisedAt, { style: "datetime" })}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  Entregado: {pending.deliveredQuantity} / {pending.quantity}{" "}
+                  {pending.product.unit}
+                </p>
+              </div>
+              <div className="flex shrink-0 flex-col items-end gap-1.5">
+                <Badge tone={deadline.tone}>{deadline.label}</Badge>
+                <Badge tone={status.tone}>{status.label}</Badge>
+              </div>
             </div>
-            <div className="flex shrink-0 flex-col items-end gap-1.5">
-              <Badge tone={deadline.tone}>{deadline.label}</Badge>
-              <Badge tone={status.tone}>{status.label}</Badge>
-            </div>
+
+            {isOpen && (canDeliver || canCancel) ? (
+              <div className="flex flex-col gap-3 border-t border-border pt-3 sm:flex-row sm:items-start sm:justify-between">
+                {canDeliver ? (
+                  <PendingDeliverForm pendingId={pending.id} remaining={remaining} />
+                ) : null}
+                {canCancel ? <PendingCancelForm pendingId={pending.id} /> : null}
+              </div>
+            ) : null}
           </Card>
         );
       })}
