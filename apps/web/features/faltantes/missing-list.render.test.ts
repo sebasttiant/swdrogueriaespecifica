@@ -153,6 +153,71 @@ describe("MissingList render contract", () => {
   });
 });
 
+describe("MissingList · order visibility", () => {
+  const orderedAt = new Date("2026-06-05T15:30:00.000Z");
+  const supplier = { id: "supplier-id", name: "Distribuidora Norte" };
+  const orderedLabel = formatBogotaDate(orderedAt, { style: "datetime" });
+
+  it("shows supplier and order date for an ordered item in both card and table", () => {
+    const html = renderMissingList([
+      item({
+        id: "pedido-1",
+        status: "PEDIDO",
+        orderedAt,
+        supplier,
+        supplierId: supplier.id,
+        product: product("Pedido", "PED-1"),
+      }),
+    ]);
+
+    // Una vez en la tarjeta mobile y otra en la fila desktop.
+    expect(countOccurrences(html, "Distribuidora Norte")).toBe(2);
+    expect(countOccurrences(html, orderedLabel)).toBe(2);
+    expect(html).toMatch(new RegExp(`<th[^>]*>Pedido<\\/th>`));
+  });
+
+  it("shows no order detail for an item that has not been ordered", () => {
+    const html = renderMissingList([
+      item({ id: "faltante-1", product: product("Faltante", "FALT-1") }),
+    ]);
+
+    expect(html).not.toContain("Distribuidora Norte");
+    expect(html).not.toContain(orderedLabel);
+  });
+
+  // El faltante cerrado conserva proveedor y fecha, pero la orden ya no está en
+  // curso: mostrarla lo haría leer como un pedido vivo.
+  it("shows no order detail once the item reached a closed status", () => {
+    const html = renderMissingList([
+      item({
+        id: "recibido-1",
+        status: "RECIBIDO",
+        orderedAt,
+        supplier,
+        supplierId: supplier.id,
+        product: product("Recibido", "REC-1"),
+      }),
+    ]);
+
+    expect(html).not.toContain("Distribuidora Norte");
+    expect(html).not.toContain(orderedLabel);
+  });
+
+  it("renders an ordered item whose supplier did not load, without breaking", () => {
+    const html = renderMissingList([
+      item({
+        id: "pedido-sin-proveedor",
+        status: "PEDIDO",
+        orderedAt,
+        product: product("Pedido", "PED-2"),
+      }),
+    ]);
+
+    expect(countOccurrences(html, orderedLabel)).toBe(2);
+    expect(html).toContain("Proveedor sin registrar");
+  });
+});
+
 describe("MissingList · confirmation gating", () => {
   it("renders the confirm form only for FALTANTE unconfirmed items when canConfirm is true", () => {
     mockActionState(IDLE);

@@ -16,6 +16,7 @@ import { groupMissingItems, type MissingGroupKey } from "./missing-grouping";
 import { MissingConfirmForm } from "./missing-confirm-form";
 import {
   getConfirmationMetadata,
+  getOrderMetadata,
   getPageOverview,
 } from "./missing-list-helpers";
 import { MissingOrderForm } from "./missing-order-form";
@@ -123,6 +124,42 @@ function confirmationMetadata(missing: MissingItemListItem) {
   );
 }
 
+// Proveedor y fecha de una orden en curso. `getOrderMetadata` ya decide si el
+// faltante tiene un pedido que mostrar; acá solo se formatea.
+function orderDetails(missing: MissingItemListItem) {
+  const order = getOrderMetadata(missing);
+  if (!order) return null;
+
+  return (
+    <>
+      <p>Proveedor: {order.supplierName ?? "Proveedor sin registrar"}</p>
+      {order.orderedAt ? (
+        <p>Pedido: {formatBogotaDate(order.orderedAt, { style: "datetime" })}</p>
+      ) : null}
+    </>
+  );
+}
+
+// Misma información en la celda desktop. El guion marca las filas sin pedido
+// para que la columna no quede visualmente vacía.
+function orderCell(missing: MissingItemListItem) {
+  const order = getOrderMetadata(missing);
+  if (!order) return <span className="text-muted-foreground">—</span>;
+
+  return (
+    <div className="space-y-0.5">
+      <p className="font-medium text-text">
+        {order.supplierName ?? "Proveedor sin registrar"}
+      </p>
+      {order.orderedAt ? (
+        <p className="text-muted-foreground">
+          {formatBogotaDate(order.orderedAt, { style: "datetime" })}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 // Tarjeta mobile de un faltante. Extraída para reusarse dentro de cada
 // sección de grupo sin duplicar el markup.
 function missingCard(
@@ -157,6 +194,7 @@ function missingCard(
             Cantidad: {missing.quantity} {missing.product.unit}
           </p>
           <p>Confirmación: {confirmationMetadata(missing)}</p>
+          {orderDetails(missing)}
           {origin ? (
             <>
               <p>Origen: pendiente{origin.customerName ? ` · ${origin.customerName}` : ""}</p>
@@ -199,6 +237,7 @@ function missingRow(
           <Badge tone={status.tone}>{status.label}</Badge>
         </div>
       </td>
+      <td className="px-4 py-3 text-sm">{orderCell(missing)}</td>
       {hasActions ? (
         <td className="px-4 py-3">
           {missingActions(missing, canConfirm, canOrder)}
@@ -277,7 +316,7 @@ export function MissingList({
 
             {/* Desktop: tabla simple tipo checklist. Scroll horizontal si no entra. */}
             <Card className="hidden overflow-x-auto p-0 lg:block">
-              <table className="w-full min-w-[48rem] text-left text-sm">
+              <table className="w-full min-w-[56rem] text-left text-sm">
                 <thead className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
                   <tr>
                     <th className="px-4 py-3 font-medium">Producto</th>
@@ -285,6 +324,7 @@ export function MissingList({
                     <th className="px-4 py-3 font-medium">Cantidad</th>
                     <th className="px-4 py-3 font-medium">Confirmación</th>
                     <th className="px-4 py-3 font-medium">Estado</th>
+                    <th className="px-4 py-3 font-medium">Pedido</th>
                     {canConfirm || canOrder ? (
                       <th className="px-4 py-3 text-right font-medium">Acción</th>
                     ) : null}
