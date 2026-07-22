@@ -18,8 +18,30 @@ export function getProducts(params: {
   cursor?: string | null;
   take?: number;
   q?: string;
+  active?: boolean;
 }): Promise<Paginated<ProductListItem>> {
   return listProducts(params);
+}
+
+export type ActiveProductOption = Pick<ProductListItem, "id" | "name" | "code">;
+
+export async function getActiveProductsForMissingItem(params: {
+  cursor?: string | null;
+  q: string;
+}): Promise<Paginated<ActiveProductOption>> {
+  const page = await getProducts({
+    active: true,
+    q: params.q,
+    take: 20,
+    ...(params.cursor ? { cursor: params.cursor } : {}),
+  });
+
+  return {
+    items: page.items
+      .filter((product) => product.active)
+      .map(({ id, name, code }) => ({ id, name, code })),
+    nextCursor: page.nextCursor,
+  };
 }
 
 export function getProduct(id: string): Promise<Product | null> {

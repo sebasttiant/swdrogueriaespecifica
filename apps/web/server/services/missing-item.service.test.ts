@@ -343,6 +343,16 @@ describe("createManualMissingItem", () => {
 
     expect(repo.createMissingItem).not.toHaveBeenCalled();
   });
+
+  it("rejects inactive catalog products without creating a missing item", async () => {
+    productRepo.findProductById.mockResolvedValue({ id: "inactive-product", active: false });
+
+    await expect(
+      createManualMissingItem({ productId: "inactive-product", quantity: 1, createdById: "admin-1" }),
+    ).rejects.toThrow("Product not found");
+
+    expect(repo.createMissingItem).not.toHaveBeenCalled();
+  });
 });
 
 describe("getMissingItemsSummary", () => {

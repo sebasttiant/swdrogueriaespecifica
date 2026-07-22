@@ -174,6 +174,16 @@ describe("MissingList render contract", () => {
       ),
     );
   });
+
+  it("renders a manual note in both the mobile card and desktop table", () => {
+    const note = "Prioridad mostrador";
+    const html = renderMissingList([
+      item({ id: "manual-note", note, product: product("Manual product", "MAN-1") }),
+    ]);
+
+    expect(countOccurrences(html, `Nota: ${note}`)).toBe(2);
+    expect(html).toMatch(new RegExp(`<th[^>]*>Nota<\\/th>`));
+  });
 });
 
 describe("MissingList · order visibility", () => {

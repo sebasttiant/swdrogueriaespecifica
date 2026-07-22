@@ -20,8 +20,29 @@ import {
   type OrderMissingItemInput,
   type OrderRejection,
 } from "@/server/services/missing-item.service";
+import {
+  getActiveProductsForMissingItem,
+  type ActiveProductOption,
+} from "@/server/services/product.service";
 
 export type MissingItemActionState = { error: string | null; ok: boolean };
+
+export type MissingItemProductSearchResult = {
+  items: ActiveProductOption[];
+  nextCursor: string | null;
+};
+
+export async function searchActiveProductsForMissingItemAction(
+  rawQuery: string,
+  cursor?: string | null,
+): Promise<MissingItemProductSearchResult> {
+  await requireCapability("canCreateMissingItems");
+
+  const q = rawQuery.trim();
+  if (!q) return { items: [], nextCursor: null };
+
+  return getActiveProductsForMissingItem({ q, cursor });
+}
 
 export async function createMissingItemAction(
   _prev: MissingItemActionState,
@@ -39,12 +60,18 @@ export async function createMissingItemAction(
     return { error: "Revisá los datos del faltante.", ok: false };
   }
 
+  let item: Awaited<ReturnType<typeof createManualMissingItem>>;
   try {
-    const item = await createManualMissingItem({
+    item = await createManualMissingItem({
       ...parsed.data,
       createdById: session.user.id,
     });
+  } catch (error) {
+    console.error("[faltantes] No se pudo registrar el faltante manual:", error);
+    return { error: "No se pudo registrar el faltante. Intentá de nuevo.", ok: false };
+  }
 
+  try {
     await recordAudit({
       action: AUDIT_ACTIONS.MISSING_CREATE,
       module: AUDIT_MODULES.FALTANTES,
@@ -60,12 +87,16 @@ export async function createMissingItemAction(
       context: await auditContextFromHeaders(session.user.id),
     });
   } catch (error) {
-    console.error("[faltantes] No se pudo registrar el faltante manual:", error);
-    return { error: "No se pudo registrar el faltante. Intentá de nuevo.", ok: false };
+    console.error("[faltantes] El faltante se creó, pero no se pudo auditar:", error);
   }
 
-  revalidatePath("/faltantes");
-  revalidatePath("/dashboard");
+  for (const path of ["/faltantes", "/dashboard"]) {
+    try {
+      revalidatePath(path);
+    } catch (error) {
+      console.error("[faltantes] El faltante se creó, pero no se pudo revalidar:", error);
+    }
+  }
   return { error: null, ok: true };
 }
 

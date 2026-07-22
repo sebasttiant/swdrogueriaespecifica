@@ -254,6 +254,9 @@ function missingRow(
         {missing.quantity} {missing.product.unit}
       </td>
       <td className="px-3 py-2 text-sm">{confirmationMetadata(missing)}</td>
+      <td className="px-3 py-2 text-sm text-muted-foreground">
+        {missing.note ? `Nota: ${missing.note}` : "—"}
+      </td>
       <td className="px-3 py-2">
         <div className="flex items-center gap-1.5">
           {deadlineBadge(missing.origin, now)}
@@ -331,6 +334,7 @@ export function MissingList({
                     <th className="px-3 py-2 font-medium">Código</th>
                     <th className="px-3 py-2 font-medium">Cantidad</th>
                     <th className="px-3 py-2 font-medium">Confirmación</th>
+                    <th className="px-3 py-2 font-medium">Nota</th>
                     <th className="px-3 py-2 font-medium">Estado</th>
                     <th className="px-3 py-2 font-medium">Pedido</th>
                     {canConfirm || canOrder ? (
