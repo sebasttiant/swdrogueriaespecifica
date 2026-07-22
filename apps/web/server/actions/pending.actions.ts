@@ -132,7 +132,7 @@ export async function createPendingAction(
 
 // --------------------------------------------------------------------------
 // Ciclo de vida de entrega (Slice A): entregas parciales + cancelación.
-// Mismo esqueleto que `confirmMissingItemAction`: Zod → requireCapability →
+// Mismo esqueleto que `orderMissingItemAction`: Zod → requireCapability →
 // service → audit best-effort → revalidate. El `customerName` del pendiente
 // NUNCA se guarda en el payload de auditoría.
 // --------------------------------------------------------------------------

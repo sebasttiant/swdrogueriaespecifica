@@ -1,32 +1,9 @@
 import type { MissingItemListItem } from "@/server/repositories/missing-item.repository";
 
-export type ConfirmationMetadata = {
-  label: "Pendiente" | "Autorizado";
-  confirmedAt: Date | null;
-  /** Nombre de quien autorizó, o null si la relación no se resuelve. */
-  authorizedBy: string | null;
-};
-
 export type OrderMetadata = {
   supplierName: string | null;
   orderedAt: Date | null;
 };
-
-export function getConfirmationMetadata(
-  item: MissingItemListItem,
-): ConfirmationMetadata {
-  if (!item.confirmedAt) {
-    return { label: "Pendiente", confirmedAt: null, authorizedBy: null };
-  }
-
-  // La fecha es el hecho registrado: un faltante con `confirmedAt` está
-  // autorizado aunque el usuario que lo autorizó ya no se resuelva.
-  return {
-    label: "Autorizado",
-    confirmedAt: item.confirmedAt,
-    authorizedBy: item.confirmedBy?.name ?? null,
-  };
-}
 
 // Detalle de la orden en curso: a qué proveedor se pidió y cuándo.
 //

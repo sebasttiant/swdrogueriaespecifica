@@ -17,7 +17,6 @@ vi.mock("react", async (importOriginal) => {
 // `useActionState` la reciba. Mockearla evita arrastrar "use server" y
 // next/cache al entorno de test.
 vi.mock("@/server/actions/missing-item.actions", () => ({
-	confirmMissingItemAction: vi.fn(),
 	orderMissingItemAction: vi.fn(),
 }));
 
@@ -78,7 +77,6 @@ function mockActionState(state: ActionState, isPending = false) {
 
 function renderMissingList(
 	items: MissingItemListItem[],
-	canConfirm = false,
 	canOrder = false,
 	options: {
 		suppliers?: { id: string; name: string }[];
@@ -89,17 +87,12 @@ function renderMissingList(
 		createElement(MissingList, {
 			items,
 			nextCursor: null,
-			canConfirm,
 			canOrder,
 			now,
 			suppliers: options.suppliers ?? [],
 			canCreateSupplier: options.canCreateSupplier ?? true,
 		}),
 	);
-}
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function countOccurrences(value: string, needle: string): number {
@@ -128,7 +121,7 @@ describe("MissingList render contract", () => {
     expect(html).toContain("Open missing");
   });
 
-  // El detalle secundario (origen, promesa, confirmación) sigue disponible, pero
+  // El detalle secundario (origen, promesa, pedido) sigue disponible, pero
   // colapsado: en la cola no se lee contexto, se actúa.
   it("keeps the secondary detail collapsed behind a disclosure", () => {
     const html = renderMissingList([
@@ -142,66 +135,6 @@ describe("MissingList render contract", () => {
 
     expect(html).toContain("<details");
     expect(html).toContain("Ver detalle");
-  });
-
-  it("renders authorization metadata with the authorizer in the card and table markup", () => {
-    const confirmedAt = new Date("2026-06-06T12:00:00.000Z");
-    const authorizedLabel = `Autorizado por Ana Gerente · ${formatBogotaDate(confirmedAt, {
-      style: "datetime",
-    })}`;
-    const html = renderMissingList([
-      item({
-        id: "confirmed-open-status",
-        confirmedAt,
-        confirmedById: "user-1",
-        confirmedBy: { id: "user-1", name: "Ana Gerente" },
-        product: product("Confirmed product", "CONF-1"),
-        originId: "pending-id",
-        origin: origin({ promisedAt: new Date("2026-06-06T13:00:00.000Z") }),
-      }),
-      item({ id: "pending", product: product("Pending product", "PEND-1") }),
-    ]);
-
-    // Móvil y escritorio: el mismo hecho operativo se ve en ambas superficies.
-    expect(countOccurrences(html, authorizedLabel)).toBe(2);
-    expect(countOccurrences(html, "Pendiente")).toBe(2);
-    expect(html).toMatch(
-      new RegExp(
-        `class="space-y-3 lg:hidden"[\\s\\S]*Autorización: <span[^>]*>${escapeRegex(
-          authorizedLabel,
-        )}<\\/span>`,
-      ),
-    );
-    expect(html).toMatch(
-      new RegExp(
-        `<table[\\s\\S]*<th[^>]*>Autorización<\\/th>[\\s\\S]*<td[^>]*><span[^>]*>${escapeRegex(
-          authorizedLabel,
-        )}<\\/span><\\/td>`,
-      ),
-    );
-    // La terminología vieja no debe quedar viva en la interfaz.
-    expect(html).not.toContain("Confirmación");
-    expect(html).not.toContain("Confirmado");
-  });
-
-  // Un registro anterior puede tener fecha de autorización sin usuario
-  // resoluble: sigue leyéndose como autorizado, sin nombre inventado.
-  it("still reads as authorized when the authorizer cannot be resolved", () => {
-    const confirmedAt = new Date("2026-06-06T12:00:00.000Z");
-    const html = renderMissingList([
-      item({
-        id: "legacy-authorized",
-        confirmedAt,
-        confirmedById: "gone",
-        product: product("Legacy", "LEG-1"),
-      }),
-    ]);
-
-    expect(countOccurrences(
-      html,
-      `Autorizado · ${formatBogotaDate(confirmedAt, { style: "datetime" })}`,
-    )).toBe(2);
-    expect(html).not.toContain("Autorizado por");
   });
 
   it("renders a manual note in both the mobile card and desktop table", () => {
@@ -280,123 +213,132 @@ describe("MissingList · order visibility", () => {
   });
 });
 
-describe("MissingList · confirmation gating", () => {
-  it("renders the confirm form only for FALTANTE unconfirmed items when canConfirm is true", () => {
+describe("MissingList · order gating", () => {
+  it("renders the order form only for FALTANTE unconfirmed items when canOrder is true", () => {
     mockActionState(IDLE);
     const html = renderMissingList(
       [
         item({ id: "faltante-1", product: product("Faltante", "FALT-1") }),
+        item({ id: "pedido-1", status: "PEDIDO", product: product("Pedido", "PED-1") }),
         item({
-          id: "pedido-1",
-          status: "PEDIDO",
-          product: product("Pedido", "PED-1"),
-        }),
-        item({
-          id: "recibido-1",
-          status: "RECIBIDO",
+          id: "historico-1",
           confirmedAt: new Date("2026-06-06T10:00:00.000Z"),
-          product: product("Recibido", "REC-1"),
-        }),
-        item({
-          id: "cancelado-1",
-          status: "CANCELADO",
-          product: product("Cancelado", "CANC-1"),
+          product: product("Historico", "HIST-1"),
         }),
       ],
       true,
     );
 
-    // El check de autorización solo aparece para el faltante autorizable.
-    expect(html).toContain('aria-label="Autorizar"');
-    expect(html).toContain('name="id" value="faltante-1"');
-    // No se ofrece autorización sobre PEDIDO ni estados cerrados.
-    expect(html).not.toContain('name="id" value="pedido-1"');
-    expect(html).not.toContain('name="id" value="recibido-1"');
-    expect(html).not.toContain('name="id" value="cancelado-1"');
+    expect(html).toContain('name="missingItemId" value="faltante-1"');
+    expect(html).toContain("Pedir");
+    expect(html).not.toContain('name="missingItemId" value="pedido-1"');
+    expect(html).not.toContain('name="missingItemId" value="historico-1"');
   });
 
-  it("renders no confirm form when canConfirm is false, even for confirmable items", () => {
+  // El formulario de pedido nace colapsado: la fila ofrece el disparador
+  // "Pedir", no un formulario abierto que empuje la lista fuera de pantalla.
+  it("renders the order form collapsed, mounting no supplier fields in the list", () => {
+    mockActionState(IDLE);
+    const html = renderMissingList(
+      [item({ id: "faltante-1", product: product("Faltante", "FALT-1") })],
+      true,
+      { suppliers: [{ id: "sup-1", name: "Distribuidora Norte" }] },
+    );
+
+    expect(html).toContain("Pedir");
+    expect(html).not.toContain('name="supplierId"');
+    expect(html).not.toContain("Nombre del proveedor");
+    expect(html).not.toContain("Distribuidora Norte");
+  });
+
+  it("offers no action at all when the user cannot order", () => {
     mockActionState(IDLE);
     const html = renderMissingList(
       [item({ id: "faltante-1", product: product("Faltante", "FALT-1") })],
       false,
     );
 
-    expect(html).not.toContain("Autorizar");
-    expect(html).not.toContain('name="id"');
+    expect(html).not.toContain("Pedir");
+    expect(html).not.toContain('name="missingItemId"');
     // Sin la columna Acción del encabezado desktop.
-	expect(html).not.toContain("Acción");
-	});
+    expect(html).not.toContain("Acción");
+  });
+});
 
-	it("renders the order form only for FALTANTE unconfirmed items when canOrder is true", () => {
-		mockActionState(IDLE);
-		const html = renderMissingList(
-			[
-				item({ id: "faltante-1", product: product("Faltante", "FALT-1") }),
-				item({ id: "pedido-1", status: "PEDIDO", product: product("Pedido", "PED-1") }),
-				item({
-					id: "confirmado-1",
-					confirmedAt: new Date("2026-06-06T10:00:00.000Z"),
-					product: product("Confirmado", "CONF-1"),
-				}),
-			],
-			false,
-			true,
-		);
+// "OK gerencia" registraba que gerencia YA había pedido, pero sin proveedor y
+// sin pasar a PEDIDO. Convivía con "Pedir" bajo la MISMA condición, así que la
+// misma fila ofrecía dos caminos para el mismo hecho. "Pedir" queda como única
+// transición operativa; `confirmedAt` sobrevive en los datos y lo tratan C2/C3.
+describe("MissingList · no ambiguous authorization path", () => {
+  const AUTHORIZATION_WORDING = [
+    "Autorizar",
+    "Autorizado",
+    "Autorizados",
+    "Autorización",
+    "OK gerencia",
+    "Confirmar",
+    "Confirmación",
+  ];
 
-		expect(html).toContain('name="missingItemId" value="faltante-1"');
-		expect(html).toContain("Pedir");
-		expect(html).not.toContain('name="missingItemId" value="pedido-1"');
-		expect(html).not.toContain('name="missingItemId" value="confirmado-1"');
-	});
+  it.each(AUTHORIZATION_WORDING)("never renders %s anywhere in the list", (wording) => {
+    mockActionState(IDLE);
+    const html = renderMissingList(
+      [
+        item({ id: "faltante-1", product: product("Faltante", "FALT-1") }),
+        item({
+          id: "historico-1",
+          confirmedAt: new Date("2026-06-06T10:00:00.000Z"),
+          confirmedById: "admin-1",
+          confirmedBy: { id: "admin-1", name: "Ana Gerente" },
+          product: product("Historico", "HIST-1"),
+        }),
+      ],
+      true,
+    );
 
-	// El formulario de pedido nace colapsado: la fila ofrece el disparador
-	// "Pedir", no un formulario abierto que empuje la lista fuera de pantalla.
-	it("renders the order form collapsed, mounting no supplier fields in the list", () => {
-		mockActionState(IDLE);
-		const html = renderMissingList(
-			[item({ id: "faltante-1", product: product("Faltante", "FALT-1") })],
-			false,
-			true,
-			{ suppliers: [{ id: "sup-1", name: "Distribuidora Norte" }] },
-		);
+    expect(html).not.toContain(wording);
+  });
 
-		expect(html).toContain("Pedir");
-		expect(html).not.toContain('name="supplierId"');
-		expect(html).not.toContain("Nombre del proveedor");
-		expect(html).not.toContain("Distribuidora Norte");
-	});
+  // La fila histórica sigue existiendo y renderizando; lo que desaparece es el
+  // camino ambiguo, no el registro.
+  it("still renders a row that carries confirmedAt, without offering the removed action", () => {
+    mockActionState(IDLE);
+    const html = renderMissingList(
+      [
+        item({
+          id: "historico-1",
+          confirmedAt: new Date("2026-06-06T10:00:00.000Z"),
+          confirmedById: "admin-1",
+          confirmedBy: { id: "admin-1", name: "Ana Gerente" },
+          product: product("Historico", "HIST-1"),
+        }),
+      ],
+      true,
+    );
+
+    expect(html).toContain("Historico");
+    expect(html).toContain("HIST-1");
+    // El nombre del responsable histórico no se muestra todavía: C2 lo trae de
+    // vuelta como "pedido histórico", con su proveedor sin registrar.
+    expect(html).not.toContain("Ana Gerente");
+  });
 });
 
 describe("MissingList · action error contract", () => {
-	it("surfaces the confirmation rejection returned by the server action", () => {
-		const message = "No se pudo autorizar el faltante. Intentá de nuevo.";
-		mockActionState({ error: message, ok: false });
+  it("surfaces the order rejection returned by the server action", () => {
+    const message = "Este faltante ya fue pedido.";
+    mockActionState({ error: message, ok: false });
 
     const html = renderMissingList(
       [item({ id: "faltante-1", product: product("Faltante", "FALT-1") })],
       true,
     );
 
-		expect(html).toContain('role="alert"');
-		expect(html).toContain(message);
-	});
+    expect(html).toContain('role="alert"');
+    expect(html).toContain(message);
+  });
 
-	it("surfaces the order rejection returned by the server action", () => {
-		const message = "Este faltante ya fue pedido.";
-		mockActionState({ error: message, ok: false });
-
-		const html = renderMissingList(
-			[item({ id: "faltante-1", product: product("Faltante", "FALT-1") })],
-			false,
-			true,
-		);
-
-		expect(html).toContain('role="alert"');
-		expect(html).toContain(message);
-	});
-
-	it("renders no alert while the action has not rejected", () => {
+  it("renders no alert while the action has not rejected", () => {
     mockActionState(IDLE);
 
     const html = renderMissingList(
@@ -407,7 +349,7 @@ describe("MissingList · action error contract", () => {
     expect(html).not.toContain('role="alert"');
   });
 
-  it("wires the confirm form to the stateful action, not to a fire-and-forget wrapper", () => {
+  it("wires the order form to the stateful action, not to a fire-and-forget wrapper", () => {
     mockActionState(IDLE);
 
     renderMissingList(
@@ -415,12 +357,12 @@ describe("MissingList · action error contract", () => {
       true,
     );
 
-	// El item confirmable se renderiza dos veces (tarjeta mobile + fila
-	// desktop, una sola visible por CSS), así que hay dos instancias del
-	// formulario y dos llamadas a `useActionState`. Un wrapper `Promise<void>`
-	// (que descarta `{ ok, error }`) no podría alimentar el hook ninguna vez.
-	expect(useActionStateMock).toHaveBeenCalledTimes(2);
-	});
+    // El item se renderiza dos veces (tarjeta mobile + fila desktop, una sola
+    // visible por CSS), así que hay dos instancias del formulario y dos llamadas
+    // a `useActionState`. Un wrapper `Promise<void>` (que descarta
+    // `{ ok, error }`) no podría alimentar el hook ninguna vez.
+    expect(useActionStateMock).toHaveBeenCalledTimes(2);
+  });
 });
 
 function product(

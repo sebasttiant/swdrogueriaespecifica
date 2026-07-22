@@ -25,19 +25,19 @@ function render(
 }
 
 describe("MissingSummary · compact chip strip", () => {
-  it("renders the four operational counters", () => {
+  it("renders the three operational counters", () => {
     const html = render({ open: 12, overdue: 3, ordered: 5, confirmed: 8 });
 
     expect(html).toContain("Abiertos");
     expect(html).toContain("Vencidos");
     expect(html).toContain("Pedidos");
-    expect(html).toContain("Autorizados");
-    // La terminología vieja no debe sobrevivir en la franja de indicadores.
+    // "OK gerencia"/"Autorizados" describía un pedido ya realizado, pero por un
+    // camino ambiguo que ya no existe. El chip se retira con la acción.
+    expect(html).not.toContain("Autorizados");
     expect(html).not.toContain("OK gerencia");
     expect(html).toContain(">12<");
     expect(html).toContain(">3<");
     expect(html).toContain(">5<");
-    expect(html).toContain(">8<");
   });
 
   // `/faltantes` es una cola operativa, no un tablero. Los tiles de texto 3xl se

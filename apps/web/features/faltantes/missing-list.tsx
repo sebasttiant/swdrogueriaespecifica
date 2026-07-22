@@ -14,17 +14,12 @@ import {
   type DeadlineStatus,
 } from "../pendientes/deadline-status";
 import { groupMissingItems, type MissingGroupKey } from "./missing-grouping";
-import { MissingConfirmForm } from "./missing-confirm-form";
-import {
-  getConfirmationMetadata,
-  getOrderMetadata,
-} from "./missing-list-helpers";
+import { getOrderMetadata } from "./missing-list-helpers";
 import { MissingOrderForm } from "./missing-order-form";
 
 type MissingListProps = {
   items: MissingItemListItem[];
   nextCursor: string | null;
-  canConfirm: boolean;
   canOrder: boolean;
   // Proveedores elegibles para el pedido. Vacío = todavía no hay ninguno, así
   // que la única rama posible es crear uno nuevo.
@@ -72,23 +67,17 @@ function deadlineBadge(origin: MissingItemListItem["origin"], now: Date) {
   return <Badge tone={deadline.tone}>{deadline.label}</Badge>;
 }
 
-// La autorización de gerencia solo aplica a un faltante que sigue
-// FALTANTE y sin confirmar. Un PEDIDO ya no se confirma (invariante del
-// service: nunca PEDIDO + confirmedAt), y los estados cerrados tampoco. El
-// botón no se ofrece sobre estados muertos, así que no quedan caminos
-// obsoletos que disparen un submit sin destino válido.
-function canConfirmItem(missing: MissingItemListItem): boolean {
-  return missing.status === "FALTANTE" && missing.confirmedAt === null;
-}
-
+// `confirmedAt` NO es redundante con el status. Los registros del camino viejo
+// ("OK gerencia") quedaron en FALTANTE con `confirmedAt` seteado: gerencia ya
+// había pedido, pero sin registrar proveedor. No se les vuelve a ofrecer "Pedir"
+// hasta que C2 los reclasifique. Simplificar esta condición reintroduce el bug.
 function canOrderItem(missing: MissingItemListItem): boolean {
   return missing.status === "FALTANTE" && missing.confirmedAt === null;
 }
 
-// Contexto de las acciones de una fila. Agrupado para no arrastrar cuatro
-// booleanos posicionales por cada helper de render.
+// Contexto de la acción de una fila. Agrupado para no arrastrar parámetros
+// posicionales por cada helper de render.
 type ActionContext = {
-  canConfirm: boolean;
   canOrder: boolean;
   suppliers: SupplierOption[];
   canCreateSupplier: boolean;
@@ -99,43 +88,19 @@ function missingActions(
   actions: ActionContext,
   className?: string,
 ) {
-  const showConfirm = actions.canConfirm && canConfirmItem(missing);
   const showOrder = actions.canOrder && canOrderItem(missing);
 
-  if (!showConfirm && !showOrder) return null;
+  if (!showOrder) return null;
 
   return (
     <div className={cn("flex flex-col items-end gap-2", className)}>
-      {showConfirm ? <MissingConfirmForm id={missing.id} /> : null}
-      {showOrder ? (
-        <MissingOrderForm
-          id={missing.id}
-          suppliers={actions.suppliers}
-          canCreateSupplier={actions.canCreateSupplier}
-        />
-      ) : null}
+      <MissingOrderForm
+        id={missing.id}
+        suppliers={actions.suppliers}
+        canCreateSupplier={actions.canCreateSupplier}
+      />
     </div>
   );
-}
-
-// Autorización de gerencia: quién la dio y cuándo.
-//
-// El texto se arma como un único string para que el DOM reciba un solo nodo de
-// texto: en SSR real React separa expresiones adyacentes con comentarios, y eso
-// fragmenta lo que anuncia el lector de pantalla. Los tests fijan el contenido,
-// no esta propiedad — `renderToStaticMarkup` no reproduce esa separación, así
-// que volver a expresiones adyacentes no haría fallar la suite.
-function confirmationMetadata(missing: MissingItemListItem) {
-  const metadata = getConfirmationMetadata(missing);
-
-  if (!metadata.confirmedAt) {
-    return <span className="text-muted-foreground">{metadata.label}</span>;
-  }
-
-  const authorizer = metadata.authorizedBy ? ` por ${metadata.authorizedBy}` : "";
-  const when = formatBogotaDate(metadata.confirmedAt, { style: "datetime" });
-
-  return <span className="text-success">{`${metadata.label}${authorizer} · ${when}`}</span>;
 }
 
 // Proveedor y fecha de una orden en curso. `getOrderMetadata` ya decide si el
@@ -185,7 +150,7 @@ function missingCard(
   const origin = missing.origin;
 
   // Jerarquía operativa: producto y cantidad arriba, estado como chip, acción
-  // siempre visible. Todo lo demás (origen, promesa, autorización, pedido) es
+  // siempre visible. Todo lo demás (origen, promesa, pedido) es
   // contexto secundario y va colapsado: en la cola no se lee, se actúa.
   return (
     <Card key={missing.id} className="space-y-3 p-4">
@@ -219,7 +184,6 @@ function missingCard(
           Ver detalle
         </summary>
         <div className="mt-2 space-y-1 text-xs text-muted-foreground">
-          <p>Autorización: {confirmationMetadata(missing)}</p>
           {missing.note ? <p>Nota: {missing.note}</p> : null}
           {orderDetails(missing)}
           {origin ? (
@@ -246,7 +210,7 @@ function missingRow(
   actions: ActionContext,
 ) {
   const status = STATUS[missing.status];
-  const hasActions = actions.canConfirm || actions.canOrder;
+  const hasActions = actions.canOrder;
   return (
     <tr key={missing.id} className="border-b border-border last:border-0">
       <td className="px-3 py-2 font-medium text-text">
@@ -259,7 +223,6 @@ function missingRow(
       <td className="px-3 py-2 text-muted-foreground">
         {missing.quantity} {missing.product.unit}
       </td>
-      <td className="px-3 py-2 text-sm">{confirmationMetadata(missing)}</td>
       <td className="px-3 py-2 text-sm text-muted-foreground">
         {missing.note ? `Nota: ${missing.note}` : "—"}
       </td>
@@ -284,14 +247,12 @@ function missingRow(
 export function MissingList({
   items,
   nextCursor,
-  canConfirm,
   canOrder,
   suppliers,
   canCreateSupplier,
   now,
 }: MissingListProps) {
   const actions: ActionContext = {
-    canConfirm,
     canOrder,
     suppliers,
     canCreateSupplier,
@@ -339,11 +300,10 @@ export function MissingList({
                     <th className="px-3 py-2 font-medium">Producto</th>
                     <th className="px-3 py-2 font-medium">Código</th>
                     <th className="px-3 py-2 font-medium">Cantidad</th>
-                    <th className="px-3 py-2 font-medium">Autorización</th>
                     <th className="px-3 py-2 font-medium">Nota</th>
                     <th className="px-3 py-2 font-medium">Estado</th>
                     <th className="px-3 py-2 font-medium">Pedido</th>
-                    {canConfirm || canOrder ? (
+                    {canOrder ? (
                       <th className="px-3 py-2 text-right font-medium">Acción</th>
                     ) : null}
                   </tr>
