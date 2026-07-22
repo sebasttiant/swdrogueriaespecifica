@@ -25,6 +25,9 @@ export type CloseMissingItemsByEntryParams = {
 export type MissingItemListItem = {
   id: string;
   quantity: number;
+  // Cantidad que gerencia pidió. Null en faltantes abiertos y en registros
+  // anteriores a esta columna. No es lo mismo que `quantity` (necesidad).
+  orderedQuantity: number | null;
   note: string | null;
   status: MissingItemStatus;
   originId: string | null;
@@ -76,11 +79,13 @@ export type OrderMissingItemData = {
   supplierId: string;
   orderedById: string;
   orderedAt: Date;
+  orderedQuantity: number;
 };
 
 const LIST_SELECT = {
   id: true,
   quantity: true,
+  orderedQuantity: true,
   note: true,
   status: true,
   originId: true,
@@ -341,6 +346,9 @@ export async function orderMissingItem(
       orderedAt: data.orderedAt,
       orderedById: data.orderedById,
       supplierId: data.supplierId,
+      // La cantidad pedida entra en el MISMO update atómico que el status: si
+      // el CAS no coincide (pedido concurrente), tampoco se escribe la cantidad.
+      orderedQuantity: data.orderedQuantity,
     },
   });
   return count;

@@ -258,6 +258,11 @@ model MissingItem {
   product     Product           @relation(fields: [productId], references: [id])
   productId   String
   quantity    Int
+  // Cantidad que gerencia efectivamente pidió al proveedor. Distinta de
+  // `quantity` (necesidad/déficit histórico): null mientras el faltante sigue
+  // abierto, y en registros anteriores a esta columna. Nunca se deriva de
+  // `quantity`. Un CHECK aditivo refuerza `IS NULL OR > 0`.
+  orderedQuantity Int?
   note        String?
   status      MissingItemStatus @default(FALTANTE)
   // Pendiente que lo originó (cuando se genera automáticamente). Null = manual.

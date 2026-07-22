@@ -18,6 +18,9 @@ const INITIAL_STATE: MissingItemActionState = { error: null, ok: false };
 
 type MissingOrderFormProps = {
 	id: string;
+	// Necesidad/déficit histórico del faltante (`quantity`). Se muestra SOLO como
+	// referencia: gerencia define explícitamente cuánto pedir, no se deriva de acá.
+	neededQuantity: number;
 	suppliers: SupplierOption[];
 	// Crear un proveedor al vuelo es un eje aparte del pedido (`canManageSuppliers`).
 	// Este booleano es cosmético: la Server Action lo vuelve a exigir del lado del
@@ -38,6 +41,7 @@ type MissingOrderFormProps = {
 // selector ni los inputs del proveedor nuevo.
 export function MissingOrderForm({
 	id,
+	neededQuantity,
 	suppliers,
 	canCreateSupplier,
 	defaultOpen = false,
@@ -59,6 +63,7 @@ export function MissingOrderForm({
 	const supplierId = useId();
 	const nameId = useId();
 	const phoneId = useId();
+	const orderedQuantityId = useId();
 
 	// El `missingItemId` viaja siempre: el form existe aun colapsado, pero sin los
 	// campos pesados. Un rechazo del server sigue siendo visible al cerrar.
@@ -101,6 +106,23 @@ export function MissingOrderForm({
 			)}
 		>
 			<input type="hidden" name="missingItemId" value={id} />
+
+			<Field
+				label="Cantidad a pedir"
+				htmlFor={orderedQuantityId}
+				hint={`Necesidad registrada: ${neededQuantity} unidades.`}
+			>
+				<Input
+					id={orderedQuantityId}
+					name="orderedQuantity"
+					type="number"
+					required
+					min={1}
+					step={1}
+					inputMode="numeric"
+					placeholder="Cuántas unidades pedir"
+				/>
+			</Field>
 
 			{isCreating ? (
 				<>

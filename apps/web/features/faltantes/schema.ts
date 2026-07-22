@@ -22,6 +22,22 @@ const optionalEmail = z.preprocess(
   z.email({ error: "Email inválido." }).max(160).optional(),
 );
 
+// Tope de la cantidad a pedir. Cota de cordura contra un tipeo accidental
+// (p. ej. un código de barras en el campo cantidad), no un límite comercial.
+// El CHECK aditivo de la migración solo refuerza `> 0`; el máximo vive acá y
+// en el servidor para dar un mensaje claro en vez de un error de base.
+export const MAX_ORDERED_QUANTITY = 100_000;
+
+// Cantidad entera positiva a pedir, definida por gerencia al realizar el
+// pedido. `coerce` acepta el string del FormData; `int().positive()` rechaza
+// vacío, cero, negativos y decimales, y `finite()` descarta NaN/Infinity.
+const orderedQuantitySchema = z.coerce
+  .number({ error: "Ingresá la cantidad a pedir." })
+  .finite({ error: "La cantidad a pedir no es válida." })
+  .int({ error: "La cantidad a pedir debe ser un número entero." })
+  .positive({ error: "La cantidad a pedir debe ser mayor a cero." })
+  .max(MAX_ORDERED_QUANTITY, { error: "La cantidad a pedir supera el máximo permitido." });
+
 // Pedido de un faltante a un proveedor. `supplierId` vacío/ausente significa
 // "proveedor nuevo": en esa rama el nombre es obligatorio. La rama la decide el
 // servidor según si `supplierId` llegó con valor, nunca una prop de la UI.
@@ -31,6 +47,7 @@ export const orderMissingItemSchema = z
       .string()
       .trim()
       .min(1, { error: "Falta el id del faltante." }),
+    orderedQuantity: orderedQuantitySchema,
     supplierId: optionalText(60),
     name: optionalText(120),
     phone: optionalText(40),

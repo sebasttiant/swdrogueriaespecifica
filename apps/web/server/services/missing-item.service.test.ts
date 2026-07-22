@@ -84,6 +84,7 @@ function missingItemRow(
   return {
     id: "missing-1",
     quantity: 3,
+    orderedQuantity: null,
     note: null,
     status: "FALTANTE",
     originId: "pending-1",
@@ -500,6 +501,7 @@ describe("orderMissingItem", () => {
       {
         missingItemId: "missing-1",
         userId: "admin-1",
+        orderedQuantity: 20,
         supplier: { kind: "existing", supplierId: "sup-1" },
       },
       now,
@@ -512,11 +514,13 @@ describe("orderMissingItem", () => {
       orderedAt: now,
       supplierId: "sup-1",
     });
-    // La escritura recibe el `tx`, el id, y `orderedAt === now` (inyectado).
+    // La escritura recibe el `tx`, el id, `orderedAt === now` (inyectado) y la
+    // cantidad pedida, todo en el mismo update atómico del CAS.
     expect(repo.orderMissingItem).toHaveBeenCalledWith(tx, "missing-1", {
       supplierId: "sup-1",
       orderedById: "admin-1",
       orderedAt: now,
+      orderedQuantity: 20,
     });
     // El enlace producto↔proveedor se hace idempotente dentro de la misma tx.
     expect(supplierRepo.upsertProductSupplierLink).toHaveBeenCalledWith(tx, {
@@ -532,6 +536,7 @@ describe("orderMissingItem", () => {
       {
         missingItemId: "missing-1",
         userId: "admin-1",
+        orderedQuantity: 20,
         supplier: { kind: "existing", supplierId: "sup-1" },
       },
       now,
@@ -552,6 +557,7 @@ describe("orderMissingItem", () => {
       {
         missingItemId: "missing-1",
         userId: "admin-1",
+        orderedQuantity: 20,
         supplier: { kind: "existing", supplierId: "sup-1" },
       },
       now,
@@ -577,6 +583,7 @@ describe("orderMissingItem", () => {
       {
         missingItemId: "missing-1",
         userId: "admin-1",
+        orderedQuantity: 20,
         supplier: { kind: "existing", supplierId: "sup-1" },
       },
       now,
@@ -597,6 +604,7 @@ describe("orderMissingItem", () => {
       {
         missingItemId: "missing-1",
         userId: "admin-1",
+        orderedQuantity: 20,
         supplier: { kind: "existing", supplierId: "sup-1" },
       },
       now,
@@ -616,6 +624,7 @@ describe("orderMissingItem", () => {
       {
         missingItemId: "missing-1",
         userId: "admin-1",
+        orderedQuantity: 20,
         supplier: { kind: "existing", supplierId: "sup-1" },
       },
       now,
@@ -643,6 +652,7 @@ describe("orderMissingItem", () => {
       {
         missingItemId: "missing-1",
         userId: "admin-2",
+        orderedQuantity: 20,
         supplier: { kind: "existing", supplierId: "sup-2" },
       },
       now,
@@ -667,6 +677,7 @@ describe("orderMissingItem", () => {
         {
           missingItemId: "missing-1",
           userId: "admin-1",
+          orderedQuantity: 20,
           supplier: { kind: "new", name: "Droguería Central" },
         },
         now,
@@ -683,6 +694,7 @@ describe("orderMissingItem", () => {
         {
           missingItemId: "missing-1",
           userId: "admin-1",
+          orderedQuantity: 20,
           supplier: { kind: "existing", supplierId: "sup-1" },
         },
         now,
@@ -702,6 +714,7 @@ describe("orderMissingItem", () => {
       {
         missingItemId: "missing-1",
         userId: "admin-1",
+        orderedQuantity: 20,
         supplier: { kind: "existing", supplierId: "ghost" },
       },
       now,
@@ -722,6 +735,7 @@ describe("orderMissingItem", () => {
         {
           missingItemId: "ghost",
           userId: "admin-1",
+          orderedQuantity: 20,
           supplier: { kind: "existing", supplierId: "sup-1" },
         },
         now,
@@ -740,6 +754,7 @@ describe("orderMissingItem", () => {
       {
         missingItemId: "missing-1",
         userId: "admin-1",
+        orderedQuantity: 20,
         supplier: {
           kind: "new",
           name: "  Droguería Central  ",
@@ -768,6 +783,7 @@ describe("orderMissingItem", () => {
       supplierId: "sup-new",
       orderedById: "admin-1",
       orderedAt: now,
+      orderedQuantity: 20,
     });
   });
 
@@ -781,6 +797,7 @@ describe("orderMissingItem", () => {
       {
         missingItemId: "missing-1",
         userId: "admin-1",
+        orderedQuantity: 20,
         supplier: { kind: "existing", supplierId: "sup-1" },
       },
       now,
@@ -813,6 +830,7 @@ describe("orderMissingItem", () => {
       {
         missingItemId: "missing-1",
         userId: "admin-1",
+        orderedQuantity: 20,
         supplier: { kind: "existing", supplierId: "sup-1" },
       },
       now,

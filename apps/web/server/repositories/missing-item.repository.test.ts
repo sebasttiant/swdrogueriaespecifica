@@ -68,9 +68,15 @@ describe("listMissingItems · active confirmation filter", () => {
     expect(args.where).toBeUndefined();
   });
 
-  // El nombre de quien autorizó se lee de la relación real; nunca se duplica
-  // como texto en la fila del faltante. Sin este select, la interfaz no tendría
-  // de dónde sacarlo.
+  // La cantidad pedida se muestra en la vista de Pedidos; el listado tiene que
+  // traerla. Es distinta de `quantity` (necesidad), así que se selecciona aparte.
+  it("selects orderedQuantity so the ordered amount can be shown", async () => {
+    await listMissingItems({});
+
+    const args = prismaMock.missingItem.findMany.mock.calls[0]![0];
+    expect(args.select.orderedQuantity).toBe(true);
+  });
+
   it("selects the authorizing user relation, limited to id and name", async () => {
     await listMissingItems({});
 
@@ -114,11 +120,13 @@ describe("orderMissingItem", () => {
       supplierId: "sup-1",
       orderedById: "admin-1",
       orderedAt,
+      orderedQuantity: 20,
     });
 
     expect(written).toBe(1);
     // El `where` es el compare-and-set: un faltante ya PEDIDO o ya confirmado
     // no coincide, así que la escritura no aplica en vez de pisar el estado.
+    // `orderedQuantity` se persiste en el MISMO update atómico que el status.
     expect(tx.missingItem.updateMany).toHaveBeenCalledWith({
       where: { id: "missing-1", status: "FALTANTE", confirmedAt: null },
       data: {
@@ -126,6 +134,7 @@ describe("orderMissingItem", () => {
         orderedAt,
         orderedById: "admin-1",
         supplierId: "sup-1",
+        orderedQuantity: 20,
       },
     });
   });
@@ -138,6 +147,7 @@ describe("orderMissingItem", () => {
       supplierId: "sup-1",
       orderedById: "admin-1",
       orderedAt: new Date(),
+      orderedQuantity: 20,
     });
 
     expect(written).toBe(0);

@@ -123,6 +123,9 @@ export async function orderMissingItemAction(
 
   const parsed = orderMissingItemSchema.safeParse({
     missingItemId: formData.get("missingItemId"),
+    // Ausente → undefined (no null): así el schema da el mensaje "requerido" en
+    // vez de coaccionar null a 0 y reportar "mayor a cero".
+    orderedQuantity: formData.get("orderedQuantity") ?? undefined,
     // FormData devuelve null cuando el campo no viene; lo normalizamos a
     // undefined para que el schema aplique sus reglas.
     supplierId: formData.get("supplierId") ?? undefined,
@@ -162,52 +165,79 @@ export async function orderMissingItemAction(
     };
   }
 
+  // Solo la transacción del pedido va dentro del try cuyo catch reporta fallo:
+  // una vez que el pedido se persistió, un error posterior de auditoría o
+  // revalidación NO debe decirle al gerente que el pedido falló (un reintento
+  // chocaría con ALREADY_ORDERED).
+  let result: Awaited<ReturnType<typeof orderMissingItem>>;
   try {
-    const result = await orderMissingItem({
+    result = await orderMissingItem({
       missingItemId: data.missingItemId,
       userId: session.user.id,
+      orderedQuantity: data.orderedQuantity,
       supplier,
-    });
-
-		// Intento real de pedir sobre un faltante que no lo admitía: se audita como
-		// FAILURE con el código de rechazo. `supplierKind` deja ver si se intentó
-		// con un proveedor existente o creando uno nuevo, sin guardar sus datos de
-		// contacto (nombre/teléfono/dirección/mail vienen del formulario).
-		if (result.rejection) {
-			await recordAudit({
-				action: AUDIT_ACTIONS.MISSING_ITEM_ORDERED,
-				module: AUDIT_MODULES.FALTANTES,
-				entity: "MissingItem",
-				entityId: data.missingItemId,
-				result: "FAILURE",
-				after: { reason: result.rejection, supplierKind: supplier.kind },
-				context: await auditContextFromHeaders(session.user.id),
-			});
-
-			revalidatePath("/faltantes");
-			revalidatePath("/dashboard");
-			return { error: ORDER_REJECTION_MESSAGES[result.rejection], ok: false };
-		}
-
-    await recordAudit({
-      action: AUDIT_ACTIONS.MISSING_ITEM_ORDERED,
-      module: AUDIT_MODULES.FALTANTES,
-      entity: "MissingItem",
-      entityId: data.missingItemId,
-      // Sin PII del cliente: solo metadatos del pedido.
-      after: {
-        supplierId: result.item?.supplierId ?? null,
-        supplierCreated: supplier.kind === "new",
-        status: result.item?.status ?? null,
-      },
-      context: await auditContextFromHeaders(session.user.id),
     });
   } catch (error) {
     console.error("[faltantes] No se pudo pedir el faltante:", error);
     return { error: "No se pudo registrar el pedido. Intentá de nuevo.", ok: false };
   }
 
-  revalidatePath("/faltantes");
-  revalidatePath("/dashboard");
+  // Intento real de pedir sobre un faltante que no lo admitía: se audita como
+  // FAILURE con el código de rechazo. `supplierKind` deja ver si se intentó con
+  // un proveedor existente o creando uno nuevo, sin guardar sus datos de
+  // contacto (nombre/teléfono/dirección/mail vienen del formulario).
+  if (result.rejection) {
+    try {
+      await recordAudit({
+        action: AUDIT_ACTIONS.MISSING_ITEM_ORDERED,
+        module: AUDIT_MODULES.FALTANTES,
+        entity: "MissingItem",
+        entityId: data.missingItemId,
+        result: "FAILURE",
+        after: { reason: result.rejection, supplierKind: supplier.kind },
+        context: await auditContextFromHeaders(session.user.id),
+      });
+    } catch (error) {
+      console.error("[faltantes] El rechazo del pedido no se pudo auditar:", error);
+    }
+
+    revalidateOrderViews();
+    return { error: ORDER_REJECTION_MESSAGES[result.rejection], ok: false };
+  }
+
+  // El pedido YA se persistió. La auditoría es best-effort: si falla, se registra
+  // el error pero el pedido sigue siendo un éxito para el gerente.
+  try {
+    await recordAudit({
+      action: AUDIT_ACTIONS.MISSING_ITEM_ORDERED,
+      module: AUDIT_MODULES.FALTANTES,
+      entity: "MissingItem",
+      entityId: data.missingItemId,
+      // Sin PII del cliente: solo metadatos del pedido, con la cantidad pedida.
+      after: {
+        supplierId: result.item?.supplierId ?? null,
+        supplierCreated: supplier.kind === "new",
+        status: result.item?.status ?? null,
+        orderedQuantity: data.orderedQuantity,
+      },
+      context: await auditContextFromHeaders(session.user.id),
+    });
+  } catch (error) {
+    console.error("[faltantes] El pedido se registró, pero no se pudo auditar:", error);
+  }
+
+  revalidateOrderViews();
   return { error: null, ok: true };
+}
+
+// Revalida las vistas que muestran el estado del pedido, sin dejar que un fallo
+// de caché convierta un pedido ya persistido en un error para el usuario.
+function revalidateOrderViews() {
+  for (const path of ["/faltantes", "/dashboard"]) {
+    try {
+      revalidatePath(path);
+    } catch (error) {
+      console.error("[faltantes] El pedido se registró, pero no se pudo revalidar:", error);
+    }
+  }
 }
