@@ -25,6 +25,7 @@ export type CloseMissingItemsByEntryParams = {
 export type MissingItemListItem = {
   id: string;
   quantity: number;
+  note: string | null;
   status: MissingItemStatus;
   originId: string | null;
   confirmedAt: Date | null;
@@ -55,6 +56,7 @@ export type CreateMissingItemData = {
   quantity: number;
   originId?: string | null;
   createdById?: string | null;
+  note?: string | null;
 };
 
 export type MissingItemScope = "active" | "history";
@@ -75,6 +77,7 @@ export type OrderMissingItemData = {
 const LIST_SELECT = {
   id: true,
   quantity: true,
+  note: true,
   status: true,
   originId: true,
   confirmedAt: true,
@@ -222,6 +225,7 @@ export async function createMissingItem(
     data: {
       productId: data.productId,
       quantity: data.quantity,
+      note: data.note ?? null,
       originId: data.originId ?? null,
       createdById: data.createdById ?? null,
     },

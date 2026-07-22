@@ -137,3 +137,29 @@ describe("listProducts · q filter", () => {
     expect(result.nextCursor).toBeNull();
   });
 });
+
+describe("listProducts · active filter", () => {
+  it("filters active products in the paginated query before returning a page", async () => {
+    prismaMock.product.findMany.mockResolvedValueOnce([makeRow()]);
+
+    await listProducts({ active: true });
+
+    const args = prismaMock.product.findMany.mock.calls[0]![0];
+    expect(args.where).toEqual({ active: true });
+  });
+
+  it("combines the active filter with catalog search", async () => {
+    prismaMock.product.findMany.mockResolvedValueOnce([makeRow()]);
+
+    await listProducts({ active: true, q: "aceta" });
+
+    const args = prismaMock.product.findMany.mock.calls[0]![0];
+    expect(args.where).toEqual({
+      active: true,
+      OR: [
+        { name: { contains: "aceta", mode: "insensitive" } },
+        { code: { contains: "aceta", mode: "insensitive" } },
+      ],
+    });
+  });
+});

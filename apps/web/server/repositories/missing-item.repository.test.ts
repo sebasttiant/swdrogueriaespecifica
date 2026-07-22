@@ -4,6 +4,7 @@ const { prismaMock } = vi.hoisted(() => {
   const prismaMock = {
     missingItem: {
       count: vi.fn(),
+      create: vi.fn(),
       findUnique: vi.fn(),
       findMany: vi.fn(),
       update: vi.fn(),
@@ -20,6 +21,7 @@ import {
   countConfirmedMissingItems,
   countOrderedMissingItems,
   countOverdueMissingItems,
+  createMissingItem,
   listMissingItems,
   lockMissingItemForUpdate,
   orderMissingItem,
@@ -345,5 +347,41 @@ describe("countConfirmedMissingItems", () => {
     expect(prismaMock.missingItem.count).toHaveBeenCalledWith({
       where: { confirmedAt: { not: null } },
     });
+  });
+});
+
+describe("createMissingItem", () => {
+  it("creates a manual missing item with originId null and a nullable note", async () => {
+    prismaMock.missingItem.create.mockResolvedValue({ id: "missing-manual" });
+
+    await expect(
+      createMissingItem({
+        productId: "prod-1",
+        quantity: 4,
+        originId: null,
+        createdById: "admin-1",
+        note: "Prioridad mostrador",
+      }),
+    ).resolves.toEqual({ id: "missing-manual" });
+
+    expect(prismaMock.missingItem.create).toHaveBeenCalledWith({
+      data: {
+        productId: "prod-1",
+        quantity: 4,
+        originId: null,
+        createdById: "admin-1",
+        note: "Prioridad mostrador",
+      },
+    });
+  });
+
+  it("normalizes an omitted manual note to null without repurposing confirmationNote", async () => {
+    prismaMock.missingItem.create.mockResolvedValue({ id: "missing-manual" });
+
+    await createMissingItem({ productId: "prod-1", quantity: 1, originId: null });
+
+    const args = prismaMock.missingItem.create.mock.calls[0]![0];
+    expect(args.data.note).toBeNull();
+    expect(args.data.confirmationNote).toBeUndefined();
   });
 });

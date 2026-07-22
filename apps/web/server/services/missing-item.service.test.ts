@@ -27,6 +27,7 @@ const { repo } = vi.hoisted(() => ({
     lockMissingItemForUpdate: vi.fn(),
     listMissingItems: vi.fn(),
     orderMissingItem: vi.fn(),
+    createMissingItem: vi.fn(),
   },
 }));
 
@@ -41,6 +42,14 @@ const { supplierRepo } = vi.hoisted(() => ({
 }));
 
 vi.mock("@/server/repositories/supplier.repository", () => supplierRepo);
+
+const { productRepo } = vi.hoisted(() => ({
+  productRepo: {
+    findProductById: vi.fn(),
+  },
+}));
+
+vi.mock("@/server/repositories/product.repository", () => productRepo);
 
 // La cadena de pedido NUNCA debe importar/llamar al repositorio de pendientes.
 // Lo mockeamos con espías para poder afirmar que ninguna de sus funciones se
@@ -58,6 +67,7 @@ vi.mock("@/server/repositories/pending.repository", () => pendingRepo);
 
 import {
   confirmMissingItemOk,
+  createManualMissingItem,
   getMissingItems,
   getMissingItemsSummary,
   orderMissingItem,
@@ -74,6 +84,7 @@ function missingItemRow(
   return {
     id: "missing-1",
     quantity: 3,
+    note: null,
     status: "FALTANTE",
     originId: "pending-1",
     confirmedAt: null,
@@ -284,6 +295,63 @@ describe("getMissingItems", () => {
     // The object handed back by the mocked repo must still hold the
     // original customerName — the service must return NEW objects.
     expect(row.origin?.customerName).toBe("Juan Pérez");
+  });
+});
+
+describe("createManualMissingItem", () => {
+  it("creates a FALTANTE for an existing catalog product with originId null and note", async () => {
+    productRepo.findProductById.mockResolvedValue({ id: "prod-1", active: true });
+    repo.createMissingItem.mockResolvedValue({
+      id: "missing-manual",
+      productId: "prod-1",
+      quantity: 3,
+      originId: null,
+      note: "Prioridad mostrador",
+      status: "FALTANTE",
+    });
+
+    const result = await createManualMissingItem({
+      productId: "prod-1",
+      quantity: 3,
+      note: "Prioridad mostrador",
+      createdById: "admin-1",
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        id: "missing-manual",
+        originId: null,
+        note: "Prioridad mostrador",
+      }),
+    );
+    expect(productRepo.findProductById).toHaveBeenCalledWith("prod-1");
+    expect(repo.createMissingItem).toHaveBeenCalledWith({
+      productId: "prod-1",
+      quantity: 3,
+      originId: null,
+      createdById: "admin-1",
+      note: "Prioridad mostrador",
+    });
+  });
+
+  it("rejects unknown catalog product ids without creating a product or missing item", async () => {
+    productRepo.findProductById.mockResolvedValue(null);
+
+    await expect(
+      createManualMissingItem({ productId: "ghost", quantity: 1, createdById: "admin-1" }),
+    ).rejects.toThrow("Product not found");
+
+    expect(repo.createMissingItem).not.toHaveBeenCalled();
+  });
+
+  it("rejects inactive catalog products without creating a missing item", async () => {
+    productRepo.findProductById.mockResolvedValue({ id: "inactive-product", active: false });
+
+    await expect(
+      createManualMissingItem({ productId: "inactive-product", quantity: 1, createdById: "admin-1" }),
+    ).rejects.toThrow("Product not found");
+
+    expect(repo.createMissingItem).not.toHaveBeenCalled();
   });
 });
 

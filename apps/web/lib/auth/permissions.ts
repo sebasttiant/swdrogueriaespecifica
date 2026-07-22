@@ -172,6 +172,13 @@ export const CAPABILITIES = [
   // proveedores conocidos" SIN poder inventar proveedores nuevos: sería un
   // cambio de una línea en `ROLE_CAPABILITIES`, jamás un cambio de código.
   "canManageSuppliers",
+  // Gatea la carga MANUAL de un faltante (uno que no nace de un pendiente sin
+  // stock). Es un eje DISTINTO de `canOrderMissingItems`: decidir que algo falta
+  // no es lo mismo que decidir comprarlo, y de `canConfirmMissingItems`: dar el
+  // OK gerencia sobre un faltante existente no es crearlo. Hoy vive en la
+  // gerencia (ADMIN/SUPERADMIN); habilitarla a SUPERVISOR sería una línea en
+  // `ROLE_CAPABILITIES`, jamás un cambio de código.
+  "canCreateMissingItems",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];

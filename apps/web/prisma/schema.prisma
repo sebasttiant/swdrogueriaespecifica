@@ -258,6 +258,7 @@ model MissingItem {
   product     Product           @relation(fields: [productId], references: [id])
   productId   String
   quantity    Int
+  note        String?
   status      MissingItemStatus @default(FALTANTE)
   // Pendiente que lo originó (cuando se genera automáticamente). Null = manual.
   origin      Pending?          @relation(fields: [originId], references: [id])

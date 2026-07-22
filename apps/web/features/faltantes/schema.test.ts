@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { orderMissingItemSchema } from "./schema";
+import { manualMissingItemCreateSchema, orderMissingItemSchema } from "./schema";
 
 // Base válida reutilizable; cada test sobreescribe lo que necesita probar.
 const validInput = {
@@ -84,5 +84,46 @@ describe("orderMissingItemSchema", () => {
       supplierId: "sup-1",
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("manualMissingItemCreateSchema", () => {
+  it("accepts an existing catalog product, positive quantity, and trims the optional note", () => {
+    const result = manualMissingItemCreateSchema.safeParse({
+      productId: "  prod-1  ",
+      quantity: "3",
+      note: "  Prioridad mostrador  ",
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toEqual({
+        productId: "prod-1",
+        quantity: 3,
+        note: "Prioridad mostrador",
+      });
+    }
+  });
+
+  it("normalizes an empty note to undefined", () => {
+    const result = manualMissingItemCreateSchema.safeParse({
+      productId: "prod-1",
+      quantity: "1",
+      note: "   ",
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.note).toBeUndefined();
+    }
+  });
+
+  it("rejects missing productId and non-positive quantities", () => {
+    expect(
+      manualMissingItemCreateSchema.safeParse({ productId: "", quantity: "1" }).success,
+    ).toBe(false);
+    expect(
+      manualMissingItemCreateSchema.safeParse({ productId: "prod-1", quantity: "0" }).success,
+    ).toBe(false);
   });
 });

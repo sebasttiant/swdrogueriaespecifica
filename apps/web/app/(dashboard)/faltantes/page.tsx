@@ -1,6 +1,10 @@
 import type { Metadata } from "next";
 
 import { PageHeader } from "@/app/_components/app-shell/page-header";
+import { Card, CardTitle } from "@/app/_components/ui/card";
+import {
+  MissingCreateForm,
+} from "@/features/faltantes/missing-create-form";
 import { MissingList } from "@/features/faltantes/missing-list";
 import { MissingSummary } from "@/features/faltantes/missing-summary";
 import {
@@ -27,6 +31,7 @@ export default async function FaltantesPage({
 	const canConfirm = can(session.user.role, "canConfirmMissingItems");
 	const canOrderMissingItems = can(session.user.role, "canOrderMissingItems");
 	const canManageSuppliers = can(session.user.role, "canManageSuppliers");
+	const canCreateMissingItems = can(session.user.role, "canCreateMissingItems");
 	const canViewCustomerIdentity = can(session.user.role, "canViewCustomerIdentity");
 
   // Un único instante compartido por el resumen global y el agrupamiento de
@@ -62,6 +67,13 @@ export default async function FaltantesPage({
       <PageHeader title="Faltantes" description="Lo que hay que conseguir." />
 
       <MissingSummary summary={summary} />
+
+      {canCreateMissingItems ? (
+        <Card className="space-y-3 p-3">
+          <CardTitle>Alta manual</CardTitle>
+          <MissingCreateForm />
+        </Card>
+      ) : null}
 
 		<MissingList
 			items={items}
