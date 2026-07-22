@@ -57,6 +57,9 @@ export type OrderRejection =
 export type OrderMissingItemInput = {
   missingItemId: string;
   userId: string;
+  // Cantidad que gerencia decide comprar. Definida en el formulario "Pedir" y
+  // revalidada en la server action; el service solo la persiste con el pedido.
+  orderedQuantity: number;
   supplier:
     | { kind: "existing"; supplierId: string }
     | { kind: "new"; name: string; phone?: string; address?: string; email?: string };
@@ -271,6 +274,7 @@ export async function orderMissingItem(
       supplierId,
       orderedById: input.userId,
       orderedAt: now,
+      orderedQuantity: input.orderedQuantity,
     });
     // Rollback: el proveedor creado al vuelo y el enlace producto↔proveedor se
     // revierten con la transacción, así que no queda un proveedor huérfano.

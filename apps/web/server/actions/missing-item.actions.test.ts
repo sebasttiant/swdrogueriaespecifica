@@ -37,6 +37,7 @@ const PREV = { error: null, ok: false };
 function orderExistingFormData(supplierId = "sup-1") {
   const data = new FormData();
   data.set("missingItemId", "missing-1");
+  data.set("orderedQuantity", "20");
   data.set("supplierId", supplierId);
   return data;
 }
@@ -45,6 +46,7 @@ function orderExistingFormData(supplierId = "sup-1") {
 function orderNewSupplierFormData() {
   const data = new FormData();
   data.set("missingItemId", "missing-1");
+  data.set("orderedQuantity", "20");
   data.set("supplierId", "");
   data.set("name", "Droguería Central");
   data.set("phone", "555");
@@ -127,6 +129,7 @@ describe("orderMissingItemAction", () => {
     expect(mocks.orderMissingItem).toHaveBeenCalledWith({
       missingItemId: "missing-1",
       userId: "admin-1",
+      orderedQuantity: 20,
       supplier: { kind: "existing", supplierId: "sup-1" },
     });
     expect(mocks.recordAudit).toHaveBeenCalledWith(
@@ -135,7 +138,12 @@ describe("orderMissingItemAction", () => {
         module: AUDIT_MODULES.FALTANTES,
         entity: "MissingItem",
         entityId: "missing-1",
-        after: { supplierId: "sup-1", supplierCreated: false, status: "PEDIDO" },
+        after: {
+          supplierId: "sup-1",
+          supplierCreated: false,
+          status: "PEDIDO",
+          orderedQuantity: 20,
+        },
       }),
     );
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/faltantes");
@@ -195,6 +203,7 @@ describe("orderMissingItemAction", () => {
     expect(mocks.orderMissingItem).toHaveBeenCalledWith({
       missingItemId: "missing-1",
       userId: "admin-1",
+      orderedQuantity: 20,
       supplier: {
         kind: "new",
         name: "Droguería Central",
@@ -206,7 +215,12 @@ describe("orderMissingItemAction", () => {
     expect(mocks.recordAudit).toHaveBeenCalledWith(
       expect.objectContaining({
         action: AUDIT_ACTIONS.MISSING_ITEM_ORDERED,
-        after: { supplierId: "sup-new", supplierCreated: true, status: "PEDIDO" },
+        after: {
+          supplierId: "sup-new",
+          supplierCreated: true,
+          status: "PEDIDO",
+          orderedQuantity: 20,
+        },
       }),
     );
   });
@@ -270,6 +284,55 @@ describe("orderMissingItemAction", () => {
 		const serialized = JSON.stringify(auditCall);
 		expect(serialized).not.toContain("Droguería Central");
 		expect(serialized).not.toContain("555");
+	});
+
+	it("rejects an invalid ordered quantity server-side, before touching the service", async () => {
+		grant("ADMIN", ["canOrderMissingItems"]);
+		const data = orderExistingFormData();
+		data.set("orderedQuantity", "0");
+
+		const result = await orderMissingItemAction(PREV, data);
+
+		expect(result.ok).toBe(false);
+		expect(result.error).toBeTruthy();
+		// La validación corta antes de cualquier efecto: ni pedido, ni auditoría.
+		expect(mocks.orderMissingItem).not.toHaveBeenCalled();
+		expect(mocks.recordAudit).not.toHaveBeenCalled();
+	});
+
+	it("rejects a missing ordered quantity", async () => {
+		grant("ADMIN", ["canOrderMissingItems"]);
+		const data = orderExistingFormData();
+		data.delete("orderedQuantity");
+
+		const result = await orderMissingItemAction(PREV, data);
+
+		expect(result.ok).toBe(false);
+		expect(mocks.orderMissingItem).not.toHaveBeenCalled();
+	});
+
+	// El pedido YA se persistió (CAS ok). Un fallo posterior de auditoría no debe
+	// decirle al gerente que el pedido falló: un reintento chocaría con
+	// ALREADY_ORDERED y sembraría confusión. Cubre el riesgo preexistente que
+	// C2Q toca al agregar orderedQuantity a la metadata de auditoría.
+	it("reports success when auditing fails after the order was persisted", async () => {
+		grant("ADMIN", ["canOrderMissingItems"]);
+		mocks.orderMissingItem.mockResolvedValue({
+			item: {
+				id: "missing-1",
+				status: "PEDIDO",
+				orderedAt: new Date("2026-07-09T12:00:00.000Z"),
+				supplierId: "sup-1",
+			},
+			rejection: null,
+		});
+		mocks.recordAudit.mockRejectedValueOnce(new Error("audit unavailable"));
+
+		await expect(
+			orderMissingItemAction(PREV, orderExistingFormData()),
+		).resolves.toEqual({ error: null, ok: true });
+		expect(mocks.orderMissingItem).toHaveBeenCalledTimes(1);
+		expect(mocks.revalidatePath).toHaveBeenCalledWith("/faltantes");
 	});
 });
 

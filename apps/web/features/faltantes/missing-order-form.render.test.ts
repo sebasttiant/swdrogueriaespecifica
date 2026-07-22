@@ -33,6 +33,7 @@ function render(
     suppliers: { id: string; name: string }[];
     canCreateSupplier: boolean;
     defaultOpen: boolean;
+    neededQuantity: number;
   }> = {},
 ): string {
   return renderToStaticMarkup(
@@ -41,6 +42,7 @@ function render(
       suppliers: props.suppliers ?? SUPPLIERS,
       canCreateSupplier: props.canCreateSupplier ?? true,
       defaultOpen: props.defaultOpen ?? false,
+      neededQuantity: props.neededQuantity ?? 3,
     }),
   );
 }
@@ -120,5 +122,34 @@ describe("MissingOrderForm · supplier branch", () => {
     const html = render({ defaultOpen: true });
 
     expect(html).toContain("Cargar proveedor nuevo");
+  });
+});
+
+describe("MissingOrderForm · ordered quantity", () => {
+  it("requires an ordered quantity as a positive integer input", () => {
+    const html = render({ defaultOpen: true });
+
+    expect(html).toContain('name="orderedQuantity"');
+    expect(html).toContain("Cantidad a pedir");
+    expect(html).toContain('type="number"');
+    expect(html).toContain('required=""');
+    expect(html).toContain('min="1"');
+    expect(html).toContain('step="1"');
+  });
+
+  // La necesidad histórica se muestra SOLO como referencia; gerencia confirma
+  // explícitamente cuánto pedir. No debe prellenar el campo en silencio.
+  it("shows the recorded need as a reference without prefilling the field", () => {
+    const html = render({ defaultOpen: true, neededQuantity: 7 });
+
+    expect(html).toContain("Necesidad registrada: 7");
+    // El input de cantidad a pedir no arranca con la necesidad como valor.
+    expect(html).not.toContain('value="7"');
+  });
+
+  it("mounts the quantity field only when the form is open", () => {
+    const html = render();
+
+    expect(html).not.toContain('name="orderedQuantity"');
   });
 });

@@ -8,6 +8,7 @@ function item(overrides: Partial<MissingItemListItem>): MissingItemListItem {
   return {
     id: "missing-id",
     quantity: 1,
+    orderedQuantity: null,
     note: null,
     status: "FALTANTE",
     originId: null,
@@ -36,10 +37,27 @@ describe("getOrderMetadata", () => {
   const orderedAt = new Date("2026-06-06T15:30:00");
   const supplier = { id: "supplier-id", name: "Distribuidora Norte" };
 
-  it("expone proveedor y fecha de pedido cuando el faltante está PEDIDO", () => {
+  it("expone proveedor, fecha y cantidad pedida cuando el faltante está PEDIDO", () => {
     expect(
-      getOrderMetadata(item({ status: "PEDIDO", orderedAt, supplier, supplierId: supplier.id })),
-    ).toEqual({ supplierName: "Distribuidora Norte", orderedAt });
+      getOrderMetadata(
+        item({
+          status: "PEDIDO",
+          orderedAt,
+          orderedQuantity: 20,
+          supplier,
+          supplierId: supplier.id,
+        }),
+      ),
+    ).toEqual({ supplierName: "Distribuidora Norte", orderedAt, orderedQuantity: 20 });
+  });
+
+  // Pedido anterior a la columna orderedQuantity: se pidió, pero la cantidad no
+  // quedó registrada. No se inventa ni se cae al valor de `quantity`.
+  it("expone orderedQuantity null para un PEDIDO legacy sin cantidad registrada", () => {
+    const result = getOrderMetadata(
+      item({ status: "PEDIDO", orderedAt, supplier, supplierId: supplier.id, orderedQuantity: null }),
+    );
+    expect(result?.orderedQuantity).toBeNull();
   });
 
   it("no expone detalle de pedido para un faltante que todavía no se pidió", () => {
@@ -64,6 +82,7 @@ describe("getOrderMetadata", () => {
     expect(getOrderMetadata(item({ status: "PEDIDO", orderedAt }))).toEqual({
       supplierName: null,
       orderedAt,
+      orderedQuantity: null,
     });
   });
 

@@ -14,7 +14,7 @@ import {
   type DeadlineStatus,
 } from "../pendientes/deadline-status";
 import { groupMissingItems, type MissingGroupKey } from "./missing-grouping";
-import { getOrderMetadata } from "./missing-list-helpers";
+import { getOrderMetadata, orderedQuantityLabel } from "./missing-list-helpers";
 import { MissingOrderForm } from "./missing-order-form";
 
 type MissingListProps = {
@@ -96,6 +96,7 @@ function missingActions(
     <div className={cn("flex flex-col items-end gap-2", className)}>
       <MissingOrderForm
         id={missing.id}
+        neededQuantity={missing.quantity}
         suppliers={actions.suppliers}
         canCreateSupplier={actions.canCreateSupplier}
       />
@@ -115,6 +116,7 @@ function orderDetails(missing: MissingItemListItem) {
       {order.orderedAt ? (
         <p>Pedido: {formatBogotaDate(order.orderedAt, { style: "datetime" })}</p>
       ) : null}
+      <p>{orderedQuantityLabel(order.orderedQuantity)}</p>
     </>
   );
 }
@@ -135,6 +137,9 @@ function orderCell(missing: MissingItemListItem) {
           {formatBogotaDate(order.orderedAt, { style: "datetime" })}
         </p>
       ) : null}
+      <p className="text-muted-foreground">
+        {orderedQuantityLabel(order.orderedQuantity)}
+      </p>
     </div>
   );
 }

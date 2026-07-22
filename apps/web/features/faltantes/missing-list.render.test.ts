@@ -31,6 +31,7 @@ function item(overrides: Partial<MissingItemListItem>): MissingItemListItem {
   return {
     id: "missing-id",
     quantity: 1,
+    orderedQuantity: null,
     note: null,
     status: "FALTANTE",
     originId: null,
@@ -169,6 +170,42 @@ describe("MissingList · order visibility", () => {
     expect(countOccurrences(html, "Distribuidora Norte")).toBe(2);
     expect(countOccurrences(html, orderedLabel)).toBe(2);
     expect(html).toMatch(new RegExp(`<th[^>]*>Pedido<\\/th>`));
+  });
+
+  it("shows the ordered quantity for an ordered item in both card and table", () => {
+    const html = renderMissingList([
+      item({
+        id: "pedido-1",
+        status: "PEDIDO",
+        orderedAt,
+        orderedQuantity: 20,
+        supplier,
+        supplierId: supplier.id,
+        product: product("Pedido", "PED-1"),
+      }),
+    ]);
+
+    expect(countOccurrences(html, "Cantidad pedida: 20 unidades")).toBe(2);
+  });
+
+  // Pedido anterior a la columna: se pidió, pero la cantidad no quedó
+  // registrada. Nunca se muestra `quantity` (necesidad) como si fuera lo pedido.
+  it("marks the ordered quantity as unregistered for a legacy ordered item", () => {
+    const html = renderMissingList([
+      item({
+        id: "pedido-legacy",
+        status: "PEDIDO",
+        orderedAt,
+        orderedQuantity: null,
+        quantity: 3,
+        supplier,
+        supplierId: supplier.id,
+        product: product("Pedido legacy", "PED-2"),
+      }),
+    ]);
+
+    expect(countOccurrences(html, "Cantidad pedida no registrada")).toBe(2);
+    expect(html).not.toContain("Cantidad pedida: 3");
   });
 
   it("shows no order detail for an item that has not been ordered", () => {
