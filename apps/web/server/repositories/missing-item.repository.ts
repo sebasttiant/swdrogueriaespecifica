@@ -49,6 +49,10 @@ export type MissingItemListItem = {
     customerName: string | null;
   } | null;
   supplier: { id: string; name: string } | null;
+  // Quién autorizó, leído de la relación real. `confirmedById` puede apuntar a
+  // un usuario ya no resoluble, así que la relación es la única fuente del
+  // nombre: nunca se duplica como texto en la fila del faltante.
+  confirmedBy: { id: string; name: string } | null;
 };
 
 export type CreateMissingItemData = {
@@ -100,6 +104,12 @@ const LIST_SELECT = {
     select: { id: true, promisedAt: true, status: true, customerName: true },
   },
   supplier: { select: { id: true, name: true } },
+  // Decisión explícita: el nombre de quien autorizó es visible para TODO rol
+  // que pueda ver /faltantes, incluido OPERADOR. Es trazabilidad operativa
+  // interna, no PII de cliente: a diferencia de `origin.customerName` —que el
+  // service borra sin `canViewCustomerIdentity`— acá no hay gate por capability.
+  // Se seleccionan solo id y nombre; nunca email, rol ni credenciales.
+  confirmedBy: { select: { id: true, name: true } },
 } as const;
 
 export async function listMissingItems(params: {

@@ -22,7 +22,7 @@ export function MissingSummary({ summary }: MissingSummaryProps) {
     { label: "Abiertos", value: summary.open, alerts: false },
     { label: "Vencidos", value: summary.overdue, alerts: summary.overdue > 0 },
     { label: "Pedidos", value: summary.ordered, alerts: false },
-    { label: "OK gerencia", value: summary.confirmed, alerts: false },
+    { label: "Autorizados", value: summary.confirmed, alerts: false },
   ];
 
   return (

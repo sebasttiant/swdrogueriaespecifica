@@ -108,6 +108,7 @@ function missingItemRow(
       customerName: "Juan Pérez",
     },
     supplier: null,
+    confirmedBy: null,
     ...overrides,
   };
 }

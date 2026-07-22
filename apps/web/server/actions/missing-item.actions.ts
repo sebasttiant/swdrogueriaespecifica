@@ -103,7 +103,7 @@ export async function createMissingItemAction(
 // Rechazos de negocio del pedido → mensaje en español para el gerente.
 const ORDER_REJECTION_MESSAGES: Record<OrderRejection, string> = {
   ALREADY_ORDERED: "Este faltante ya fue pedido.",
-  ALREADY_CONFIRMED: "Este faltante ya fue confirmado (OK gerencia) y no se puede pedir.",
+  ALREADY_CONFIRMED: "Este faltante ya fue autorizado y no se puede pedir.",
   NOT_ORDERABLE: "Este faltante no se puede pedir desde su estado actual.",
   SUPPLIER_NOT_FOUND: "No se encontró el proveedor seleccionado.",
 };
@@ -130,7 +130,7 @@ export async function confirmMissingItemAction(
     });
   } catch (error) {
     console.error("[faltantes] No se pudo confirmar el faltante:", error);
-    return { error: "No se pudo marcar OK. Intentá de nuevo.", ok: false };
+    return { error: "No se pudo autorizar el faltante. Intentá de nuevo.", ok: false };
   }
 
   // `changed: false` significa que la confirmación ya NO aplica: el faltante
@@ -153,7 +153,7 @@ export async function confirmMissingItemAction(
     revalidatePath("/dashboard");
     return {
       error:
-        "El faltante ya fue pedido, confirmado o cambiado. Refrescá y revisá su estado actual antes de confirmar.",
+        "El faltante ya fue pedido, autorizado o cambiado. Refrescá y revisá su estado actual antes de autorizar.",
       ok: false,
     };
   }

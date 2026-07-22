@@ -30,24 +30,50 @@ function item(overrides: Partial<MissingItemListItem>): MissingItemListItem {
     },
     origin: null,
     supplier: null,
+    confirmedBy: null,
     ...overrides,
   };
 }
 
 describe("getConfirmationMetadata", () => {
-  it("expone metadata pendiente cuando no hay fecha de confirmación", () => {
+  it("expone metadata pendiente cuando no hay fecha de autorización", () => {
     expect(getConfirmationMetadata(item({ id: "pending" }))).toEqual({
       label: "Pendiente",
       confirmedAt: null,
+      authorizedBy: null,
     });
   });
 
-  it("expone metadata confirmada cuando hay fecha de confirmación", () => {
+  it("expone metadata autorizada con el nombre de quien autorizó", () => {
     const confirmedAt = new Date("2026-06-06T12:00:00");
 
-    expect(getConfirmationMetadata(item({ id: "confirmed", confirmedAt }))).toEqual({
-      label: "Confirmado",
+    expect(
+      getConfirmationMetadata(
+        item({
+          id: "confirmed",
+          confirmedAt,
+          confirmedById: "user-1",
+          confirmedBy: { id: "user-1", name: "Ana Gerente" },
+        }),
+      ),
+    ).toEqual({
+      label: "Autorizado",
       confirmedAt,
+      authorizedBy: "Ana Gerente",
+    });
+  });
+
+  // El autorizador se lee de la relación real. Un registro viejo puede tener
+  // fecha sin usuario resoluble: sigue siendo autorizado, sin nombre inventado.
+  it("mantiene el registro como autorizado aunque no se resuelva el usuario", () => {
+    const confirmedAt = new Date("2026-06-06T12:00:00");
+
+    expect(
+      getConfirmationMetadata(item({ id: "legacy", confirmedAt, confirmedById: "gone" })),
+    ).toEqual({
+      label: "Autorizado",
+      confirmedAt,
+      authorizedBy: null,
     });
   });
 });

@@ -17,15 +17,15 @@ type MissingConfirmFormProps = {
   className?: string;
 };
 
-// Confirmación de gerencia ("OK gerencia"): un check limpio, no un botón con
+// Autorización de gerencia: un check limpio, no un botón con
 // texto. Es un client component porque necesita `useActionState` para traer el
 // `{ ok, error }` que devuelve la Server Action al render y mostrarlo acá —
 // antes el formulario descartaba el rechazo con un wrapper `Promise<void>`.
 //
 // Si un pedido concurrente pasó el faltante a PEDIDO (o ya fue confirmado), la
 // Server Action devuelve `changed: false` y un mensaje; nunca pisa en silencio.
-// La lista solo monta este formulario para items todavía confirmables
-// (FALTANTE sin confirmar), así que el botón no se ofrece sobre estados muertos.
+// La lista solo monta este formulario para items todavía autorizables
+// (FALTANTE sin autorizar), así que el botón no se ofrece sobre estados muertos.
 export function MissingConfirmForm({ id, className }: MissingConfirmFormProps) {
   const [state, formAction, isPending] = useActionState(
     confirmMissingItemAction,
@@ -38,8 +38,8 @@ export function MissingConfirmForm({ id, className }: MissingConfirmFormProps) {
       <Button
         type="submit"
         variant="ghost"
-        aria-label="Confirmar (OK gerencia)"
-        title="OK gerencia"
+        aria-label="Autorizar"
+        title="Autorizar"
         disabled={isPending}
         className="px-2 text-success hover:bg-success/10"
       >
