@@ -31,7 +31,9 @@ describe("MissingSummary · compact chip strip", () => {
     expect(html).toContain("Abiertos");
     expect(html).toContain("Vencidos");
     expect(html).toContain("Pedidos");
-    expect(html).toContain("OK gerencia");
+    expect(html).toContain("Autorizados");
+    // La terminología vieja no debe sobrevivir en la franja de indicadores.
+    expect(html).not.toContain("OK gerencia");
     expect(html).toContain(">12<");
     expect(html).toContain(">3<");
     expect(html).toContain(">5<");

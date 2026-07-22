@@ -72,7 +72,7 @@ function deadlineBadge(origin: MissingItemListItem["origin"], now: Date) {
   return <Badge tone={deadline.tone}>{deadline.label}</Badge>;
 }
 
-// La confirmación ("OK gerencia") solo aplica a un faltante que sigue
+// La autorización de gerencia solo aplica a un faltante que sigue
 // FALTANTE y sin confirmar. Un PEDIDO ya no se confirma (invariante del
 // service: nunca PEDIDO + confirmedAt), y los estados cerrados tampoco. El
 // botón no se ofrece sobre estados muertos, así que no quedan caminos
@@ -118,6 +118,13 @@ function missingActions(
   );
 }
 
+// Autorización de gerencia: quién la dio y cuándo.
+//
+// El texto se arma como un único string para que el DOM reciba un solo nodo de
+// texto: en SSR real React separa expresiones adyacentes con comentarios, y eso
+// fragmenta lo que anuncia el lector de pantalla. Los tests fijan el contenido,
+// no esta propiedad — `renderToStaticMarkup` no reproduce esa separación, así
+// que volver a expresiones adyacentes no haría fallar la suite.
 function confirmationMetadata(missing: MissingItemListItem) {
   const metadata = getConfirmationMetadata(missing);
 
@@ -125,11 +132,10 @@ function confirmationMetadata(missing: MissingItemListItem) {
     return <span className="text-muted-foreground">{metadata.label}</span>;
   }
 
-  return (
-    <span className="text-success">
-      {metadata.label}: {formatBogotaDate(metadata.confirmedAt, { style: "datetime" })}
-    </span>
-  );
+  const authorizer = metadata.authorizedBy ? ` por ${metadata.authorizedBy}` : "";
+  const when = formatBogotaDate(metadata.confirmedAt, { style: "datetime" });
+
+  return <span className="text-success">{`${metadata.label}${authorizer} · ${when}`}</span>;
 }
 
 // Proveedor y fecha de una orden en curso. `getOrderMetadata` ya decide si el
@@ -179,7 +185,7 @@ function missingCard(
   const origin = missing.origin;
 
   // Jerarquía operativa: producto y cantidad arriba, estado como chip, acción
-  // siempre visible. Todo lo demás (origen, promesa, confirmación, pedido) es
+  // siempre visible. Todo lo demás (origen, promesa, autorización, pedido) es
   // contexto secundario y va colapsado: en la cola no se lee, se actúa.
   return (
     <Card key={missing.id} className="space-y-3 p-4">
@@ -213,7 +219,7 @@ function missingCard(
           Ver detalle
         </summary>
         <div className="mt-2 space-y-1 text-xs text-muted-foreground">
-          <p>Confirmación: {confirmationMetadata(missing)}</p>
+          <p>Autorización: {confirmationMetadata(missing)}</p>
           {missing.note ? <p>Nota: {missing.note}</p> : null}
           {orderDetails(missing)}
           {origin ? (
@@ -333,7 +339,7 @@ export function MissingList({
                     <th className="px-3 py-2 font-medium">Producto</th>
                     <th className="px-3 py-2 font-medium">Código</th>
                     <th className="px-3 py-2 font-medium">Cantidad</th>
-                    <th className="px-3 py-2 font-medium">Confirmación</th>
+                    <th className="px-3 py-2 font-medium">Autorización</th>
                     <th className="px-3 py-2 font-medium">Nota</th>
                     <th className="px-3 py-2 font-medium">Estado</th>
                     <th className="px-3 py-2 font-medium">Pedido</th>

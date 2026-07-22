@@ -67,6 +67,16 @@ describe("listMissingItems · active confirmation filter", () => {
     const args = prismaMock.missingItem.findMany.mock.calls[0]![0];
     expect(args.where).toBeUndefined();
   });
+
+  // El nombre de quien autorizó se lee de la relación real; nunca se duplica
+  // como texto en la fila del faltante. Sin este select, la interfaz no tendría
+  // de dónde sacarlo.
+  it("selects the authorizing user relation, limited to id and name", async () => {
+    await listMissingItems({});
+
+    const args = prismaMock.missingItem.findMany.mock.calls[0]![0];
+    expect(args.select.confirmedBy).toEqual({ select: { id: true, name: true } });
+  });
 });
 
 describe("lockMissingItemForUpdate", () => {

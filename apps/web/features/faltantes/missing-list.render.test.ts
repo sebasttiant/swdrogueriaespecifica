@@ -51,6 +51,7 @@ function item(overrides: Partial<MissingItemListItem>): MissingItemListItem {
     },
     origin: null,
     supplier: null,
+    confirmedBy: null,
     ...overrides,
   };
 }
@@ -143,13 +144,17 @@ describe("MissingList render contract", () => {
     expect(html).toContain("Ver detalle");
   });
 
-  it("renders confirmation metadata in the card and table markup", () => {
+  it("renders authorization metadata with the authorizer in the card and table markup", () => {
     const confirmedAt = new Date("2026-06-06T12:00:00.000Z");
-    const confirmedLabel = `Confirmado: ${formatBogotaDate(confirmedAt, { style: "datetime" })}`;
+    const authorizedLabel = `Autorizado por Ana Gerente · ${formatBogotaDate(confirmedAt, {
+      style: "datetime",
+    })}`;
     const html = renderMissingList([
       item({
         id: "confirmed-open-status",
         confirmedAt,
+        confirmedById: "user-1",
+        confirmedBy: { id: "user-1", name: "Ana Gerente" },
         product: product("Confirmed product", "CONF-1"),
         originId: "pending-id",
         origin: origin({ promisedAt: new Date("2026-06-06T13:00:00.000Z") }),
@@ -157,22 +162,46 @@ describe("MissingList render contract", () => {
       item({ id: "pending", product: product("Pending product", "PEND-1") }),
     ]);
 
-    expect(countOccurrences(html, confirmedLabel)).toBe(2);
+    // Móvil y escritorio: el mismo hecho operativo se ve en ambas superficies.
+    expect(countOccurrences(html, authorizedLabel)).toBe(2);
     expect(countOccurrences(html, "Pendiente")).toBe(2);
     expect(html).toMatch(
       new RegExp(
-        `class="space-y-3 lg:hidden"[\\s\\S]*Confirmación: <span[^>]*>${escapeRegex(
-          confirmedLabel,
+        `class="space-y-3 lg:hidden"[\\s\\S]*Autorización: <span[^>]*>${escapeRegex(
+          authorizedLabel,
         )}<\\/span>`,
       ),
     );
     expect(html).toMatch(
       new RegExp(
-        `<table[\\s\\S]*<th[^>]*>Confirmación<\\/th>[\\s\\S]*<td[^>]*><span[^>]*>${escapeRegex(
-          confirmedLabel,
+        `<table[\\s\\S]*<th[^>]*>Autorización<\\/th>[\\s\\S]*<td[^>]*><span[^>]*>${escapeRegex(
+          authorizedLabel,
         )}<\\/span><\\/td>`,
       ),
     );
+    // La terminología vieja no debe quedar viva en la interfaz.
+    expect(html).not.toContain("Confirmación");
+    expect(html).not.toContain("Confirmado");
+  });
+
+  // Un registro anterior puede tener fecha de autorización sin usuario
+  // resoluble: sigue leyéndose como autorizado, sin nombre inventado.
+  it("still reads as authorized when the authorizer cannot be resolved", () => {
+    const confirmedAt = new Date("2026-06-06T12:00:00.000Z");
+    const html = renderMissingList([
+      item({
+        id: "legacy-authorized",
+        confirmedAt,
+        confirmedById: "gone",
+        product: product("Legacy", "LEG-1"),
+      }),
+    ]);
+
+    expect(countOccurrences(
+      html,
+      `Autorizado · ${formatBogotaDate(confirmedAt, { style: "datetime" })}`,
+    )).toBe(2);
+    expect(html).not.toContain("Autorizado por");
   });
 
   it("renders a manual note in both the mobile card and desktop table", () => {
@@ -277,10 +306,10 @@ describe("MissingList · confirmation gating", () => {
       true,
     );
 
-    // El check de confirmación solo aparece para el faltante confirmable.
-    expect(html).toContain('aria-label="Confirmar (OK gerencia)"');
+    // El check de autorización solo aparece para el faltante autorizable.
+    expect(html).toContain('aria-label="Autorizar"');
     expect(html).toContain('name="id" value="faltante-1"');
-    // No se ofrece confirmación sobre PEDIDO ni estados cerrados.
+    // No se ofrece autorización sobre PEDIDO ni estados cerrados.
     expect(html).not.toContain('name="id" value="pedido-1"');
     expect(html).not.toContain('name="id" value="recibido-1"');
     expect(html).not.toContain('name="id" value="cancelado-1"');
@@ -293,7 +322,7 @@ describe("MissingList · confirmation gating", () => {
       false,
     );
 
-    expect(html).not.toContain("Confirmar (OK gerencia)");
+    expect(html).not.toContain("Autorizar");
     expect(html).not.toContain('name="id"');
     // Sin la columna Acción del encabezado desktop.
 	expect(html).not.toContain("Acción");
@@ -341,7 +370,7 @@ describe("MissingList · confirmation gating", () => {
 
 describe("MissingList · action error contract", () => {
 	it("surfaces the confirmation rejection returned by the server action", () => {
-		const message = "No se pudo marcar OK. Intentá de nuevo.";
+		const message = "No se pudo autorizar el faltante. Intentá de nuevo.";
 		mockActionState({ error: message, ok: false });
 
     const html = renderMissingList(

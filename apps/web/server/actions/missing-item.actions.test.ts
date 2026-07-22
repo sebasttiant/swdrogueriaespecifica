@@ -159,7 +159,7 @@ describe("confirmMissingItemAction", () => {
 
     expect(res.ok).toBe(false);
     expect(res.error).toEqual(
-      "El faltante ya fue pedido, confirmado o cambiado. Refrescá y revisá su estado actual antes de confirmar.",
+      "El faltante ya fue pedido, autorizado o cambiado. Refrescá y revisá su estado actual antes de autorizar.",
     );
 
     expect(mocks.confirmMissingItemOk).toHaveBeenCalledWith(
@@ -322,7 +322,7 @@ describe("orderMissingItemAction", () => {
 		["ALREADY_ORDERED", "Este faltante ya fue pedido."],
 		[
 			"ALREADY_CONFIRMED",
-			"Este faltante ya fue confirmado (OK gerencia) y no se puede pedir.",
+			"Este faltante ya fue autorizado y no se puede pedir.",
 		],
 		["NOT_ORDERABLE", "Este faltante no se puede pedir desde su estado actual."],
 		["SUPPLIER_NOT_FOUND", "No se encontró el proveedor seleccionado."],
