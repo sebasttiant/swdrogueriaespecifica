@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   auditContextFromHeaders: vi.fn(),
-  confirmMissingItemOk: vi.fn(),
   createManualMissingItem: vi.fn(),
   getActiveProductsForMissingItem: vi.fn(),
   orderMissingItem: vi.fn(),
@@ -18,7 +17,6 @@ vi.mock("@/server/services/audit.service", () => ({
   recordAudit: mocks.recordAudit,
 }));
 vi.mock("@/server/services/missing-item.service", () => ({
-  confirmMissingItemOk: mocks.confirmMissingItemOk,
   createManualMissingItem: mocks.createManualMissingItem,
   orderMissingItem: mocks.orderMissingItem,
 }));
@@ -28,19 +26,12 @@ vi.mock("@/server/services/product.service", () => ({
 
 import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
 import {
-  confirmMissingItemAction,
   createMissingItemAction,
   orderMissingItemAction,
   searchActiveProductsForMissingItemAction,
 } from "./missing-item.actions";
 
 const PREV = { error: null, ok: false };
-
-function formData() {
-  const data = new FormData();
-  data.set("id", "missing-1");
-  return data;
-}
 
 // FormData del pedido para la rama "proveedor existente".
 function orderExistingFormData(supplierId = "sup-1") {
@@ -85,104 +76,6 @@ function grant(
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.auditContextFromHeaders.mockResolvedValue({ userId: "admin-1", channel: "web" });
-});
-
-describe("confirmMissingItemAction", () => {
-  it("guards with the canConfirmMissingItems capability and rejects before mutation", async () => {
-    mocks.requireCapability.mockRejectedValueOnce(new Error("REDIRECT:/dashboard"));
-
-    await expect(confirmMissingItemAction(PREV, formData())).rejects.toThrow(
-      "REDIRECT:/dashboard",
-    );
-    expect(mocks.requireCapability).toHaveBeenCalledWith("canConfirmMissingItems");
-    expect(mocks.confirmMissingItemOk).not.toHaveBeenCalled();
-    expect(mocks.recordAudit).not.toHaveBeenCalled();
-  });
-
-  it("confirms, audits management OK, and revalidates active views", async () => {
-    mocks.requireCapability.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
-    mocks.confirmMissingItemOk.mockResolvedValue({
-      changed: true,
-      item: { id: "missing-1", status: "FALTANTE", confirmedAt: new Date() },
-    });
-
-    await expect(confirmMissingItemAction(PREV, formData())).resolves.toEqual({ error: null, ok: true });
-    expect(mocks.confirmMissingItemOk).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "missing-1", confirmedById: "admin-1" }),
-    );
-    expect(mocks.recordAudit).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: AUDIT_ACTIONS.MISSING_CONFIRM_OK,
-        module: AUDIT_MODULES.FALTANTES,
-        entityId: "missing-1",
-        after: { status: "FALTANTE", changed: true },
-      }),
-    );
-    expect(mocks.revalidatePath).toHaveBeenCalledWith("/faltantes");
-    expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard");
-  });
-
-  it("allows SUPERVISOR through the same capability boundary", async () => {
-    mocks.requireCapability.mockResolvedValue({ user: { id: "sup-1", role: "SUPERVISOR" } });
-    mocks.confirmMissingItemOk.mockResolvedValue({
-      changed: true,
-      item: { id: "missing-1", status: "FALTANTE", confirmedAt: new Date() },
-    });
-
-    await expect(confirmMissingItemAction(PREV, formData())).resolves.toEqual({ error: null, ok: true });
-    expect(mocks.requireCapability).toHaveBeenCalledWith("canConfirmMissingItems");
-    expect(mocks.confirmMissingItemOk).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "missing-1", confirmedById: "sup-1" }),
-    );
-  });
-
-  // `changed: false` es un rechazo de negocio (faltante pedido/confirmado/cambiado
-  // de forma concurrente, o formulario obsoleto): NO es un éxito. Se audita como
-  // FAILURE (nunca como una confirmación exitosa), no debe pretender éxito, y
-  // debe devolver un error visible en español para que el gerente refresque.
-  it("treats changed:false as a business rejection: ok false + Spanish error, FAILURE audit, no fake success", async () => {
-    mocks.requireCapability.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
-    // El faltante ya fue pedido en otra sesión: el CAS del repositorio no escribe
-    // y `confirmMissingItemOk` devuelve `changed: false` con el estado actual.
-    mocks.confirmMissingItemOk.mockResolvedValue({
-      changed: false,
-      item: {
-        id: "missing-1",
-        status: "PEDIDO",
-        confirmedAt: null,
-        confirmedById: null,
-        confirmationNote: null,
-      },
-    });
-
-    const res = await confirmMissingItemAction(PREV, formData());
-
-    expect(res.ok).toBe(false);
-    expect(res.error).toEqual(
-      "El faltante ya fue pedido, autorizado o cambiado. Refrescá y revisá su estado actual antes de autorizar.",
-    );
-
-    expect(mocks.confirmMissingItemOk).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "missing-1", confirmedById: "admin-1" }),
-    );
-
-    // Perder el CAS es un intento real de confirmar sobre un estado que ya no lo
-    // admitía: se audita como FAILURE, nunca como MISSING_CONFIRM_OK exitoso.
-    expect(mocks.recordAudit).toHaveBeenCalledTimes(1);
-    expect(mocks.recordAudit.mock.calls[0]![0]).toEqual(
-      expect.objectContaining({
-        action: AUDIT_ACTIONS.MISSING_CONFIRM_OK,
-        module: AUDIT_MODULES.FALTANTES,
-        entity: "MissingItem",
-        entityId: "missing-1",
-        result: "FAILURE",
-        after: { reason: "STALE_STATE", status: "PEDIDO" },
-      }),
-    );
-
-    expect(mocks.revalidatePath).toHaveBeenCalledWith("/faltantes");
-    expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard");
-  });
 });
 
 describe("orderMissingItemAction", () => {
@@ -322,7 +215,7 @@ describe("orderMissingItemAction", () => {
 		["ALREADY_ORDERED", "Este faltante ya fue pedido."],
 		[
 			"ALREADY_CONFIRMED",
-			"Este faltante ya fue autorizado y no se puede pedir.",
+			"Este faltante ya figura como pedido y no se puede volver a pedir.",
 		],
 		["NOT_ORDERABLE", "Este faltante no se puede pedir desde su estado actual."],
 		["SUPPLIER_NOT_FOUND", "No se encontró el proveedor seleccionado."],

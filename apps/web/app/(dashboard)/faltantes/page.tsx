@@ -28,7 +28,6 @@ export default async function FaltantesPage({
 }) {
 	const { cursor } = await searchParams;
 	const session = await requireCapability("canViewFaltantes");
-	const canConfirm = can(session.user.role, "canConfirmMissingItems");
 	const canOrderMissingItems = can(session.user.role, "canOrderMissingItems");
 	const canManageSuppliers = can(session.user.role, "canManageSuppliers");
 	const canCreateMissingItems = can(session.user.role, "canCreateMissingItems");
@@ -78,7 +77,6 @@ export default async function FaltantesPage({
 		<MissingList
 			items={items}
 			nextCursor={nextCursor}
-			canConfirm={canConfirm}
 			canOrder={canOrder}
 			suppliers={suppliers}
 			canCreateSupplier={canCreateSupplier}

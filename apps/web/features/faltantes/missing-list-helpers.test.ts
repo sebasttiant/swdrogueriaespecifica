@@ -2,10 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { MissingItemListItem } from "@/server/repositories/missing-item.repository";
 
-import {
-  getConfirmationMetadata,
-  getOrderMetadata,
-} from "./missing-list-helpers";
+import { getOrderMetadata } from "./missing-list-helpers";
 
 function item(overrides: Partial<MissingItemListItem>): MissingItemListItem {
   return {
@@ -34,49 +31,6 @@ function item(overrides: Partial<MissingItemListItem>): MissingItemListItem {
     ...overrides,
   };
 }
-
-describe("getConfirmationMetadata", () => {
-  it("expone metadata pendiente cuando no hay fecha de autorización", () => {
-    expect(getConfirmationMetadata(item({ id: "pending" }))).toEqual({
-      label: "Pendiente",
-      confirmedAt: null,
-      authorizedBy: null,
-    });
-  });
-
-  it("expone metadata autorizada con el nombre de quien autorizó", () => {
-    const confirmedAt = new Date("2026-06-06T12:00:00");
-
-    expect(
-      getConfirmationMetadata(
-        item({
-          id: "confirmed",
-          confirmedAt,
-          confirmedById: "user-1",
-          confirmedBy: { id: "user-1", name: "Ana Gerente" },
-        }),
-      ),
-    ).toEqual({
-      label: "Autorizado",
-      confirmedAt,
-      authorizedBy: "Ana Gerente",
-    });
-  });
-
-  // El autorizador se lee de la relación real. Un registro viejo puede tener
-  // fecha sin usuario resoluble: sigue siendo autorizado, sin nombre inventado.
-  it("mantiene el registro como autorizado aunque no se resuelva el usuario", () => {
-    const confirmedAt = new Date("2026-06-06T12:00:00");
-
-    expect(
-      getConfirmationMetadata(item({ id: "legacy", confirmedAt, confirmedById: "gone" })),
-    ).toEqual({
-      label: "Autorizado",
-      confirmedAt,
-      authorizedBy: null,
-    });
-  });
-});
 
 describe("getOrderMetadata", () => {
   const orderedAt = new Date("2026-06-06T15:30:00");

@@ -13,10 +13,8 @@ import {
   recordAudit,
 } from "@/server/services/audit.service";
 import {
-  confirmMissingItemOk,
   createManualMissingItem,
   orderMissingItem,
-  type ConfirmMissingItemResult,
   type OrderMissingItemInput,
   type OrderRejection,
 } from "@/server/services/missing-item.service";
@@ -101,76 +99,16 @@ export async function createMissingItemAction(
 }
 
 // Rechazos de negocio del pedido → mensaje en español para el gerente.
+//
+// ALREADY_CONFIRMED se dispara sobre filas con `confirmedAt`: registros del
+// camino viejo, donde gerencia YA había pedido pero sin registrar proveedor.
+// Su clasificación y su cierre por entrada se resuelven en C2 y C3.
 const ORDER_REJECTION_MESSAGES: Record<OrderRejection, string> = {
   ALREADY_ORDERED: "Este faltante ya fue pedido.",
-  ALREADY_CONFIRMED: "Este faltante ya fue autorizado y no se puede pedir.",
+  ALREADY_CONFIRMED: "Este faltante ya figura como pedido y no se puede volver a pedir.",
   NOT_ORDERABLE: "Este faltante no se puede pedir desde su estado actual.",
   SUPPLIER_NOT_FOUND: "No se encontró el proveedor seleccionado.",
 };
-
-export async function confirmMissingItemAction(
-  _prev: MissingItemActionState,
-  formData: FormData,
-): Promise<MissingItemActionState> {
-  const session = await requireCapability("canConfirmMissingItems");
-  const id = formData.get("id");
-  const rawNote = formData.get("note");
-  const note = typeof rawNote === "string" && rawNote.trim() ? rawNote.trim() : undefined;
-
-  if (typeof id !== "string" || id.trim().length === 0) {
-    return { error: "No se pudo identificar el faltante.", ok: false };
-  }
-
-  let result: ConfirmMissingItemResult;
-  try {
-    result = await confirmMissingItemOk({
-      id,
-      confirmedById: session.user.id,
-      note,
-    });
-  } catch (error) {
-    console.error("[faltantes] No se pudo confirmar el faltante:", error);
-    return { error: "No se pudo autorizar el faltante. Intentá de nuevo.", ok: false };
-  }
-
-  // `changed: false` significa que la confirmación ya NO aplica: el faltante
-  // fue pedido/confirmado/cambiado de forma concurrente (o el formulario estaba
-  // obsoleto). NO es un éxito, así que se audita como FAILURE —nunca como una
-  // confirmación exitosa— y devolvemos un error visible en español para que el
-  // gerente refresque y revise el estado actual antes de actuar de nuevo.
-  if (!result.changed) {
-    await recordAudit({
-      action: AUDIT_ACTIONS.MISSING_CONFIRM_OK,
-      module: AUDIT_MODULES.FALTANTES,
-      entity: "MissingItem",
-      entityId: result.item.id,
-      result: "FAILURE",
-      after: { reason: "STALE_STATE", status: result.item.status },
-      context: await auditContextFromHeaders(session.user.id),
-    });
-
-    revalidatePath("/faltantes");
-    revalidatePath("/dashboard");
-    return {
-      error:
-        "El faltante ya fue pedido, autorizado o cambiado. Refrescá y revisá su estado actual antes de autorizar.",
-      ok: false,
-    };
-  }
-
-  await recordAudit({
-    action: AUDIT_ACTIONS.MISSING_CONFIRM_OK,
-    module: AUDIT_MODULES.FALTANTES,
-    entity: "MissingItem",
-    entityId: result.item.id,
-    after: { status: result.item.status, changed: result.changed },
-    context: await auditContextFromHeaders(session.user.id),
-  });
-
-  revalidatePath("/faltantes");
-  revalidatePath("/dashboard");
-  return { error: null, ok: true };
-}
 
 // --------------------------------------------------------------------------
 // Pedido de un faltante a un proveedor. Solo gerencia (canOrderMissingItems).
