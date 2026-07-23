@@ -1,10 +1,52 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  MAX_MISSING_REPORT_NAME_LENGTH,
   MAX_ORDERED_QUANTITY,
   manualMissingItemCreateSchema,
+  missingReportSubmitSchema,
   orderMissingItemSchema,
 } from "./schema";
+
+describe("missingReportSubmitSchema", () => {
+  it("accepts a normal product name and trims it", () => {
+    const result = missingReportSubmitSchema.safeParse({ rawName: "  Acetaminofén 500  " });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.rawName).toBe("Acetaminofén 500");
+  });
+
+  it("rejects an empty or whitespace-only name", () => {
+    expect(missingReportSubmitSchema.safeParse({ rawName: "" }).success).toBe(false);
+    expect(missingReportSubmitSchema.safeParse({ rawName: "   " }).success).toBe(false);
+  });
+
+  it("rejects a missing name", () => {
+    expect(missingReportSubmitSchema.safeParse({}).success).toBe(false);
+  });
+
+  it("accepts the maximum length and rejects one character over it", () => {
+    const atLimit = "a".repeat(MAX_MISSING_REPORT_NAME_LENGTH);
+    const overLimit = "a".repeat(MAX_MISSING_REPORT_NAME_LENGTH + 1);
+    expect(missingReportSubmitSchema.safeParse({ rawName: atLimit }).success).toBe(true);
+    expect(missingReportSubmitSchema.safeParse({ rawName: overLimit }).success).toBe(false);
+  });
+
+  // rawName se conserva tal cual (para mostrar): el schema no lo baja a
+  // minúsculas ni colapsa espacios internos — eso es normalización, del service.
+  it("preserves the raw name's case and inner spacing for display", () => {
+    const result = missingReportSubmitSchema.safeParse({ rawName: "ACME   Gel" });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.rawName).toBe("ACME   Gel");
+  });
+
+  // Clave del contrato con el service: un nombre de solo caracteres de control
+  // PASA el schema (el `trim` nativo no los elimina), así que la validación de
+  // "normaliza a vacío" DEBE vivir en el service, no acá.
+  it("lets a control-character-only name through, leaving the empty check to the service", () => {
+    const result = missingReportSubmitSchema.safeParse({ rawName: "\u0000\u0001\u001f" });
+    expect(result.success).toBe(true);
+  });
+});
 
 // Base válida reutilizable; cada test sobreescribe lo que necesita probar.
 // La cantidad a pedir es obligatoria: gerencia define explícitamente cuánto

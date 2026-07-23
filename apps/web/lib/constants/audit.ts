@@ -38,6 +38,7 @@ export const AUDIT_ACTIONS = {
   MISSING_STATUS_CHANGE: "missing.status.change",
   MISSING_CONFIRM_OK: "missing.confirm.ok",
   MISSING_ITEM_ORDERED: "missing.ordered",
+  MISSING_REPORT_CREATE: "missing.report.create",
   // Entradas
   ENTRY_CREATE: "entry.create",
   MISSING_CLOSED_BY_ENTRY: "missing.closed.by.entry",
