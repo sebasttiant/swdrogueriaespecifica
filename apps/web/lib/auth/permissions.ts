@@ -149,6 +149,9 @@ export const CAPABILITIES = [
   "canManageProducts",
   "canCreatePendientes",
   "canCreateEntries",
+  // Reporting a name that is missing from stock is an operational observation,
+  // not a catalog mutation or purchasing decision, so every role may do it.
+  "canSubmitMissingReports",
   // Gates exposure of customer PII (the pending's `customerName`) wherever that
   // identity is reused: Pendientes, Faltantes, and Dashboard. Data minimization
   // default: the lowest operational role (OPERADOR) does NOT get it; SUPERVISOR
@@ -199,6 +202,7 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     "canViewEntradas",
     "canCreatePendientes",
     "canCreateEntries",
+    "canSubmitMissingReports",
     "canConfirmMissingItems",
     "canViewCustomerIdentity",
     "canDeliverPendings",
@@ -212,6 +216,7 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     "canViewEntradas",
     "canCreatePendientes",
     "canCreateEntries",
+    "canSubmitMissingReports",
     "canDeliverPendings",
   ],
 };

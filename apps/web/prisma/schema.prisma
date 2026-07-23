@@ -45,6 +45,14 @@ enum MissingItemStatus {
   CANCELADO
 }
 
+// Estado de un reporte provisional de faltante hecho por un vendedor. Empieza
+// mínimo: todo reporte nace pendiente de revisión de gerencia. Los estados de
+// resolución (vinculado, descartado) llegan cuando se implemente la cola de
+// revisión, sin migración de datos.
+enum MissingReportStatus {
+  PENDING_REVIEW
+}
+
 enum AuditResult {
   SUCCESS
   FAILURE
@@ -85,6 +93,7 @@ model User {
   inventoryEntries InventoryEntry[]
   auditLogs       AuditLog[]
   orderedMissingItems MissingItem[] @relation("MissingItemOrderedBy")
+  missingReports  MissingReport[] @relation("MissingReportReportedBy")
 
   @@index([active])
   @@index([archivedAt])
@@ -342,4 +351,24 @@ model AuditLog {
   @@index([result])
   @@index([createdAt])
   @@map("audit_logs")
+}
+
+// Reporte provisional de un faltante hecho por un vendedor desde el celular.
+// NO es un Product ni un MissingItem canónico: solo dice "este producto (por su
+// nombre) quedó en cero", pendiente de que gerencia lo revise. `rawName` es lo
+// que el vendedor pegó desde Orión, tal cual, para mostrar; `normalizedName` es
+// la forma comparable, para agrupar reportes del mismo producto en el futuro.
+// Deliberadamente sin cantidad, proveedor, foto ni vínculo a catálogo: esos ejes
+// llegan en fases posteriores, cada una con su migración aditiva.
+model MissingReport {
+  id             String              @id @default(cuid())
+  rawName        String
+  normalizedName String
+  reporter       User                @relation("MissingReportReportedBy", fields: [reporterId], references: [id])
+  reporterId     String
+  status         MissingReportStatus @default(PENDING_REVIEW)
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  @@map("missing_reports")
 }
