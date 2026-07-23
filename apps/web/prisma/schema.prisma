@@ -370,5 +370,10 @@ model MissingReport {
   createdAt      DateTime            @default(now())
   updatedAt      DateTime            @updatedAt
 
+  // La cola de revisión filtra por `status` y agrupa/consulta por
+  // `normalizedName` (groupBy de pendientes + findMany por nombre). Este índice
+  // compuesto sirve ambas consultas. Es el ÚNICO índice justificado hoy: no hay
+  // consulta que motive uno por `reporterId` ni `createdAt` sueltos.
+  @@index([status, normalizedName])
   @@map("missing_reports")
 }
