@@ -7,6 +7,7 @@ import {
   BarChart3,
   ShieldCheck,
   Users,
+  Inbox,
   type LucideIcon,
 } from "lucide-react";
 
@@ -30,6 +31,9 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard, primaryMobile: true, capability: "canViewDashboard" },
   { label: "Pendientes", href: "/pendientes", icon: ClipboardList, primaryMobile: true, capability: "canViewPendientes" },
   { label: "Faltantes", href: "/faltantes", icon: PackageX, primaryMobile: true, capability: "canViewFaltantes" },
+  // Sin `primaryMobile`: es una vista de gerencia, no debe ocupar un lugar en
+  // la barra inferior del celular del vendedor.
+  { label: "Revisión de reportes", href: "/revision-faltantes", icon: Inbox, capability: "canReviewMissingReports" },
   { label: "Entradas", href: "/entradas", icon: PackagePlus, primaryMobile: true, capability: "canViewEntradas" },
   { label: "Productos", href: "/productos", icon: Package, capability: "canViewProductos" },
   { label: "Reportes", href: "/reportes", icon: BarChart3, capability: "canViewReports" },

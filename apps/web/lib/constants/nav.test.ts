@@ -51,3 +51,23 @@ describe("visibleNavItems", () => {
     expect(labels(undefined)).toEqual([]);
   });
 });
+
+describe("visibleNavItems · revisión de reportes", () => {
+  // La cola de revisión es de gerencia: el vendedor que reporta no la ve.
+  it("solo la ven SUPERADMIN y ADMIN", () => {
+    expect(labels("SUPERADMIN")).toContain("Revisión de reportes");
+    expect(labels("ADMIN")).toContain("Revisión de reportes");
+    expect(labels("SUPERVISOR")).not.toContain("Revisión de reportes");
+    expect(labels("OPERADOR")).not.toContain("Revisión de reportes");
+  });
+
+  // La barra inferior del celular es del flujo operativo; una vista de gerencia
+  // no debe robarle un lugar.
+  it("no ocupa un lugar en la barra inferior móvil", () => {
+    const item = visibleNavItems("ADMIN").find(
+      (navItem) => navItem.href === "/revision-faltantes",
+    );
+    expect(item).toBeDefined();
+    expect(item?.primaryMobile).toBeUndefined();
+  });
+});
