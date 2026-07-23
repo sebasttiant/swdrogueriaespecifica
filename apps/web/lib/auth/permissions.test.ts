@@ -256,6 +256,25 @@ describe("canSubmitMissingReports (capability)", () => {
   });
 });
 
+describe("canReviewMissingReports (capability)", () => {
+  // Reviewing the seller-report queue is a management decision (which report
+  // becomes a real faltante), so only ADMIN/SUPERADMIN get it — unlike
+  // canSubmitMissingReports, which every role has.
+  it("is management-only", () => {
+    expect(can("SUPERADMIN", "canReviewMissingReports")).toBe(true);
+    expect(can("ADMIN", "canReviewMissingReports")).toBe(true);
+    expect(can("SUPERVISOR", "canReviewMissingReports")).toBe(false);
+    expect(can("OPERADOR", "canReviewMissingReports")).toBe(false);
+  });
+
+  it("is exactly the ADMIN/SUPERADMIN set", () => {
+    expect(rolesWithCapability("canReviewMissingReports")).toEqual([
+      "SUPERADMIN",
+      "ADMIN",
+    ]);
+  });
+});
+
 describe("rolesWithCapability", () => {
   it("preserva el orden de USER_ROLES", () => {
     expect(rolesWithCapability("canViewDashboard")).toEqual([...USER_ROLES]);

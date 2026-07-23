@@ -182,6 +182,12 @@ export const CAPABILITIES = [
   // gerencia (ADMIN/SUPERADMIN); habilitarla a SUPERVISOR sería una línea en
   // `ROLE_CAPABILITIES`, jamás un cambio de código.
   "canCreateMissingItems",
+  // Gatea la COLA de revisión de reportes provisionales de vendedores. Revisar
+  // qué reporte se convierte en un faltante real es una decisión de gerencia,
+  // así que solo ADMIN/SUPERADMIN — es el eje opuesto de `canSubmitMissingReports`
+  // (todos reportan; solo gerencia revisa). ADMIN/SUPERADMIN la heredan de
+  // `[...CAPABILITIES]`; no se agrega a SUPERVISOR/OPERADOR.
+  "canReviewMissingReports",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
