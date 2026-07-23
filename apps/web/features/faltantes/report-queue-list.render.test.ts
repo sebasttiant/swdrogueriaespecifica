@@ -1,6 +1,21 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("@/server/actions/missing-report.actions", () => ({
+  linkMissingReportToProductAction: vi.fn(),
+}));
+vi.mock("@/server/actions/missing-item.actions", () => ({
+  searchActiveProductsForMissingItemAction: vi.fn(),
+}));
+
+vi.mock("react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react")>();
+  return {
+    ...actual,
+    useActionState: () => [{ error: null, ok: false }, vi.fn(), false],
+  };
+});
 
 import { formatBogotaDate } from "@/lib/datetime/bogota";
 import type { MissingReportQueueGroup } from "@/server/services/missing-report.service";
@@ -44,6 +59,10 @@ function render(
       hasMore: options.hasMore ?? false,
     }),
   );
+}
+
+function countOccurrences(value: string, needle: string): number {
+  return value.split(needle).length - 1;
 }
 
 describe("ReportQueueList · empty", () => {
@@ -150,14 +169,16 @@ describe("ReportQueueList · pagination", () => {
 describe("ReportQueueList · read-only", () => {
   // D1d-2 es solo lectura: vincular a un producto y crear el faltante canónico
   // es D1e. No debe haber ningún control de mutación todavía.
-  it("offers no mutation controls", () => {
+  // Vincular es la ÚNICA mutación que ofrece la cola. Descartar un reporte o
+  // fijar cantidad/proveedor no son parte de este flujo.
+  it("offers linking, and no other mutation", () => {
     const html = render([group()], { page: 1, hasMore: true });
 
-    expect(html).not.toContain("<form");
-    expect(html).not.toContain("<button");
-    expect(html).not.toContain("Vincular");
+    expect(html).toContain("Vincular producto");
     expect(html).not.toContain("Descartar");
     expect(html).not.toContain("Crear faltante");
+    expect(html).not.toContain('name="quantity"');
+    expect(html).not.toContain('name="supplierId"');
   });
 
   it("never exposes a reporter's internal id in the visible text", () => {
@@ -175,5 +196,40 @@ describe("ReportQueueList · long names", () => {
     const html = render([group({ displayName: long })]);
 
     expect(html).toContain("break-words");
+  });
+});
+
+describe("ReportQueueList · linking", () => {
+  it("offers a link form for each group", () => {
+    const html = render([
+      group({ normalizedName: "a", displayName: "A", reports: [report("r1", "A", "2026-07-20T10:00:00.000Z")] }),
+      group({ normalizedName: "b", displayName: "B", reports: [report("r2", "B", "2026-07-19T10:00:00.000Z")] }),
+    ]);
+
+    expect(countOccurrences(html, "Vincular producto")).toBe(2);
+  });
+
+  // El form nace colapsado, así que los ids ocultos todavía no se montan: eso se
+  // verifica en el test del propio form. Acá lo observable es que cada grupo
+  // tenga SU form, uno por tarjeta.
+  it("gives every group its own form, one per card", () => {
+    const html = render([
+      group({
+        normalizedName: "a",
+        displayName: "A",
+        reports: [
+          report("r1", "A", "2026-07-20T10:00:00.000Z"),
+          report("r2", "A", "2026-07-19T10:00:00.000Z"),
+        ],
+      }),
+    ]);
+
+    expect(countOccurrences(html, "Vincular producto")).toBe(1);
+  });
+
+  it("shows no link form when the queue is empty", () => {
+    const html = render([]);
+
+    expect(html).not.toContain("Vincular producto");
   });
 });

@@ -7,6 +7,7 @@ import { EmptyState } from "@/app/_components/ui/empty-state";
 import { formatBogotaDate } from "@/lib/datetime/bogota";
 import type { MissingReportQueueGroup } from "@/server/services/missing-report.service";
 
+import { ReportLinkForm } from "./report-link-form";
 import { reportQueueHref } from "./report-queue-paging";
 
 type ReportQueueListProps = {
@@ -30,8 +31,9 @@ function timesReported(count: number): string {
 // colapsado detrás de un disclosure (mismo patrón que la cola de faltantes) para
 // que la pantalla del celular muestre varios grupos sin scroll infinito.
 //
-// Vincular un grupo con un producto y generar el faltante canónico es D1e: acá
-// todavía no hay ninguna acción de mutación.
+// La única acción disponible es vincular el grupo con un producto del catálogo,
+// lo que genera el faltante canónico. Descartar un reporte, o fijar cantidad y
+// proveedor, no son parte de este flujo.
 export function ReportQueueList({ groups, page, hasMore }: ReportQueueListProps) {
   if (groups.length === 0) {
     return (
@@ -81,6 +83,12 @@ export function ReportQueueList({ groups, page, hasMore }: ReportQueueListProps)
               ))}
             </ul>
           </details>
+
+          {/* Vincular es la única mutación de la cola. El form lleva los ids de
+              ESTE grupo: el vínculo es del grupo entero, nunca de un reporte
+              suelto. La página ya exige `canReviewMissingReports`, así que quien
+              llega hasta acá puede vincular. */}
+          <ReportLinkForm reportIds={group.reports.map((report) => report.id)} />
         </Card>
       ))}
 
