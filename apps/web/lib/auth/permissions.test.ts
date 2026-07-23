@@ -238,6 +238,24 @@ describe("canCreateMissingItems (capability)", () => {
   });
 });
 
+describe("canSubmitMissingReports (capability)", () => {
+  it("allows every role to report a missing product name", () => {
+    expect(can("SUPERADMIN", "canSubmitMissingReports")).toBe(true);
+    expect(can("ADMIN", "canSubmitMissingReports")).toBe(true);
+    expect(can("SUPERVISOR", "canSubmitMissingReports")).toBe(true);
+    expect(can("OPERADOR", "canSubmitMissingReports")).toBe(true);
+  });
+
+  it("does not grant operational roles management capabilities", () => {
+    for (const role of ["SUPERVISOR", "OPERADOR"] as const) {
+      expect(can(role, "canCreateMissingItems")).toBe(false);
+      expect(can(role, "canOrderMissingItems")).toBe(false);
+      expect(can(role, "canManageSuppliers")).toBe(false);
+      expect(can(role, "canManageProducts")).toBe(false);
+    }
+  });
+});
+
 describe("rolesWithCapability", () => {
   it("preserva el orden de USER_ROLES", () => {
     expect(rolesWithCapability("canViewDashboard")).toEqual([...USER_ROLES]);
