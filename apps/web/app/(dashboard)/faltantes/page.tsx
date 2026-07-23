@@ -6,6 +6,7 @@ import {
   MissingCreateForm,
 } from "@/features/faltantes/missing-create-form";
 import { MissingList } from "@/features/faltantes/missing-list";
+import { MissingReportForm } from "@/features/faltantes/missing-report-form";
 import { MissingSummary } from "@/features/faltantes/missing-summary";
 import {
   canShowNewSupplierOrderForm,
@@ -31,6 +32,7 @@ export default async function FaltantesPage({
 	const canOrderMissingItems = can(session.user.role, "canOrderMissingItems");
 	const canManageSuppliers = can(session.user.role, "canManageSuppliers");
 	const canCreateMissingItems = can(session.user.role, "canCreateMissingItems");
+	const canSubmitMissingReports = can(session.user.role, "canSubmitMissingReports");
 	const canViewCustomerIdentity = can(session.user.role, "canViewCustomerIdentity");
 
   // Un único instante compartido por el resumen global y el agrupamiento de
@@ -67,9 +69,20 @@ export default async function FaltantesPage({
 
       <MissingSummary summary={summary} />
 
+      {/* Reporte del vendedor: pegar un nombre desde Orión y avisar que falta.
+          Es un eje aparte del alta catalogada de gerencia (abajo): distinto
+          permiso, distinta tarjeta, distinto texto. Un OPERADOR ve esto y NADA
+          del flujo administrativo. */}
+      {canSubmitMissingReports ? (
+        <Card className="space-y-3 p-3">
+          <CardTitle>Reportar faltante</CardTitle>
+          <MissingReportForm />
+        </Card>
+      ) : null}
+
       {canCreateMissingItems ? (
         <Card className="space-y-3 p-3">
-          <CardTitle>Alta manual</CardTitle>
+          <CardTitle>Alta manual catalogada</CardTitle>
           <MissingCreateForm />
         </Card>
       ) : null}

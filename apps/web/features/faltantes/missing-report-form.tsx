@@ -1,0 +1,128 @@
+"use client";
+
+import { Megaphone } from "lucide-react";
+import { useActionState, useId, useState } from "react";
+
+import { Button } from "@/app/_components/ui/button";
+import { Field } from "@/app/_components/ui/field";
+import { Input } from "@/app/_components/ui/input";
+import { MAX_MISSING_REPORT_NAME_LENGTH } from "@/features/faltantes/schema";
+import {
+  createMissingReportAction,
+  type MissingReportActionState,
+} from "@/server/actions/missing-report.actions";
+
+const INITIAL_STATE: MissingReportActionState = { error: null, ok: false };
+
+type MissingReportFormProps = { defaultOpen?: boolean };
+
+// Reporte rápido de un vendedor desde el celular: el 90% del uso es móvil, así
+// que el formulario nace COLAPSADO detrás de un botón compacto y de ancho
+// completo (target táctil holgado, usable con una mano). Abierto, muestra un
+// único campo: el nombre pegado desde Orión. Todo lo demás —cantidad, proveedor,
+// producto canónico— es decisión de gerencia en otro flujo; acá no aparece.
+//
+// El contrato con la Server Action es exactamente `rawName`. El `reporterId`
+// SIEMPRE lo pone el servidor desde la sesión: no viaja en el formulario.
+export function MissingReportForm({ defaultOpen = false }: MissingReportFormProps) {
+  const [state, formAction, isPending] = useActionState(
+    createMissingReportAction,
+    INITIAL_STATE,
+  );
+  const [open, setOpen] = useState(defaultOpen);
+  // Input CONTROLADO a propósito: un `<form action>` uncontrolled se resetea en
+  // React 19 al terminar la acción TAMBIÉN en error, y borrar el nombre que el
+  // vendedor acaba de pegar tras un rechazo lo obligaría a volver a copiarlo de
+  // Orión. Controlado, se limpia SOLO en éxito y se conserva en error.
+  const [rawName, setRawName] = useState("");
+  // Una vez que el vendedor edita el campo, el resultado anterior ya no lo
+  // describe: se oculta para no dejar un "enviado" viejo sobre un reporte nuevo.
+  const [dirty, setDirty] = useState(false);
+  const rawNameId = useId();
+
+  // Ajuste de estado al cambiar `state`, DURANTE el render (patrón recomendado
+  // por React, no un efecto): `state` es un objeto nuevo por cada envío, así que
+  // al detectar uno distinto del último visto limpiamos el campo en éxito y
+  // descartamos el estado "editando" para mostrar el feedback fresco. En error
+  // el campo NO se toca: el nombre pegado se conserva.
+  const [lastState, setLastState] = useState(state);
+  if (state !== lastState) {
+    setLastState(state);
+    setDirty(false);
+    if (state.ok) setRawName("");
+  }
+
+  // El éxito/error viaja en `state` (useActionState) y sobrevive al colapso: el
+  // vendedor ve la confirmación aunque el formulario ya se haya cerrado. Se
+  // oculta apenas empieza a escribir el próximo reporte.
+  const feedback =
+    dirty ? null : state.error ? (
+      <p role="alert" className="text-sm font-medium text-danger break-words">
+        {state.error}
+      </p>
+    ) : state.ok ? (
+      <p role="status" className="text-sm font-medium text-success break-words">
+        Reporte enviado para revisión
+      </p>
+    ) : null;
+
+  if (!open) {
+    return (
+      <div className="space-y-2">
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={() => setOpen(true)}
+          aria-expanded={false}
+          className="w-full"
+        >
+          <Megaphone aria-hidden="true" className="h-4 w-4" />
+          Reportar faltante
+        </Button>
+        {feedback}
+      </div>
+    );
+  }
+
+  return (
+    <form action={formAction} className="space-y-3">
+      <Field
+        label="Nombre del producto"
+        htmlFor={rawNameId}
+        hint="Pegá el nombre tal como aparece en Orión."
+      >
+        <Input
+          id={rawNameId}
+          name="rawName"
+          value={rawName}
+          onChange={(event) => {
+            setRawName(event.target.value);
+            setDirty(true);
+          }}
+          required
+          maxLength={MAX_MISSING_REPORT_NAME_LENGTH}
+          autoComplete="off"
+          placeholder="Pegá el nombre desde Orión"
+        />
+      </Field>
+
+      {feedback}
+
+      <div className="flex gap-2">
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={() => setOpen(false)}
+          disabled={isPending}
+          className="flex-1"
+        >
+          Cerrar
+        </Button>
+        <Button type="submit" variant="secondary" disabled={isPending} className="flex-1">
+          <Megaphone aria-hidden="true" className="h-4 w-4" />
+          {isPending ? "Enviando…" : "Enviar reporte"}
+        </Button>
+      </div>
+    </form>
+  );
+}
