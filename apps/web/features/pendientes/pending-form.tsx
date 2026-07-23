@@ -7,6 +7,10 @@ import { Field } from "@/app/_components/ui/field";
 import { Input } from "@/app/_components/ui/input";
 import { Select } from "@/app/_components/ui/select";
 import {
+  buildPromisedAtOptions,
+  defaultPromisedAtValue,
+} from "@/features/pendientes/promised-at-options";
+import {
   createPendingAction,
   type PendingFormState,
 } from "@/server/actions/pending.actions";
@@ -21,11 +25,18 @@ export type ProductOption = {
 
 type PendingFormProps = {
   products: ProductOption[];
+  // Inyectables para tests deterministas; en producción usan los defaults.
+  now?: Date;
+  defaultCustom?: boolean;
 };
 
 // Alta de pendiente. Único client component del slice (necesita useActionState y
 // el toggle catálogo/manual). La lista de productos llega del server component.
-export function PendingForm({ products }: PendingFormProps) {
+export function PendingForm({
+  products,
+  now = new Date(),
+  defaultCustom = false,
+}: PendingFormProps) {
   const [state, formAction, isPending] = useActionState(
     createPendingAction,
     INITIAL_STATE,
@@ -36,6 +47,14 @@ export function PendingForm({ products }: PendingFormProps) {
   // el manual es la única vía, así que arranca activo y sin opción de togglear.
   const [manual, setManual] = useState(!canSelectExisting);
   const manualToggleId = useId();
+
+  // Entrega prometida: atajos rápidos (el caso común) + un modo personalizado
+  // que muestra el `datetime-local` de siempre (el caso raro). El valor viaja
+  // como `promisedAt` sin cambiar el contrato del backend.
+  const promisedAtOptions = buildPromisedAtOptions(now);
+  const [promisedAt, setPromisedAt] = useState(() => defaultPromisedAtValue(now));
+  const [customPromisedAt, setCustomPromisedAt] = useState(defaultCustom);
+  const promisedAtCustomId = useId();
 
   return (
     <form action={formAction} className="space-y-4">
@@ -114,14 +133,53 @@ export function PendingForm({ products }: PendingFormProps) {
             defaultValue={1}
           />
         </Field>
-        <Field label="Entrega prometida" htmlFor="promisedAt">
-          <Input
-            id="promisedAt"
-            name="promisedAt"
-            type="datetime-local"
-            required
-          />
-        </Field>
+        <div className="space-y-1.5 sm:col-span-2">
+          <span className="text-sm font-medium text-text">Entrega prometida</span>
+          {/* El campo real que viaja al backend: siempre lleva un valor (arranca
+              con el default), así que nunca se envía vacío. */}
+          <input type="hidden" name="promisedAt" value={promisedAt} />
+          {/* `flex-wrap`: en pantalla ancha los atajos van en línea; en el
+              celular envuelven. Targets `min-h-11` para el pulgar. */}
+          <div className="flex flex-wrap gap-2">
+            {promisedAtOptions.map((option) => (
+              <Button
+                key={option.key}
+                type="button"
+                variant={
+                  !customPromisedAt && promisedAt === option.value
+                    ? "secondary"
+                    : "ghost"
+                }
+                disabled={option.disabled}
+                onClick={() => {
+                  setPromisedAt(option.value);
+                  setCustomPromisedAt(false);
+                }}
+                className="min-h-11"
+              >
+                {option.label}
+              </Button>
+            ))}
+            <Button
+              type="button"
+              variant={customPromisedAt ? "secondary" : "ghost"}
+              onClick={() => setCustomPromisedAt(true)}
+              className="min-h-11"
+            >
+              Personalizado
+            </Button>
+          </div>
+          {customPromisedAt ? (
+            <Input
+              id={promisedAtCustomId}
+              type="datetime-local"
+              required
+              value={promisedAt}
+              onChange={(event) => setPromisedAt(event.target.value)}
+              aria-label="Fecha y hora personalizada"
+            />
+          ) : null}
+        </div>
         <Field label="Cliente (opcional)" htmlFor="customerName">
           <Input
             id="customerName"
