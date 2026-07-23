@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireCapability: vi.fn(),
   submitMissingReport: vi.fn(),
+  linkReportToProduct: vi.fn(),
   recordAudit: vi.fn(),
   auditContextFromHeaders: vi.fn(),
   revalidatePath: vi.fn(),
@@ -16,12 +17,22 @@ vi.mock("@/server/services/audit.service", () => ({
 }));
 vi.mock("@/server/services/missing-report.service", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/server/services/missing-report.service")>();
-  return { ...actual, submitMissingReport: mocks.submitMissingReport };
+  return {
+    ...actual,
+    submitMissingReport: mocks.submitMissingReport,
+    linkReportToProduct: mocks.linkReportToProduct,
+  };
 });
 
 import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
-import { MissingReportEmptyNameError } from "@/server/services/missing-report.service";
-import { createMissingReportAction } from "./missing-report.actions";
+import {
+  MissingReportEmptyNameError,
+  MissingReportLinkError,
+} from "@/server/services/missing-report.service";
+import {
+  createMissingReportAction,
+  linkMissingReportToProductAction,
+} from "./missing-report.actions";
 
 const PREV = { error: null, ok: false };
 
@@ -45,6 +56,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.auditContextFromHeaders.mockResolvedValue({ userId: "op-1", channel: "web" });
   mocks.submitMissingReport.mockResolvedValue({ id: "report-1", reporterId: "operador-1" });
+  mocks.linkReportToProduct.mockResolvedValue({
+    missingItem: { id: "missing-1" },
+    linkedReportsCount: 2,
+  });
 });
 
 describe("createMissingReportAction", () => {
@@ -168,6 +183,153 @@ describe("createMissingReportAction", () => {
 
     expect(result.ok).toBe(false);
     expect(result.error).toBe("No se pudo enviar el reporte. Intentá de nuevo.");
+    expect(mocks.recordAudit).not.toHaveBeenCalled();
+  });
+});
+
+function linkFormData(
+  reportIds: string[] = ["r1", "r2"],
+  productId = "prod-1",
+  extra: Record<string, string> = {},
+) {
+  const data = new FormData();
+  for (const id of reportIds) data.append("reportIds", id);
+  data.set("productId", productId);
+  for (const [k, v] of Object.entries(extra)) data.set(k, v);
+  return data;
+}
+
+describe("linkMissingReportToProductAction", () => {
+  it("guards with canReviewMissingReports before doing anything", async () => {
+    grant("OPERADOR", ["canSubmitMissingReports"]); // reporta, pero no revisa
+
+    await expect(
+      linkMissingReportToProductAction(PREV, linkFormData()),
+    ).rejects.toThrow("REDIRECT:/dashboard");
+    expect(mocks.requireCapability).toHaveBeenCalledWith("canReviewMissingReports");
+    expect(mocks.linkReportToProduct).not.toHaveBeenCalled();
+  });
+
+  it("rejects SUPERVISOR, who can report but not review", async () => {
+    grant("SUPERVISOR", ["canSubmitMissingReports"]);
+
+    await expect(
+      linkMissingReportToProductAction(PREV, linkFormData()),
+    ).rejects.toThrow("REDIRECT:/dashboard");
+    expect(mocks.linkReportToProduct).not.toHaveBeenCalled();
+  });
+
+  it("lets ADMIN link a group, returning the new faltante id", async () => {
+    grant("ADMIN", ["canReviewMissingReports"]);
+
+    await expect(
+      linkMissingReportToProductAction(PREV, linkFormData()),
+    ).resolves.toEqual({ error: null, ok: true, missingItemId: "missing-1" });
+  });
+
+  // El usuario que vincula SIEMPRE sale de la sesión: un userId inyectado por
+  // FormData no debe influir.
+  it("takes the linking user from the session, ignoring any FormData userId", async () => {
+    grant("ADMIN", ["canReviewMissingReports"]);
+
+    await linkMissingReportToProductAction(
+      PREV,
+      linkFormData(["r1"], "prod-1", { userId: "attacker-999" }),
+    );
+
+    expect(mocks.linkReportToProduct).toHaveBeenCalledWith({
+      reportIds: ["r1"],
+      productId: "prod-1",
+      userId: "admin-1",
+    });
+  });
+
+  it("rejects an empty report list or a missing product before touching the service", async () => {
+    grant("ADMIN", ["canReviewMissingReports"]);
+
+    const noReports = await linkMissingReportToProductAction(PREV, linkFormData([]));
+    expect(noReports.ok).toBe(false);
+
+    const noProduct = await linkMissingReportToProductAction(
+      PREV,
+      linkFormData(["r1"], ""),
+    );
+    expect(noProduct.ok).toBe(false);
+    expect(mocks.linkReportToProduct).not.toHaveBeenCalled();
+  });
+
+  it("maps an unknown or inactive product to a readable error", async () => {
+    grant("ADMIN", ["canReviewMissingReports"]);
+    mocks.linkReportToProduct.mockRejectedValueOnce(
+      new MissingReportLinkError("PRODUCT_NOT_FOUND", "nope"),
+    );
+
+    const result = await linkMissingReportToProductAction(PREV, linkFormData());
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("El producto no existe o está inactivo.");
+  });
+
+  it("maps a group someone else already reviewed to a readable error", async () => {
+    grant("ADMIN", ["canReviewMissingReports"]);
+    mocks.linkReportToProduct.mockRejectedValueOnce(
+      new MissingReportLinkError("ALREADY_LINKED", "nope"),
+    );
+
+    const result = await linkMissingReportToProductAction(PREV, linkFormData());
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("Estos reportes ya fueron revisados. Actualizá la cola.");
+  });
+
+  it("audits the link with safe metadata only: no reporter names", async () => {
+    grant("ADMIN", ["canReviewMissingReports"]);
+
+    await linkMissingReportToProductAction(PREV, linkFormData());
+
+    const audit = mocks.recordAudit.mock.calls[0]![0];
+    expect(audit).toMatchObject({
+      action: AUDIT_ACTIONS.MISSING_REPORT_LINKED,
+      module: AUDIT_MODULES.FALTANTES,
+      entity: "MissingReport",
+      after: {
+        productId: "prod-1",
+        missingItemId: "missing-1",
+        linkedReportsCount: 2,
+      },
+    });
+    const serialized = JSON.stringify(audit);
+    expect(serialized).not.toContain("rawName");
+  });
+
+  // El vínculo YA se persistió: un fallo posterior de auditoría no debe decirle
+  // a gerencia que falló, o reintentaría sobre un grupo ya vinculado.
+  it("reports success when auditing fails after the link was persisted", async () => {
+    grant("ADMIN", ["canReviewMissingReports"]);
+    mocks.recordAudit.mockRejectedValueOnce(new Error("audit unavailable"));
+
+    await expect(
+      linkMissingReportToProductAction(PREV, linkFormData()),
+    ).resolves.toMatchObject({ ok: true, missingItemId: "missing-1" });
+  });
+
+  it("revalidates both the review queue and the faltantes list", async () => {
+    grant("ADMIN", ["canReviewMissingReports"]);
+
+    await linkMissingReportToProductAction(PREV, linkFormData());
+
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/revision-faltantes");
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/faltantes");
+  });
+
+  it("returns a generic error when the link itself fails", async () => {
+    grant("ADMIN", ["canReviewMissingReports"]);
+    mocks.linkReportToProduct.mockRejectedValueOnce(new Error("db down"));
+
+    const result = await linkMissingReportToProductAction(PREV, linkFormData());
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("No se pudo vincular el reporte. Intentá de nuevo.");
     expect(mocks.recordAudit).not.toHaveBeenCalled();
   });
 });

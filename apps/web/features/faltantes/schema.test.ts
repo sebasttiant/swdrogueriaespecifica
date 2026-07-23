@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  linkMissingReportSchema,
+  MAX_LINKED_REPORTS,
   MAX_MISSING_REPORT_NAME_LENGTH,
   MAX_ORDERED_QUANTITY,
   manualMissingItemCreateSchema,
@@ -215,6 +217,60 @@ describe("manualMissingItemCreateSchema", () => {
     ).toBe(false);
     expect(
       manualMissingItemCreateSchema.safeParse({ productId: "prod-1", quantity: "0" }).success,
+    ).toBe(false);
+  });
+});
+
+describe("linkMissingReportSchema", () => {
+  it("accepts a group of report ids and a product id", () => {
+    const result = linkMissingReportSchema.safeParse({
+      reportIds: ["r1", "r2"],
+      productId: "prod-1",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.reportIds).toEqual(["r1", "r2"]);
+      expect(result.data.productId).toBe("prod-1");
+    }
+  });
+
+  it("rejects an empty report list", () => {
+    expect(
+      linkMissingReportSchema.safeParse({ reportIds: [], productId: "prod-1" }).success,
+    ).toBe(false);
+  });
+
+  it("rejects a blank or missing product", () => {
+    expect(
+      linkMissingReportSchema.safeParse({ reportIds: ["r1"], productId: "  " }).success,
+    ).toBe(false);
+    expect(
+      linkMissingReportSchema.safeParse({ reportIds: ["r1"] }).success,
+    ).toBe(false);
+  });
+
+  it("rejects blank ids inside the report list", () => {
+    expect(
+      linkMissingReportSchema.safeParse({ reportIds: ["r1", "  "], productId: "p1" })
+        .success,
+    ).toBe(false);
+  });
+});
+
+describe("linkMissingReportSchema · group hygiene", () => {
+  it("deduplicates repeated report ids", () => {
+    const result = linkMissingReportSchema.safeParse({
+      reportIds: ["r1", "r2", "r1"],
+      productId: "p1",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.reportIds).toEqual(["r1", "r2"]);
+  });
+
+  it("caps an absurdly large group", () => {
+    const tooMany = Array.from({ length: MAX_LINKED_REPORTS + 1 }, (_, i) => `r${i}`);
+    expect(
+      linkMissingReportSchema.safeParse({ reportIds: tooMany, productId: "p1" }).success,
     ).toBe(false);
   });
 });

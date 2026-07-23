@@ -8,6 +8,7 @@
 // --------------------------------------------------------------------------
 
 import { prisma } from "@/lib/db/prisma";
+import type { Prisma } from "@/lib/generated/prisma/client";
 
 export type CreateMissingReportData = {
   rawName: string;
@@ -93,4 +94,40 @@ export async function listPendingReportsForNames(
       reporter: { select: { id: true, name: true } },
     },
   });
+}
+
+// --------------------------------------------------------------------------
+// Vinculación de un grupo de reportes al producto que gerencia eligió.
+//
+// UNA sola escritura para todo el grupo, con compare-and-set sobre `status`: si
+// otro gerente ya vinculó alguno de esos reportes, esa fila no coincide y no se
+// pisa su vínculo anterior. Evita además el estado a medias que dejaría una
+// actualización por reporte.
+// --------------------------------------------------------------------------
+
+export type LinkMissingReportsData = {
+  reportIds: string[];
+  productId: string;
+  missingItemId: string;
+};
+
+/**
+ * Devuelve cuántos reportes quedaron efectivamente vinculados.
+ *
+ * `client` permite correr dentro de la MISMA transacción que crea el faltante:
+ * si el CAS no coincide, el rollback también descarta ese faltante.
+ */
+export async function linkMissingReports(
+  data: LinkMissingReportsData,
+  client: Prisma.TransactionClient = prisma,
+): Promise<number> {
+  const { count } = await client.missingReport.updateMany({
+    where: { id: { in: data.reportIds }, status: "PENDING_REVIEW" },
+    data: {
+      status: "LINKED",
+      linkedProductId: data.productId,
+      linkedMissingItemId: data.missingItemId,
+    },
+  });
+  return count;
 }
