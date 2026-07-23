@@ -1,17 +1,40 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const { prismaMock, tx } = vi.hoisted(() => {
+  const tx = { __brand: "tx-client" as const };
+  const prismaMock = {
+    $transaction: vi.fn((fn: (client: typeof tx) => unknown) => fn(tx)),
+  };
+  return { prismaMock, tx };
+});
+
+vi.mock("@/lib/db/prisma", () => ({ prisma: prismaMock }));
+
 const { repo } = vi.hoisted(() => ({
   repo: {
     createMissingReport: vi.fn(),
     groupPendingReportsByName: vi.fn(),
     listPendingReportsForNames: vi.fn(),
+    linkMissingReports: vi.fn(),
   },
 }));
 
 vi.mock("@/server/repositories/missing-report.repository", () => repo);
 
+const { productRepo } = vi.hoisted(() => ({
+  productRepo: { findProductById: vi.fn() },
+}));
+vi.mock("@/server/repositories/product.repository", () => productRepo);
+
+const { missingItemRepo } = vi.hoisted(() => ({
+  missingItemRepo: { createMissingItem: vi.fn() },
+}));
+vi.mock("@/server/repositories/missing-item.repository", () => missingItemRepo);
+
 import {
   getMissingReportQueue,
+  linkReportToProduct,
+  MissingReportLinkError,
   MissingReportEmptyNameError,
   submitMissingReport,
 } from "./missing-report.service";
@@ -22,6 +45,9 @@ beforeEach(() => {
     id: "report-1",
     ...(data as object),
   }));
+  productRepo.findProductById.mockResolvedValue({ id: "prod-1", active: true });
+  missingItemRepo.createMissingItem.mockResolvedValue({ id: "missing-1", productId: "prod-1" });
+  repo.linkMissingReports.mockResolvedValue(2);
   repo.groupPendingReportsByName.mockResolvedValue([]);
   repo.listPendingReportsForNames.mockResolvedValue([]);
 });
@@ -291,5 +317,189 @@ describe("getMissingReportQueue", () => {
     expect(queue.groups).toEqual([]);
     expect(queue.hasMore).toBe(false);
     expect(repo.listPendingReportsForNames).toHaveBeenCalledWith([]);
+  });
+});
+
+describe("linkReportToProduct", () => {
+  const input = { reportIds: ["r1", "r2"], productId: "prod-1", userId: "admin-1" };
+
+  it("creates exactly ONE faltante for the whole group", async () => {
+    await linkReportToProduct(input);
+
+    expect(missingItemRepo.createMissingItem).toHaveBeenCalledTimes(1);
+  });
+
+  // `quantity: 1` es un placeholder deliberado: gerencia define la cantidad real
+  // al pedir (`orderedQuantity`, desde C2Q). Cero rompería el cierre FIFO, que
+  // trata `quantity <= remaining` como "cubierto" y lo cerraría con cualquier
+  // entrada.
+  it("creates the faltante with the placeholder quantity and the seller-report note", async () => {
+    await linkReportToProduct(input);
+
+    expect(missingItemRepo.createMissingItem).toHaveBeenCalledWith(
+      {
+        productId: "prod-1",
+        quantity: 1,
+        originId: null,
+        createdById: "admin-1",
+        note: "Generado desde reporte de vendedor",
+      },
+      tx,
+    );
+  });
+
+  it("links the whole group to the product and the new faltante", async () => {
+    await linkReportToProduct(input);
+
+    expect(repo.linkMissingReports).toHaveBeenCalledWith(
+      {
+        reportIds: ["r1", "r2"],
+        productId: "prod-1",
+        missingItemId: "missing-1",
+      },
+      tx,
+    );
+  });
+
+  it("returns the faltante and how many reports were linked", async () => {
+    repo.linkMissingReports.mockResolvedValue(2);
+
+    const result = await linkReportToProduct(input);
+
+    expect(result.missingItem).toMatchObject({ id: "missing-1" });
+    expect(result.linkedReportsCount).toBe(2);
+  });
+
+  it("rejects an unknown product without creating anything", async () => {
+    productRepo.findProductById.mockResolvedValue(null);
+
+    await expect(linkReportToProduct(input)).rejects.toBeInstanceOf(MissingReportLinkError);
+    expect(missingItemRepo.createMissingItem).not.toHaveBeenCalled();
+    expect(repo.linkMissingReports).not.toHaveBeenCalled();
+  });
+
+  // Un producto inactivo no puede recibir un faltante nuevo: es la misma regla
+  // que ya aplica el alta manual catalogada.
+  it("rejects an inactive product without creating anything", async () => {
+    productRepo.findProductById.mockResolvedValue({ id: "prod-1", active: false });
+
+    await expect(linkReportToProduct(input)).rejects.toBeInstanceOf(MissingReportLinkError);
+    expect(missingItemRepo.createMissingItem).not.toHaveBeenCalled();
+  });
+
+  it("validates the product BEFORE creating the faltante", async () => {
+    const order: string[] = [];
+    productRepo.findProductById.mockImplementation(async () => {
+      order.push("product");
+      return { id: "prod-1", active: true };
+    });
+    missingItemRepo.createMissingItem.mockImplementation(async () => {
+      order.push("create");
+      return { id: "missing-1" };
+    });
+
+    await linkReportToProduct(input);
+
+    expect(order).toEqual(["product", "create"]);
+  });
+
+  // Carrera: otro gerente vinculó el grupo primero. El CAS del repositorio no
+  // escribe ninguna fila y el service lo reporta en vez de fingir éxito.
+  it("rejects when no report was still pending review", async () => {
+    repo.linkMissingReports.mockResolvedValue(0);
+
+    await expect(linkReportToProduct(input)).rejects.toBeInstanceOf(MissingReportLinkError);
+  });
+});
+
+describe("linkReportToProduct · atomicity", () => {
+  const input = { reportIds: ["r1"], productId: "prod-1", userId: "admin-1" };
+
+  beforeEach(() => {
+    prismaMock.$transaction.mockImplementation(
+      (fn: (client: typeof tx) => unknown) => fn(tx),
+    );
+    // Un solo reporte en el grupo: la escritura debe cubrirlo entero.
+    repo.linkMissingReports.mockResolvedValue(1);
+  });
+
+  // Crear el faltante y marcar los reportes tiene que ser TODO o NADA. Sin la
+  // transacción, perder la carrera dejaba un faltante huérfano ya creado, sin
+  // ningún reporte apuntándole y visible en /faltantes.
+  it("creates the faltante and links the reports inside ONE transaction", async () => {
+    await linkReportToProduct(input);
+
+    expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
+    expect(missingItemRepo.createMissingItem).toHaveBeenCalledWith(
+      expect.objectContaining({ productId: "prod-1" }),
+      tx,
+    );
+    expect(repo.linkMissingReports).toHaveBeenCalledWith(
+      expect.objectContaining({ productId: "prod-1" }),
+      tx,
+    );
+  });
+
+  // Al perder la carrera, el throw revierte la transacción: el faltante creado
+  // dentro de ella NO queda persistido.
+  it("rolls back the created faltante when the group was already linked", async () => {
+    repo.linkMissingReports.mockResolvedValue(0);
+
+    await expect(linkReportToProduct(input)).rejects.toBeInstanceOf(
+      MissingReportLinkError,
+    );
+    // El error escapa de la transacción, que es lo que fuerza el rollback.
+    expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("linkReportToProduct · partial link", () => {
+  beforeEach(() => {
+    prismaMock.$transaction.mockImplementation(
+      (fn: (client: typeof tx) => unknown) => fn(tx),
+    );
+  });
+
+  // El caso peligroso: parte del grupo ya fue vinculada por otro gerente. Si se
+  // aceptara, el grupo quedaría partido entre DOS faltantes en silencio.
+  it("rejects when only SOME of the group was still pending review", async () => {
+    repo.linkMissingReports.mockResolvedValue(2); // se pidieron 3
+
+    await expect(
+      linkReportToProduct({
+        reportIds: ["r1", "r2", "r3"],
+        productId: "prod-1",
+        userId: "admin-1",
+      }),
+    ).rejects.toBeInstanceOf(MissingReportLinkError);
+  });
+
+  it("accepts only when every report in the group was linked", async () => {
+    repo.linkMissingReports.mockResolvedValue(3);
+
+    const result = await linkReportToProduct({
+      reportIds: ["r1", "r2", "r3"],
+      productId: "prod-1",
+      userId: "admin-1",
+    });
+
+    expect(result.linkedReportsCount).toBe(3);
+  });
+
+  // Ids repetidos no deben inflar lo esperado: se deduplican antes de comparar.
+  it("deduplicates repeated ids before comparing what it wrote", async () => {
+    repo.linkMissingReports.mockResolvedValue(2);
+
+    const result = await linkReportToProduct({
+      reportIds: ["r1", "r2", "r1"],
+      productId: "prod-1",
+      userId: "admin-1",
+    });
+
+    expect(result.linkedReportsCount).toBe(2);
+    expect(repo.linkMissingReports).toHaveBeenCalledWith(
+      expect.objectContaining({ reportIds: ["r1", "r2"] }),
+      tx,
+    );
   });
 });

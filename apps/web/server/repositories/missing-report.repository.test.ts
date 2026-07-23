@@ -6,6 +6,8 @@ const { prismaMock } = vi.hoisted(() => ({
       create: vi.fn(),
       groupBy: vi.fn(),
       findMany: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn(),
     },
   },
 }));
@@ -15,6 +17,7 @@ vi.mock("@/lib/db/prisma", () => ({ prisma: prismaMock }));
 import {
   createMissingReport,
   groupPendingReportsByName,
+  linkMissingReports,
   listPendingReportsForNames,
 } from "./missing-report.repository";
 
@@ -26,6 +29,7 @@ beforeEach(() => {
   }));
   prismaMock.missingReport.groupBy.mockResolvedValue([]);
   prismaMock.missingReport.findMany.mockResolvedValue([]);
+  prismaMock.missingReport.updateMany.mockResolvedValue({ count: 0 });
 });
 
 describe("createMissingReport", () => {
@@ -136,5 +140,63 @@ describe("listPendingReportsForNames", () => {
     const select = prismaMock.missingReport.findMany.mock.calls[0]![0].select;
     expect(select.reporter).toEqual({ select: { id: true, name: true } });
     expect(select).not.toHaveProperty("reporterId");
+  });
+});
+
+describe("linkMissingReports", () => {
+  it("marks the whole group LINKED with the product and the generated faltante", async () => {
+    prismaMock.missingReport.updateMany.mockResolvedValue({ count: 2 });
+
+    await linkMissingReports({
+      reportIds: ["r1", "r2"],
+      productId: "prod-1",
+      missingItemId: "missing-1",
+    });
+
+    expect(prismaMock.missingReport.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ["r1", "r2"] }, status: "PENDING_REVIEW" },
+      data: {
+        status: "LINKED",
+        linkedProductId: "prod-1",
+        linkedMissingItemId: "missing-1",
+      },
+    });
+  });
+
+  // El `where` es un compare-and-set: un reporte que otro gerente ya vinculó no
+  // coincide, así que no se re-escribe ni se pisa su vínculo anterior.
+  it("only writes over reports still pending review", async () => {
+    await linkMissingReports({
+      reportIds: ["r1"],
+      productId: "prod-1",
+      missingItemId: "missing-1",
+    });
+
+    const where = prismaMock.missingReport.updateMany.mock.calls[0]![0].where;
+    expect(where.status).toBe("PENDING_REVIEW");
+  });
+
+  it("returns how many reports it actually linked", async () => {
+    prismaMock.missingReport.updateMany.mockResolvedValue({ count: 3 });
+
+    const linked = await linkMissingReports({
+      reportIds: ["r1", "r2", "r3"],
+      productId: "prod-1",
+      missingItemId: "missing-1",
+    });
+
+    expect(linked).toBe(3);
+  });
+
+  it("reports zero when the group was already linked by someone else", async () => {
+    prismaMock.missingReport.updateMany.mockResolvedValue({ count: 0 });
+
+    const linked = await linkMissingReports({
+      reportIds: ["r1"],
+      productId: "prod-1",
+      missingItemId: "missing-1",
+    });
+
+    expect(linked).toBe(0);
   });
 });

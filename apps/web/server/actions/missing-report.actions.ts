@@ -2,7 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 
-import { missingReportSubmitSchema } from "@/features/faltantes/schema";
+import {
+  linkMissingReportSchema,
+  missingReportSubmitSchema,
+} from "@/features/faltantes/schema";
 import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
 import { requireCapability } from "@/lib/auth/require-role";
 import {
@@ -10,7 +13,9 @@ import {
   recordAudit,
 } from "@/server/services/audit.service";
 import {
+  linkReportToProduct,
   MissingReportEmptyNameError,
+  MissingReportLinkError,
   submitMissingReport,
 } from "@/server/services/missing-report.service";
 
@@ -80,4 +85,87 @@ export async function createMissingReportAction(
   }
 
   return { error: null, ok: true };
+}
+
+export type LinkMissingReportActionState = {
+  error: string | null;
+  ok: boolean;
+  missingItemId?: string;
+};
+
+// Rechazos de negocio de la vinculación → mensaje para gerencia.
+const LINK_REJECTION_MESSAGES: Record<MissingReportLinkError["reason"], string> = {
+  PRODUCT_NOT_FOUND: "El producto no existe o está inactivo.",
+  ALREADY_LINKED: "Estos reportes ya fueron revisados. Actualizá la cola.",
+};
+
+/**
+ * Convierte un grupo de reportes de vendedores en un faltante canónico,
+ * apuntando al producto que gerencia eligió del catálogo.
+ *
+ * Solo gerencia (`canReviewMissingReports`). El usuario que vincula sale SIEMPRE
+ * de la sesión: un `userId` en el FormData se ignora por construcción.
+ */
+export async function linkMissingReportToProductAction(
+  _prev: LinkMissingReportActionState,
+  formData: FormData,
+): Promise<LinkMissingReportActionState> {
+  const session = await requireCapability("canReviewMissingReports");
+
+  const parsed = linkMissingReportSchema.safeParse({
+    reportIds: formData.getAll("reportIds"),
+    productId: formData.get("productId"),
+  });
+  if (!parsed.success) {
+    const message =
+      parsed.error.issues[0]?.message ?? "Revisá los datos de la vinculación.";
+    return { error: message, ok: false };
+  }
+
+  let result: Awaited<ReturnType<typeof linkReportToProduct>>;
+  try {
+    result = await linkReportToProduct({
+      reportIds: parsed.data.reportIds,
+      productId: parsed.data.productId,
+      userId: session.user.id,
+    });
+  } catch (error) {
+    if (error instanceof MissingReportLinkError) {
+      return { error: LINK_REJECTION_MESSAGES[error.reason], ok: false };
+    }
+    console.error("[faltantes] No se pudo vincular el reporte:", error);
+    return { error: "No se pudo vincular el reporte. Intentá de nuevo.", ok: false };
+  }
+
+  // El vínculo YA existe. Auditoría best-effort: si falla, se registra el error
+  // pero para gerencia sigue siendo un éxito — reintentar chocaría con un grupo
+  // ya vinculado. Metadata mínima: nunca nombres de reportantes ni el texto
+  // crudo, solo cuántos reportes se vincularon.
+  try {
+    await recordAudit({
+      action: AUDIT_ACTIONS.MISSING_REPORT_LINKED,
+      module: AUDIT_MODULES.FALTANTES,
+      entity: "MissingReport",
+      entityId: result.missingItem.id,
+      after: {
+        productId: parsed.data.productId,
+        missingItemId: result.missingItem.id,
+        linkedReportsCount: result.linkedReportsCount,
+      },
+      context: await auditContextFromHeaders(session.user.id),
+    });
+  } catch (error) {
+    console.error("[faltantes] El reporte se vinculó, pero no se pudo auditar:", error);
+  }
+
+  // La cola pierde el grupo y la lista de faltantes gana el nuevo registro.
+  for (const path of ["/revision-faltantes", "/faltantes"]) {
+    try {
+      revalidatePath(path);
+    } catch (error) {
+      console.error("[faltantes] El reporte se vinculó, pero no se pudo revalidar:", error);
+    }
+  }
+
+  return { error: null, ok: true, missingItemId: result.missingItem.id };
 }

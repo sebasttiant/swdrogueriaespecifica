@@ -51,6 +51,10 @@ enum MissingItemStatus {
 // revisión, sin migración de datos.
 enum MissingReportStatus {
   PENDING_REVIEW
+  // Gerencia ya lo revisó y lo vinculó a un producto del catálogo, generando el
+  // faltante canónico. Sale de la cola de revisión, pero la fila se conserva:
+  // es el rastro de quién reportó y cuándo.
+  LINKED
 }
 
 enum AuditResult {
@@ -367,6 +371,12 @@ model MissingReport {
   reporter       User                @relation("MissingReportReportedBy", fields: [reporterId], references: [id])
   reporterId     String
   status         MissingReportStatus @default(PENDING_REVIEW)
+  // Resultado de la revisión: a qué producto del catálogo se vinculó y qué
+  // faltante canónico se generó. Null mientras el reporte sigue pendiente.
+  // Columnas planas (no relaciones): el reporte es un rastro histórico y no debe
+  // impedir que un producto se archive.
+  linkedProductId     String?
+  linkedMissingItemId String?
   createdAt      DateTime            @default(now())
   updatedAt      DateTime            @updatedAt
 
@@ -375,5 +385,9 @@ model MissingReport {
   // compuesto sirve ambas consultas. Es el ÚNICO índice justificado hoy: no hay
   // consulta que motive uno por `reporterId` ni `createdAt` sueltos.
   @@index([status, normalizedName])
+  // Todavía sin consumidor: los agrega D1e-1 para las consultas de trazabilidad
+  // que vendrán (qué reportes originaron un faltante / un producto).
+  @@index([linkedProductId])
+  @@index([linkedMissingItemId])
   @@map("missing_reports")
 }

@@ -1,11 +1,15 @@
 import { normalizeMissingReportName } from "@/features/faltantes/missing-report-name";
+import { prisma } from "@/lib/db/prisma";
 import { clampTake } from "@/lib/pagination";
+import { createMissingItem } from "@/server/repositories/missing-item.repository";
 import {
   createMissingReport,
   groupPendingReportsByName,
+  linkMissingReports,
   listPendingReportsForNames,
   type PendingReportRow,
 } from "@/server/repositories/missing-report.repository";
+import { findProductById } from "@/server/repositories/product.repository";
 
 export type SubmitMissingReportInput = {
   // Nombre tal cual lo pegó el vendedor desde Orión. Se conserva para mostrar.
@@ -124,4 +128,98 @@ export async function getMissingReportQueue(params: {
   });
 
   return { groups, hasMore, page };
+}
+
+// --------------------------------------------------------------------------
+// Vinculación: gerencia revisa un grupo de reportes y lo convierte en un
+// faltante canónico apuntando a un producto del catálogo.
+//
+// Se crea UN solo MissingItem para todo el grupo —varios vendedores reportando
+// el mismo producto son un único faltante—, y todos los reportes del grupo
+// quedan LINKED apuntando a él. Las filas se conservan: son el rastro de quién
+// reportó y cuándo.
+// --------------------------------------------------------------------------
+
+// Cantidad con la que nace el faltante generado desde un reporte. Es un
+// PLACEHOLDER: el vendedor no sabe cuánto comprar, y gerencia define la cantidad
+// real al pedir (`orderedQuantity`, desde C2Q). No puede ser 0: el cierre FIFO
+// trata `quantity <= disponible` como "cubierto", así que un 0 cerraría el
+// faltante con cualquier entrada de inventario.
+const LINKED_REPORT_PLACEHOLDER_QUANTITY = 1;
+
+const LINKED_REPORT_NOTE = "Generado desde reporte de vendedor";
+
+// Rechazo de negocio de la vinculación: producto inexistente o inactivo, o un
+// grupo que otro gerente ya vinculó. La acción lo traduce a un mensaje.
+export class MissingReportLinkError extends Error {
+  constructor(
+    readonly reason: "PRODUCT_NOT_FOUND" | "ALREADY_LINKED",
+    message: string,
+  ) {
+    super(message);
+    this.name = "MissingReportLinkError";
+  }
+}
+
+export type LinkReportToProductInput = {
+  reportIds: string[];
+  productId: string;
+  // Gerente que vincula. Viene de la sesión en la capa de acción.
+  userId: string;
+};
+
+export async function linkReportToProduct(input: LinkReportToProductInput) {
+  // El producto se valida ANTES de crear nada: un producto inexistente o
+  // inactivo no debe dejar un faltante huérfano.
+  const product = await findProductById(input.productId);
+  if (!product || !product.active) {
+    throw new MissingReportLinkError(
+      "PRODUCT_NOT_FOUND",
+      "Product not found or inactive",
+    );
+  }
+
+  // Crear el faltante y marcar los reportes es TODO o NADA. Si el CAS no
+  // coincide (otro gerente ganó la carrera), el throw revierte la transacción y
+  // el faltante recién creado no queda persistido: sin esto quedaría huérfano,
+  // sin ningún reporte apuntándole y visible en la cola de faltantes.
+  // Los ids ya vienen deduplicados del schema; se recalcula acá para que el
+  // service sea correcto aunque lo llame otro camino.
+  const reportIds = [...new Set(input.reportIds)];
+  const expectedReports = reportIds.length;
+
+  return prisma.$transaction(async (tx) => {
+    const missingItem = await createMissingItem(
+      {
+        productId: input.productId,
+        quantity: LINKED_REPORT_PLACEHOLDER_QUANTITY,
+        originId: null,
+        createdById: input.userId,
+        note: LINKED_REPORT_NOTE,
+      },
+      tx,
+    );
+
+    const linkedReportsCount = await linkMissingReports(
+      {
+        reportIds,
+        productId: input.productId,
+        missingItemId: missingItem.id,
+      },
+      tx,
+    );
+
+    // Se exige que TODOS los reportes del grupo se hayan escrito, no solo
+    // alguno. Un CAS parcial (otro gerente vinculó parte del grupo a otro
+    // producto) partiría el grupo entre dos faltantes en silencio, que es
+    // justamente lo contrario del contrato "un faltante por grupo".
+    if (linkedReportsCount !== expectedReports) {
+      throw new MissingReportLinkError(
+        "ALREADY_LINKED",
+        "Reports were already reviewed by someone else",
+      );
+    }
+
+    return { missingItem, linkedReportsCount };
+  });
 }
