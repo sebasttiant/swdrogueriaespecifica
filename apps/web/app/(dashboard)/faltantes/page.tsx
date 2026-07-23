@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 
 import { PageHeader } from "@/app/_components/app-shell/page-header";
 import { Card, CardTitle } from "@/app/_components/ui/card";
@@ -7,6 +8,7 @@ import {
 } from "@/features/faltantes/missing-create-form";
 import { MissingList } from "@/features/faltantes/missing-list";
 import { MissingReportForm } from "@/features/faltantes/missing-report-form";
+import { REVIEW_QUEUE_PATH } from "@/features/faltantes/report-queue-paging";
 import { MissingSummary } from "@/features/faltantes/missing-summary";
 import {
   canShowNewSupplierOrderForm,
@@ -33,6 +35,7 @@ export default async function FaltantesPage({
 	const canManageSuppliers = can(session.user.role, "canManageSuppliers");
 	const canCreateMissingItems = can(session.user.role, "canCreateMissingItems");
 	const canSubmitMissingReports = can(session.user.role, "canSubmitMissingReports");
+	const canReviewMissingReports = can(session.user.role, "canReviewMissingReports");
 	const canViewCustomerIdentity = can(session.user.role, "canViewCustomerIdentity");
 
   // Un único instante compartido por el resumen global y el agrupamiento de
@@ -68,6 +71,18 @@ export default async function FaltantesPage({
       <PageHeader title="Faltantes" description="Lo que hay que conseguir." />
 
       <MissingSummary summary={summary} />
+
+      {/* Atajo de gerencia a la cola de revisión. Link plano a propósito:
+          un contador obligaría a una consulta extra en cada carga de esta
+          pantalla, que es la del vendedor en el celular. */}
+      {canReviewMissingReports ? (
+        <Link
+          href={REVIEW_QUEUE_PATH}
+          className="inline-block text-sm font-semibold text-primary hover:underline"
+        >
+          Revisar reportes de vendedores
+        </Link>
+      ) : null}
 
       {/* Reporte del vendedor: pegar un nombre desde Orión y avisar que falta.
           Es un eje aparte del alta catalogada de gerencia (abajo): distinto
