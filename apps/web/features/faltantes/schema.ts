@@ -139,3 +139,23 @@ export const linkMissingReportSchema = z.object({
 });
 
 export type LinkMissingReportInput = z.infer<typeof linkMissingReportSchema>;
+
+// Descarte masivo. Los ids viajan como entradas repetidas del mismo campo, que
+// es como el navegador postea un grupo de checkboxes.
+//
+// Se deduplican acá para que el service pueda comparar cuántas filas escribió
+// contra cuántas esperaba: con ids repetidos ese conteo mentiría.
+export const MAX_BULK_MISSING_ITEMS = 200;
+
+export const discardMissingItemsSchema = z.object({
+  ids: z
+    .array(z.string().trim().min(1))
+    .min(1, { error: "Elegí al menos un faltante." })
+    .max(MAX_BULK_MISSING_ITEMS, { error: "Demasiados faltantes en una sola acción." })
+    .transform((ids) => [...new Set(ids)]),
+  // El motivo es opcional pero se conserva: "por qué se descartó" es justo lo
+  // que alguien va a preguntar cuando el faltante desaparezca de la cola.
+  reason: optionalText(200),
+});
+
+export type DiscardMissingItemsInput = z.infer<typeof discardMissingItemsSchema>;

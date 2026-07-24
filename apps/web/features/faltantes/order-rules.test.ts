@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   canShowNewSupplierOrderForm,
   canShowOrderForm,
+  canDiscard,
   canTransitionToOrdered,
+  splitEligible,
 } from "./order-rules";
 
 describe("missing item order rules", () => {
@@ -81,5 +83,39 @@ describe("canShowOrderForm", () => {
         hasSuppliers: true,
       }),
     ).toBe(false);
+  });
+});
+
+describe("canDiscard", () => {
+  it("permite descartar un faltante todavía abierto", () => {
+    expect(canDiscard("FALTANTE")).toBe(true);
+  });
+
+  // Descartar un PEDIDO borraría el hecho de que gerencia ya compró.
+  it("no permite descartar lo que ya se pidió ni lo ya cerrado", () => {
+    expect(canDiscard("PEDIDO")).toBe(false);
+    expect(canDiscard("RECIBIDO")).toBe(false);
+    expect(canDiscard("CANCELADO")).toBe(false);
+  });
+});
+
+describe("splitEligible", () => {
+  // Rechazar el lote entero por una fila obligaría a rehacer toda la selección.
+  it("aplica sobre las elegibles en vez de rechazar el lote entero", () => {
+    const { eligible, skipped } = splitEligible(
+      [
+        { id: "a", status: "FALTANTE" as const },
+        { id: "b", status: "PEDIDO" as const },
+        { id: "c", status: "FALTANTE" as const },
+      ],
+      (item) => canDiscard(item.status),
+    );
+
+    expect(eligible.map((item) => item.id)).toEqual(["a", "c"]);
+    expect(skipped.map((item) => item.id)).toEqual(["b"]);
+  });
+
+  it("devuelve listas vacías sin selección", () => {
+    expect(splitEligible([], () => true)).toEqual({ eligible: [], skipped: [] });
   });
 });

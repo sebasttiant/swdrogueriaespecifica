@@ -104,6 +104,7 @@ model User {
   inventoryEntries InventoryEntry[]
   auditLogs       AuditLog[]
   orderedMissingItems MissingItem[] @relation("MissingItemOrderedBy")
+  discardedMissingItems MissingItem[] @relation("MissingItemDiscardedBy")
   missingReports  MissingReport[] @relation("MissingReportReportedBy")
 
   @@index([active])
@@ -327,6 +328,14 @@ model MissingItem {
   orderedById String?
   supplier Supplier? @relation(fields: [supplierId], references: [id])
   supplierId String?
+  // Descarte de un faltante duplicado o que ya no hace falta (status CANCELADO).
+  // Columnas PROPIAS a propósito: reutilizar `confirmedAt`/`confirmedById` haría
+  // imposible distinguir después un descarte de una confirmación, que es el
+  // error que ya obligó a revertir "OK gerencia".
+  discardedAt   DateTime?
+  discardedBy   User?    @relation("MissingItemDiscardedBy", fields: [discardedById], references: [id])
+  discardedById String?
+  discardReason String?
   createdAt   DateTime          @default(now())
   updatedAt   DateTime          @updatedAt
 

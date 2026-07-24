@@ -38,6 +38,10 @@ export const AUDIT_ACTIONS = {
   MISSING_STATUS_CHANGE: "missing.status.change",
   MISSING_CONFIRM_OK: "missing.confirm.ok",
   MISSING_ITEM_ORDERED: "missing.ordered",
+  // Descarte de un faltante duplicado o que ya no hace falta. Acción propia y
+  // NO un alias de `MISSING_CONFIRM_OK`: descartar afirma que nadie lo va a
+  // pedir, confirmar afirmaba que ya se pidió. Son hechos opuestos.
+  MISSING_DISCARDED: "missing.discarded",
   MISSING_REPORT_CREATE: "missing.report.create",
   MISSING_REPORT_LINKED: "missing.report.linked",
   // Entradas

@@ -15,6 +15,7 @@ import {
   countOverdueMissingItems,
   createMissingItem,
   listMissingItems,
+  discardMissingItem,
   lockMissingItemForUpdate,
   listOpenMissingItemsForExport,
   orderMissingItem as persistOrderedMissingItem,
@@ -26,7 +27,7 @@ import {
   type MissingExportRow,
 } from "@/server/services/missing-export.service";
 import type { MissingItemStatus } from "@/lib/generated/prisma/client";
-import { canTransitionToOrdered } from "@/features/faltantes/order-rules";
+import { canDiscard, canTransitionToOrdered } from "@/features/faltantes/order-rules";
 import {
   findSupplierById,
   upsertProductSupplierLink,
@@ -335,4 +336,60 @@ export async function orderMissingItem(
       rejection: null,
     };
   });
+}
+
+// --------------------------------------------------------------------------
+// Acciones masivas de gerencia sobre la cola de faltantes.
+//
+// Dos vendedores anotan el mismo producto, o gerencia ya lo compró por fuera
+// del sistema: en ambos casos la cola queda con filas que no representan
+// trabajo pendiente. Cerrarlas de a una es el cuello de botella que se pidió
+// resolver.
+//
+// Se procesa fila por fila, cada una con SU lock y su resultado: un lote no es
+// una transacción única. Si lo fuera, un solo faltante que otro gerente tocó
+// medio segundo antes haría fallar las otras cuatro, y el operador tendría que
+// adivinar cuál fue y rehacer la selección entera.
+// --------------------------------------------------------------------------
+
+export type BulkDiscardInput = {
+  ids: readonly string[];
+  discardedById: string;
+  reason?: string;
+};
+
+export type BulkResult = {
+  // Filas efectivamente escritas por esta llamada.
+  discarded: string[];
+  // Ya no estaban FALTANTE al tomar el lock: otro las pidió o descartó primero.
+  // No es un error: es el resultado honesto de una carrera.
+  skipped: string[];
+};
+
+export async function discardMissingItems(
+  input: BulkDiscardInput,
+  now: Date = new Date(),
+): Promise<BulkResult> {
+  const discarded: string[] = [];
+  const skipped: string[] = [];
+
+  for (const id of input.ids) {
+    // Una transacción POR FALTANTE: el lock se toma y se suelta por fila, así
+    // un lote grande no bloquea la cola entera mientras corre.
+    const written = await prisma.$transaction(async (tx) => {
+      const locked = await lockMissingItemForUpdate(tx, id);
+      // Fila inexistente o ya fuera de FALTANTE: nada que descartar.
+      if (!locked || !canDiscard(locked.status)) return 0;
+
+      return discardMissingItem(tx, id, {
+        discardedById: input.discardedById,
+        discardedAt: now,
+        reason: input.reason,
+      });
+    });
+
+    (written > 0 ? discarded : skipped).push(id);
+  }
+
+  return { discarded, skipped };
 }

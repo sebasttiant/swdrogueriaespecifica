@@ -400,3 +400,34 @@ export async function confirmMissingItem(
   });
   return count;
 }
+
+/**
+ * Compare-and-set del descarte: escribe solo si el faltante sigue FALTANTE y
+ * sin confirmar, tal como se leyó bajo el lock. Devuelve las filas escritas
+ * (0 o 1), así el service distingue "descartado" de "otro lo tocó primero".
+ *
+ * `tx` es obligatorio, igual que en `orderMissingItem`: el descarte corre
+ * siempre dentro de la transacción que tomó el lock, nunca suelto.
+ *
+ * Escribe en columnas PROPIAS (`discardedAt`/`discardedById`/`discardReason`) y
+ * NO reutiliza `confirmedAt`/`confirmedById`. Sobrecargar un campo cuyo nombre
+ * significa otra cosa es el error que ya costó el rollback de "OK gerencia":
+ * meses después nadie puede decir si esa fecha fue una confirmación o un
+ * descarte, y las consultas que filtran por `confirmedAt` empiezan a mentir.
+ */
+export async function discardMissingItem(
+  tx: Prisma.TransactionClient,
+  id: string,
+  data: { discardedById: string; discardedAt: Date; reason?: string },
+): Promise<number> {
+  const { count } = await tx.missingItem.updateMany({
+    where: { id, status: "FALTANTE", confirmedAt: null },
+    data: {
+      status: "CANCELADO",
+      discardedAt: data.discardedAt,
+      discardedById: data.discardedById,
+      discardReason: data.reason ?? null,
+    },
+  });
+  return count;
+}

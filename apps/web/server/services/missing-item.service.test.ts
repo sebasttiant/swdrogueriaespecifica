@@ -25,6 +25,7 @@ const { repo } = vi.hoisted(() => ({
     // plana: es lo que serializa pedidos/confirmaciones sobre el mismo
     // faltante. El SQL del lock se afirma en `missing-item.repository.test.ts`.
     lockMissingItemForUpdate: vi.fn(),
+    discardMissingItem: vi.fn(),
     listMissingItems: vi.fn(),
     orderMissingItem: vi.fn(),
     createMissingItem: vi.fn(),
@@ -76,6 +77,7 @@ vi.mock("@/server/repositories/pending.repository", () => pendingRepo);
 
 import {
   confirmMissingItemOk,
+  discardMissingItems,
   createManualMissingItem,
   getMissingItems,
   getMissingItemsSummary,
@@ -972,5 +974,79 @@ describe("getMissingItems · minimización de la identidad del proveedor", () =>
     });
 
     expect(row.supplier).toEqual(supplier);
+  });
+});
+
+// Dos vendedores anotando el mismo producto es el caso más común de la cola.
+// Antes la única salida era pedirlo, lo que dejaba en la base una orden a un
+// proveedor que no existe.
+describe("discardMissingItems", () => {
+  const NOW = new Date("2026-07-24T15:00:00.000Z");
+
+  it("descarta cada faltante bajo su propio lock", async () => {
+    repo.lockMissingItemForUpdate.mockResolvedValue(missing());
+    repo.discardMissingItem.mockResolvedValue(1);
+
+    const result = await discardMissingItems(
+      { ids: ["m-1", "m-2"], discardedById: "adm-1", reason: "Duplicado" },
+      NOW,
+    );
+
+    expect(result.discarded).toEqual(["m-1", "m-2"]);
+    expect(result.skipped).toEqual([]);
+    // Una transacción POR faltante: un lote grande no bloquea la cola entera.
+    expect(prismaMock.$transaction).toHaveBeenCalledTimes(2);
+    expect(repo.discardMissingItem).toHaveBeenCalledWith(tx, "m-1", {
+      discardedById: "adm-1",
+      discardedAt: NOW,
+      reason: "Duplicado",
+    });
+  });
+
+  // Otro gerente llegó primero. No es un error del lote: es el resultado real.
+  it("saltea el que ya no está FALTANTE en vez de fallar el lote entero", async () => {
+    repo.lockMissingItemForUpdate
+      .mockResolvedValueOnce(missing())
+      .mockResolvedValueOnce(missing({ status: "PEDIDO" }))
+      .mockResolvedValueOnce(missing());
+    repo.discardMissingItem.mockResolvedValue(1);
+
+    const result = await discardMissingItems(
+      { ids: ["m-1", "m-2", "m-3"], discardedById: "adm-1" },
+      NOW,
+    );
+
+    expect(result.discarded).toEqual(["m-1", "m-3"]);
+    expect(result.skipped).toEqual(["m-2"]);
+    // El PEDIDO no se toca: descartarlo borraría que gerencia ya compró.
+    expect(repo.discardMissingItem).toHaveBeenCalledTimes(2);
+  });
+
+  it("saltea un id que no existe sin romper", async () => {
+    repo.lockMissingItemForUpdate.mockResolvedValue(null);
+
+    const result = await discardMissingItems(
+      { ids: ["fantasma"], discardedById: "adm-1" },
+      NOW,
+    );
+
+    expect(result.discarded).toEqual([]);
+    expect(result.skipped).toEqual(["fantasma"]);
+    expect(repo.discardMissingItem).not.toHaveBeenCalled();
+  });
+
+  // El compare-and-set perdió contra una escritura concurrente entre el lock y
+  // el update: la fila no se escribió, así que no se reporta como descartada.
+  it("cuenta como salteado cuando el compare-and-set no escribe", async () => {
+    repo.lockMissingItemForUpdate.mockResolvedValue(missing());
+    repo.discardMissingItem.mockResolvedValue(0);
+
+    const result = await discardMissingItems(
+      { ids: ["m-1"], discardedById: "adm-1" },
+      NOW,
+    );
+
+    expect(result.discarded).toEqual([]);
+    expect(result.skipped).toEqual(["m-1"]);
   });
 });

@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   createManualMissingItem: vi.fn(),
   getActiveProductsForMissingItem: vi.fn(),
   orderMissingItem: vi.fn(),
+  discardMissingItems: vi.fn(),
   recordAudit: vi.fn(),
   requireCapability: vi.fn(),
   revalidatePath: vi.fn(),
@@ -19,6 +20,7 @@ vi.mock("@/server/services/audit.service", () => ({
 vi.mock("@/server/services/missing-item.service", () => ({
   createManualMissingItem: mocks.createManualMissingItem,
   orderMissingItem: mocks.orderMissingItem,
+  discardMissingItems: mocks.discardMissingItems,
 }));
 vi.mock("@/server/services/product.service", () => ({
   getActiveProductsForMissingItem: mocks.getActiveProductsForMissingItem,
@@ -27,6 +29,7 @@ vi.mock("@/server/services/product.service", () => ({
 import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
 import {
   createMissingItemAction,
+  discardMissingItemsAction,
   orderMissingItemAction,
   searchActiveProductsForMissingItemAction,
 } from "./missing-item.actions";
@@ -509,5 +512,112 @@ describe("searchActiveProductsForMissingItemAction", () => {
       q: "amoxi",
       cursor: "cursor-2",
     });
+  });
+});
+
+function discardFormData(ids: string[], reason?: string) {
+  const data = new FormData();
+  // Los checkboxes del lote postean el MISMO nombre repetido: por eso el action
+  // usa `getAll` y no `get`.
+  for (const id of ids) data.append("ids", id);
+  if (reason !== undefined) data.set("reason", reason);
+  return data;
+}
+
+describe("discardMissingItemsAction", () => {
+  const PREV_STATE = { error: null, ok: false };
+
+  // `clearAllMocks` del beforeEach global limpia las LLAMADAS pero no las
+  // implementaciones: los casos de "auditoría caída" y "cache caída" de más
+  // arriba dejan sus rechazos puestos. Se resetean acá para que este bloque
+  // pruebe el descarte y no el estado que dejó otro test.
+  beforeEach(() => {
+    mocks.recordAudit.mockReset();
+    mocks.revalidatePath.mockReset();
+    mocks.auditContextFromHeaders.mockResolvedValue({ userId: "adm-1", channel: "web" });
+  });
+
+  // El punto que pidió gerencia: descartar es autoridad de compras, no de
+  // cualquiera que pueda ver la cola.
+  it("exige la capacidad de compras y corta antes de tocar la base", async () => {
+    mocks.requireCapability.mockRejectedValueOnce(new Error("REDIRECT:/dashboard"));
+
+    await expect(
+      discardMissingItemsAction(PREV_STATE, discardFormData(["m-1"])),
+    ).rejects.toThrow("REDIRECT:/dashboard");
+
+    expect(mocks.requireCapability).toHaveBeenCalledWith("canOrderMissingItems");
+    expect(mocks.discardMissingItems).not.toHaveBeenCalled();
+  });
+
+  it("lee todos los ids seleccionados, no solo el primero", async () => {
+    mocks.requireCapability.mockResolvedValue({ user: { id: "adm-1", role: "ADMIN" } });
+    mocks.discardMissingItems.mockResolvedValue({
+      discarded: ["m-1", "m-2", "m-3"],
+      skipped: [],
+    });
+
+    const result = await discardMissingItemsAction(
+      PREV_STATE,
+      discardFormData(["m-1", "m-2", "m-3"], "Duplicado"),
+    );
+
+    expect(result).toEqual({ error: null, ok: true });
+    expect(mocks.discardMissingItems).toHaveBeenCalledWith({
+      ids: ["m-1", "m-2", "m-3"],
+      discardedById: "adm-1",
+      reason: "Duplicado",
+    });
+  });
+
+  it("deduplica ids repetidos antes de llegar al service", async () => {
+    mocks.requireCapability.mockResolvedValue({ user: { id: "adm-1", role: "ADMIN" } });
+    mocks.discardMissingItems.mockResolvedValue({ discarded: ["m-1"], skipped: [] });
+
+    await discardMissingItemsAction(PREV_STATE, discardFormData(["m-1", "m-1"]));
+
+    expect(mocks.discardMissingItems).toHaveBeenCalledWith(
+      expect.objectContaining({ ids: ["m-1"] }),
+    );
+  });
+
+  it("rechaza una selección vacía sin llamar al service", async () => {
+    mocks.requireCapability.mockResolvedValue({ user: { id: "adm-1", role: "ADMIN" } });
+
+    const result = await discardMissingItemsAction(PREV_STATE, discardFormData([]));
+
+    expect(result.ok).toBe(false);
+    expect(mocks.discardMissingItems).not.toHaveBeenCalled();
+  });
+
+  // Una entrada por faltante: el lote es comodidad de la pantalla, no una
+  // unidad de negocio. Quién descartó QUÉ es la pregunta que alguien va a hacer.
+  it("audita un registro por faltante descartado, no uno por lote", async () => {
+    mocks.requireCapability.mockResolvedValue({ user: { id: "adm-1", role: "ADMIN" } });
+    mocks.discardMissingItems.mockResolvedValue({
+      discarded: ["m-1", "m-2"],
+      skipped: ["m-3"],
+    });
+
+    await discardMissingItemsAction(PREV_STATE, discardFormData(["m-1", "m-2", "m-3"]));
+
+    const discardCalls = mocks.recordAudit.mock.calls.filter(
+      (call) => call[0].action === AUDIT_ACTIONS.MISSING_DISCARDED,
+    );
+    expect(discardCalls).toHaveLength(2);
+    expect(discardCalls.map((call) => call[0].entityId)).toEqual(["m-1", "m-2"]);
+    // El salteado NO se audita como descartado: nunca se escribió.
+    expect(discardCalls.map((call) => call[0].entityId)).not.toContain("m-3");
+  });
+
+  // Otro gerente llegó primero. Se informa sin pretender que hubo una falla.
+  it("informa cuando ninguno seguía abierto", async () => {
+    mocks.requireCapability.mockResolvedValue({ user: { id: "adm-1", role: "ADMIN" } });
+    mocks.discardMissingItems.mockResolvedValue({ discarded: [], skipped: ["m-1"] });
+
+    const result = await discardMissingItemsAction(PREV_STATE, discardFormData(["m-1"]));
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/seguía abierto/i);
   });
 });

@@ -7,12 +7,14 @@ import {
   MissingCreateForm,
 } from "@/features/faltantes/missing-create-form";
 import { MissingExportActions } from "@/features/faltantes/missing-export-actions";
+import { MissingBulkActions } from "@/features/faltantes/missing-bulk-actions";
 import { MissingList } from "@/features/faltantes/missing-list";
 import { MissingListCompact } from "@/features/faltantes/missing-list-compact";
 import { MissingReportForm } from "@/features/faltantes/missing-report-form";
 import { REVIEW_QUEUE_PATH } from "@/features/faltantes/report-queue-paging";
 import { MissingSummary } from "@/features/faltantes/missing-summary";
 import {
+  canDiscard,
   canShowNewSupplierOrderForm,
   canShowOrderForm,
 } from "@/features/faltantes/order-rules";
@@ -142,6 +144,22 @@ export default async function FaltantesPage({
 
         <MissingExportActions />
       </div>
+
+      {/* Cierre rápido de duplicados: solo la autoridad de compras. El vendedor
+          no ve ni las casillas. Se ofrecen únicamente los faltantes que la
+          acción admite, para no mostrar un control que el servidor rechazaría. */}
+      {canOrderMissingItems ? (
+        <MissingBulkActions
+          items={items
+            .filter((item) => canDiscard(item.status))
+            .map((item) => ({
+              id: item.id,
+              productName: item.product.name,
+              quantity: item.quantity,
+              unit: item.product.unit,
+            }))}
+        />
+      ) : null}
 
       {view === "compact" ? (
         <MissingListCompact items={items} />
