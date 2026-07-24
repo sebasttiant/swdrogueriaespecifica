@@ -15,6 +15,7 @@ import {
   remainingAmount,
 } from "@/features/pendientes/payment-state";
 import { MAX_ZONE_LENGTH } from "@/features/pendientes/zone";
+import { MAX_PHONE_INPUT_LENGTH } from "@/features/pendientes/phone";
 import { formatCop, parseCopInput } from "@/lib/format/currency";
 import {
   createPendingAction,
@@ -206,15 +207,8 @@ export function PendingForm({
             />
           ) : null}
         </div>
-        <Field label="Cliente (opcional)" htmlFor="customerName">
-          <Input
-            id="customerName"
-            name="customerName"
-            placeholder="Nombre del cliente"
-          />
-        </Field>
         <Field
-          label="Zona (opcional)"
+          label="Zona o barrio"
           htmlFor="zone"
           hint="Se guarda con formato uniforme para poder agrupar por zona."
         >
@@ -237,6 +231,30 @@ export function PendingForm({
           ) : null}
         </Field>
 
+        {/* Nombre y teléfono son obligatorios: un pendiente es un compromiso
+            con una persona concreta, y sin teléfono no se le puede avisar que
+            llegó. `required` es ayuda del navegador; el servidor revalida. */}
+        <Field label="Cliente" htmlFor="customerName">
+          <Input
+            id="customerName"
+            name="customerName"
+            required
+            maxLength={120}
+            placeholder="Nombre del cliente"
+          />
+        </Field>
+        <Field label="Teléfono" htmlFor="customerPhone">
+          <Input
+            id="customerPhone"
+            name="customerPhone"
+            type="tel"
+            inputMode="tel"
+            autoComplete="tel"
+            required
+            maxLength={MAX_PHONE_INPUT_LENGTH}
+            placeholder="300 123 4567"
+          />
+        </Field>
         {/* Pago: dos montos y NADA más. El "pagado totalmente" no es un campo,
             es el resultado de que el abono cubra el total — se muestra abajo. */}
         <div className="space-y-3 sm:col-span-2">

@@ -15,6 +15,7 @@ import {
   type DeadlineStatus,
 } from "./deadline-status";
 import { formatCop } from "@/lib/format/currency";
+import { formatPhone } from "./phone";
 import { remainingQuantity } from "./delivery-rules";
 import { canSetManagementStatus } from "./management-status";
 import {
@@ -145,15 +146,32 @@ export function PendingList({
                 <p className="text-sm text-muted-foreground">
                   {pending.quantity} {pending.product.unit} · {pending.product.code}
                   {pending.customerName ? ` · ${pending.customerName}` : ""}
-                  {pending.zone ? ` · ${pending.zone}` : ""}
                 </p>
+                {/* Teléfono: es el dato con el que se avisa que llegó, así que
+                    va en la tarjeta y no escondido. Los pendientes anteriores a
+                    que fuera obligatorio no lo tienen. */}
+                {pending.customerPhone ? (
+                  <p className="text-sm text-muted-foreground">
+                    Tel: {formatPhone(pending.customerPhone)}
+                  </p>
+                ) : null}
+                {/* Promesa y zona JUNTAS: gerencia prioriza leyendo las dos a la
+                    vez (pedido explícito), no buscando la zona en otra línea. */}
                 <p className="text-sm text-muted-foreground">
                   Promesa: {formatBogotaDate(pending.promisedAt, { style: "datetime" })}
+                  {pending.zone ? ` · ${pending.zone}` : ""}
                 </p>
                 <p className="text-sm text-muted-foreground">
                   Entregado: {pending.deliveredQuantity} / {pending.quantity}{" "}
                   {pending.product.unit}
                 </p>
+                {/* Quién lo anotó: gerencia lo necesita para saber a nombre de
+                    quién va la venta y quién factura. */}
+                {pending.createdBy ? (
+                  <p className="text-sm text-muted-foreground">
+                    Anotado por {pending.createdBy.name}
+                  </p>
+                ) : null}
                 {/* El saldo es lo que hay que COBRAR al entregar: se muestra en
                     la tarjeta, no escondido detrás de un badge. */}
                 {paymentState === "SIN_ABONO" ? null : (

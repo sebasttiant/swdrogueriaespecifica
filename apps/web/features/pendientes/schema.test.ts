@@ -12,6 +12,10 @@ const validInput = {
   productId: "prod_123",
   quantity: "5",
   promisedAt: "2026-06-09T14:30",
+  // Obligatorios desde julio de 2026: un pendiente sin cliente ni teléfono ya
+  // no es válido, así que forman parte de la base reutilizable.
+  customerName: "Ana Pérez",
+  customerPhone: "300 123 4567",
 };
 
 describe("pendingCreateSchema", () => {
@@ -33,17 +37,49 @@ describe("pendingCreateSchema", () => {
     }
   });
 
-  it("normaliza textos opcionales vacíos a undefined", () => {
+  it("normaliza los textos OPCIONALES vacíos a undefined", () => {
+    const result = pendingCreateSchema.safeParse({ ...validInput, note: "" });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.note).toBeUndefined();
+  });
+
+  // ------------------------------------------------------------------------
+  // Cliente y teléfono: obligatorios desde julio de 2026. Un pendiente es un
+  // compromiso con una persona concreta; sin teléfono no se le puede avisar.
+  // ------------------------------------------------------------------------
+
+  it("rechaza un pendiente sin nombre de cliente", () => {
+    const { customerName: _omit, ...withoutName } = validInput;
+    expect(pendingCreateSchema.safeParse(withoutName).success).toBe(false);
+    expect(
+      pendingCreateSchema.safeParse({ ...validInput, customerName: "   " }).success,
+    ).toBe(false);
+  });
+
+  it("rechaza un pendiente sin teléfono", () => {
+    const { customerPhone: _omit, ...withoutPhone } = validInput;
+    expect(pendingCreateSchema.safeParse(withoutPhone).success).toBe(false);
+    expect(
+      pendingCreateSchema.safeParse({ ...validInput, customerPhone: "  " }).success,
+    ).toBe(false);
+  });
+
+  it("guarda el teléfono en su forma canónica, no como se tipeó", () => {
     const result = pendingCreateSchema.safeParse({
       ...validInput,
-      customerName: "   ",
-      note: "",
+      customerPhone: "(300) 123-4567",
     });
     expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.customerName).toBeUndefined();
-      expect(result.data.note).toBeUndefined();
-    }
+    if (result.success) expect(result.data.customerPhone).toBe("3001234567");
+  });
+
+  it("rechaza un teléfono que no tiene forma de teléfono", () => {
+    expect(
+      pendingCreateSchema.safeParse({ ...validInput, customerPhone: "300" }).success,
+    ).toBe(false);
+    expect(
+      pendingCreateSchema.safeParse({ ...validInput, customerPhone: "no tiene" }).success,
+    ).toBe(false);
   });
 
   it("rechaza un pendiente sin producto (ni catálogo ni manual)", () => {

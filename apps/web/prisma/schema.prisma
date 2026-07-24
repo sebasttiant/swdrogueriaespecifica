@@ -219,7 +219,15 @@ model Pending {
   // Promesa de entrega al cliente: cuándo le respondemos. Obligatoria: en
   // droguería el pendiente es operativo y necesita una fecha/hora comprometida.
   promisedAt   DateTime
+  // Nombre y teléfono del cliente. Obligatorios EN EL FORMULARIO desde julio de
+  // 2026 (pedido de gerencia: sin teléfono no se puede avisar que llegó), pero
+  // la columna sigue siendo nullable a propósito.
+  //
+  // Volverlas NOT NULL obligaría a inventarle un valor a cada pendiente
+  // anterior, y ahí la base pasaría a mentir sobre el pasado. La regla nueva
+  // aplica hacia adelante; la historia se conserva como fue.
   customerName String?
+  customerPhone String?
   note         String?
   // --------------------------------------------------------------------
   // Seguimiento del cliente: zona de entrega y estado de pago.

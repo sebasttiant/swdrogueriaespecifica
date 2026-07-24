@@ -4,6 +4,10 @@ import { compactCopInput } from "@/lib/format/currency";
 import { parseBogotaWallTime } from "@/lib/datetime/bogota";
 import { MANAGEMENT_STATUSES } from "@/features/pendientes/management-status";
 import { MAX_ZONE_LENGTH, normalizeZone } from "@/features/pendientes/zone";
+import {
+  MAX_PHONE_INPUT_LENGTH,
+  normalizePhone,
+} from "@/features/pendientes/phone";
 
 // Texto opcional que llega desde FormData: se normaliza vacío/espacios a
 // `undefined` para no persistir cadenas vacías como si fueran datos.
@@ -74,7 +78,33 @@ export const pendingCreateSchema = z
         }
         return parsed;
       }),
-    customerName: optionalText(120),
+    // Nombre y teléfono del cliente: OBLIGATORIOS desde julio de 2026. Un
+    // pendiente es un compromiso con una persona concreta; sin nombre no se
+    // sabe a quién se le prometió y sin teléfono no se le puede avisar que
+    // llegó. La columna sigue siendo nullable para no falsear la historia
+    // anterior (ver la migración), pero por acá ya no pasa uno sin ellos.
+    customerName: z
+      .string({ error: "Escribí el nombre del cliente." })
+      .trim()
+      .min(1, { error: "Escribí el nombre del cliente." })
+      .max(120, { error: "El nombre del cliente es demasiado largo." }),
+    customerPhone: z
+      .string({ error: "Escribí el teléfono del cliente." })
+      .trim()
+      .min(1, { error: "Escribí el teléfono del cliente." })
+      .max(MAX_PHONE_INPUT_LENGTH, { error: "El teléfono no es válido." })
+      // Se guarda la forma canónica, no lo tipeado: ver `phone.ts`.
+      .transform((value, ctx) => {
+        const normalized = normalizePhone(value);
+        if (normalized === null) {
+          ctx.addIssue({
+            code: "custom",
+            message: "El teléfono no es válido. Ej: 300 123 4567",
+          });
+          return z.NEVER;
+        }
+        return normalized;
+      }),
     note: optionalText(280),
     // Seguimiento del cliente: zona de entrega y estado de pago.
     zone: optionalText(MAX_ZONE_LENGTH),
@@ -113,6 +143,7 @@ export const pendingCreateSchema = z
       quantity: data.quantity,
       promisedAt: data.promisedAt,
       customerName: data.customerName,
+      customerPhone: data.customerPhone,
       note: data.note,
       // Se persiste la forma canónica, no lo que se tipeó: ver `zone.ts`.
       zone: data.zone ? (normalizeZone(data.zone) ?? undefined) : undefined,

@@ -89,6 +89,8 @@ function pendingRow(overrides: Partial<PendingListItem> = {}): PendingListItem {
     promisedAt: new Date("2026-07-10T10:00:00.000Z"),
     customerName: "Juan Pérez",
     note: null,
+    customerPhone: "3001234567",
+    createdBy: { id: "user-1", name: "Juan Esteban" },
     zone: "Norte",
     totalAmount: 50_000,
     paidAmount: 20_000,
@@ -516,7 +518,7 @@ describe("getPendings · scope", () => {
 });
 
 describe("getPendings", () => {
-  it("nulls customerName for every item when canViewCustomerIdentity is false, keeping every other field intact", async () => {
+  it("nulls customerName AND customerPhone when canViewCustomerIdentity is false, keeping every other field intact", async () => {
     const row = pendingRow();
     repo.listPendings.mockResolvedValue({ items: [row], nextCursor: null });
 
@@ -524,7 +526,9 @@ describe("getPendings", () => {
 
     expect(result.items).toHaveLength(1);
     expect(result.items[0]!.customerName).toBeNull();
-    expect(result.items[0]).toEqual({ ...row, customerName: null });
+    // El teléfono identifica al cliente tanto como el nombre: se corta igual.
+    expect(result.items[0]!.customerPhone).toBeNull();
+    expect(result.items[0]).toEqual({ ...row, customerName: null, customerPhone: null });
   });
 
   it("returns customerName verbatim when canViewCustomerIdentity is true", async () => {
@@ -548,8 +552,8 @@ describe("getPendings", () => {
     expect(row.customerName).toBe("Juan Pérez");
   });
 
-  it("passes items with customerName === null through unchanged under both flags", async () => {
-    const row = pendingRow({ customerName: null });
+  it("passes items with no customer identity through unchanged under both flags", async () => {
+    const row = pendingRow({ customerName: null, customerPhone: null });
     repo.listPendings.mockResolvedValue({ items: [row], nextCursor: null });
 
     const resultDenied = await getPendings({ canViewCustomerIdentity: false });
@@ -586,14 +590,14 @@ describe("getPendingDashboard", () => {
     repo.countUpcomingPendings.mockResolvedValue(2);
   });
 
-  it("nulls customerName for every item in `urgent` when canViewCustomerIdentity is false, counts unchanged", async () => {
+  it("nulls the customer identity of every `urgent` item when canViewCustomerIdentity is false, counts unchanged", async () => {
     const row = pendingRow();
     repo.listUrgentPendings.mockResolvedValue([row]);
 
     const result = await getPendingDashboard({ canViewCustomerIdentity: false, now });
 
     expect(result.urgent[0]!.customerName).toBeNull();
-    expect(result.urgent[0]).toEqual({ ...row, customerName: null });
+    expect(result.urgent[0]).toEqual({ ...row, customerName: null, customerPhone: null });
     expect(result.openCount).toBe(4);
     expect(result.overdueCount).toBe(1);
     expect(result.upcomingCount).toBe(2);
@@ -618,8 +622,8 @@ describe("getPendingDashboard", () => {
     expect(row.customerName).toBe("Juan Pérez");
   });
 
-  it("passes items with customerName === null through unchanged under both flags", async () => {
-    const row = pendingRow({ customerName: null });
+  it("passes items with no customer identity through unchanged under both flags", async () => {
+    const row = pendingRow({ customerName: null, customerPhone: null });
     repo.listUrgentPendings.mockResolvedValue([row]);
 
     const resultDenied = await getPendingDashboard({
