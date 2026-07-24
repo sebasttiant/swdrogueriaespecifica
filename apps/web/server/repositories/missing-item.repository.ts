@@ -173,6 +173,21 @@ export function countOpenMissingItems(): Promise<number> {
   });
 }
 
+// Export (Mejora 3): TODOS los faltantes abiertos, sin paginar, para volcarlos a
+// CSV/Excel. Acotado a un máximo defensivo: la cola operativa son cientos, no
+// millones, pero el tope evita que un export barra la tabla entera si algo se
+// desmadra. Mismo orden que la lista (más nuevos primero).
+const EXPORT_MAX = 2000;
+
+export function listOpenMissingItemsForExport(): Promise<MissingItemListItem[]> {
+  return prisma.missingItem.findMany({
+    where: { confirmedAt: null, status: { in: OPEN_STATUSES } },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: EXPORT_MAX,
+    select: LIST_SELECT,
+  });
+}
+
 // Total histórico de faltantes (para reportería: cerrados = total - abiertos).
 export function countAllMissingItems(): Promise<number> {
   return prisma.missingItem.count();

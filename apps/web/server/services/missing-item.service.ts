@@ -16,10 +16,15 @@ import {
   createMissingItem,
   listMissingItems,
   lockMissingItemForUpdate,
+  listOpenMissingItemsForExport,
   orderMissingItem as persistOrderedMissingItem,
   type MissingItemListItem,
 } from "@/server/repositories/missing-item.repository";
 import { reporterNamesByLinkedItemIds } from "@/server/repositories/missing-report.repository";
+import {
+  buildMissingExportRows,
+  type MissingExportRow,
+} from "@/server/services/missing-export.service";
 import type { MissingItemStatus } from "@/lib/generated/prisma/client";
 import { canTransitionToOrdered } from "@/features/faltantes/order-rules";
 import {
@@ -130,6 +135,15 @@ export async function getMissingItems(params: {
   });
 
   return { items: enrichedItems, nextCursor };
+}
+
+// Export (Mejora 3): filas ya aplanadas de TODOS los faltantes abiertos, para
+// que la ruta las vuelque a CSV/Excel. No pagina —el export es la lista
+// completa, no una página— y no toca PII (las columnas son producto,
+// laboratorio, cantidad, estado, proveedor).
+export async function getMissingItemsForExport(): Promise<MissingExportRow[]> {
+  const items = await listOpenMissingItemsForExport();
+  return buildMissingExportRows(items);
 }
 
 export async function createManualMissingItem(input: CreateManualMissingItemInput) {
