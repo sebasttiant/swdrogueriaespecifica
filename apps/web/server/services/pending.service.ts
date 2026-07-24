@@ -58,6 +58,7 @@ export type RegisterPendingInput = {
   promisedAt: Date;
   customerName?: string;
   customerPhone?: string;
+  customerAddress?: string;
   note?: string;
   // Seguimiento del cliente. `zone` llega ya canonizada desde el schema.
   zone?: string;
@@ -113,7 +114,12 @@ function minimizeCustomerIdentity(
 ): PendingListItem[] {
   return canViewCustomerIdentity
     ? items
-    : items.map((item) => ({ ...item, customerName: null, customerPhone: null }));
+    : items.map((item) => ({
+        ...item,
+        customerName: null,
+        customerPhone: null,
+        customerAddress: null,
+      }));
 }
 
 export async function getPendings(params: {
@@ -216,6 +222,7 @@ export async function registerPending(
         promisedAt: data.promisedAt,
         customerName: data.customerName,
         customerPhone: data.customerPhone,
+        customerAddress: data.customerAddress,
         note: data.note,
         zone: data.zone,
         totalAmount: data.totalAmount,

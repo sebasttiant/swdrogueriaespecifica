@@ -55,6 +55,7 @@ export async function createPendingAction(
     promisedAt: formData.get("promisedAt") ?? undefined,
     customerName: formData.get("customerName") ?? undefined,
     customerPhone: formData.get("customerPhone") ?? undefined,
+    customerAddress: formData.get("customerAddress") ?? undefined,
     note: formData.get("note") ?? undefined,
     // Seguimiento del cliente: zona de entrega y estado de pago.
     zone: formData.get("zone") ?? undefined,
@@ -108,6 +109,7 @@ export async function createPendingAction(
         // que omitirlo acá no protegería nada y sí perdería la traza del dato
         // con el que se comprometió la entrega.
         customerPhone: parsed.data.customerPhone ?? null,
+        customerAddress: parsed.data.customerAddress ?? null,
         note: parsed.data.note ?? null,
         manual: parsed.data.manual ?? null,
         // El dinero comprometido con el cliente se audita: quién registró qué

@@ -43,6 +43,7 @@ function pending(overrides: Partial<PendingListItem> = {}): PendingListItem {
     customerName: null,
     note: null,
     customerPhone: null,
+    customerAddress: null,
     createdBy: null,
     zone: null,
     totalAmount: null,
@@ -278,5 +279,21 @@ describe("PendingList · seguimiento del cliente", () => {
 
     expect(html).not.toContain("Abonó");
     expect(html).not.toContain(">Pagado<");
+  });
+});
+
+describe("PendingList · dirección de entrega", () => {
+  it("muestra la dirección cuando el pendiente la tiene", () => {
+    const html = renderList({
+      items: [pending({ customerAddress: "Calle 10 #43-20" })],
+    });
+
+    expect(html).toContain("Calle 10 #43-20");
+  });
+
+  it("no muestra la línea de dirección cuando está vacía", () => {
+    const html = renderList({ items: [pending({ customerAddress: null })] });
+
+    expect(html).not.toContain("Dirección:");
   });
 });

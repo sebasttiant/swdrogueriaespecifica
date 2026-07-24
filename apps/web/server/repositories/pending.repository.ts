@@ -22,6 +22,7 @@ export type PendingListItem = {
   // Teléfono canónico (solo dígitos). Null en los pendientes anteriores a que
   // el dato fuera obligatorio: no se inventa un número que nadie dio.
   customerPhone: string | null;
+  customerAddress: string | null;
   note: string | null;
   // Seguimiento del cliente. Los montos son enteros de pesos; el estado de pago
   // se deriva de ellos en `features/pendientes/payment-state.ts`, no se lee.
@@ -44,6 +45,7 @@ export type CreatePendingData = {
   promisedAt: Date;
   customerName?: string;
   customerPhone?: string;
+  customerAddress?: string;
   note?: string;
   // Ya canonizada por el schema (`normalizeZone`): el repositorio no normaliza.
   zone?: string;
@@ -59,6 +61,7 @@ const LIST_SELECT = {
   promisedAt: true,
   customerName: true,
   customerPhone: true,
+  customerAddress: true,
   note: true,
   zone: true,
   totalAmount: true,
@@ -249,6 +252,7 @@ export async function createPending(
       promisedAt: data.promisedAt,
       customerName: data.customerName ?? null,
       customerPhone: data.customerPhone ?? null,
+      customerAddress: data.customerAddress ?? null,
       note: data.note ?? null,
       zone: data.zone ?? null,
       totalAmount: data.totalAmount ?? null,
