@@ -18,7 +18,8 @@ import { normalizeMissingReportName } from "../features/faltantes/missing-report
 import { PrismaClient } from "../lib/generated/prisma/client";
 
 const CONFIRM = process.env.CONFIRM_DEMO;
-const DEMO_PASSWORD = process.env.DEMO_PASSWORD ?? "Demo.2026*";
+const DEMO_PASSWORD = process.env.DEMO_PASSWORD ?? "123456789";
+const DEMO_SELLER_EMAIL = "vendedor@drogueriaespecifica.com";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 async function main(): Promise<void> {
@@ -44,11 +45,13 @@ async function main(): Promise<void> {
     const admin = await prisma.user.findFirst({ where: { role: "SUPERADMIN" } });
 
     // --- Vendedor (el que reporta y registra pendientes) ---
-    const juan = await prisma.user.upsert({
-      where: { email: "juan@drogueria.demo" },
+    // upsert: si el email ya existe, lo reutiliza (asegura rol/estado/clave demo);
+    // si no, lo crea.
+    const vendedor = await prisma.user.upsert({
+      where: { email: DEMO_SELLER_EMAIL },
       update: { name: "Juan Esteban", role: "OPERADOR", active: true, passwordHash },
       create: {
-        email: "juan@drogueria.demo",
+        email: DEMO_SELLER_EMAIL,
         name: "Juan Esteban",
         role: "OPERADOR",
         active: true,
@@ -120,7 +123,7 @@ async function main(): Promise<void> {
         customerName: "Cliente Demo",
         note: "Solicitud de mostrador",
         status: "PENDIENTE",
-        createdById: juan.id,
+        createdById: vendedor.id,
       },
     });
     // 2) Sin stock + estado de gestión SOLICITADO (Mejora 2).
@@ -134,7 +137,7 @@ async function main(): Promise<void> {
         promisedAt: tomorrow,
         customerName: "Cliente Demo 2",
         status: "SOLICITADO",
-        createdById: juan.id,
+        createdById: vendedor.id,
       },
     });
 
@@ -148,7 +151,7 @@ async function main(): Promise<void> {
         productId: ibuprofeno.id,
         quantity: 10,
         status: "FALTANTE",
-        createdById: juan.id,
+        createdById: vendedor.id,
       },
     });
     // 2) PEDIDO a un proveedor (muestra estado + proveedor en el export).
@@ -163,7 +166,7 @@ async function main(): Promise<void> {
         supplierId: proveedor.id,
         orderedAt: new Date(),
         orderedQuantity: 8,
-        createdById: juan.id,
+        createdById: vendedor.id,
         ...(admin ? { orderedById: admin.id } : {}),
       },
     });
@@ -177,13 +180,13 @@ async function main(): Promise<void> {
         id: "demo-report-1",
         rawName,
         normalizedName: normalizeMissingReportName(rawName),
-        reporterId: juan.id,
+        reporterId: vendedor.id,
         status: "PENDING_REVIEW",
       },
     });
 
     console.log(
-      "Demo OK. Vendedor: juan@drogueria.demo (OPERADOR) | pass: " +
+      `Demo OK. Vendedor: ${DEMO_SELLER_EMAIL} (OPERADOR) | pass: ` +
         `${DEMO_PASSWORD} | 3 productos, 1 proveedor, 2 pendientes, 2 faltantes, 1 reporte.`,
     );
   } finally {
