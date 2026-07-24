@@ -6,7 +6,9 @@ import { Card, CardTitle } from "@/app/_components/ui/card";
 import {
   MissingCreateForm,
 } from "@/features/faltantes/missing-create-form";
+import { MissingExportActions } from "@/features/faltantes/missing-export-actions";
 import { MissingList } from "@/features/faltantes/missing-list";
+import { MissingListCompact } from "@/features/faltantes/missing-list-compact";
 import { MissingReportForm } from "@/features/faltantes/missing-report-form";
 import { REVIEW_QUEUE_PATH } from "@/features/faltantes/report-queue-paging";
 import { MissingSummary } from "@/features/faltantes/missing-summary";
@@ -14,7 +16,9 @@ import {
   canShowNewSupplierOrderForm,
   canShowOrderForm,
 } from "@/features/faltantes/order-rules";
+import { resolveMissingView } from "@/features/faltantes/missing-view";
 import { can } from "@/lib/auth/permissions";
+import { cn } from "@/lib/utils/cn";
 import { requireCapability } from "@/lib/auth/require-role";
 import {
   getMissingItems,
@@ -27,9 +31,10 @@ export const metadata: Metadata = { title: "Faltantes" };
 export default async function FaltantesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ cursor?: string }>;
+  searchParams: Promise<{ cursor?: string; view?: string }>;
 }) {
-	const { cursor } = await searchParams;
+	const { cursor, view: rawView } = await searchParams;
+	const view = resolveMissingView(rawView);
 	const session = await requireCapability("canViewFaltantes");
 	const canOrderMissingItems = can(session.user.role, "canOrderMissingItems");
 	const canManageSuppliers = can(session.user.role, "canManageSuppliers");
@@ -78,7 +83,7 @@ export default async function FaltantesPage({
       {canReviewMissingReports ? (
         <Link
           href={REVIEW_QUEUE_PATH}
-          className="inline-block text-sm font-semibold text-primary hover:underline"
+          className="inline-block text-sm font-semibold text-primary hover:underline print:hidden"
         >
           Revisar reportes de vendedores
         </Link>
@@ -89,28 +94,65 @@ export default async function FaltantesPage({
           permiso, distinta tarjeta, distinto texto. Un OPERADOR ve esto y NADA
           del flujo administrativo. */}
       {canSubmitMissingReports ? (
-        <Card className="space-y-3 p-3">
+        <Card className="space-y-3 p-3 print:hidden">
           <CardTitle>Reportar faltante</CardTitle>
           <MissingReportForm />
         </Card>
       ) : null}
 
       {canCreateMissingItems ? (
-        <Card className="space-y-3 p-3">
+        <Card className="space-y-3 p-3 print:hidden">
           <CardTitle>Alta manual catalogada</CardTitle>
           <MissingCreateForm />
         </Card>
       ) : null}
 
-		<MissingList
-			items={items}
-			nextCursor={nextCursor}
-			canOrder={canOrder}
-			canSeeStatus={canOrderMissingItems}
-			suppliers={suppliers}
-			canCreateSupplier={canCreateSupplier}
-			now={now}
-		/>
+      {/* Toggle de vista (completa/compacta) + export. Se ocultan al imprimir:
+          el PDF es la lista, no los controles. */}
+      <div className="flex flex-col gap-3 print:hidden sm:flex-row sm:items-center sm:justify-between">
+        <nav aria-label="Vista de faltantes" className="flex gap-2 text-sm font-semibold">
+          <Link
+            href="/faltantes"
+            aria-current={view === "full" ? "page" : undefined}
+            className={cn(
+              "rounded-lg px-3 py-1.5 transition-colors",
+              view === "full"
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:bg-muted",
+            )}
+          >
+            Completa
+          </Link>
+          <Link
+            href="/faltantes?view=compact"
+            aria-current={view === "compact" ? "page" : undefined}
+            className={cn(
+              "rounded-lg px-3 py-1.5 transition-colors",
+              view === "compact"
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:bg-muted",
+            )}
+          >
+            Compacta
+          </Link>
+        </nav>
+
+        <MissingExportActions />
+      </div>
+
+      {view === "compact" ? (
+        <MissingListCompact items={items} />
+      ) : (
+        <MissingList
+          items={items}
+          nextCursor={nextCursor}
+          canOrder={canOrder}
+          canSeeStatus={canOrderMissingItems}
+          suppliers={suppliers}
+          canCreateSupplier={canCreateSupplier}
+          now={now}
+        />
+      )}
     </div>
   );
 }
