@@ -15,8 +15,10 @@ import {
   type DeadlineStatus,
 } from "./deadline-status";
 import { remainingQuantity } from "./delivery-rules";
+import { canSetManagementStatus } from "./management-status";
 import { PendingCancelForm } from "./pending-cancel-form";
 import { PendingDeliverForm } from "./pending-deliver-form";
+import { PendingManagementStatusForm } from "./pending-management-status-form";
 
 type PendingListProps = {
   items: PendingListItem[];
@@ -25,6 +27,9 @@ type PendingListProps = {
   // Action re-chequea la capability del lado del server siempre.
   canDeliver: boolean;
   canCancel: boolean;
+  // Autoridad de compras (`canOrderMissingItems`): habilita el selector de
+  // estado de gestión. El vendedor no lo tiene y solo ve el badge.
+  canManageStatus: boolean;
   // El scope viaja en el link de la página siguiente: sin esto, paginar dentro
   // del historial devolvería al usuario a la vista activa sin avisar.
   scope: PendingScope;
@@ -71,6 +76,7 @@ export function PendingList({
   nextCursor,
   canDeliver,
   canCancel,
+  canManageStatus,
   scope,
 }: PendingListProps) {
   if (items.length === 0) {
@@ -104,6 +110,10 @@ export function PendingList({
           DEADLINE[computeDeadlineStatus(pending.promisedAt, pending.status, now)];
         const isOpen = !CLOSED_STATUSES.includes(pending.status);
         const remaining = remainingQuantity(pending.quantity, pending.deliveredQuantity);
+        // Selector de gestión: solo compras, y solo mientras el estado lo admita.
+        const showManagement =
+          canManageStatus && canSetManagementStatus(pending.status);
+        const showDeliverCancel = isOpen && (canDeliver || canCancel);
 
         return (
           <Card key={pending.id} className="space-y-3">
@@ -130,12 +140,22 @@ export function PendingList({
               </div>
             </div>
 
-            {isOpen && (canDeliver || canCancel) ? (
-              <div className="flex flex-col gap-3 border-t border-border pt-3 sm:flex-row sm:items-start sm:justify-between">
-                {canDeliver ? (
-                  <PendingDeliverForm pendingId={pending.id} remaining={remaining} />
+            {showManagement || showDeliverCancel ? (
+              <div className="flex flex-col gap-3 border-t border-border pt-3">
+                {showManagement ? (
+                  <PendingManagementStatusForm
+                    pendingId={pending.id}
+                    currentStatus={pending.status}
+                  />
                 ) : null}
-                {canCancel ? <PendingCancelForm pendingId={pending.id} /> : null}
+                {showDeliverCancel ? (
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    {canDeliver ? (
+                      <PendingDeliverForm pendingId={pending.id} remaining={remaining} />
+                    ) : null}
+                    {canCancel ? <PendingCancelForm pendingId={pending.id} /> : null}
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </Card>

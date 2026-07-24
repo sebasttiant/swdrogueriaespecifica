@@ -24,6 +24,16 @@ export const MANAGEMENT_STATUSES = [
 
 export type ManagementStatus = (typeof MANAGEMENT_STATUSES)[number];
 
+// Etiquetas en español, fuente única para el selector de gerencia y cualquier
+// leyenda. El badge de la lista mantiene su propio mapa porque además lleva
+// tono de color; estas etiquetas deben coincidir con ese texto.
+export const MANAGEMENT_STATUS_LABELS: Record<ManagementStatus, string> = {
+  SOLICITADO: "Solicitado",
+  BUSQUEDA: "En búsqueda",
+  COTIZANDO: "Cotizando",
+  AGOTADO: "Agotado",
+};
+
 export function isManagementStatus(value: unknown): value is ManagementStatus {
   return (
     typeof value === "string" &&
