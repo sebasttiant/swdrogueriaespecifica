@@ -37,6 +37,10 @@ function item(overrides: Partial<MissingItemListEntry> = {}): MissingItemListEnt
   };
 }
 
+function countOccurrences(haystack: string, needle: string): number {
+  return haystack.split(needle).length - 1;
+}
+
 function render(items: MissingItemListEntry[]): string {
   return renderToStaticMarkup(createElement(MissingListCompact, { items }));
 }
@@ -71,5 +75,24 @@ describe("MissingListCompact", () => {
 
   it("renders an empty state when there are no items", () => {
     expect(render([])).toContain("Sin faltantes");
+  });
+});
+
+describe("MissingListCompact · quién anotó (F1)", () => {
+  // El pedido de gerencia: saber qué vendedor registró el faltante. La vista
+  // compacta también lo necesita, no solo la completa.
+  it("muestra el solicitante en la tarjeta mobile y en la tabla desktop", () => {
+    const html = render([item({ requestedByName: "Juan Esteban" })]);
+
+    // Una vez en la tarjeta mobile, otra en la fila desktop.
+    expect(countOccurrences(html, "Juan Esteban")).toBe(2);
+    expect(html).toMatch(/<th[^>]*>Solicitado por<\/th>/);
+  });
+
+  it("marca las filas sin solicitante sin romper la columna", () => {
+    const html = render([item({ requestedByName: null })]);
+
+    // La tabla desktop pone un guion; la tarjeta mobile simplemente lo omite.
+    expect(html).toContain("—");
   });
 });

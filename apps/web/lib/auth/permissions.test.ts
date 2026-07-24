@@ -212,6 +212,17 @@ describe("capabilities · can()", () => {
     expect(can("SUPERADMIN", "canViewSupplierIdentity")).toBe(true);
   });
 
+  // Descargar la cola de faltantes: solo gerencia. Ver la cola en pantalla
+  // (canViewFaltantes) lo tienen todos; llevársela a un archivo, no.
+  it("canExportFaltantes: solo ADMIN/SUPERADMIN; ni SUPERVISOR ni OPERADOR", () => {
+    expect(can("OPERADOR", "canExportFaltantes")).toBe(false);
+    expect(can("SUPERVISOR", "canExportFaltantes")).toBe(false);
+    expect(can("ADMIN", "canExportFaltantes")).toBe(true);
+    expect(can("SUPERADMIN", "canExportFaltantes")).toBe(true);
+    // El vendedor ve la cola pero no puede exportarla: son ejes distintos.
+    expect(can("OPERADOR", "canViewFaltantes")).toBe(true);
+  });
+
   it("canViewCustomerIdentity: OPERADOR no la tiene; SUPERVISOR/ADMIN/SUPERADMIN sí", () => {
     expect(can("OPERADOR", "canViewCustomerIdentity")).toBe(false);
     expect(can("SUPERVISOR", "canViewCustomerIdentity")).toBe(true);

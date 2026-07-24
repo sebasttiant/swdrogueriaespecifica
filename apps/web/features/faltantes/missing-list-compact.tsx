@@ -38,6 +38,14 @@ export function MissingListCompact({ items }: MissingListCompactProps) {
               <p className="truncate text-xs text-muted-foreground">
                 {item.product.laboratory?.name ?? "Sin laboratorio"}
               </p>
+              {/* Quién lo anotó: gerencia lo necesita para saber qué vendedor
+                  registró el faltante. Es el punto del pedido (F1), así que va
+                  también en la vista compacta, no solo en la completa. */}
+              {item.requestedByName ? (
+                <p className="truncate text-xs text-muted-foreground">
+                  Solicitado por {item.requestedByName}
+                </p>
+              ) : null}
             </div>
             <p className="shrink-0 font-bold tabular-nums text-text">
               {item.quantity}
@@ -57,6 +65,7 @@ export function MissingListCompact({ items }: MissingListCompactProps) {
               <th className="px-3 py-2 font-medium">Producto</th>
               <th className="px-3 py-2 font-medium">Laboratorio</th>
               <th className="px-3 py-2 font-medium">Cantidad</th>
+              <th className="px-3 py-2 font-medium">Solicitado por</th>
             </tr>
           </thead>
           <tbody>
@@ -70,6 +79,9 @@ export function MissingListCompact({ items }: MissingListCompactProps) {
                 </td>
                 <td className="px-3 py-2 text-muted-foreground">
                   {item.quantity} {item.product.unit}
+                </td>
+                <td className="px-3 py-2 text-muted-foreground">
+                  {item.requestedByName ?? "—"}
                 </td>
               </tr>
             ))}

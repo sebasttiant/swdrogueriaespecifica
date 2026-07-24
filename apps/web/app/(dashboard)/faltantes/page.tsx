@@ -47,6 +47,9 @@ export default async function FaltantesPage({
 	// De quién compra la droguería: solo gerencia. El service ya lo minimiza,
 	// así que esto último solo evita renderizar una columna que vendría vacía.
 	const canViewSupplierIdentity = can(session.user.role, "canViewSupplierIdentity");
+	// Descargar la cola a un archivo: solo gerencia. El vendedor ve la cola pero
+	// no se la lleva.
+	const canExportFaltantes = can(session.user.role, "canExportFaltantes");
 
   // Un único instante compartido por el resumen global y el agrupamiento de
   // la página actual, para que ambos hablen del mismo "ahora".
@@ -142,7 +145,9 @@ export default async function FaltantesPage({
           </Link>
         </nav>
 
-        <MissingExportActions />
+        {/* Export (Excel/CSV/PDF) solo para gerencia. La ruta de descarga
+            revalida la capacidad igual: esto solo evita ofrecer el botón. */}
+        {canExportFaltantes ? <MissingExportActions /> : null}
       </div>
 
       {/* Cierre rápido de duplicados: solo la autoridad de compras. El vendedor

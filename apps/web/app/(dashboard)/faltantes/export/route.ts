@@ -19,7 +19,10 @@ import {
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request): Promise<Response> {
-  const session = await requireCapability("canViewFaltantes");
+  // Descargar la cola es acción de gerencia: la ruta exige la capacidad de
+  // export, no solo poder ver la página. Esconder el botón en la UI no
+  // protegería el archivo —esta URL es accesible directamente—.
+  const session = await requireCapability("canExportFaltantes");
   const canViewSupplierIdentity = can(session.user.role, "canViewSupplierIdentity");
 
   const format =

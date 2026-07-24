@@ -170,6 +170,16 @@ export const CAPABILITIES = [
   // SERVIDOR. Ocultar la columna en el render no alcanzaría —el nombre viajaría
   // igual en el payload y se leería desde el inspector del navegador—.
   "canViewSupplierIdentity",
+  // Gatea la DESCARGA de la cola de faltantes (Excel / CSV / impresión a PDF).
+  // Bajarse la lista completa a un archivo es una acción de gerencia, no de un
+  // vendedor: el archivo se reenvía y se guarda fuera del sistema. Solo
+  // ADMIN/SUPERADMIN.
+  //
+  // Es un eje DISTINTO de `canViewFaltantes` (que todos tienen para reportar y
+  // operar): ver la cola en pantalla no es lo mismo que llevársela entera. El
+  // corte real vive en la RUTA de export, no en el botón: esconder el botón
+  // dejaría la URL accesible a cualquiera que la conozca.
+  "canExportFaltantes",
   // Delivery lifecycle (Slice A). Asymmetric on purpose: delivering is the
   // counter operator's everyday job, so OPERADOR gets it too. Cancelling
   // breaks a commitment already made to a customer and needs a higher
