@@ -42,6 +42,8 @@ function pending(overrides: Partial<PendingListItem> = {}): PendingListItem {
     promisedAt: new Date("2026-07-10T18:00:00.000Z"),
     customerName: null,
     note: null,
+    customerPhone: null,
+    createdBy: null,
     zone: null,
     totalAmount: null,
     paidAmount: 0,

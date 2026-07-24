@@ -54,6 +54,7 @@ export async function createPendingAction(
     // obligatoria) en vez de coercer null a una fecha epoch válida.
     promisedAt: formData.get("promisedAt") ?? undefined,
     customerName: formData.get("customerName") ?? undefined,
+    customerPhone: formData.get("customerPhone") ?? undefined,
     note: formData.get("note") ?? undefined,
     // Seguimiento del cliente: zona de entrega y estado de pago.
     zone: formData.get("zone") ?? undefined,
@@ -103,6 +104,10 @@ export async function createPendingAction(
         quantity: parsed.data.quantity,
         promisedAt: parsed.data.promisedAt.toISOString(),
         customerName: parsed.data.customerName ?? null,
+        // Teléfono: PII del cliente, pero el alta ya audita `customerName`, así
+        // que omitirlo acá no protegería nada y sí perdería la traza del dato
+        // con el que se comprometió la entrega.
+        customerPhone: parsed.data.customerPhone ?? null,
         note: parsed.data.note ?? null,
         manual: parsed.data.manual ?? null,
         // El dinero comprometido con el cliente se audita: quién registró qué

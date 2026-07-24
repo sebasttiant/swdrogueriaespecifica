@@ -148,3 +148,37 @@ describe("PendingForm · seguimiento del cliente", () => {
     expect(html).not.toContain('type="checkbox" name="paid');
   });
 });
+
+describe("PendingForm · datos obligatorios del cliente", () => {
+  it("postea el teléfono del cliente", () => {
+    const html = render();
+
+    expect(html).toContain('name="customerPhone"');
+    // Teclado telefónico en el celular: el 90% del uso es iPhone.
+    expect(html).toContain('type="tel"');
+  });
+
+  // Gerencia los pidió obligatorios: sin nombre no se sabe a quién se le
+  // prometió, sin teléfono no se le puede avisar que llegó.
+  it("marca cliente y teléfono como requeridos, y ya no dice (opcional)", () => {
+    const html = render();
+
+    // React emite `required` antes que `name`: se ancla por el id del input.
+    expect(html).toMatch(/<input[^>]*id="customerName"[^>]*required/);
+    expect(html).toMatch(/<input[^>]*id="customerPhone"[^>]*required/);
+    expect(html).not.toContain("Cliente (opcional)");
+  });
+
+  // La zona se lee junto a la promesa porque con esas dos gerencia prioriza.
+  it("ubica la zona junto a la entrega prometida, antes que el cliente", () => {
+    const html = render();
+
+    const promised = html.indexOf("Entrega prometida");
+    const zone = html.indexOf('name="zone"');
+    const customer = html.indexOf('name="customerName"');
+
+    expect(promised).toBeGreaterThan(-1);
+    expect(zone).toBeGreaterThan(promised);
+    expect(zone).toBeLessThan(customer);
+  });
+});

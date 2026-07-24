@@ -19,6 +19,9 @@ export type PendingListItem = {
   status: PendingStatus;
   promisedAt: Date;
   customerName: string | null;
+  // Teléfono canónico (solo dígitos). Null en los pendientes anteriores a que
+  // el dato fuera obligatorio: no se inventa un número que nadie dio.
+  customerPhone: string | null;
   note: string | null;
   // Seguimiento del cliente. Los montos son enteros de pesos; el estado de pago
   // se deriva de ellos en `features/pendientes/payment-state.ts`, no se lee.
@@ -28,6 +31,11 @@ export type PendingListItem = {
   createdAt: Date;
   deliveredQuantity: number;
   product: { id: string; name: string; code: string; unit: string };
+  // Quién anotó el pendiente. Gerencia lo necesita para saber a nombre de quién
+  // va la venta y quién factura. Se lee de la RELACIÓN, nunca de un texto
+  // duplicado en la fila: si el usuario se renombra, esto sigue siendo cierto.
+  // Null cuando el usuario ya no resuelve o el pendiente es anterior al dato.
+  createdBy: { id: string; name: string } | null;
 };
 
 export type CreatePendingData = {
@@ -35,6 +43,7 @@ export type CreatePendingData = {
   quantity: number;
   promisedAt: Date;
   customerName?: string;
+  customerPhone?: string;
   note?: string;
   // Ya canonizada por el schema (`normalizeZone`): el repositorio no normaliza.
   zone?: string;
@@ -49,6 +58,7 @@ const LIST_SELECT = {
   status: true,
   promisedAt: true,
   customerName: true,
+  customerPhone: true,
   note: true,
   zone: true,
   totalAmount: true,
@@ -56,6 +66,7 @@ const LIST_SELECT = {
   createdAt: true,
   deliveredQuantity: true,
   product: { select: { id: true, name: true, code: true, unit: true } },
+  createdBy: { select: { id: true, name: true } },
 } as const;
 
 // Mismo eje que `MissingItemScope`: "active" es la vista operativa (lo que
@@ -237,6 +248,7 @@ export async function createPending(
       quantity: data.quantity,
       promisedAt: data.promisedAt,
       customerName: data.customerName ?? null,
+      customerPhone: data.customerPhone ?? null,
       note: data.note ?? null,
       zone: data.zone ?? null,
       totalAmount: data.totalAmount ?? null,

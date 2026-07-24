@@ -64,6 +64,8 @@ function createCatalogFormData(overrides: Record<string, string> = {}) {
   data.set("productId", "prod-1");
   data.set("quantity", "2");
   data.set("promisedAt", "2099-01-02T12:00");
+  data.set("customerName", "Ana Pérez");
+  data.set("customerPhone", "3001234567");
   for (const [key, value] of Object.entries(overrides)) data.set(key, value);
   return data;
 }
@@ -74,6 +76,8 @@ function createManualFormData(overrides: Record<string, string> = {}) {
   data.set("manualUnit", "frasco");
   data.set("quantity", "2");
   data.set("promisedAt", "2099-01-02T12:00");
+  data.set("customerName", "Ana Pérez");
+  data.set("customerPhone", "3001234567");
   for (const [key, value] of Object.entries(overrides)) data.set(key, value);
   return data;
 }
