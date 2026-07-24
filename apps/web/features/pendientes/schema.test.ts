@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { pendingCancelSchema, pendingCreateSchema, pendingDeliverSchema } from "./schema";
+import {
+  pendingCancelSchema,
+  pendingCreateSchema,
+  pendingDeliverSchema,
+  pendingManagementStatusSchema,
+} from "./schema";
 
 // Base válida reutilizable; cada test sobreescribe lo que necesita probar.
 const validInput = {
@@ -192,5 +197,29 @@ describe("pendingCancelSchema", () => {
   it("rechaza id vacío", () => {
     const result = pendingCancelSchema.safeParse({ id: "" });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("pendingManagementStatusSchema", () => {
+  it("acepta cada uno de los cuatro estados de gestión", () => {
+    for (const status of ["SOLICITADO", "BUSQUEDA", "COTIZANDO", "AGOTADO"]) {
+      const result = pendingManagementStatusSchema.safeParse({ id: "pend-1", status });
+      expect(result.success).toBe(true);
+    }
+  });
+
+  // No se puede forzar un estado del ciclo de entrega por esta vía.
+  it("rechaza estados que no son de gestión", () => {
+    for (const status of ["PENDIENTE", "PARCIAL", "ENTREGADO", "CANCELADO"]) {
+      const result = pendingManagementStatusSchema.safeParse({ id: "pend-1", status });
+      expect(result.success).toBe(false);
+    }
+  });
+
+  it("rechaza id vacío o status ausente", () => {
+    expect(pendingManagementStatusSchema.safeParse({ id: "", status: "SOLICITADO" }).success).toBe(
+      false,
+    );
+    expect(pendingManagementStatusSchema.safeParse({ id: "pend-1" }).success).toBe(false);
   });
 });

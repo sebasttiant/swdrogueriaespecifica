@@ -1,0 +1,48 @@
+import type { PendingStatus } from "@/lib/generated/prisma/client";
+
+// --------------------------------------------------------------------------
+// Reglas puras de los ESTADOS DE GESTIÓN de un pendiente (Mejora 2).
+//
+// Gerencia/compras fija uno de estos estados sobre un pendiente abierto para
+// comunicarle al vendedor en qué punto está la búsqueda del producto:
+//   SOLICITADO → ya se lo pedimos al proveedor; llega más tarde.
+//   BUSQUEDA   → lo estamos buscando (sigue rebotando como faltante).
+//   COTIZANDO  → esperando precio/negociación con el proveedor.
+//   AGOTADO    → no se consigue. NO cancela el pendiente: es una señal para que
+//                el vendedor avise al cliente y lo rechace por el flujo normal.
+//
+// PURO: no toca Prisma ni el reloj. El schema Zod y el service lo usan para
+// validar; la UI lo usa para pintar el selector. Nunca importar Prisma acá.
+// --------------------------------------------------------------------------
+
+export const MANAGEMENT_STATUSES = [
+  "SOLICITADO",
+  "BUSQUEDA",
+  "COTIZANDO",
+  "AGOTADO",
+] as const;
+
+export type ManagementStatus = (typeof MANAGEMENT_STATUSES)[number];
+
+export function isManagementStatus(value: unknown): value is ManagementStatus {
+  return (
+    typeof value === "string" &&
+    (MANAGEMENT_STATUSES as readonly string[]).includes(value)
+  );
+}
+
+// Estados desde los que gerencia puede fijar (o cambiar) un estado de gestión:
+// un pendiente todavía abierto que NO entró al flujo de entrega. Un PARCIAL ya
+// tiene una entrega en curso; un ENTREGADO/CANCELADO es terminal. En esos casos
+// un cambio de gestión no tiene sentido y se rechaza.
+export const MANAGEMENT_ELIGIBLE_STATUSES: PendingStatus[] = [
+  "PENDIENTE",
+  "SOLICITADO",
+  "BUSQUEDA",
+  "COTIZANDO",
+  "AGOTADO",
+];
+
+export function canSetManagementStatus(status: PendingStatus): boolean {
+  return MANAGEMENT_ELIGIBLE_STATUSES.includes(status);
+}

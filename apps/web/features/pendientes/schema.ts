@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { parseBogotaWallTime } from "@/lib/datetime/bogota";
+import { MANAGEMENT_STATUSES } from "@/features/pendientes/management-status";
 
 // Texto opcional que llega desde FormData: se normaliza vacío/espacios a
 // `undefined` para no persistir cadenas vacías como si fueran datos.
@@ -106,3 +107,18 @@ export const pendingCancelSchema = z.object({
 });
 
 export type PendingCancelInput = z.infer<typeof pendingCancelSchema>;
+
+// --------------------------------------------------------------------------
+// Estado de gestión (Mejora 2): gerencia/compras fija uno de los cuatro
+// términos sobre un pendiente abierto. `status` DEBE ser un estado de gestión;
+// no se permite forzar PENDIENTE/PARCIAL/ENTREGADO/CANCELADO por esta vía.
+// --------------------------------------------------------------------------
+
+export const pendingManagementStatusSchema = z.object({
+  id: z.string().trim().min(1, "Falta el id del pendiente"),
+  status: z.enum(MANAGEMENT_STATUSES),
+});
+
+export type PendingManagementStatusInput = z.infer<
+  typeof pendingManagementStatusSchema
+>;

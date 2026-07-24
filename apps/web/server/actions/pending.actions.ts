@@ -12,12 +12,14 @@ import {
   cancelPendingCommitment,
   deliverPending,
   registerPending,
+  setPendingManagementStatus,
 } from "@/server/services/pending.service";
 import type { DeliveryRejection } from "@/features/pendientes/delivery-rules";
 import {
   pendingCancelSchema,
   pendingCreateSchema,
   pendingDeliverSchema,
+  pendingManagementStatusSchema,
 } from "@/features/pendientes/schema";
 
 // --------------------------------------------------------------------------
@@ -211,6 +213,85 @@ export async function deliverPendingAction(
     };
   }
 
+  revalidatePath("/pendientes");
+  revalidatePath("/dashboard");
+  return { error: null, ok: true };
+}
+
+// --------------------------------------------------------------------------
+// Estado de gestión (Mejora 2): gerencia/compras fija SOLICITADO/BUSQUEDA/
+// COTIZANDO/AGOTADO sobre un pendiente abierto. Autoridad de COMPRAS: se gatea
+// con `canOrderMissingItems` (solo gerencia), NO con `canCancelPendings` —
+// declarar un producto "agotado" es una decisión de compras, no de operación.
+// --------------------------------------------------------------------------
+
+const MANAGEMENT_STATUS_REJECTION_MESSAGES: Record<"NOT_ELIGIBLE", string> = {
+  NOT_ELIGIBLE:
+    "No se pudo actualizar el estado: el pendiente ya no admite cambios de gestión.",
+};
+
+export async function updatePendingManagementStatusAction(
+  _prev: PendingFormState,
+  formData: FormData,
+): Promise<PendingFormState> {
+  const session = await requireCapability("canOrderMissingItems");
+
+  const parsed = pendingManagementStatusSchema.safeParse({
+    id: formData.get("id"),
+    status: formData.get("status"),
+  });
+
+  if (!parsed.success) {
+    return { error: "No se pudo identificar el pendiente o el estado.", ok: false };
+  }
+
+  try {
+    const result = await setPendingManagementStatus({
+      id: parsed.data.id,
+      status: parsed.data.status,
+    });
+
+    // Rechazo de negocio: alguien con la capacidad intentó gestionar un
+    // pendiente que ya no lo admite. Se audita como FAILURE con el estado
+    // intentado para que la traza exista.
+    if (result.rejection) {
+      await recordAudit({
+        action: AUDIT_ACTIONS.PENDING_STATUS_CHANGE,
+        module: AUDIT_MODULES.PENDIENTES,
+        entity: "Pending",
+        entityId: parsed.data.id,
+        result: "FAILURE",
+        after: { reason: result.rejection, status: parsed.data.status },
+        context: await auditContextFromHeaders(session.user.id),
+      });
+
+      revalidatePath("/pendientes");
+      revalidatePath("/dashboard");
+      return {
+        error: MANAGEMENT_STATUS_REJECTION_MESSAGES[result.rejection],
+        ok: false,
+      };
+    }
+
+    await recordAudit({
+      action: AUDIT_ACTIONS.PENDING_STATUS_CHANGE,
+      module: AUDIT_MODULES.PENDIENTES,
+      entity: "Pending",
+      entityId: parsed.data.id,
+      after: { status: parsed.data.status },
+      context: await auditContextFromHeaders(session.user.id),
+    });
+  } catch (error) {
+    console.error("[pendientes] No se pudo actualizar el estado de gestión:", error);
+    return {
+      error: "No se pudo actualizar el estado. Intentá de nuevo.",
+      ok: false,
+    };
+  }
+
+  // AGOTADO saca al pendiente de los estados alertables: revalidar también el
+  // dashboard para que los contadores de vencidos/próximos/urgentes no queden
+  // desfasados.
   revalidatePath("/pendientes");
   revalidatePath("/dashboard");
   return { error: null, ok: true };

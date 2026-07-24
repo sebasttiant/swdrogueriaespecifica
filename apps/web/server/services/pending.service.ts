@@ -27,6 +27,7 @@ import {
   listPendings,
   listUrgentPendings,
   updatePendingAfterDelivery,
+  updatePendingManagementStatus,
   type PendingListItem,
   type PendingScope,
 } from "@/server/repositories/pending.repository";
@@ -41,6 +42,10 @@ import {
   validateDelivery,
   type DeliveryRejection,
 } from "@/features/pendientes/delivery-rules";
+import {
+  MANAGEMENT_ELIGIBLE_STATUSES,
+  type ManagementStatus,
+} from "@/features/pendientes/management-status";
 
 // Producto manual: no está en el catálogo, se crea al vuelo desde el pendiente.
 export type ManualProductInput = { name: string; unit: string };
@@ -379,4 +384,44 @@ export async function cancelPendingCommitment(
       rejection: null,
     };
   });
+}
+
+// --------------------------------------------------------------------------
+// Estado de gestión (Mejora 2): gerencia/compras comunica en qué punto está la
+// búsqueda del producto. NO toca stock ni el ciclo de entrega.
+// --------------------------------------------------------------------------
+
+export type SetPendingManagementStatusInput = {
+  id: string;
+  status: ManagementStatus;
+};
+
+export type SetPendingManagementStatusResult = {
+  pending: { id: string; status: PendingStatus } | null;
+  // El pendiente no existe o ya no admite gestión (entró a entrega o es
+  // terminal). No es un error: la Server Action lo traduce a un mensaje.
+  rejection: "NOT_ELIGIBLE" | null;
+};
+
+/**
+ * Fija un estado de gestión sobre un pendiente abierto. Compare-and-set atómico
+ * contra los estados elegibles (`updatePendingManagementStatus`): si el
+ * pendiente ya no es elegible (no existe, PARCIAL/ENTREGADO/CANCELADO), devuelve
+ * NOT_ELIGIBLE en vez de pisar el estado. AGOTADO NO cancela el pendiente: la
+ * cancelación la hace el vendedor por el flujo de siempre.
+ */
+export async function setPendingManagementStatus(
+  input: SetPendingManagementStatusInput,
+): Promise<SetPendingManagementStatusResult> {
+  const written = await updatePendingManagementStatus({
+    id: input.id,
+    status: input.status,
+    eligibleStatuses: MANAGEMENT_ELIGIBLE_STATUSES,
+  });
+
+  if (written !== 1) {
+    return { pending: null, rejection: "NOT_ELIGIBLE" };
+  }
+
+  return { pending: { id: input.id, status: input.status }, rejection: null };
 }
