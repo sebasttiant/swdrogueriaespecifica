@@ -43,15 +43,38 @@ export const MISSING_EXPORT_COLUMNS = [
   { key: "proveedor", header: "Proveedor" },
 ] as const satisfies readonly { key: keyof MissingExportRow; header: string }[];
 
+export type MissingExportColumn = { key: keyof MissingExportRow; header: string };
+
+/**
+ * Columnas del export según quién lo descarga. Sin `canViewSupplierIdentity`
+ * la columna "Proveedor" NO EXISTE en el archivo: no va vacía, va ausente.
+ *
+ * Fuente única para CSV y Excel: ambos recorren esta lista, así que no pueden
+ * quedar desalineados y filtrar la columna en uno de los dos formatos.
+ */
+export function missingExportColumns(
+  canViewSupplierIdentity: boolean,
+): readonly MissingExportColumn[] {
+  return canViewSupplierIdentity
+    ? MISSING_EXPORT_COLUMNS
+    : MISSING_EXPORT_COLUMNS.filter((column) => column.key !== "proveedor");
+}
+
+/**
+ * `canViewSupplierIdentity` es REQUERIDO, sin default: olvidarlo tiene que ser
+ * un error de tipos y no una fuga silenciosa. Cuando es false el nombre del
+ * proveedor nunca entra a la fila, ni siquiera para descartarse después.
+ */
 export function buildMissingExportRows(
   items: readonly MissingItemListItem[],
+  canViewSupplierIdentity: boolean,
 ): MissingExportRow[] {
   return items.map((item) => ({
     nombre: item.product.name,
     laboratorio: item.product.laboratory?.name ?? "",
     cantidad: item.quantity,
     estado: MISSING_STATUS_LABEL[item.status],
-    proveedor: item.supplier?.name ?? "",
+    proveedor: canViewSupplierIdentity ? (item.supplier?.name ?? "") : "",
   }));
 }
 
@@ -74,12 +97,16 @@ function csvCell(value: string | number): string {
 // rompe los acentos. CRLF entre filas: el estándar de Excel.
 const CSV_BOM = "﻿";
 
-export function buildMissingCsv(rows: readonly MissingExportRow[]): string {
-  const header = MISSING_EXPORT_COLUMNS.map((column) => csvCell(column.header));
+export function buildMissingCsv(
+  rows: readonly MissingExportRow[],
+  canViewSupplierIdentity: boolean,
+): string {
+  const columns = missingExportColumns(canViewSupplierIdentity);
+  const header = columns.map((column) => csvCell(column.header));
   const lines = [header.join(",")];
 
   for (const row of rows) {
-    const cells = MISSING_EXPORT_COLUMNS.map((column) => csvCell(row[column.key]));
+    const cells = columns.map((column) => csvCell(row[column.key]));
     lines.push(cells.join(","));
   }
 
@@ -92,6 +119,7 @@ const HEADER_FONT = "FFFFFFFF"; // blanco
 
 export async function buildMissingWorkbookBuffer(
   rows: readonly MissingExportRow[],
+  canViewSupplierIdentity: boolean,
   generatedAt: Date = new Date(),
 ): Promise<Buffer> {
   // Import dinámico: mantiene exceljs fuera del grafo estático (test liviano).
@@ -101,16 +129,22 @@ export async function buildMissingWorkbookBuffer(
   wb.creator = "Droguería Específica";
   wb.created = generatedAt;
 
-  const ws = wb.addWorksheet("Faltantes");
-  ws.columns = [
-    { width: 36 },
-    { width: 24 },
-    { width: 10 },
-    { width: 14 },
-    { width: 24 },
-  ];
+  const columns = missingExportColumns(canViewSupplierIdentity);
 
-  const header = ws.addRow(MISSING_EXPORT_COLUMNS.map((column) => column.header));
+  // Anchos por columna, indexados por `key`, para que quitar "Proveedor" no
+  // desplace los anchos del resto.
+  const COLUMN_WIDTH: Record<keyof MissingExportRow, number> = {
+    nombre: 36,
+    laboratorio: 24,
+    cantidad: 10,
+    estado: 14,
+    proveedor: 24,
+  };
+
+  const ws = wb.addWorksheet("Faltantes");
+  ws.columns = columns.map((column) => ({ width: COLUMN_WIDTH[column.key] }));
+
+  const header = ws.addRow(columns.map((column) => column.header));
   header.eachCell((cell) => {
     cell.font = { bold: true, color: { argb: HEADER_FONT } };
     cell.fill = {
@@ -121,7 +155,7 @@ export async function buildMissingWorkbookBuffer(
   });
 
   for (const row of rows) {
-    ws.addRow([row.nombre, row.laboratorio, row.cantidad, row.estado, row.proveedor]);
+    ws.addRow(columns.map((column) => row[column.key]));
   }
 
   const buffer = await wb.xlsx.writeBuffer();

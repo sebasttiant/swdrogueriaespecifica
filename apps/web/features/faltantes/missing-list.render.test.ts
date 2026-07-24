@@ -91,6 +91,9 @@ function renderMissingList(
 		// defecto siguen a `canOrder` (gerencia ve todo), pero los tests de
 		// Mejora 4 los fijan por separado para probar la independencia.
 		canSeeStatus?: boolean;
+		// Identidad del proveedor: eje propio. Por defecto sigue a `canOrder`
+		// (gerencia), y los tests de la fuga lo fijan aparte.
+		canSeeSupplier?: boolean;
 	} = {},
 ): string {
 	return renderToStaticMarkup(
@@ -99,6 +102,7 @@ function renderMissingList(
 			nextCursor: null,
 			canOrder,
 			canSeeStatus: options.canSeeStatus ?? canOrder,
+			canSeeSupplier: options.canSeeSupplier ?? canOrder,
 			now,
 			suppliers: options.suppliers ?? [],
 			canCreateSupplier: options.canCreateSupplier ?? true,
@@ -159,6 +163,9 @@ describe("MissingList render contract", () => {
   });
 });
 
+// Estos casos describen la vista de GERENCIA: quien tiene
+// `canViewSupplierIdentity` sí ve proveedor, fecha y cantidad pedida. La vista
+// del vendedor se cubre en el bloque de más abajo.
 describe("MissingList · order visibility", () => {
   const orderedAt = new Date("2026-06-05T15:30:00.000Z");
   const supplier = { id: "supplier-id", name: "Distribuidora Norte" };
@@ -174,7 +181,7 @@ describe("MissingList · order visibility", () => {
         supplierId: supplier.id,
         product: product("Pedido", "PED-1"),
       }),
-    ]);
+    ], false, { canSeeSupplier: true });
 
     // Una vez en la tarjeta mobile y otra en la fila desktop.
     expect(countOccurrences(html, "Distribuidora Norte")).toBe(2);
@@ -193,7 +200,7 @@ describe("MissingList · order visibility", () => {
         supplierId: supplier.id,
         product: product("Pedido", "PED-1"),
       }),
-    ]);
+    ], false, { canSeeSupplier: true });
 
     expect(countOccurrences(html, "Cantidad pedida: 20 unidades")).toBe(2);
   });
@@ -212,7 +219,7 @@ describe("MissingList · order visibility", () => {
         supplierId: supplier.id,
         product: product("Pedido legacy", "PED-2"),
       }),
-    ]);
+    ], false, { canSeeSupplier: true });
 
     expect(countOccurrences(html, "Cantidad pedida no registrada")).toBe(2);
     expect(html).not.toContain("Cantidad pedida: 3");
@@ -253,7 +260,7 @@ describe("MissingList · order visibility", () => {
         orderedAt,
         product: product("Pedido", "PED-2"),
       }),
-    ]);
+    ], false, { canSeeSupplier: true });
 
     expect(countOccurrences(html, orderedLabel)).toBe(2);
     expect(html).toContain("Proveedor sin registrar");
@@ -491,3 +498,64 @@ function product(
     laboratory: null,
   };
 }
+
+// La regla de negocio: un vendedor NO debe saber a qué depósito le compra la
+// droguería. Estos casos son la contraparte de "order visibility": misma fila,
+// mirada sin `canViewSupplierIdentity`.
+describe("MissingList · el proveedor no existe para el vendedor", () => {
+  const orderedAt = new Date("2026-06-05T15:30:00.000Z");
+  const supplier = { id: "supplier-id", name: "Distribuidora Norte" };
+
+  function orderedItem() {
+    return item({
+      id: "pedido-1",
+      status: "PEDIDO",
+      orderedAt,
+      orderedQuantity: 8,
+      supplier,
+      supplierId: supplier.id,
+      product: product("Loratadina 10mg", "MED-003"),
+    });
+  }
+
+  it("no filtra el nombre del proveedor en ninguna parte del HTML", () => {
+    const html = renderMissingList([orderedItem()], false, {
+      canSeeSupplier: false,
+    });
+
+    // No basta con que no se VEA: no puede estar en el markup, porque el
+    // payload se lee desde el inspector del navegador.
+    expect(html).not.toContain("Distribuidora Norte");
+    expect(html).not.toContain("supplier-id");
+    expect(html).not.toContain("Proveedor sin registrar");
+  });
+
+  it("no renderiza la columna Pedido ni la cantidad pedida", () => {
+    const html = renderMissingList([orderedItem()], false, {
+      canSeeSupplier: false,
+    });
+
+    expect(html).not.toMatch(/<th[^>]*>Pedido<\/th>/);
+    expect(html).not.toContain("Cantidad pedida");
+  });
+
+  // Lo operativo sigue estando: el vendedor ve QUÉ falta y CUÁNTO, que es su
+  // trabajo. Solo se le oculta a quién se le compra.
+  it("conserva el producto, la cantidad y el solicitante", () => {
+    const html = renderMissingList([orderedItem()], false, {
+      canSeeSupplier: false,
+    });
+
+    expect(html).toContain("Loratadina 10mg");
+    expect(html).toContain("MED-003");
+  });
+
+  it("sí lo muestra a gerencia sobre la misma fila", () => {
+    const html = renderMissingList([orderedItem()], false, {
+      canSeeSupplier: true,
+    });
+
+    expect(html).toContain("Distribuidora Norte");
+    expect(html).toMatch(/<th[^>]*>Pedido<\/th>/);
+  });
+});

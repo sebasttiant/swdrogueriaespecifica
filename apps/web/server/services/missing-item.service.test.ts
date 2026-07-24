@@ -258,6 +258,7 @@ describe("getMissingItems", () => {
       cursor: "cursor-in",
       take: 20,
       canViewCustomerIdentity: true,
+      canViewSupplierIdentity: true,
     });
 
     expect(repo.listMissingItems).toHaveBeenCalledWith({
@@ -271,7 +272,7 @@ describe("getMissingItems", () => {
     const row = missingItemRow();
     repo.listMissingItems.mockResolvedValue({ items: [row], nextCursor: null });
 
-    const result = await getMissingItems({ canViewCustomerIdentity: false });
+    const result = await getMissingItems({ canViewCustomerIdentity: false, canViewSupplierIdentity: false });
 
     expect(result.items).toHaveLength(1);
     const item = result.items[0]!;
@@ -287,7 +288,7 @@ describe("getMissingItems", () => {
     const row = missingItemRow();
     repo.listMissingItems.mockResolvedValue({ items: [row], nextCursor: null });
 
-    const result = await getMissingItems({ canViewCustomerIdentity: true });
+    const result = await getMissingItems({ canViewCustomerIdentity: true, canViewSupplierIdentity: true });
 
     expect(result.items[0]!.origin?.customerName).toBe("Juan Pérez");
     expect(result.items[0]).toEqual({ ...row, requestedByName: row.createdBy!.name });
@@ -297,10 +298,10 @@ describe("getMissingItems", () => {
     const row = missingItemRow({ originId: null, origin: null });
     repo.listMissingItems.mockResolvedValue({ items: [row], nextCursor: null });
 
-    const resultDenied = await getMissingItems({ canViewCustomerIdentity: false });
+    const resultDenied = await getMissingItems({ canViewCustomerIdentity: false, canViewSupplierIdentity: false });
     expect(resultDenied.items[0]).toEqual({ ...row, requestedByName: row.createdBy!.name });
 
-    const resultAllowed = await getMissingItems({ canViewCustomerIdentity: true });
+    const resultAllowed = await getMissingItems({ canViewCustomerIdentity: true, canViewSupplierIdentity: true });
     expect(resultAllowed.items[0]).toEqual({ ...row, requestedByName: row.createdBy!.name });
   });
 
@@ -308,7 +309,7 @@ describe("getMissingItems", () => {
     const row = missingItemRow();
     repo.listMissingItems.mockResolvedValue({ items: [row], nextCursor: null });
 
-    await getMissingItems({ canViewCustomerIdentity: false });
+    await getMissingItems({ canViewCustomerIdentity: false, canViewSupplierIdentity: false });
 
     // The object handed back by the mocked repo must still hold the
     // original customerName — the service must return NEW objects.
@@ -323,7 +324,7 @@ describe("getMissingItems · requestedByName (trazabilidad)", () => {
     const row = missingItemRow({ id: "m-1" });
     repo.listMissingItems.mockResolvedValue({ items: [row], nextCursor: null });
 
-    await getMissingItems({ canViewCustomerIdentity: true });
+    await getMissingItems({ canViewCustomerIdentity: true, canViewSupplierIdentity: true });
 
     expect(reportRepo.reporterNamesByLinkedItemIds).toHaveBeenCalledWith(["m-1"]);
   });
@@ -340,7 +341,7 @@ describe("getMissingItems · requestedByName (trazabilidad)", () => {
       new Map([["m-1", "Juan Vendedor"]]),
     );
 
-    const result = await getMissingItems({ canViewCustomerIdentity: true });
+    const result = await getMissingItems({ canViewCustomerIdentity: true, canViewSupplierIdentity: true });
 
     expect(result.items[0]!.requestedByName).toBe("Juan Vendedor");
   });
@@ -352,7 +353,7 @@ describe("getMissingItems · requestedByName (trazabilidad)", () => {
     });
     repo.listMissingItems.mockResolvedValue({ items: [row], nextCursor: null });
 
-    const result = await getMissingItems({ canViewCustomerIdentity: true });
+    const result = await getMissingItems({ canViewCustomerIdentity: true, canViewSupplierIdentity: true });
 
     expect(result.items[0]!.requestedByName).toBe("Carla Vendedora");
   });
@@ -361,7 +362,7 @@ describe("getMissingItems · requestedByName (trazabilidad)", () => {
     const row = missingItemRow({ id: "m-1", createdBy: null });
     repo.listMissingItems.mockResolvedValue({ items: [row], nextCursor: null });
 
-    const result = await getMissingItems({ canViewCustomerIdentity: true });
+    const result = await getMissingItems({ canViewCustomerIdentity: true, canViewSupplierIdentity: true });
 
     expect(result.items[0]!.requestedByName).toBeNull();
   });
@@ -907,5 +908,69 @@ describe("orderMissingItem", () => {
     expect(pendingRepo.createPendingDelivery).not.toHaveBeenCalled();
     expect(pendingRepo.updatePendingAfterDelivery).not.toHaveBeenCalled();
     expect(pendingRepo.cancelPending).not.toHaveBeenCalled();
+  });
+});
+
+// La minimización REAL vive acá, en el servidor. Ocultar la columna en el
+// render dejaría el nombre del proveedor viajando dentro del payload, legible
+// desde el inspector del navegador: la protección tiene que cortar antes.
+describe("getMissingItems · minimización de la identidad del proveedor", () => {
+  const supplier = { id: "sup-1", name: "Distribuidora Norte" };
+
+  it("anula proveedor y supplierId cuando el rol no puede verlos", async () => {
+    const row = missingItemRow({ supplier, supplierId: supplier.id });
+    repo.listMissingItems.mockResolvedValue({ items: [row], nextCursor: null });
+
+    const result = await getMissingItems({
+      canViewCustomerIdentity: true,
+      canViewSupplierIdentity: false,
+    });
+
+    expect(result.items[0]!.supplier).toBeNull();
+    // El id solo también identifica al proveedor si se cruza con otra pantalla.
+    expect(result.items[0]!.supplierId).toBeNull();
+    expect(JSON.stringify(result.items)).not.toContain("Distribuidora Norte");
+    expect(JSON.stringify(result.items)).not.toContain("sup-1");
+  });
+
+  it("lo conserva intacto para gerencia", async () => {
+    const row = missingItemRow({ supplier, supplierId: supplier.id });
+    repo.listMissingItems.mockResolvedValue({ items: [row], nextCursor: null });
+
+    const result = await getMissingItems({
+      canViewCustomerIdentity: true,
+      canViewSupplierIdentity: true,
+    });
+
+    expect(result.items[0]!.supplier).toEqual(supplier);
+    expect(result.items[0]!.supplierId).toBe(supplier.id);
+  });
+
+  // Los dos ejes son independientes: ocultar al proveedor no puede llevarse
+  // puesto el resto de la fila ni el nombre del cliente, y viceversa.
+  it("no toca el resto de la fila al minimizar el proveedor", async () => {
+    const row = missingItemRow({ supplier, supplierId: supplier.id, quantity: 7 });
+    repo.listMissingItems.mockResolvedValue({ items: [row], nextCursor: null });
+
+    const result = await getMissingItems({
+      canViewCustomerIdentity: true,
+      canViewSupplierIdentity: false,
+    });
+
+    expect(result.items[0]!.quantity).toBe(7);
+    expect(result.items[0]!.status).toBe(row.status);
+    expect(result.items[0]!.product).toEqual(row.product);
+  });
+
+  it("nunca muta la fila que devolvió el repositorio", async () => {
+    const row = missingItemRow({ supplier, supplierId: supplier.id });
+    repo.listMissingItems.mockResolvedValue({ items: [row], nextCursor: null });
+
+    await getMissingItems({
+      canViewCustomerIdentity: false,
+      canViewSupplierIdentity: false,
+    });
+
+    expect(row.supplier).toEqual(supplier);
   });
 });

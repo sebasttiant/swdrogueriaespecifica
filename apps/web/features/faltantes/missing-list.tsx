@@ -27,6 +27,10 @@ type MissingListProps = {
   // es solo producto/cantidad/código, sin el seguimiento de gerencia. Es un eje
   // distinto de `canOrder` (que además depende de que haya proveedores).
   canSeeStatus: boolean;
+  // Gatea la columna "Pedido" (proveedor · fecha · cantidad pedida). Un vendedor
+  // NO debe saber a qué depósito le compra la droguería. Eje distinto de
+  // `canSeeStatus`: saber en qué anda el faltante no es saber a quién se le pide.
+  canSeeSupplier: boolean;
   // Proveedores elegibles para el pedido. Vacío = todavía no hay ninguno, así
   // que la única rama posible es crear uno nuevo.
   suppliers: SupplierOption[];
@@ -87,6 +91,9 @@ function canOrderItem(missing: MissingItemListItem): boolean {
 type ActionContext = {
   canOrder: boolean;
   canSeeStatus: boolean;
+  // Identidad del proveedor. El service YA la anuló para quien no la tiene, así
+  // que esto solo evita pintar una columna vacía; la protección real no vive acá.
+  canSeeSupplier: boolean;
   suppliers: SupplierOption[];
   canCreateSupplier: boolean;
 };
@@ -209,7 +216,7 @@ function missingCard(
         </summary>
         <div className="mt-2 space-y-1 text-xs text-muted-foreground">
           {missing.note ? <p>Nota: {missing.note}</p> : null}
-          {orderDetails(missing)}
+          {actions.canSeeSupplier ? orderDetails(missing) : null}
           {origin ? (
             <>
               <p>
@@ -261,7 +268,9 @@ function missingRow(
           </div>
         </td>
       ) : null}
-      <td className="px-3 py-2 text-sm">{orderCell(missing)}</td>
+      {actions.canSeeSupplier ? (
+        <td className="px-3 py-2 text-sm">{orderCell(missing)}</td>
+      ) : null}
       {hasActions ? (
         <td className="px-3 py-2">{missingActions(missing, actions)}</td>
       ) : null}
@@ -278,6 +287,7 @@ export function MissingList({
   nextCursor,
   canOrder,
   canSeeStatus,
+  canSeeSupplier,
   suppliers,
   canCreateSupplier,
   now,
@@ -285,6 +295,7 @@ export function MissingList({
   const actions: ActionContext = {
     canOrder,
     canSeeStatus,
+    canSeeSupplier,
     suppliers,
     canCreateSupplier,
   };
@@ -336,7 +347,9 @@ export function MissingList({
                     {canSeeStatus ? (
                       <th className="px-3 py-2 font-medium">Estado</th>
                     ) : null}
-                    <th className="px-3 py-2 font-medium">Pedido</th>
+                    {canSeeSupplier ? (
+                      <th className="px-3 py-2 font-medium">Pedido</th>
+                    ) : null}
                     {canOrder ? (
                       <th className="px-3 py-2 text-right font-medium">Acción</th>
                     ) : null}

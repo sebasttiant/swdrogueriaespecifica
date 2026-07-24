@@ -42,12 +42,15 @@ export default async function FaltantesPage({
 	const canSubmitMissingReports = can(session.user.role, "canSubmitMissingReports");
 	const canReviewMissingReports = can(session.user.role, "canReviewMissingReports");
 	const canViewCustomerIdentity = can(session.user.role, "canViewCustomerIdentity");
+	// De quién compra la droguería: solo gerencia. El service ya lo minimiza,
+	// así que esto último solo evita renderizar una columna que vendría vacía.
+	const canViewSupplierIdentity = can(session.user.role, "canViewSupplierIdentity");
 
   // Un único instante compartido por el resumen global y el agrupamiento de
   // la página actual, para que ambos hablen del mismo "ahora".
   const now = new Date();
   const [{ items, nextCursor }, summary, suppliers] = await Promise.all([
-    getMissingItems({ cursor, canViewCustomerIdentity }),
+    getMissingItems({ cursor, canViewCustomerIdentity, canViewSupplierIdentity }),
     getMissingItemsSummary(now),
     // Los proveedores alimentan el selector del pedido. Se piden siempre que el
     // usuario pueda pedir: sin la lista no se puede resolver si hay una rama
@@ -148,6 +151,7 @@ export default async function FaltantesPage({
           nextCursor={nextCursor}
           canOrder={canOrder}
           canSeeStatus={canOrderMissingItems}
+          canSeeSupplier={canViewSupplierIdentity}
           suppliers={suppliers}
           canCreateSupplier={canCreateSupplier}
           now={now}

@@ -157,6 +157,19 @@ export const CAPABILITIES = [
   // default: the lowest operational role (OPERADOR) does NOT get it; SUPERVISOR
   // and above do.
   "canViewCustomerIdentity",
+  // Gatea la exposición de la IDENTIDAD DEL PROVEEDOR (de qué depósito o
+  // laboratorio llega cada producto) en Faltantes y en su export. Decisión de
+  // negocio explícita: un vendedor no debe saber a quién le compra la droguería.
+  //
+  // Es un eje DISTINTO de `canOrderMissingItems`: pedir es una acción, ver de
+  // quién se compra es exposición de datos. Hoy ambas viven en la gerencia, pero
+  // separarlas permite que en el futuro alguien pueda pedir sin ver la cartera
+  // de proveedores, o al revés, con un cambio de una línea en `ROLE_CAPABILITIES`.
+  //
+  // Mismo mecanismo que `canViewCustomerIdentity`: la minimización ocurre en el
+  // SERVIDOR. Ocultar la columna en el render no alcanzaría —el nombre viajaría
+  // igual en el payload y se leería desde el inspector del navegador—.
+  "canViewSupplierIdentity",
   // Delivery lifecycle (Slice A). Asymmetric on purpose: delivering is the
   // counter operator's everyday job, so OPERADOR gets it too. Cancelling
   // breaks a commitment already made to a customer and needs a higher
