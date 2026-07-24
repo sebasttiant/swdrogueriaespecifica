@@ -131,3 +131,33 @@ export async function linkMissingReports(
   });
   return count;
 }
+
+// --------------------------------------------------------------------------
+// Trazabilidad (Mejora 5): el vendedor que REPORTÓ cada faltante nacido de un
+// reporte. Un faltante vinculado tiene `createdBy` = gerencia (quien revisó),
+// así que el solicitante real vive acá, en el `reporter` del reporte cuyo
+// `linkedMissingItemId` apunta al faltante. Consulta por lote (índice
+// `linkedMissingItemId`) para no hacer N+1 sobre la página de faltantes.
+// --------------------------------------------------------------------------
+
+export async function reporterNamesByLinkedItemIds(
+  itemIds: string[],
+): Promise<Map<string, string>> {
+  if (itemIds.length === 0) return new Map();
+
+  const rows = await prisma.missingReport.findMany({
+    where: { linkedMissingItemId: { in: itemIds } },
+    select: { linkedMissingItemId: true, reporter: { select: { name: true } } },
+    // Determinismo si dos reportes apuntaran al mismo faltante: gana el primero
+    // (el reporte original). `first-wins` abajo lo garantiza.
+    orderBy: { createdAt: "asc" },
+  });
+
+  const names = new Map<string, string>();
+  for (const row of rows) {
+    if (row.linkedMissingItemId && !names.has(row.linkedMissingItemId)) {
+      names.set(row.linkedMissingItemId, row.reporter.name);
+    }
+  }
+  return names;
+}

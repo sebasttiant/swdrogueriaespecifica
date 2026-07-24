@@ -22,12 +22,13 @@ vi.mock("@/server/actions/missing-item.actions", () => ({
 
 import { formatBogotaDate } from "@/lib/datetime/bogota";
 import type { MissingItemListItem } from "@/server/repositories/missing-item.repository";
+import type { MissingItemListEntry } from "@/server/services/missing-item.service";
 
 import { MissingList } from "./missing-list";
 
 const now = new Date("2026-06-06T12:00:00.000Z");
 
-function item(overrides: Partial<MissingItemListItem>): MissingItemListItem {
+function item(overrides: Partial<MissingItemListEntry>): MissingItemListEntry {
   return {
     id: "missing-id",
     quantity: 1,
@@ -52,6 +53,10 @@ function item(overrides: Partial<MissingItemListItem>): MissingItemListItem {
     origin: null,
     supplier: null,
     confirmedBy: null,
+    createdBy: { id: "creator-1", name: "Creador Demo" },
+    // Ya resuelto por el service (reporter o createdBy). Null por defecto para
+    // no inyectar la línea de solicitante en tests que no la prueban.
+    requestedByName: null,
     ...overrides,
   };
 }
@@ -77,7 +82,7 @@ function mockActionState(state: ActionState, isPending = false) {
 }
 
 function renderMissingList(
-	items: MissingItemListItem[],
+	items: MissingItemListEntry[],
 	canOrder = false,
 	options: {
 		suppliers?: { id: string; name: string }[];
@@ -400,6 +405,36 @@ describe("MissingList · status visibility (Mejora 4)", () => {
     const html = renderMissingList([tracked()], false, { canSeeStatus: true });
 
     expect(html).toContain("Recibido");
+  });
+});
+
+// Mejora 5: quién pidió el faltante. `requestedByName` ya viene resuelto por el
+// service (reporter del vendedor o createdBy). La lista solo lo muestra.
+describe("MissingList · requester traceability (Mejora 5)", () => {
+  it("shows the requester in the card line and the desktop column", () => {
+    const html = renderMissingList([
+      item({
+        id: "m-1",
+        requestedByName: "Juan Vendedor",
+        product: product("Producto", "PR-1"),
+      }),
+    ]);
+
+    // "Solicitado por" aparece dos veces: encabezado de columna + línea de la
+    // tarjeta mobile.
+    expect(countOccurrences(html, "Solicitado por")).toBe(2);
+    expect(html).toContain("Solicitado por Juan Vendedor");
+    // El nombre: una vez en la tarjeta, otra en la celda desktop.
+    expect(countOccurrences(html, "Juan Vendedor")).toBe(2);
+  });
+
+  it("omits the card line when no requester is known, keeping only the column header", () => {
+    const html = renderMissingList([
+      item({ id: "m-1", requestedByName: null, product: product("Producto", "PR-1") }),
+    ]);
+
+    // Solo el encabezado; sin línea de solicitante en la tarjeta.
+    expect(countOccurrences(html, "Solicitado por")).toBe(1);
   });
 });
 

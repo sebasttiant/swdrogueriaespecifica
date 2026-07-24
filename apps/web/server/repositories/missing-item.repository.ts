@@ -56,6 +56,12 @@ export type MissingItemListItem = {
   // un usuario ya no resoluble, así que la relación es la única fuente del
   // nombre: nunca se duplica como texto en la fila del faltante.
   confirmedBy: { id: string; name: string } | null;
+  // Quién CREÓ el faltante (Mejora 5, trazabilidad). Para uno auto-generado
+  // desde un pendiente es el vendedor; para un alta manual o un reporte
+  // vinculado es gerencia. El "solicitante" real lo resuelve el service
+  // (reporte → reporter; si no, este createdBy). Mismo criterio de visibilidad
+  // que `confirmedBy`: nombre de staff, no PII de cliente.
+  createdBy: { id: string; name: string } | null;
 };
 
 export type CreateMissingItemData = {
@@ -115,6 +121,8 @@ const LIST_SELECT = {
   // service borra sin `canViewCustomerIdentity`— acá no hay gate por capability.
   // Se seleccionan solo id y nombre; nunca email, rol ni credenciales.
   confirmedBy: { select: { id: true, name: true } },
+  // Trazabilidad (Mejora 5): quién creó el faltante. Solo id y nombre.
+  createdBy: { select: { id: true, name: true } },
 } as const;
 
 export async function listMissingItems(params: {

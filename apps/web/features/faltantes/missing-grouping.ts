@@ -16,9 +16,12 @@ const URGENCY_ORDER = {
 
 export type MissingGroupKey = keyof typeof URGENCY_ORDER;
 
-export type MissingGroup = {
+// Genérico sobre el tipo de fila: la agrupación solo lee `origin`, así que
+// preserva variantes enriquecidas (p. ej. `MissingItemListEntry` con
+// `requestedByName`) sin perder sus campos extra al pasar por acá.
+export type MissingGroup<T extends MissingItemListItem = MissingItemListItem> = {
   key: MissingGroupKey;
-  items: MissingItemListItem[];
+  items: T[];
 };
 
 function missingGroupKey(item: MissingItemListItem, now: Date): MissingGroupKey {
@@ -30,11 +33,11 @@ function missingGroupKey(item: MissingItemListItem, now: Date): MissingGroupKey 
   return "EN_CURSO"; // A_TIEMPO | FINALIZADO
 }
 
-export function groupMissingItems(
-  items: readonly MissingItemListItem[],
+export function groupMissingItems<T extends MissingItemListItem>(
+  items: readonly T[],
   now: Date = new Date(),
-): MissingGroup[] {
-  const buckets = new Map<MissingGroupKey, MissingItemListItem[]>();
+): MissingGroup<T>[] {
+  const buckets = new Map<MissingGroupKey, T[]>();
 
   for (const item of items) {
     const key = missingGroupKey(item, now);

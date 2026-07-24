@@ -33,6 +33,15 @@ const { repo } = vi.hoisted(() => ({
 
 vi.mock("@/server/repositories/missing-item.repository", () => repo);
 
+// Trazabilidad (Mejora 5): el nombre del solicitante lo resuelve el service
+// combinando el repo de faltantes con el de reportes. Se mockea para fijar el
+// mapa faltante→reporter sin tocar DB.
+const { reportRepo } = vi.hoisted(() => ({
+  reportRepo: { reporterNamesByLinkedItemIds: vi.fn() },
+}));
+
+vi.mock("@/server/repositories/missing-report.repository", () => reportRepo);
+
 const { supplierRepo } = vi.hoisted(() => ({
   supplierRepo: {
     findSupplierById: vi.fn(),
@@ -74,7 +83,12 @@ import {
 } from "./missing-item.service";
 import type { MissingItemListItem } from "@/server/repositories/missing-item.repository";
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  // Por defecto ningún faltante nació de un reporte: el solicitante cae en
+  // `createdBy`. Los tests de reporte-gana sobreescriben este mapa.
+  reportRepo.reporterNamesByLinkedItemIds.mockResolvedValue(new Map());
+});
 
 // Typed fixture for `listMissingItems` rows — mirrors `MissingItemListItem`
 // exactly so tests catch accidental field drops/renames, not just missing PII.
@@ -110,6 +124,7 @@ function missingItemRow(
     },
     supplier: null,
     confirmedBy: null,
+    createdBy: { id: "creator-1", name: "Carla Vendedora" },
     ...overrides,
   };
 }
@@ -264,6 +279,7 @@ describe("getMissingItems", () => {
     expect(item).toEqual({
       ...row,
       origin: { ...row.origin, customerName: null },
+      requestedByName: row.createdBy!.name,
     });
   });
 
@@ -274,7 +290,7 @@ describe("getMissingItems", () => {
     const result = await getMissingItems({ canViewCustomerIdentity: true });
 
     expect(result.items[0]!.origin?.customerName).toBe("Juan Pérez");
-    expect(result.items[0]).toEqual(row);
+    expect(result.items[0]).toEqual({ ...row, requestedByName: row.createdBy!.name });
   });
 
   it("passes items with origin === null through unchanged under both flags", async () => {
@@ -282,10 +298,10 @@ describe("getMissingItems", () => {
     repo.listMissingItems.mockResolvedValue({ items: [row], nextCursor: null });
 
     const resultDenied = await getMissingItems({ canViewCustomerIdentity: false });
-    expect(resultDenied.items[0]).toEqual(row);
+    expect(resultDenied.items[0]).toEqual({ ...row, requestedByName: row.createdBy!.name });
 
     const resultAllowed = await getMissingItems({ canViewCustomerIdentity: true });
-    expect(resultAllowed.items[0]).toEqual(row);
+    expect(resultAllowed.items[0]).toEqual({ ...row, requestedByName: row.createdBy!.name });
   });
 
   it("does not mutate the repository row in place when minimizing", async () => {
@@ -297,6 +313,57 @@ describe("getMissingItems", () => {
     // The object handed back by the mocked repo must still hold the
     // original customerName — the service must return NEW objects.
     expect(row.origin?.customerName).toBe("Juan Pérez");
+  });
+});
+
+// Mejora 5: "quién pidió el faltante". Regla: si nació de un reporte de
+// vendedor, el solicitante es el `reporter`; si no, el `createdBy`.
+describe("getMissingItems · requestedByName (trazabilidad)", () => {
+  it("consulta los reporters por los ids de la página de faltantes", async () => {
+    const row = missingItemRow({ id: "m-1" });
+    repo.listMissingItems.mockResolvedValue({ items: [row], nextCursor: null });
+
+    await getMissingItems({ canViewCustomerIdentity: true });
+
+    expect(reportRepo.reporterNamesByLinkedItemIds).toHaveBeenCalledWith(["m-1"]);
+  });
+
+  // Faltante nacido de un reporte: `createdBy` es gerencia (quien lo vinculó),
+  // pero el solicitante es el vendedor que reportó.
+  it("prefiere el reporter sobre createdBy cuando el faltante vino de un reporte", async () => {
+    const row = missingItemRow({
+      id: "m-1",
+      createdBy: { id: "mgr-1", name: "Gerente Guillermo" },
+    });
+    repo.listMissingItems.mockResolvedValue({ items: [row], nextCursor: null });
+    reportRepo.reporterNamesByLinkedItemIds.mockResolvedValue(
+      new Map([["m-1", "Juan Vendedor"]]),
+    );
+
+    const result = await getMissingItems({ canViewCustomerIdentity: true });
+
+    expect(result.items[0]!.requestedByName).toBe("Juan Vendedor");
+  });
+
+  it("cae en createdBy cuando el faltante no vino de un reporte", async () => {
+    const row = missingItemRow({
+      id: "m-1",
+      createdBy: { id: "sell-1", name: "Carla Vendedora" },
+    });
+    repo.listMissingItems.mockResolvedValue({ items: [row], nextCursor: null });
+
+    const result = await getMissingItems({ canViewCustomerIdentity: true });
+
+    expect(result.items[0]!.requestedByName).toBe("Carla Vendedora");
+  });
+
+  it("es null cuando no hay reporter ni createdBy", async () => {
+    const row = missingItemRow({ id: "m-1", createdBy: null });
+    repo.listMissingItems.mockResolvedValue({ items: [row], nextCursor: null });
+
+    const result = await getMissingItems({ canViewCustomerIdentity: true });
+
+    expect(result.items[0]!.requestedByName).toBeNull();
   });
 });
 

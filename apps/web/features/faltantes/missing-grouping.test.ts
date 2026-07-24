@@ -32,6 +32,7 @@ function item(overrides: Partial<MissingItemListItem>): MissingItemListItem {
     origin: null,
     supplier: null,
     confirmedBy: null,
+    createdBy: null,
     ...overrides,
   };
 }
