@@ -26,6 +26,7 @@ import {
   lockPendingForUpdate,
   listPendings,
   listUrgentPendings,
+  listUsedZones,
   updatePendingAfterDelivery,
   updatePendingManagementStatus,
   type PendingListItem,
@@ -57,6 +58,10 @@ export type RegisterPendingInput = {
   promisedAt: Date;
   customerName?: string;
   note?: string;
+  // Seguimiento del cliente. `zone` llega ya canonizada desde el schema.
+  zone?: string;
+  totalAmount?: number;
+  paidAmount?: number;
   createdById?: string | null;
   productId?: string;
   manual?: ManualProductInput;
@@ -92,6 +97,12 @@ export type CreatePendingResult = {
 
 // Minimización server-side: el nombre del cliente nunca llega al cliente (ni
 // siquiera serializado en el HTML) para roles sin `canViewCustomerIdentity`.
+//
+// `zone` y los montos NO se minimizan, y es una decisión deliberada: la zona es
+// un barrio (dato grueso de ruteo, no una dirección) y el saldo es lo que el
+// operador tiene que cobrar al entregar. Ocultárselos rompería justo el
+// seguimiento que se pidió, sin proteger a nadie: el operador que carga el
+// pendiente ya los escribió él mismo.
 // Nunca mutamos las filas del repositorio; devolvemos objetos nuevos. Helper
 // compartido por `getPendings` y `getPendingDashboard` para que la regla viva
 // en un solo lugar.
@@ -115,6 +126,14 @@ export async function getPendings(params: {
   const { canViewCustomerIdentity, ...listParams } = params;
   const { items, nextCursor } = await listPendings(listParams);
   return { items: minimizeCustomerIdentity(items, canViewCustomerIdentity), nextCursor };
+}
+
+/**
+ * Zonas ya usadas, para sugerirlas en el alta. No es dato del cliente: es el
+ * vocabulario de zonas de la droguería, así que no se minimiza por rol.
+ */
+export async function getUsedZones(): Promise<string[]> {
+  return listUsedZones();
 }
 
 export type PendingDashboard = {
@@ -196,6 +215,9 @@ export async function registerPending(
         promisedAt: data.promisedAt,
         customerName: data.customerName,
         note: data.note,
+        zone: data.zone,
+        totalAmount: data.totalAmount,
+        paidAmount: data.paidAmount,
         createdById: data.createdById ?? null,
       },
       tx,

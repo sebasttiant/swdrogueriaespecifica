@@ -221,6 +221,26 @@ model Pending {
   promisedAt   DateTime
   customerName String?
   note         String?
+  // --------------------------------------------------------------------
+  // Seguimiento del cliente: zona de entrega y estado de pago.
+  //
+  // `zone` se guarda YA canonizada (ver features/pendientes/zone.ts): agrupar
+  // por zona con texto libre sin normalizar daría zonas duplicadas.
+  //
+  // `totalAmount`/`paidAmount` son ENTEROS de pesos colombianos, sin centavos.
+  // Nunca un Float: la aritmética binaria de punto flotante no representa
+  // exacto los decimales y el dinero no admite ese error.
+  //
+  // No existe una columna "pagado": ese estado se DERIVA de ambos montos (ver
+  // features/pendientes/payment-state.ts). Un flag persistido podría
+  // contradecir a los montos y no habría forma de saber cuál vale.
+  //
+  // Sin índice sobre `zone`: todavía no hay query que agrupe por zona. Se
+  // agrega cuando exista el reporte que lo use, no antes.
+  // --------------------------------------------------------------------
+  zone         String?
+  totalAmount  Int?
+  paidAmount   Int           @default(0)
   createdBy    User?         @relation("PendingCreatedBy", fields: [createdById], references: [id])
   createdById  String?
   createdAt    DateTime      @default(now())

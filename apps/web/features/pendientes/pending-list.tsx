@@ -14,8 +14,14 @@ import {
   computeDeadlineStatus,
   type DeadlineStatus,
 } from "./deadline-status";
+import { formatCop } from "@/lib/format/currency";
 import { remainingQuantity } from "./delivery-rules";
 import { canSetManagementStatus } from "./management-status";
+import {
+  derivePaymentState,
+  remainingAmount,
+  type PaymentState,
+} from "./payment-state";
 import { PendingCancelForm } from "./pending-cancel-form";
 import { PendingDeliverForm } from "./pending-deliver-form";
 import { PendingManagementStatusForm } from "./pending-management-status-form";
@@ -66,6 +72,16 @@ const DEADLINE: Record<
   FINALIZADO: { label: "Finalizado", tone: "neutral" },
 };
 
+// Estado de pago. "Sin abono" no lleva badge: es el caso por defecto y un badge
+// gris en cada tarjeta sería ruido que compite con el semáforo de la promesa.
+const PAYMENT: Record<
+  Exclude<PaymentState, "SIN_ABONO">,
+  { label: string; tone: "primary" | "success" }
+> = {
+  ABONADO: { label: "Abonó", tone: "primary" },
+  PAGADO: { label: "Pagado", tone: "success" },
+};
+
 // Promesa en hora de Colombia: formatBogotaDate garantiza zona y locale consistentes.
 
 // Listado presentacional (server component). Mobile-first: tarjetas apiladas.
@@ -114,6 +130,10 @@ export function PendingList({
         const showManagement =
           canManageStatus && canSetManagementStatus(pending.status);
         const showDeliverCancel = isOpen && (canDeliver || canCancel);
+        // Estado de pago derivado de los montos, nunca de una columna guardada.
+        const paymentState = derivePaymentState(pending);
+        const balance = remainingAmount(pending);
+        const payment = paymentState === "SIN_ABONO" ? null : PAYMENT[paymentState];
 
         return (
           <Card key={pending.id} className="space-y-3">
@@ -125,6 +145,7 @@ export function PendingList({
                 <p className="text-sm text-muted-foreground">
                   {pending.quantity} {pending.product.unit} · {pending.product.code}
                   {pending.customerName ? ` · ${pending.customerName}` : ""}
+                  {pending.zone ? ` · ${pending.zone}` : ""}
                 </p>
                 <p className="text-sm text-muted-foreground">
                   Promesa: {formatBogotaDate(pending.promisedAt, { style: "datetime" })}
@@ -133,10 +154,24 @@ export function PendingList({
                   Entregado: {pending.deliveredQuantity} / {pending.quantity}{" "}
                   {pending.product.unit}
                 </p>
+                {/* El saldo es lo que hay que COBRAR al entregar: se muestra en
+                    la tarjeta, no escondido detrás de un badge. */}
+                {paymentState === "SIN_ABONO" ? null : (
+                  <p className="text-sm text-muted-foreground">
+                    Abonó {formatCop(pending.paidAmount)}
+                    {pending.totalAmount === null
+                      ? " · valor total sin acordar"
+                      : ` de ${formatCop(pending.totalAmount)}`}
+                    {balance !== null && balance > 0
+                      ? ` · saldo ${formatCop(balance)}`
+                      : ""}
+                  </p>
+                )}
               </div>
               <div className="flex shrink-0 flex-col items-end gap-1.5">
                 <Badge tone={deadline.tone}>{deadline.label}</Badge>
                 <Badge tone={status.tone}>{status.label}</Badge>
+                {payment ? <Badge tone={payment.tone}>{payment.label}</Badge> : null}
               </div>
             </div>
 

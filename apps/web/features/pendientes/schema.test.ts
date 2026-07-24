@@ -97,6 +97,79 @@ describe("pendingCreateSchema", () => {
     expect(result.success).toBe(false);
   });
 
+  // ------------------------------------------------------------------------
+  // Seguimiento del cliente: zona y montos.
+  // ------------------------------------------------------------------------
+
+  it("guarda la zona en su forma canónica, no como se tipeó", () => {
+    const result = pendingCreateSchema.safeParse({ ...validInput, zone: "  NORTE " });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.zone).toBe("Norte");
+  });
+
+  it("deja la zona en undefined cuando llega vacía", () => {
+    const result = pendingCreateSchema.safeParse({ ...validInput, zone: "   " });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.zone).toBeUndefined();
+  });
+
+  // El operador escribe el monto como lo lee en el mostrador. Si el punto de
+  // miles se interpretara como decimal, $45.000 se guardaría como $45.
+  it("lee el punto como separador de miles, no como decimal", () => {
+    const result = pendingCreateSchema.safeParse({
+      ...validInput,
+      totalAmount: "$ 45.000",
+      paidAmount: "20.000",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.totalAmount).toBe(45_000);
+      expect(result.data.paidAmount).toBe(20_000);
+    }
+  });
+
+  // La coma es el separador DECIMAL en es-CO. Borrarla daría 4500050 — cien
+  // veces el valor real. Se rechaza para que el error sea visible.
+  it("rechaza un monto con coma decimal en vez de adivinar el valor", () => {
+    const result = pendingCreateSchema.safeParse({
+      ...validInput,
+      totalAmount: "45.000,50",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("sin abono es cero, no undefined: el cliente no dejó plata", () => {
+    const result = pendingCreateSchema.safeParse(validInput);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.paidAmount).toBe(0);
+      expect(result.data.totalAmount).toBeUndefined();
+    }
+  });
+
+  it("acepta un abono sin total acordado (producto por cotizar)", () => {
+    const result = pendingCreateSchema.safeParse({ ...validInput, paidAmount: "20.000" });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.paidAmount).toBe(20_000);
+      expect(result.data.totalAmount).toBeUndefined();
+    }
+  });
+
+  it("rechaza un abono mayor al total: al cargarlo es un typo", () => {
+    const result = pendingCreateSchema.safeParse({
+      ...validInput,
+      totalAmount: "45.000",
+      paidAmount: "60.000",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rechaza un monto negativo", () => {
+    const result = pendingCreateSchema.safeParse({ ...validInput, paidAmount: "-1000" });
+    expect(result.success).toBe(false);
+  });
+
   it("rechaza cantidad menor a 1", () => {
     const result = pendingCreateSchema.safeParse({ ...validInput, quantity: "0" });
     expect(result.success).toBe(false);

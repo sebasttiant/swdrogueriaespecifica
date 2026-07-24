@@ -41,7 +41,10 @@ export async function createPendingAction(
   const session = await requireCapability("canCreatePendientes");
 
   const parsed = pendingCreateSchema.safeParse({
-    productId: formData.get("productId"),
+    // En modo manual el campo `productId` no existe en el formulario, así que
+    // `FormData.get` devuelve null. El schema lo declara opcional (acepta
+    // undefined, NO null): sin esta normalización la rama manual nunca validaba.
+    productId: formData.get("productId") ?? undefined,
     // Producto manual (opcional): cuando el operador carga uno fuera del catálogo.
     manualName: formData.get("manualName") ?? undefined,
     manualUnit: formData.get("manualUnit") ?? undefined,
@@ -52,6 +55,10 @@ export async function createPendingAction(
     promisedAt: formData.get("promisedAt") ?? undefined,
     customerName: formData.get("customerName") ?? undefined,
     note: formData.get("note") ?? undefined,
+    // Seguimiento del cliente: zona de entrega y estado de pago.
+    zone: formData.get("zone") ?? undefined,
+    totalAmount: formData.get("totalAmount") ?? undefined,
+    paidAmount: formData.get("paidAmount") ?? undefined,
   });
 
   if (!parsed.success) {
@@ -98,6 +105,11 @@ export async function createPendingAction(
         customerName: parsed.data.customerName ?? null,
         note: parsed.data.note ?? null,
         manual: parsed.data.manual ?? null,
+        // El dinero comprometido con el cliente se audita: quién registró qué
+        // abono es exactamente lo que hay que poder reconstruir ante un reclamo.
+        zone: parsed.data.zone ?? null,
+        totalAmount: parsed.data.totalAmount ?? null,
+        paidAmount: parsed.data.paidAmount,
       },
       context,
     });

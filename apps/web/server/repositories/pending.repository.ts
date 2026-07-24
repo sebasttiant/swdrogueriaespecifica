@@ -20,6 +20,11 @@ export type PendingListItem = {
   promisedAt: Date;
   customerName: string | null;
   note: string | null;
+  // Seguimiento del cliente. Los montos son enteros de pesos; el estado de pago
+  // se deriva de ellos en `features/pendientes/payment-state.ts`, no se lee.
+  zone: string | null;
+  totalAmount: number | null;
+  paidAmount: number;
   createdAt: Date;
   deliveredQuantity: number;
   product: { id: string; name: string; code: string; unit: string };
@@ -31,6 +36,10 @@ export type CreatePendingData = {
   promisedAt: Date;
   customerName?: string;
   note?: string;
+  // Ya canonizada por el schema (`normalizeZone`): el repositorio no normaliza.
+  zone?: string;
+  totalAmount?: number;
+  paidAmount?: number;
   createdById?: string | null;
 };
 
@@ -41,6 +50,9 @@ const LIST_SELECT = {
   promisedAt: true,
   customerName: true,
   note: true,
+  zone: true,
+  totalAmount: true,
+  paidAmount: true,
   createdAt: true,
   deliveredQuantity: true,
   product: { select: { id: true, name: true, code: true, unit: true } },
@@ -186,6 +198,35 @@ export function listUrgentPendings(take: number): Promise<PendingListItem[]> {
   });
 }
 
+/**
+ * Zonas ya usadas, de la usada más recientemente a la más vieja. Alimenta las
+ * sugerencias del formulario para que la misma zona se escriba siempre igual.
+ *
+ * Agrupa con `groupBy` (GROUP BY en SQL), NO con `findMany` + `distinct`: ahí
+ * el `take` recorta filas antes de deduplicar, así que treinta pendientes de
+ * la misma zona devolverían una sola sugerencia. Agrupando, el `take` acota
+ * zonas distintas, que es lo que la pantalla necesita.
+ *
+ * `take` acotado como en todo listado del repositorio: son sugerencias de un
+ * campo de texto, no un catálogo que haya que recorrer entero.
+ */
+export async function listUsedZones(take = 30): Promise<string[]> {
+  const groups = await prisma.pending.groupBy({
+    by: ["zone"],
+    where: { zone: { not: null } },
+    // Última vez que se usó la zona: ordena las sugerencias por vigencia real.
+    _max: { createdAt: true },
+    orderBy: { _max: { createdAt: "desc" } },
+    take,
+  });
+
+  // El `where` ya descarta los null; el filtro deja el tipo en string[] sin un
+  // non-null assertion que mentiría si la condición cambiara.
+  return groups
+    .map((group) => group.zone)
+    .filter((zone): zone is string => zone !== null);
+}
+
 export async function createPending(
   data: CreatePendingData,
   client: Prisma.TransactionClient = prisma,
@@ -197,6 +238,10 @@ export async function createPending(
       promisedAt: data.promisedAt,
       customerName: data.customerName ?? null,
       note: data.note ?? null,
+      zone: data.zone ?? null,
+      totalAmount: data.totalAmount ?? null,
+      // Cero, no null: "no abonó" es un hecho conocido, no un dato ausente.
+      paidAmount: data.paidAmount ?? 0,
       createdById: data.createdById ?? null,
     },
   });
