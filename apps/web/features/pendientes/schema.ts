@@ -105,6 +105,8 @@ export const pendingCreateSchema = z
         }
         return normalized;
       }),
+    // Dirección de entrega: opcional, texto libre acotado.
+    customerAddress: optionalText(200),
     note: optionalText(280),
     // Seguimiento del cliente: zona de entrega y estado de pago.
     zone: optionalText(MAX_ZONE_LENGTH),
@@ -144,6 +146,7 @@ export const pendingCreateSchema = z
       promisedAt: data.promisedAt,
       customerName: data.customerName,
       customerPhone: data.customerPhone,
+      customerAddress: data.customerAddress,
       note: data.note,
       // Se persiste la forma canónica, no lo que se tipeó: ver `zone.ts`.
       zone: data.zone ? (normalizeZone(data.zone) ?? undefined) : undefined,

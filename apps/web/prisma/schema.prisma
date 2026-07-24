@@ -229,6 +229,11 @@ model Pending {
   // aplica hacia adelante; la historia se conserva como fue.
   customerName String?
   customerPhone String?
+  // Dirección de entrega del cliente. Opcional: la zona ya da el ruteo grueso,
+  // la dirección exacta afina la entrega. Es PII —dónde vive el cliente—, así
+  // que se minimiza server-side con `canViewCustomerIdentity`, igual que el
+  // nombre y el teléfono.
+  customerAddress String?
   note         String?
   // --------------------------------------------------------------------
   // Seguimiento del cliente: zona de entrega y estado de pago.

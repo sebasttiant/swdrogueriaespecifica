@@ -161,6 +161,13 @@ export function PendingList({
                   Promesa: {formatBogotaDate(pending.promisedAt, { style: "datetime" })}
                   {pending.zone ? ` · ${pending.zone}` : ""}
                 </p>
+                {/* Dirección de entrega: dónde llevarlo. Los pendientes sin
+                    dirección (opcional, o anteriores al campo) no muestran nada. */}
+                {pending.customerAddress ? (
+                  <p className="text-sm text-muted-foreground">
+                    Dirección: {pending.customerAddress}
+                  </p>
+                ) : null}
                 <p className="text-sm text-muted-foreground">
                   Entregado: {pending.deliveredQuantity} / {pending.quantity}{" "}
                   {pending.product.unit}

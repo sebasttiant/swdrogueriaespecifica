@@ -220,7 +220,7 @@ export function PendingForm({
             name="zone"
             list={zones.length > 0 ? zonesListId : undefined}
             maxLength={MAX_ZONE_LENGTH}
-            placeholder="Norte, Centro, Chapinero…"
+            placeholder="El Poblado, Laureles, Belén…"
           />
           {zones.length > 0 ? (
             <datalist id={zonesListId}>
@@ -253,6 +253,18 @@ export function PendingForm({
             required
             maxLength={MAX_PHONE_INPUT_LENGTH}
             placeholder="300 123 4567"
+          />
+        </Field>
+        {/* Dirección de entrega: opcional. La zona ya da el ruteo grueso; esto
+            afina dónde entregar. Ocupa las dos columnas: una dirección no entra
+            cómoda en media fila. */}
+        <Field label="Dirección (opcional)" htmlFor="customerAddress" className="sm:col-span-2">
+          <Input
+            id="customerAddress"
+            name="customerAddress"
+            autoComplete="street-address"
+            maxLength={200}
+            placeholder="Calle 10 #43-20, apto 301"
           />
         </Field>
         {/* Pago: dos montos y NADA más. El "pagado totalmente" no es un campo,

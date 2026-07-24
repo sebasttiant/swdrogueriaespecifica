@@ -182,3 +182,14 @@ describe("PendingForm · datos obligatorios del cliente", () => {
     expect(zone).toBeLessThan(customer);
   });
 });
+
+describe("PendingForm · dirección de entrega", () => {
+  it("postea un campo de dirección opcional", () => {
+    const html = render();
+
+    expect(html).toContain('name="customerAddress"');
+    expect(html).toContain("Dirección (opcional)");
+    // Opcional: no lleva `required` como cliente y teléfono.
+    expect(html).not.toMatch(/id="customerAddress"[^>]*required/);
+  });
+});

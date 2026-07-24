@@ -73,6 +73,23 @@ describe("pendingCreateSchema", () => {
     if (result.success) expect(result.data.customerPhone).toBe("3001234567");
   });
 
+  it("acepta una dirección de entrega y recorta los espacios", () => {
+    const result = pendingCreateSchema.safeParse({
+      ...validInput,
+      customerAddress: "  Calle 10 #43-20, apto 301  ",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.customerAddress).toBe("Calle 10 #43-20, apto 301");
+    }
+  });
+
+  it("deja la dirección en undefined cuando no viene: es opcional", () => {
+    const result = pendingCreateSchema.safeParse(validInput);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.customerAddress).toBeUndefined();
+  });
+
   it("rechaza un teléfono que no tiene forma de teléfono", () => {
     expect(
       pendingCreateSchema.safeParse({ ...validInput, customerPhone: "300" }).success,
