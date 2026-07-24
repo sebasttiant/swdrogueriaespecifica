@@ -1,7 +1,9 @@
 import { z } from "zod";
 
+import { compactCopInput } from "@/lib/format/currency";
 import { parseBogotaWallTime } from "@/lib/datetime/bogota";
 import { MANAGEMENT_STATUSES } from "@/features/pendientes/management-status";
+import { MAX_ZONE_LENGTH, normalizeZone } from "@/features/pendientes/zone";
 
 // Texto opcional que llega desde FormData: se normaliza vacío/espacios a
 // `undefined` para no persistir cadenas vacías como si fueran datos.
@@ -15,6 +17,29 @@ const optionalText = (max: number) =>
 
 // Unidad por defecto de un producto manual cuando el operador no la especifica.
 const MANUAL_UNIT_FALLBACK = "unidad";
+
+// Cota de cordura de un monto: cien millones de pesos. No es un límite
+// comercial, frena un tipeo accidental (ej. un código de barras en el campo).
+export const MAX_PENDING_AMOUNT = 100_000_000;
+
+// Monto en PESOS colombianos tal como lo escribe el operador en el mostrador.
+// La limpieza del texto vive en `compactCopInput`, compartida con la pantalla:
+// ver ahí por qué la coma decimal se rechaza en vez de adivinarse.
+const optionalAmount = z.preprocess(
+  (value) => {
+    if (typeof value !== "string") return value ?? undefined;
+    const compact = compactCopInput(value);
+    return compact.length > 0 ? compact : undefined;
+  },
+  z.coerce
+    .number({ error: "Ingresá un monto válido en pesos." })
+    // `finite` descarta el NaN que deja cualquier carácter que no supimos leer.
+    .finite({ error: "Ingresá un monto válido en pesos." })
+    .int({ error: "El monto va en pesos enteros, sin centavos." })
+    .nonnegative({ error: "El monto no puede ser negativo." })
+    .max(MAX_PENDING_AMOUNT, { error: "El monto supera el máximo permitido." })
+    .optional(),
+);
 
 // Validación del alta de un pendiente (solicitud de cliente). La cantidad llega
 // como string desde el FormData, por eso se coerciona. El producto puede venir
@@ -51,6 +76,10 @@ export const pendingCreateSchema = z
       }),
     customerName: optionalText(120),
     note: optionalText(280),
+    // Seguimiento del cliente: zona de entrega y estado de pago.
+    zone: optionalText(MAX_ZONE_LENGTH),
+    totalAmount: optionalAmount,
+    paidAmount: optionalAmount,
   })
   .superRefine((data, ctx) => {
     const hasCatalog = Boolean(data.productId);
@@ -62,6 +91,22 @@ export const pendingCreateSchema = z
         message: "Elegí un producto del catálogo o cargá uno manual",
       });
     }
+
+    // Al CARGAR el dato, un abono mayor al total es un typo con certeza
+    // práctica, así que se rechaza con un mensaje claro. La lectura sí es
+    // tolerante (ver `derivePaymentState`): filas históricas o correcciones
+    // posteriores pueden tener un excedente legítimo a favor del cliente.
+    if (
+      data.totalAmount !== undefined &&
+      data.paidAmount !== undefined &&
+      data.paidAmount > data.totalAmount
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["paidAmount"],
+        message: "El abono no puede superar el valor total.",
+      });
+    }
   })
   .transform((data) => {
     const base = {
@@ -69,6 +114,11 @@ export const pendingCreateSchema = z
       promisedAt: data.promisedAt,
       customerName: data.customerName,
       note: data.note,
+      // Se persiste la forma canónica, no lo que se tipeó: ver `zone.ts`.
+      zone: data.zone ? (normalizeZone(data.zone) ?? undefined) : undefined,
+      totalAmount: data.totalAmount,
+      // Sin abono es cero, no "desconocido": el cliente no dejó plata.
+      paidAmount: data.paidAmount ?? 0,
     };
     // Rama catálogo: referimos al producto existente, sin producto manual.
     if (data.productId) {

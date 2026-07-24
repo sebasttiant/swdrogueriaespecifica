@@ -115,6 +115,35 @@ describe("createPendingAction", () => {
     );
   });
 
+  it("lleva zona canonizada y montos en pesos enteros hasta el service", async () => {
+    await createPendingAction(
+      PREV,
+      createCatalogFormData({
+        zone: "  NORTE ",
+        totalAmount: "$ 45.000",
+        paidAmount: "20.000",
+      }),
+    );
+
+    expect(mocks.registerPending).toHaveBeenCalledWith(
+      expect.objectContaining({ zone: "Norte", totalAmount: 45_000, paidAmount: 20_000 }),
+    );
+  });
+
+  it("audita el dinero comprometido con el cliente", async () => {
+    await createPendingAction(
+      PREV,
+      createCatalogFormData({ totalAmount: "45.000", paidAmount: "45.000" }),
+    );
+
+    const auditCall = mocks.recordAudit.mock.calls.find(
+      (call) => call[0].action === AUDIT_ACTIONS.PENDING_CREATE,
+    )![0];
+    expect(auditCall.after).toEqual(
+      expect.objectContaining({ totalAmount: 45_000, paidAmount: 45_000 }),
+    );
+  });
+
   it("rechaza cuando no llega ni producto del catálogo ni manual", async () => {
     const data = new FormData();
     data.set("quantity", "2");

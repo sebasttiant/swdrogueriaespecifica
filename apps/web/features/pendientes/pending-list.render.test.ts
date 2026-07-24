@@ -42,6 +42,9 @@ function pending(overrides: Partial<PendingListItem> = {}): PendingListItem {
     promisedAt: new Date("2026-07-10T18:00:00.000Z"),
     customerName: null,
     note: null,
+    zone: null,
+    totalAmount: null,
+    paidAmount: 0,
     createdAt: new Date("2026-07-09T10:00:00.000Z"),
     deliveredQuantity: 4,
     product: { id: "prod-1", name: "Paracetamol", code: "P-001", unit: "unidad" },
@@ -221,5 +224,57 @@ describe("PendingList · estado de gestión (Mejora 2)", () => {
     });
 
     expect(html).toMatch(/value="COTIZANDO"[^>]*selected/);
+  });
+});
+
+describe("PendingList · seguimiento del cliente", () => {
+  it("muestra la zona junto al cliente", () => {
+    const html = renderList({
+      items: [pending({ customerName: "Ana Pérez", zone: "Norte" })],
+    });
+
+    expect(html).toContain("Ana Pérez");
+    expect(html).toContain("Norte");
+  });
+
+  // El saldo es lo que el operador tiene que COBRAR al entregar: va en la
+  // tarjeta, no escondido detrás de un badge.
+  it("muestra abono, total y saldo cuando el cliente abonó parte", () => {
+    const html = renderList({
+      items: [pending({ totalAmount: 50_000, paidAmount: 20_000 })],
+    });
+
+    // Los tres números tienen que estar: lo abonado, lo acordado y lo que falta.
+    expect(html).toMatch(/Abonó[^<]*20\.000/);
+    expect(html).toMatch(/de[^<]*50\.000/);
+    expect(html).toMatch(/saldo[^<]*30\.000/);
+  });
+
+  it("marca como Pagado cuando el abono cubre el total", () => {
+    const html = renderList({
+      items: [pending({ totalAmount: 50_000, paidAmount: 50_000 })],
+    });
+
+    expect(html).toContain("Pagado");
+    // Ya no hay nada que cobrar: no se anuncia un saldo.
+    expect(html).not.toMatch(/saldo/i);
+  });
+
+  // Producto por cotizar: hay plata del cliente pero no un total acordado.
+  it("nunca dice Pagado sin un total acordado", () => {
+    const html = renderList({
+      items: [pending({ totalAmount: null, paidAmount: 99_000 })],
+    });
+
+    expect(html).toContain("valor total sin acordar");
+    expect(html).not.toContain(">Pagado<");
+  });
+
+  // Sin abono no se ensucia la tarjeta con un badge gris en cada fila.
+  it("no muestra badge ni línea de pago cuando no hubo abono", () => {
+    const html = renderList({ items: [pending({ totalAmount: null, paidAmount: 0 })] });
+
+    expect(html).not.toContain("Abonó");
+    expect(html).not.toContain(">Pagado<");
   });
 });

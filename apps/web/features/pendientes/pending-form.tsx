@@ -11,6 +11,12 @@ import {
   defaultPromisedAtValue,
 } from "@/features/pendientes/promised-at-options";
 import {
+  derivePaymentState,
+  remainingAmount,
+} from "@/features/pendientes/payment-state";
+import { MAX_ZONE_LENGTH } from "@/features/pendientes/zone";
+import { formatCop, parseCopInput } from "@/lib/format/currency";
+import {
   createPendingAction,
   type PendingFormState,
 } from "@/server/actions/pending.actions";
@@ -25,6 +31,9 @@ export type ProductOption = {
 
 type PendingFormProps = {
   products: ProductOption[];
+  // Zonas ya usadas, para sugerir en vez de obligar a recordar cómo se escribió.
+  // Sugerencia, no restricción: una zona nueva se escribe igual de rápido.
+  zones?: string[];
   // Inyectables para tests deterministas; en producción usan los defaults.
   now?: Date;
   defaultCustom?: boolean;
@@ -34,6 +43,7 @@ type PendingFormProps = {
 // el toggle catálogo/manual). La lista de productos llega del server component.
 export function PendingForm({
   products,
+  zones = [],
   now = new Date(),
   defaultCustom = false,
 }: PendingFormProps) {
@@ -55,6 +65,22 @@ export function PendingForm({
   const [promisedAt, setPromisedAt] = useState(() => defaultPromisedAtValue(now));
   const [customPromisedAt, setCustomPromisedAt] = useState(defaultCustom);
   const promisedAtCustomId = useId();
+
+  // Montos como TEXTO, no como number: el operador escribe "45.000" con el punto
+  // de miles y un <input type="number"> lo rechazaría. El texto se interpreta
+  // con `parseCopInput`, el mismo lector que usa el servidor.
+  const [totalAmount, setTotalAmount] = useState("");
+  const [paidAmount, setPaidAmount] = useState("");
+  const zonesListId = useId();
+
+  const parsedTotal = parseCopInput(totalAmount);
+  const parsedPaid = parseCopInput(paidAmount);
+  const payment = { totalAmount: parsedTotal, paidAmount: parsedPaid ?? 0 };
+  const paymentState = derivePaymentState(payment);
+  const balance = remainingAmount(payment);
+  // El abono sobre un total conocido nunca debería superarlo; se avisa mientras
+  // se escribe en vez de esperar al rechazo del servidor.
+  const overpaid = parsedTotal !== null && parsedPaid !== null && parsedPaid > parsedTotal;
 
   return (
     <form action={formAction} className="space-y-4">
@@ -187,6 +213,89 @@ export function PendingForm({
             placeholder="Nombre del cliente"
           />
         </Field>
+        <Field
+          label="Zona (opcional)"
+          htmlFor="zone"
+          hint="Se guarda con formato uniforme para poder agrupar por zona."
+        >
+          {/* `list` sugiere las zonas ya usadas sin impedir escribir una nueva:
+              un <select> obligaría a mantener un catálogo de zonas antes de
+              poder cargar el primer pendiente de una zona nueva. */}
+          <Input
+            id="zone"
+            name="zone"
+            list={zones.length > 0 ? zonesListId : undefined}
+            maxLength={MAX_ZONE_LENGTH}
+            placeholder="Norte, Centro, Chapinero…"
+          />
+          {zones.length > 0 ? (
+            <datalist id={zonesListId}>
+              {zones.map((zone) => (
+                <option key={zone} value={zone} />
+              ))}
+            </datalist>
+          ) : null}
+        </Field>
+
+        {/* Pago: dos montos y NADA más. El "pagado totalmente" no es un campo,
+            es el resultado de que el abono cubra el total — se muestra abajo. */}
+        <div className="space-y-3 sm:col-span-2">
+          <span className="text-sm font-medium text-text">Pago (opcional)</span>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Valor total" htmlFor="totalAmount">
+              <Input
+                id="totalAmount"
+                name="totalAmount"
+                // Texto + teclado numérico: `type="number"` rechaza el punto de
+                // miles que la gente escribe de verdad ("45.000").
+                inputMode="numeric"
+                autoComplete="off"
+                placeholder="$ 45.000"
+                value={totalAmount}
+                onChange={(event) => setTotalAmount(event.target.value)}
+              />
+            </Field>
+            <Field label="Abono" htmlFor="paidAmount">
+              <Input
+                id="paidAmount"
+                name="paidAmount"
+                inputMode="numeric"
+                autoComplete="off"
+                placeholder="$ 20.000"
+                value={paidAmount}
+                onChange={(event) => setPaidAmount(event.target.value)}
+              />
+            </Field>
+          </div>
+
+          {/* "Pagó todo" en un tap: copia el total al abono. No guarda un flag
+              aparte, así que el número y el estado no pueden contradecirse. */}
+          <Button
+            type="button"
+            variant="ghost"
+            className="min-h-11"
+            disabled={parsedTotal === null}
+            onClick={() => setPaidAmount(totalAmount)}
+          >
+            Pagó todo
+          </Button>
+
+          {overpaid ? (
+            <p className="text-sm font-medium text-danger">
+              El abono supera el valor total.
+            </p>
+          ) : paymentState === "PAGADO" ? (
+            <p className="text-sm font-medium text-success">Pagado completo.</p>
+          ) : paymentState === "ABONADO" ? (
+            <p className="text-sm text-muted-foreground">
+              Abonó {formatCop(parsedPaid ?? 0)}
+              {balance === null
+                ? " · falta acordar el valor total"
+                : ` · saldo ${formatCop(balance)}`}
+            </p>
+          ) : null}
+        </div>
+
         <Field label="Nota (opcional)" htmlFor="note" className="sm:col-span-2">
           <Input id="note" name="note" placeholder="Detalle de la solicitud" />
         </Field>

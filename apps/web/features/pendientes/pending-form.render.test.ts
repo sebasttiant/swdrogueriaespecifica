@@ -26,11 +26,12 @@ function bogotaNow(wall: string): Date {
 }
 
 function render(
-  props: Partial<{ now: Date; defaultCustom: boolean }> = {},
+  props: Partial<{ now: Date; defaultCustom: boolean; zones: string[] }> = {},
 ): string {
   return renderToStaticMarkup(
     createElement(PendingForm, {
       products: PRODUCTS,
+      zones: props.zones,
       now: props.now ?? bogotaNow("2026-07-24T10:00"),
       defaultCustom: props.defaultCustom ?? false,
     }),
@@ -96,5 +97,54 @@ describe("PendingForm · entrega prometida", () => {
     expect(html).toContain('name="customerName"');
     expect(html).toContain('name="note"');
     expect(html).toContain("Registrar pendiente");
+  });
+});
+
+describe("PendingForm · seguimiento del cliente", () => {
+  it("postea la zona y los dos montos del pago", () => {
+    const html = render();
+
+    expect(html).toContain('name="zone"');
+    expect(html).toContain('name="totalAmount"');
+    expect(html).toContain('name="paidAmount"');
+  });
+
+  // El operador escribe "45.000": un input numérico rechazaría el punto de
+  // miles, así que el campo es de texto con teclado numérico.
+  it("usa texto con teclado numérico para los montos, no type=number", () => {
+    const html = render();
+
+    // React serializa el atributo en camelCase; el HTML no distingue mayúsculas.
+    expect(html).toContain('inputMode="numeric"');
+    expect(html).not.toMatch(/name="totalAmount"[^>]*type="number"/);
+    expect(html).not.toMatch(/name="paidAmount"[^>]*type="number"/);
+  });
+
+  it("sugiere las zonas ya usadas sin impedir escribir una nueva", () => {
+    const html = render({ zones: ["Norte", "Centro"] });
+
+    expect(html).toContain("<datalist");
+    expect(html).toContain('value="Norte"');
+    expect(html).toContain('value="Centro"');
+    // Es un input libre, no un select cerrado.
+    expect(html).toMatch(/<input[^>]*name="zone"/);
+  });
+
+  it("no monta un datalist vacío cuando todavía no hay zonas cargadas", () => {
+    const html = render({ zones: [] });
+
+    expect(html).not.toContain("<datalist");
+  });
+
+  // "Pagado" no es un campo que se postee: es el resultado de que el abono
+  // cubra el total. Si apareciera un input, el estado podría contradecir a los
+  // montos, que es justo lo que este diseño evita.
+  it("no postea ningún flag de pagado: el estado se deriva", () => {
+    const html = render();
+
+    expect(html).toContain("Pagó todo");
+    expect(html).not.toContain('name="paid"');
+    expect(html).not.toContain('name="isPaid"');
+    expect(html).not.toContain('type="checkbox" name="paid');
   });
 });

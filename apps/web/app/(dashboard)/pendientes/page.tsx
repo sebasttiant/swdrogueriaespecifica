@@ -14,7 +14,7 @@ import {
 } from "@/features/pendientes/pending-form";
 import { PendingList } from "@/features/pendientes/pending-list";
 import { getProducts } from "@/server/services/product.service";
-import { getPendings } from "@/server/services/pending.service";
+import { getPendings, getUsedZones } from "@/server/services/pending.service";
 
 export const metadata: Metadata = { title: "Pendientes" };
 
@@ -39,9 +39,10 @@ export default async function PendientesPage({
 
   // Opciones para el selector del formulario. Slice MVP: primera página de
   // productos activos (ver README — selector sin búsqueda todavía).
-  const [products, pendings] = await Promise.all([
+  const [products, pendings, zones] = await Promise.all([
     getProducts({ take: MAX_PAGE_SIZE }),
     getPendings({ cursor, scope, canViewCustomerIdentity }),
+    getUsedZones(),
   ]);
 
   const productOptions: ProductOption[] = products.items
@@ -61,7 +62,7 @@ export default async function PendientesPage({
 
       <Card className="space-y-4">
         <CardTitle>Nuevo pendiente</CardTitle>
-        <PendingForm products={productOptions} />
+        <PendingForm products={productOptions} zones={zones} />
       </Card>
 
       {/* El historial es una vista aparte: los cerrados no se mezclan con lo que
