@@ -6,6 +6,7 @@ import { requireCapability } from "@/lib/auth/require-role";
 import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
 import {
   manualMissingItemCreateSchema,
+  discardMissingItemsSchema,
   orderMissingItemSchema,
 } from "@/features/faltantes/schema";
 import {
@@ -14,6 +15,7 @@ import {
 } from "@/server/services/audit.service";
 import {
   createManualMissingItem,
+  discardMissingItems,
   orderMissingItem,
   type OrderMissingItemInput,
   type OrderRejection,
@@ -240,4 +242,69 @@ function revalidateOrderViews() {
       console.error("[faltantes] El pedido se registró, pero no se pudo revalidar:", error);
     }
   }
+}
+
+/**
+ * Descarte masivo de faltantes duplicados o que ya no hacen falta.
+ *
+ * Gateada con `canOrderMissingItems`: es la autoridad de compras la que decide
+ * que un faltante no representa trabajo. Un vendedor no ve ni el control.
+ *
+ * NO es un "OK" genérico. Descartar afirma que nadie va a pedir esto; marcar
+ * como pedido afirma que ya se pidió. Un solo botón para ambos casos es el
+ * error que obligó a revertir "OK gerencia", y no se repite.
+ */
+export async function discardMissingItemsAction(
+  _prev: MissingItemActionState,
+  formData: FormData,
+): Promise<MissingItemActionState> {
+  const session = await requireCapability("canOrderMissingItems");
+
+  const parsed = discardMissingItemsSchema.safeParse({
+    // `getAll`: los checkboxes del lote postean el mismo nombre repetido.
+    ids: formData.getAll("ids").map(String),
+    reason: formData.get("reason") ?? undefined,
+  });
+
+  if (!parsed.success) {
+    const message = parsed.error.issues[0]?.message ?? "Revisá la selección.";
+    return { error: message, ok: false };
+  }
+
+  let result: Awaited<ReturnType<typeof discardMissingItems>>;
+  try {
+    result = await discardMissingItems({
+      ids: parsed.data.ids,
+      discardedById: session.user.id,
+      reason: parsed.data.reason,
+    });
+  } catch (error) {
+    console.error("[faltantes] No se pudieron descartar los faltantes:", error);
+    return { error: "No se pudo descartar. Intentá de nuevo.", ok: false };
+  }
+
+  // Se audita UNA entrada por faltante descartado: el lote es una comodidad de
+  // la pantalla, no una unidad de negocio. Quién descartó QUÉ es la pregunta
+  // que alguien va a hacer cuando un faltante desaparezca de la cola.
+  const context = await auditContextFromHeaders(session.user.id);
+  for (const id of result.discarded) {
+    await recordAudit({
+      action: AUDIT_ACTIONS.MISSING_DISCARDED,
+      module: AUDIT_MODULES.FALTANTES,
+      entity: "MissingItem",
+      entityId: id,
+      after: { status: "CANCELADO", reason: parsed.data.reason ?? null },
+      context,
+    });
+  }
+
+  revalidatePath("/faltantes");
+  revalidatePath("/dashboard");
+
+  // Una carrera no es un error: otro gerente llegó primero. Se informa sin
+  // pretender que el lote falló.
+  if (result.discarded.length === 0) {
+    return { error: "Ninguno de los faltantes elegidos seguía abierto.", ok: false };
+  }
+  return { error: null, ok: true };
 }
