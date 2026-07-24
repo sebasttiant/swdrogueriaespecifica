@@ -27,6 +27,7 @@ vi.mock("@/server/services/pending.service", () => ({
 import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
 import {
   cancelPendingAction,
+  createPendingAction,
   deliverPendingAction,
   updatePendingManagementStatusAction,
 } from "./pending.actions";
@@ -51,6 +52,79 @@ function cancelFormData(overrides: Record<string, string> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.auditContextFromHeaders.mockResolvedValue({ userId: "user-1", channel: "web" });
+});
+
+// El formulario tiene dos modos EXCLUYENTES y cada uno postea campos distintos:
+// catálogo envía `productId`, manual envía `manualName` y NO envía `productId`.
+// Estos tests arman el FormData real de cada modo (no un objeto plano), porque
+// la regresión que cubren vivía justo en esa frontera: `FormData.get` devuelve
+// null para un campo ausente y el schema solo acepta undefined.
+function createCatalogFormData(overrides: Record<string, string> = {}) {
+  const data = new FormData();
+  data.set("productId", "prod-1");
+  data.set("quantity", "2");
+  data.set("promisedAt", "2099-01-02T12:00");
+  for (const [key, value] of Object.entries(overrides)) data.set(key, value);
+  return data;
+}
+
+function createManualFormData(overrides: Record<string, string> = {}) {
+  const data = new FormData();
+  data.set("manualName", "Ibuprofeno jarabe");
+  data.set("manualUnit", "frasco");
+  data.set("quantity", "2");
+  data.set("promisedAt", "2099-01-02T12:00");
+  for (const [key, value] of Object.entries(overrides)) data.set(key, value);
+  return data;
+}
+
+describe("createPendingAction", () => {
+  beforeEach(() => {
+    mocks.requireCapability.mockResolvedValue({ user: { id: "op-1", role: "OPERADOR" } });
+    mocks.registerPending.mockResolvedValue({
+      pending: { id: "pend-1", productId: "prod-1" },
+      missingItem: null,
+      createdProduct: null,
+    });
+  });
+
+  it("registra un pendiente del catálogo", async () => {
+    const result = await createPendingAction(PREV, createCatalogFormData());
+
+    expect(result).toEqual({ error: null, ok: true });
+    expect(mocks.registerPending).toHaveBeenCalledWith(
+      expect.objectContaining({ productId: "prod-1", quantity: 2, createdById: "op-1" }),
+    );
+  });
+
+  it("registra un pendiente manual aunque el form no postee productId", async () => {
+    mocks.registerPending.mockResolvedValue({
+      pending: { id: "pend-2", productId: "prod-nuevo" },
+      missingItem: null,
+      createdProduct: { id: "prod-nuevo", code: "MAN-ABC", name: "Ibuprofeno jarabe", unit: "frasco" },
+    });
+
+    const result = await createPendingAction(PREV, createManualFormData());
+
+    expect(result).toEqual({ error: null, ok: true });
+    expect(mocks.registerPending).toHaveBeenCalledWith(
+      expect.objectContaining({
+        productId: undefined,
+        manual: { name: "Ibuprofeno jarabe", unit: "frasco" },
+      }),
+    );
+  });
+
+  it("rechaza cuando no llega ni producto del catálogo ni manual", async () => {
+    const data = new FormData();
+    data.set("quantity", "2");
+    data.set("promisedAt", "2099-01-02T12:00");
+
+    const result = await createPendingAction(PREV, data);
+
+    expect(result.ok).toBe(false);
+    expect(mocks.registerPending).not.toHaveBeenCalled();
+  });
 });
 
 describe("deliverPendingAction", () => {

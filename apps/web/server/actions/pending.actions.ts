@@ -41,7 +41,10 @@ export async function createPendingAction(
   const session = await requireCapability("canCreatePendientes");
 
   const parsed = pendingCreateSchema.safeParse({
-    productId: formData.get("productId"),
+    // En modo manual el campo `productId` no existe en el formulario, así que
+    // `FormData.get` devuelve null. El schema lo declara opcional (acepta
+    // undefined, NO null): sin esta normalización la rama manual nunca validaba.
+    productId: formData.get("productId") ?? undefined,
     // Producto manual (opcional): cuando el operador carga uno fuera del catálogo.
     manualName: formData.get("manualName") ?? undefined,
     manualUnit: formData.get("manualUnit") ?? undefined,
