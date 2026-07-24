@@ -19,6 +19,7 @@ import {
   groupPendingReportsByName,
   linkMissingReports,
   listPendingReportsForNames,
+  reporterNamesByLinkedItemIds,
 } from "./missing-report.repository";
 
 beforeEach(() => {
@@ -198,5 +199,42 @@ describe("linkMissingReports", () => {
     });
 
     expect(linked).toBe(0);
+  });
+});
+
+describe("reporterNamesByLinkedItemIds", () => {
+  // Sin ids no hay nada que resolver: ni siquiera se consulta la base.
+  it("returns an empty map without querying when there are no ids", async () => {
+    const result = await reporterNamesByLinkedItemIds([]);
+
+    expect(result.size).toBe(0);
+    expect(prismaMock.missingReport.findMany).not.toHaveBeenCalled();
+  });
+
+  it("maps each linked missing item id to its reporter name", async () => {
+    prismaMock.missingReport.findMany.mockResolvedValue([
+      { linkedMissingItemId: "m-1", reporter: { name: "Juan Vendedor" } },
+      { linkedMissingItemId: "m-2", reporter: { name: "Ana Vendedora" } },
+    ]);
+
+    const result = await reporterNamesByLinkedItemIds(["m-1", "m-2"]);
+
+    expect(result.get("m-1")).toBe("Juan Vendedor");
+    expect(result.get("m-2")).toBe("Ana Vendedora");
+    const call = prismaMock.missingReport.findMany.mock.calls[0]![0];
+    expect(call.where).toEqual({ linkedMissingItemId: { in: ["m-1", "m-2"] } });
+  });
+
+  // Determinismo: si dos reportes apuntaran al mismo faltante, gana el primero
+  // (orden por createdAt asc + first-wins).
+  it("keeps the first reporter when two reports point to the same item", async () => {
+    prismaMock.missingReport.findMany.mockResolvedValue([
+      { linkedMissingItemId: "m-1", reporter: { name: "Primero" } },
+      { linkedMissingItemId: "m-1", reporter: { name: "Segundo" } },
+    ]);
+
+    const result = await reporterNamesByLinkedItemIds(["m-1"]);
+
+    expect(result.get("m-1")).toBe("Primero");
   });
 });

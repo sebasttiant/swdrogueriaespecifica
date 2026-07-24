@@ -19,6 +19,7 @@ import {
   orderMissingItem as persistOrderedMissingItem,
   type MissingItemListItem,
 } from "@/server/repositories/missing-item.repository";
+import { reporterNamesByLinkedItemIds } from "@/server/repositories/missing-report.repository";
 import type { MissingItemStatus } from "@/lib/generated/prisma/client";
 import { canTransitionToOrdered } from "@/features/faltantes/order-rules";
 import {
@@ -88,27 +89,47 @@ export type CreateManualMissingItemInput = {
 // PEDIDO + confirmedAt). El repositorio refuerza este mismo filtro en su CAS.
 const CONFIRMABLE_STATUSES: MissingItemStatus[] = ["FALTANTE"];
 
+// Faltante enriquecido con el nombre del solicitante (Mejora 5). `requestedByName`
+// es derivado en el service —no vive en la fila de `MissingItem`—, así que se
+// expone acá y no en el tipo del repositorio.
+export type MissingItemListEntry = MissingItemListItem & {
+  requestedByName: string | null;
+};
+
 export async function getMissingItems(params: {
   cursor?: string | null;
   take?: number;
   // Requerido (sin default): que falte el flag debe ser un error de tipos,
   // nunca una fuga silenciosa de PII. `false` fuerza la minimización abajo.
   canViewCustomerIdentity: boolean;
-}): Promise<Paginated<MissingItemListItem>> {
+}): Promise<Paginated<MissingItemListEntry>> {
   const { canViewCustomerIdentity, ...listParams } = params;
   const { items, nextCursor } = await listMissingItems(listParams);
+
+  // El solicitante real: si el faltante nació de un reporte de vendedor, su
+  // `createdBy` es gerencia (quien lo vinculó), así que el vendedor está en el
+  // `reporter` del reporte. Una consulta por lote (índice `linkedMissingItemId`)
+  // resuelve toda la página sin N+1.
+  const reporterNames = await reporterNamesByLinkedItemIds(items.map((item) => item.id));
 
   // Minimización server-side: el nombre del cliente nunca llega al cliente
   // (ni siquiera serializado en el HTML) para roles sin esta capability.
   // Nunca mutamos las filas del repositorio; devolvemos objetos nuevos.
-  const minimizedItems = canViewCustomerIdentity
-    ? items
-    : items.map((item) => ({
-        ...item,
-        origin: item.origin ? { ...item.origin, customerName: null } : null,
-      }));
+  const enrichedItems = items.map((item) => {
+    const base = canViewCustomerIdentity
+      ? item
+      : {
+          ...item,
+          origin: item.origin ? { ...item.origin, customerName: null } : null,
+        };
+    // Reporte → reporter; si no, quien lo creó (vendedor del pendiente o
+    // gerencia en el alta manual). Nombre de staff, no PII de cliente.
+    const requestedByName =
+      reporterNames.get(item.id) ?? item.createdBy?.name ?? null;
+    return { ...base, requestedByName };
+  });
 
-  return { items: minimizedItems, nextCursor };
+  return { items: enrichedItems, nextCursor };
 }
 
 export async function createManualMissingItem(input: CreateManualMissingItemInput) {

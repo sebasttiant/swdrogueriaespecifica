@@ -8,6 +8,7 @@ import { formatBogotaDate } from "@/lib/datetime/bogota";
 import type { MissingItemStatus } from "@/lib/generated/prisma/client";
 import { cn } from "@/lib/utils/cn";
 import type { MissingItemListItem } from "@/server/repositories/missing-item.repository";
+import type { MissingItemListEntry } from "@/server/services/missing-item.service";
 import type { SupplierOption } from "@/server/repositories/supplier.repository";
 import {
   computeDeadlineStatus,
@@ -18,7 +19,7 @@ import { getOrderMetadata, orderedQuantityLabel } from "./missing-list-helpers";
 import { MissingOrderForm } from "./missing-order-form";
 
 type MissingListProps = {
-  items: MissingItemListItem[];
+  items: MissingItemListEntry[];
   nextCursor: string | null;
   canOrder: boolean;
   // Autoridad de compras (`canOrderMissingItems`): habilita ver los badges de
@@ -154,7 +155,7 @@ function orderCell(missing: MissingItemListItem) {
 // Tarjeta mobile de un faltante. Extraída para reusarse dentro de cada
 // sección de grupo sin duplicar el markup.
 function missingCard(
-  missing: MissingItemListItem,
+  missing: MissingItemListEntry,
   now: Date,
   actions: ActionContext,
 ) {
@@ -175,6 +176,13 @@ function missingCard(
             {missing.product.code}
             {missing.originId ? " · auto" : ""}
           </p>
+          {/* Trazabilidad (Mejora 5): quién lo pidió. El vendedor que reportó,
+              o quien lo creó. Visible para todos: es contexto operativo. */}
+          {missing.requestedByName ? (
+            <p className="truncate text-xs text-muted-foreground">
+              Solicitado por {missing.requestedByName}
+            </p>
+          ) : null}
         </div>
         <p className="shrink-0 text-lg font-bold tabular-nums text-text">
           {missing.quantity}
@@ -221,7 +229,7 @@ function missingCard(
 
 // Fila desktop de un faltante. Misma razón de ser que `missingCard`.
 function missingRow(
-  missing: MissingItemListItem,
+  missing: MissingItemListEntry,
   now: Date,
   actions: ActionContext,
 ) {
@@ -241,6 +249,9 @@ function missingRow(
       </td>
       <td className="px-3 py-2 text-sm text-muted-foreground">
         {missing.note ? `Nota: ${missing.note}` : "—"}
+      </td>
+      <td className="px-3 py-2 text-sm text-muted-foreground">
+        {missing.requestedByName ?? "—"}
       </td>
       {actions.canSeeStatus ? (
         <td className="px-3 py-2">
@@ -321,6 +332,7 @@ export function MissingList({
                     <th className="px-3 py-2 font-medium">Código</th>
                     <th className="px-3 py-2 font-medium">Cantidad</th>
                     <th className="px-3 py-2 font-medium">Nota</th>
+                    <th className="px-3 py-2 font-medium">Solicitado por</th>
                     {canSeeStatus ? (
                       <th className="px-3 py-2 font-medium">Estado</th>
                     ) : null}
