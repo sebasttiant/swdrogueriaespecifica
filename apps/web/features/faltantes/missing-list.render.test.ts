@@ -82,6 +82,10 @@ function renderMissingList(
 	options: {
 		suppliers?: { id: string; name: string }[];
 		canCreateSupplier?: boolean;
+		// Ver los badges de seguimiento es un eje aparte de poder pedir. Por
+		// defecto siguen a `canOrder` (gerencia ve todo), pero los tests de
+		// Mejora 4 los fijan por separado para probar la independencia.
+		canSeeStatus?: boolean;
 	} = {},
 ): string {
 	return renderToStaticMarkup(
@@ -89,6 +93,7 @@ function renderMissingList(
 			items,
 			nextCursor: null,
 			canOrder,
+			canSeeStatus: options.canSeeStatus ?? canOrder,
 			now,
 			suppliers: options.suppliers ?? [],
 			canCreateSupplier: options.canCreateSupplier ?? true,
@@ -358,6 +363,43 @@ describe("MissingList · no ambiguous authorization path", () => {
     // El nombre del responsable histórico no se muestra todavía: C2 lo trae de
     // vuelta como "pedido histórico", con su proveedor sin registrar.
     expect(html).not.toContain("Ana Gerente");
+  });
+});
+
+// Mejora 4: el vendedor reporta y sigue operando. En su vista de la cola no va
+// el seguimiento de gerencia (badges de estado y vencimiento); gerencia sí lo ve.
+describe("MissingList · status visibility (Mejora 4)", () => {
+  function tracked() {
+    return item({
+      id: "seg-1",
+      status: "RECIBIDO",
+      originId: "pending-id",
+      origin: origin({ promisedAt: new Date("2026-06-06T18:00:00.000Z") }),
+      product: product("Producto seguimiento", "SEG-1"),
+    });
+  }
+
+  it("hides the status badge and the Estado column from the seller", () => {
+    const html = renderMissingList([tracked()], false, { canSeeStatus: false });
+
+    expect(html).not.toContain("Recibido");
+    expect(html).not.toMatch(/<th[^>]*>Estado<\/th>/);
+  });
+
+  it("shows the status badge and the Estado column to gerencia", () => {
+    const html = renderMissingList([tracked()], true, { canSeeStatus: true });
+
+    // Una vez en la tarjeta mobile y otra en la fila desktop.
+    expect(countOccurrences(html, "Recibido")).toBe(2);
+    expect(html).toMatch(/<th[^>]*>Estado<\/th>/);
+  });
+
+  // La visibilidad del seguimiento NO depende de poder pedir: un gerente sin
+  // proveedores (canOrder false) igual ve el estado.
+  it("keeps the status visible for gerencia even when ordering is unavailable", () => {
+    const html = renderMissingList([tracked()], false, { canSeeStatus: true });
+
+    expect(html).toContain("Recibido");
   });
 });
 

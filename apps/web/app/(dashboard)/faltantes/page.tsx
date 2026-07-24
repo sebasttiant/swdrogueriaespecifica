@@ -106,6 +106,7 @@ export default async function FaltantesPage({
 			items={items}
 			nextCursor={nextCursor}
 			canOrder={canOrder}
+			canSeeStatus={canOrderMissingItems}
 			suppliers={suppliers}
 			canCreateSupplier={canCreateSupplier}
 			now={now}

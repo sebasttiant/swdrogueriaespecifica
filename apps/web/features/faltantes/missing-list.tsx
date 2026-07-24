@@ -21,6 +21,11 @@ type MissingListProps = {
   items: MissingItemListItem[];
   nextCursor: string | null;
   canOrder: boolean;
+  // Autoridad de compras (`canOrderMissingItems`): habilita ver los badges de
+  // estado y vencimiento. El vendedor reporta y sigue operando; para él la cola
+  // es solo producto/cantidad/código, sin el seguimiento de gerencia. Es un eje
+  // distinto de `canOrder` (que además depende de que haya proveedores).
+  canSeeStatus: boolean;
   // Proveedores elegibles para el pedido. Vacío = todavía no hay ninguno, así
   // que la única rama posible es crear uno nuevo.
   suppliers: SupplierOption[];
@@ -75,10 +80,12 @@ function canOrderItem(missing: MissingItemListItem): boolean {
   return missing.status === "FALTANTE" && missing.confirmedAt === null;
 }
 
-// Contexto de la acción de una fila. Agrupado para no arrastrar parámetros
-// posicionales por cada helper de render.
+// Contexto de render de una fila: quién puede pedir (acción) y quién ve el
+// seguimiento (badges de estado/vencimiento). Agrupado para no arrastrar
+// parámetros posicionales por cada helper de render.
 type ActionContext = {
   canOrder: boolean;
+  canSeeStatus: boolean;
   suppliers: SupplierOption[];
   canCreateSupplier: boolean;
 };
@@ -177,10 +184,14 @@ function missingCard(
         </p>
       </div>
 
-      <div className="flex flex-wrap items-center gap-1.5">
-        {deadlineBadge(origin, now)}
-        <Badge tone={status.tone}>{status.label}</Badge>
-      </div>
+      {/* Seguimiento (vencimiento + estado): solo gerencia. El vendedor ve la
+          fila sin badges: reporta y sigue operando. */}
+      {actions.canSeeStatus ? (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {deadlineBadge(origin, now)}
+          <Badge tone={status.tone}>{status.label}</Badge>
+        </div>
+      ) : null}
 
       {missingActions(missing, actions)}
 
@@ -231,12 +242,14 @@ function missingRow(
       <td className="px-3 py-2 text-sm text-muted-foreground">
         {missing.note ? `Nota: ${missing.note}` : "—"}
       </td>
-      <td className="px-3 py-2">
-        <div className="flex items-center gap-1.5">
-          {deadlineBadge(missing.origin, now)}
-          <Badge tone={status.tone}>{status.label}</Badge>
-        </div>
-      </td>
+      {actions.canSeeStatus ? (
+        <td className="px-3 py-2">
+          <div className="flex items-center gap-1.5">
+            {deadlineBadge(missing.origin, now)}
+            <Badge tone={status.tone}>{status.label}</Badge>
+          </div>
+        </td>
+      ) : null}
       <td className="px-3 py-2 text-sm">{orderCell(missing)}</td>
       {hasActions ? (
         <td className="px-3 py-2">{missingActions(missing, actions)}</td>
@@ -253,12 +266,14 @@ export function MissingList({
   items,
   nextCursor,
   canOrder,
+  canSeeStatus,
   suppliers,
   canCreateSupplier,
   now,
 }: MissingListProps) {
   const actions: ActionContext = {
     canOrder,
+    canSeeStatus,
     suppliers,
     canCreateSupplier,
   };
@@ -306,7 +321,9 @@ export function MissingList({
                     <th className="px-3 py-2 font-medium">Código</th>
                     <th className="px-3 py-2 font-medium">Cantidad</th>
                     <th className="px-3 py-2 font-medium">Nota</th>
-                    <th className="px-3 py-2 font-medium">Estado</th>
+                    {canSeeStatus ? (
+                      <th className="px-3 py-2 font-medium">Estado</th>
+                    ) : null}
                     <th className="px-3 py-2 font-medium">Pedido</th>
                     {canOrder ? (
                       <th className="px-3 py-2 text-right font-medium">Acción</th>
