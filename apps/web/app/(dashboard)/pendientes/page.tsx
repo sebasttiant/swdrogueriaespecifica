@@ -27,6 +27,9 @@ export default async function PendientesPage({
   const canViewCustomerIdentity = can(session.user.role, "canViewCustomerIdentity");
   const canDeliver = can(session.user.role, "canDeliverPendings");
   const canCancel = can(session.user.role, "canCancelPendings");
+  // Estado de gestión: autoridad de compras (gerencia). Reusa la misma
+  // capability que pedir un faltante, no la de cancelar.
+  const canManageStatus = can(session.user.role, "canOrderMissingItems");
 
   const { cursor, scope: rawScope } = await searchParams;
 
@@ -96,6 +99,7 @@ export default async function PendientesPage({
         nextCursor={pendings.nextCursor}
         canDeliver={canDeliver}
         canCancel={canCancel}
+        canManageStatus={canManageStatus}
         scope={scope}
       />
     </div>

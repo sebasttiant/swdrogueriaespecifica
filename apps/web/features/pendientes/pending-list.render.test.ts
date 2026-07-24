@@ -16,6 +16,7 @@ vi.mock("react", async (importOriginal) => {
 vi.mock("@/server/actions/pending.actions", () => ({
   deliverPendingAction: vi.fn(),
   cancelPendingAction: vi.fn(),
+  updatePendingManagementStatusAction: vi.fn(),
 }));
 
 import { createElement } from "react";
@@ -52,6 +53,7 @@ function renderList(
   props: Partial<{
     canDeliver: boolean;
     canCancel: boolean;
+    canManageStatus: boolean;
     items: PendingListItem[];
     nextCursor: string | null;
     scope: "active" | "history";
@@ -63,6 +65,7 @@ function renderList(
       nextCursor: props.nextCursor ?? null,
       canDeliver: props.canDeliver ?? true,
       canCancel: props.canCancel ?? true,
+      canManageStatus: props.canManageStatus ?? false,
       scope: props.scope ?? "active",
     }),
   );
@@ -161,5 +164,62 @@ describe("PendingList · capability gating and delivery bounds", () => {
 
     expect(html).toMatch(/<button[^>]*disabled/);
     expect(html).toMatch(/id="quantity-pend-1"[^>]*disabled/);
+  });
+});
+
+describe("PendingList · estado de gestión (Mejora 2)", () => {
+  // El vendedor (sin autoridad de compras) NUNCA ve el selector, ni siquiera en
+  // un pendiente que sí lo admitiría.
+  it("hides the management selector from users without purchasing authority", () => {
+    const html = renderList({
+      canManageStatus: false,
+      items: [pending({ status: "PENDIENTE", deliveredQuantity: 0 })],
+    });
+
+    expect(html).not.toContain("Estado de gestión");
+    expect(html).not.toContain('name="status"');
+  });
+
+  it("shows the four management options to purchasing (gerencia) on an open pending", () => {
+    const html = renderList({
+      canManageStatus: true,
+      items: [pending({ status: "PENDIENTE", deliveredQuantity: 0 })],
+    });
+
+    expect(html).toContain("Estado de gestión");
+    expect(html).toContain('name="status"');
+    expect(html).toContain("Solicitado");
+    expect(html).toContain("En búsqueda");
+    expect(html).toContain("Cotizando");
+    expect(html).toContain("Agotado");
+  });
+
+  // PARCIAL ya tiene una entrega en curso: la gestión no aplica ni para gerencia.
+  it("does not show the selector once the pending entered delivery (PARCIAL)", () => {
+    const html = renderList({
+      canManageStatus: true,
+      items: [pending({ status: "PARCIAL", deliveredQuantity: 4 })],
+    });
+
+    expect(html).not.toContain("Estado de gestión");
+  });
+
+  it("does not show the selector on a closed pending", () => {
+    const html = renderList({
+      canManageStatus: true,
+      items: [pending({ status: "ENTREGADO", deliveredQuantity: 10 })],
+    });
+
+    expect(html).not.toContain("Estado de gestión");
+  });
+
+  // Si el pendiente ya está en un estado de gestión, el selector lo preselecciona.
+  it("preselects the current management status", () => {
+    const html = renderList({
+      canManageStatus: true,
+      items: [pending({ status: "COTIZANDO", deliveredQuantity: 0 })],
+    });
+
+    expect(html).toMatch(/value="COTIZANDO"[^>]*selected/);
   });
 });
