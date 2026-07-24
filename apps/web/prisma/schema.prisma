@@ -36,6 +36,13 @@ enum PendingStatus {
   PARCIAL
   ENTREGADO
   CANCELADO
+  // Estados de gestión (Mejora 2): los fija gerencia/compras sobre un pendiente
+  // abierto. AGOTADO no cancela: es una señal para que el vendedor rechace el
+  // pendiente por el flujo normal. Ver features/pendientes/management-status.ts.
+  SOLICITADO
+  BUSQUEDA
+  COTIZANDO
+  AGOTADO
 }
 
 enum MissingItemStatus {

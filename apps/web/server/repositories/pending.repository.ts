@@ -96,8 +96,31 @@ export async function listPendings(params: {
 // `client` permite ejecutar dentro de una transacción (Prisma.$transaction);
 // por defecto usa el singleton. Así el service compone alta de pendiente +
 // faltante de forma atómica sin que el repo conozca la transacción.
-// Estados "abiertos": siguen requiriendo atención operativa.
-const OPEN_STATUSES: PendingStatus[] = ["PENDIENTE", "PARCIAL"];
+// Estados "abiertos": siguen requiriendo atención operativa y aparecen en la
+// vista activa y en el conteo de abiertos. Incluye los estados de gestión
+// (SOLICITADO/BUSQUEDA/COTIZANDO/AGOTADO): un pendiente en gestión sigue vivo
+// hasta que se entrega o se cancela, así que el vendedor debe verlo.
+const OPEN_STATUSES: PendingStatus[] = [
+  "PENDIENTE",
+  "PARCIAL",
+  "SOLICITADO",
+  "BUSQUEDA",
+  "COTIZANDO",
+  "AGOTADO",
+];
+
+// Estados que disparan las ALERTAS de vencimiento/urgencia (banner rojo,
+// próximas 24h, lista de urgentes). Es OPEN_STATUSES MENOS `AGOTADO`: un
+// pendiente marcado agotado ya no tiene acción de gestión pendiente —el
+// vendedor lo rechaza por el flujo normal—, así que mantenerlo en la alerta
+// roja solo entrena a la gente a ignorarla.
+const ALERT_STATUSES: PendingStatus[] = [
+  "PENDIENTE",
+  "PARCIAL",
+  "SOLICITADO",
+  "BUSQUEDA",
+  "COTIZANDO",
+];
 
 export function countOpenPendings(): Promise<number> {
   return prisma.pending.count({ where: { status: { in: OPEN_STATUSES } } });
@@ -130,10 +153,11 @@ export async function listPendingCreatedAtSince(since: Date): Promise<Date[]> {
   return rows.map((row) => row.createdAt);
 }
 
-// Vencidos = abiertos cuya promesa ya pasó.
+// Vencidos = abiertos-alertables cuya promesa ya pasó. Usa ALERT_STATUSES para
+// excluir AGOTADO (ver la nota en la definición de la constante).
 export function countOverduePendings(now: Date = new Date()): Promise<number> {
   return prisma.pending.count({
-    where: { status: { in: OPEN_STATUSES }, promisedAt: { lt: now } },
+    where: { status: { in: ALERT_STATUSES }, promisedAt: { lt: now } },
   });
 }
 
@@ -145,16 +169,17 @@ const MS_24H = 24 * 60 * 60 * 1000;
 export function countUpcomingPendings(now: Date = new Date()): Promise<number> {
   return prisma.pending.count({
     where: {
-      status: { in: OPEN_STATUSES },
+      status: { in: ALERT_STATUSES },
       promisedAt: { gte: now, lte: new Date(now.getTime() + MS_24H) },
     },
   });
 }
 
-// Pendientes abiertos más urgentes: los que vencen antes, primero.
+// Pendientes más urgentes: los que vencen antes, primero. Alertables (sin
+// AGOTADO), como el resto de las señales de urgencia.
 export function listUrgentPendings(take: number): Promise<PendingListItem[]> {
   return prisma.pending.findMany({
-    where: { status: { in: OPEN_STATUSES } },
+    where: { status: { in: ALERT_STATUSES } },
     take,
     orderBy: [{ promisedAt: "asc" }, { id: "asc" }],
     select: LIST_SELECT,
@@ -295,6 +320,36 @@ export async function cancelPending(
       cancelledById: data.cancelledById,
       cancelReason: data.cancelReason ?? null,
     },
+  });
+  return count;
+}
+
+// --------------------------------------------------------------------------
+// Estado de gestión (Mejora 2): gerencia/compras fija SOLICITADO/BUSQUEDA/
+// COTIZANDO/AGOTADO sobre un pendiente abierto.
+// --------------------------------------------------------------------------
+
+export type UpdatePendingManagementStatusData = {
+  id: string;
+  status: PendingStatus;
+  // Estados desde los que el cambio es válido. El guard va en el WHERE para que
+  // el update sea un compare-and-set atómico: si una entrega/cancelación
+  // concurrente ya movió la fila fuera de este set, no se escribe.
+  eligibleStatuses: PendingStatus[];
+};
+
+/**
+ * Compare-and-set del estado de gestión: escribe solo si el pendiente sigue en
+ * un estado elegible. Devuelve las filas escritas (0 o 1). `0` significa que el
+ * pendiente no existe o ya no admite gestión (entregado/parcial/cancelado): así
+ * un cambio de gestión nunca pisa una entrega o cancelación concurrente.
+ */
+export async function updatePendingManagementStatus(
+  data: UpdatePendingManagementStatusData,
+): Promise<number> {
+  const { count } = await prisma.pending.updateMany({
+    where: { id: data.id, status: { in: data.eligibleStatuses } },
+    data: { status: data.status },
   });
   return count;
 }

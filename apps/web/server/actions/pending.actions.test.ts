@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   deliverPending: vi.fn(),
   recordAudit: vi.fn(),
   registerPending: vi.fn(),
+  setPendingManagementStatus: vi.fn(),
   requireCapability: vi.fn(),
   revalidatePath: vi.fn(),
 }));
@@ -20,10 +21,15 @@ vi.mock("@/server/services/pending.service", () => ({
   cancelPendingCommitment: mocks.cancelPendingCommitment,
   deliverPending: mocks.deliverPending,
   registerPending: mocks.registerPending,
+  setPendingManagementStatus: mocks.setPendingManagementStatus,
 }));
 
 import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
-import { cancelPendingAction, deliverPendingAction } from "./pending.actions";
+import {
+  cancelPendingAction,
+  deliverPendingAction,
+  updatePendingManagementStatusAction,
+} from "./pending.actions";
 
 const PREV = { error: null, ok: false };
 
@@ -243,4 +249,83 @@ describe("cancelPendingAction", () => {
 		const auditCall = mocks.recordAudit.mock.calls[0]![0];
 		expect(JSON.stringify(auditCall)).not.toContain("Juan Pérez");
 	});
+});
+
+function managementFormData(overrides: Record<string, string> = {}) {
+  const data = new FormData();
+  data.set("id", "pend-1");
+  data.set("status", "SOLICITADO");
+  for (const [key, value] of Object.entries(overrides)) data.set(key, value);
+  return data;
+}
+
+describe("updatePendingManagementStatusAction", () => {
+  // Autoridad de compras: gerencia (canOrderMissingItems), NO canCancelPendings.
+  it("exige la capacidad de compras y corta si no la tiene", async () => {
+    mocks.requireCapability.mockRejectedValueOnce(new Error("REDIRECT:/dashboard"));
+
+    await expect(
+      updatePendingManagementStatusAction(PREV, managementFormData()),
+    ).rejects.toThrow("REDIRECT:/dashboard");
+
+    expect(mocks.requireCapability).toHaveBeenCalledWith("canOrderMissingItems");
+    expect(mocks.setPendingManagementStatus).not.toHaveBeenCalled();
+  });
+
+  it("rechaza un status que no es de gestión sin llamar al service", async () => {
+    mocks.requireCapability.mockResolvedValue({ user: { id: "adm-1", role: "ADMIN" } });
+
+    const result = await updatePendingManagementStatusAction(
+      PREV,
+      managementFormData({ status: "ENTREGADO" }),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(mocks.setPendingManagementStatus).not.toHaveBeenCalled();
+  });
+
+  it("fija el estado, audita el cambio y revalida en el camino feliz", async () => {
+    mocks.requireCapability.mockResolvedValue({ user: { id: "adm-1", role: "ADMIN" } });
+    mocks.setPendingManagementStatus.mockResolvedValue({
+      pending: { id: "pend-1", status: "COTIZANDO" },
+      rejection: null,
+    });
+
+    const result = await updatePendingManagementStatusAction(
+      PREV,
+      managementFormData({ status: "COTIZANDO" }),
+    );
+
+    expect(mocks.setPendingManagementStatus).toHaveBeenCalledWith({
+      id: "pend-1",
+      status: "COTIZANDO",
+    });
+    const auditCall = mocks.recordAudit.mock.calls[0]![0];
+    expect(auditCall.action).toBe(AUDIT_ACTIONS.PENDING_STATUS_CHANGE);
+    expect(auditCall.module).toBe(AUDIT_MODULES.PENDIENTES);
+    expect(auditCall.after).toEqual({ status: "COTIZANDO" });
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/pendientes");
+    // AGOTADO cambia los contadores del dashboard: debe revalidarse también.
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard");
+    expect(result).toEqual({ error: null, ok: true });
+  });
+
+  it("traduce el rechazo NOT_ELIGIBLE a un mensaje y lo audita como FAILURE", async () => {
+    mocks.requireCapability.mockResolvedValue({ user: { id: "adm-1", role: "ADMIN" } });
+    mocks.setPendingManagementStatus.mockResolvedValue({
+      pending: null,
+      rejection: "NOT_ELIGIBLE",
+    });
+
+    const result = await updatePendingManagementStatusAction(
+      PREV,
+      managementFormData({ status: "AGOTADO" }),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/no admite cambios de gestión/i);
+    const auditCall = mocks.recordAudit.mock.calls[0]![0];
+    expect(auditCall.result).toBe("FAILURE");
+    expect(auditCall.after).toEqual({ reason: "NOT_ELIGIBLE", status: "AGOTADO" });
+  });
 });

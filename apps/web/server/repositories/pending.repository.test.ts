@@ -6,6 +6,7 @@ const { prismaMock } = vi.hoisted(() => {
       count: vi.fn(),
       findUnique: vi.fn(),
       findMany: vi.fn(),
+      updateMany: vi.fn(),
     },
   };
   return { prismaMock };
@@ -16,10 +17,13 @@ vi.mock("@/lib/db/prisma", () => ({ prisma: prismaMock }));
 import { encodeCursor } from "@/lib/pagination";
 import {
   cancelPending,
+  countOverduePendings,
   countUpcomingPendings,
   listPendings,
+  listUrgentPendings,
   lockPendingForUpdate,
   updatePendingAfterDelivery,
+  updatePendingManagementStatus,
 } from "./pending.repository";
 
 beforeEach(() => {
@@ -225,14 +229,22 @@ describe("listPendings · scope", () => {
     await listPendings({});
 
     const args = prismaMock.pending.findMany.mock.calls[0]![0];
-    expect(args.where).toEqual({ status: { in: ["PENDIENTE", "PARCIAL"] } });
+    expect(args.where).toEqual({
+      status: {
+        in: ["PENDIENTE", "PARCIAL", "SOLICITADO", "BUSQUEDA", "COTIZANDO", "AGOTADO"],
+      },
+    });
   });
 
   it("filtra a estados abiertos con scope active explícito", async () => {
     await listPendings({ scope: "active" });
 
     const args = prismaMock.pending.findMany.mock.calls[0]![0];
-    expect(args.where).toEqual({ status: { in: ["PENDIENTE", "PARCIAL"] } });
+    expect(args.where).toEqual({
+      status: {
+        in: ["PENDIENTE", "PARCIAL", "SOLICITADO", "BUSQUEDA", "COTIZANDO", "AGOTADO"],
+      },
+    });
   });
 
   // El historial es una vista aparte, no la operativa: ahí sí entran los cerrados.
@@ -277,5 +289,75 @@ describe("listPendings · seguridad del cursor", () => {
     const args = prismaMock.pending.findMany.mock.calls[0]![0];
     expect(args.cursor).toEqual({ id: "real-id" });
     expect(args.skip).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Estados de gestión (Mejora 2) en las ALERTAS: los estados en curso
+// (SOLICITADO/BUSQUEDA/COTIZANDO) siguen alertables; AGOTADO queda EXCLUIDO
+// porque ya no tiene acción de gestión pendiente.
+// ---------------------------------------------------------------------------
+
+describe("alertas · estados de gestión", () => {
+  it("countOverduePendings incluye los estados en curso pero excluye AGOTADO", async () => {
+    await countOverduePendings(NOW);
+
+    const call = prismaMock.pending.count.mock.calls[0]![0];
+    expect(call.where.status.in).toEqual(
+      expect.arrayContaining(["SOLICITADO", "BUSQUEDA", "COTIZANDO"]),
+    );
+    expect(call.where.status.in).not.toContain("AGOTADO");
+  });
+
+  it("countUpcomingPendings excluye AGOTADO de la ventana de 24h", async () => {
+    await countUpcomingPendings(NOW);
+
+    const call = prismaMock.pending.count.mock.calls[0]![0];
+    expect(call.where.status.in).not.toContain("AGOTADO");
+  });
+
+  it("listUrgentPendings excluye AGOTADO del listado de urgentes", async () => {
+    await listUrgentPendings(5);
+
+    const args = prismaMock.pending.findMany.mock.calls[0]![0];
+    expect(args.where.status.in).not.toContain("AGOTADO");
+    expect(args.where.status.in).toEqual(
+      expect.arrayContaining(["PENDIENTE", "PARCIAL", "SOLICITADO"]),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Compare-and-set del estado de gestión: solo escribe si el pendiente sigue en
+// un estado elegible, para no pisar una entrega/cancelación concurrente.
+// ---------------------------------------------------------------------------
+
+describe("updatePendingManagementStatus", () => {
+  it("emite un updateMany guardado por los estados elegibles y devuelve las filas escritas", async () => {
+    prismaMock.pending.updateMany.mockResolvedValueOnce({ count: 1 });
+
+    const written = await updatePendingManagementStatus({
+      id: "pend-1",
+      status: "SOLICITADO",
+      eligibleStatuses: ["PENDIENTE", "COTIZANDO"],
+    });
+
+    expect(written).toBe(1);
+    expect(prismaMock.pending.updateMany).toHaveBeenCalledWith({
+      where: { id: "pend-1", status: { in: ["PENDIENTE", "COTIZANDO"] } },
+      data: { status: "SOLICITADO" },
+    });
+  });
+
+  it("devuelve 0 cuando ningún pendiente elegible coincide (inexistente o ya cerrado)", async () => {
+    prismaMock.pending.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    const written = await updatePendingManagementStatus({
+      id: "pend-terminal",
+      status: "AGOTADO",
+      eligibleStatuses: ["PENDIENTE"],
+    });
+
+    expect(written).toBe(0);
   });
 });

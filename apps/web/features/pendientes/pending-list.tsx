@@ -35,12 +35,19 @@ const CLOSED_STATUSES: readonly PendingStatus[] = ["ENTREGADO", "CANCELADO"];
 
 const STATUS: Record<
   PendingStatus,
-  { label: string; tone: "neutral" | "primary" | "success" | "warning" }
+  { label: string; tone: "neutral" | "primary" | "success" | "warning" | "danger" }
 > = {
   PENDIENTE: { label: "Pendiente", tone: "warning" },
   PARCIAL: { label: "Parcial", tone: "primary" },
   ENTREGADO: { label: "Entregado", tone: "success" },
   CANCELADO: { label: "Cancelado", tone: "neutral" },
+  // Estados de gestión (Mejora 2). "Solicitado" ya está pedido → informativo.
+  // "En búsqueda"/"Cotizando" siguen en curso → warning. "Agotado" es un
+  // producto que no se consigue → danger, para que el vendedor lo distinga.
+  SOLICITADO: { label: "Solicitado", tone: "primary" },
+  BUSQUEDA: { label: "En búsqueda", tone: "warning" },
+  COTIZANDO: { label: "Cotizando", tone: "warning" },
+  AGOTADO: { label: "Agotado", tone: "danger" },
 };
 
 // Semáforo operativo: el déficit de tiempo respecto de la promesa de entrega.

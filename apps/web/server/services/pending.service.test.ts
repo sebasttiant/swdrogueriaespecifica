@@ -47,6 +47,7 @@ const { repo } = vi.hoisted(() => ({
     countUpcomingPendings: vi.fn(),
     listPendings: vi.fn(),
     listUrgentPendings: vi.fn(),
+    updatePendingManagementStatus: vi.fn(),
   },
 }));
 
@@ -62,6 +63,7 @@ import {
   getPendingDashboard,
   getPendings,
   registerPending,
+  setPendingManagementStatus,
 } from "./pending.service";
 import type { PendingListItem } from "@/server/repositories/pending.repository";
 
@@ -639,5 +641,63 @@ describe("getPendingDashboard", () => {
     // would not equal the injected `now` and must fail this assertion.
     expect(repo.countOverduePendings).toHaveBeenCalledWith(now);
     expect(repo.countUpcomingPendings).toHaveBeenCalledWith(now);
+  });
+});
+
+describe("setPendingManagementStatus", () => {
+  it("delega el compare-and-set con los estados elegibles de gestión", async () => {
+    repo.updatePendingManagementStatus.mockResolvedValue(1);
+
+    await setPendingManagementStatus({ id: "pend-1", status: "SOLICITADO" });
+
+    expect(repo.updatePendingManagementStatus).toHaveBeenCalledWith({
+      id: "pend-1",
+      status: "SOLICITADO",
+      eligibleStatuses: [
+        "PENDIENTE",
+        "SOLICITADO",
+        "BUSQUEDA",
+        "COTIZANDO",
+        "AGOTADO",
+      ],
+    });
+  });
+
+  it("devuelve el pendiente actualizado cuando el CAS escribe una fila", async () => {
+    repo.updatePendingManagementStatus.mockResolvedValue(1);
+
+    const result = await setPendingManagementStatus({
+      id: "pend-1",
+      status: "COTIZANDO",
+    });
+
+    expect(result).toEqual({
+      pending: { id: "pend-1", status: "COTIZANDO" },
+      rejection: null,
+    });
+  });
+
+  // count 0 = no existe o ya entró a entrega/terminal: rechazo, no error.
+  it("rechaza con NOT_ELIGIBLE cuando el CAS no escribe (no elegible)", async () => {
+    repo.updatePendingManagementStatus.mockResolvedValue(0);
+
+    const result = await setPendingManagementStatus({
+      id: "pend-entregado",
+      status: "AGOTADO",
+    });
+
+    expect(result).toEqual({ pending: null, rejection: "NOT_ELIGIBLE" });
+  });
+
+  // AGOTADO es una señal, no una cancelación: nunca escribe CANCELADO.
+  it("marcar AGOTADO fija ese estado, no CANCELADO", async () => {
+    repo.updatePendingManagementStatus.mockResolvedValue(1);
+
+    const result = await setPendingManagementStatus({
+      id: "pend-1",
+      status: "AGOTADO",
+    });
+
+    expect(result.pending?.status).toBe("AGOTADO");
   });
 });

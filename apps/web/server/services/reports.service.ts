@@ -141,12 +141,20 @@ export function parseReportsPeriod(value: string | undefined): ReportsPeriod {
 const PENDING_STATUS_ORDER: PendingStatus[] = [
   "PENDIENTE",
   "PARCIAL",
+  "SOLICITADO",
+  "BUSQUEDA",
+  "COTIZANDO",
+  "AGOTADO",
   "ENTREGADO",
   "CANCELADO",
 ];
 const PENDING_STATUS_LABEL: Record<PendingStatus, string> = {
   PENDIENTE: "Pendiente",
   PARCIAL: "Parcial",
+  SOLICITADO: "Solicitado",
+  BUSQUEDA: "En búsqueda",
+  COTIZANDO: "Cotizando",
+  AGOTADO: "Agotado",
   ENTREGADO: "Entregado",
   CANCELADO: "Cancelado",
 };
