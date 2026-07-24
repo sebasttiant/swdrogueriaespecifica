@@ -107,8 +107,11 @@ export async function getMissingItems(params: {
   // Requerido (sin default): que falte el flag debe ser un error de tipos,
   // nunca una fuga silenciosa de PII. `false` fuerza la minimización abajo.
   canViewCustomerIdentity: boolean;
+  // Idem para la identidad del proveedor. Requerido por la misma razón: un
+  // default permisivo convertiría un olvido del llamador en una fuga silenciosa.
+  canViewSupplierIdentity: boolean;
 }): Promise<Paginated<MissingItemListEntry>> {
-  const { canViewCustomerIdentity, ...listParams } = params;
+  const { canViewCustomerIdentity, canViewSupplierIdentity, ...listParams } = params;
   const { items, nextCursor } = await listMissingItems(listParams);
 
   // El solicitante real: si el faltante nació de un reporte de vendedor, su
@@ -121,12 +124,20 @@ export async function getMissingItems(params: {
   // (ni siquiera serializado en el HTML) para roles sin esta capability.
   // Nunca mutamos las filas del repositorio; devolvemos objetos nuevos.
   const enrichedItems = items.map((item) => {
-    const base = canViewCustomerIdentity
+    const withoutCustomer = canViewCustomerIdentity
       ? item
       : {
           ...item,
           origin: item.origin ? { ...item.origin, customerName: null } : null,
         };
+    // Identidad del proveedor: se corta acá, en el servidor, por la misma razón
+    // que el nombre del cliente. Si solo se ocultara la columna en el render, el
+    // nombre viajaría igual dentro del payload y cualquiera lo leería desde el
+    // inspector del navegador. `supplierId` se anula junto con el nombre: el id
+    // solo también identifica al proveedor si se cruza con otra pantalla.
+    const base = canViewSupplierIdentity
+      ? withoutCustomer
+      : { ...withoutCustomer, supplier: null, supplierId: null };
     // Reporte → reporter; si no, quien lo creó (vendedor del pendiente o
     // gerencia en el alta manual). Nombre de staff, no PII de cliente.
     const requestedByName =
@@ -141,9 +152,11 @@ export async function getMissingItems(params: {
 // que la ruta las vuelque a CSV/Excel. No pagina —el export es la lista
 // completa, no una página— y no toca PII (las columnas son producto,
 // laboratorio, cantidad, estado, proveedor).
-export async function getMissingItemsForExport(): Promise<MissingExportRow[]> {
+export async function getMissingItemsForExport(
+  canViewSupplierIdentity: boolean,
+): Promise<MissingExportRow[]> {
   const items = await listOpenMissingItemsForExport();
-  return buildMissingExportRows(items);
+  return buildMissingExportRows(items, canViewSupplierIdentity);
 }
 
 export async function createManualMissingItem(input: CreateManualMissingItemInput) {

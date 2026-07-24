@@ -203,6 +203,15 @@ describe("capabilities · can()", () => {
     expect(can("SUPERVISOR", "canSnoozeAlerts")).toBe(false);
   });
 
+  // Identidad del proveedor: es MÁS restrictiva que la del cliente. Un
+  // SUPERVISOR ve al cliente pero NO a quién le compra la droguería.
+  it("canViewSupplierIdentity: solo ADMIN/SUPERADMIN; ni SUPERVISOR ni OPERADOR", () => {
+    expect(can("OPERADOR", "canViewSupplierIdentity")).toBe(false);
+    expect(can("SUPERVISOR", "canViewSupplierIdentity")).toBe(false);
+    expect(can("ADMIN", "canViewSupplierIdentity")).toBe(true);
+    expect(can("SUPERADMIN", "canViewSupplierIdentity")).toBe(true);
+  });
+
   it("canViewCustomerIdentity: OPERADOR no la tiene; SUPERVISOR/ADMIN/SUPERADMIN sí", () => {
     expect(can("OPERADOR", "canViewCustomerIdentity")).toBe(false);
     expect(can("SUPERVISOR", "canViewCustomerIdentity")).toBe(true);
