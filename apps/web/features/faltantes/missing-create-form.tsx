@@ -13,6 +13,8 @@ import {
   searchFailed,
   searchStarted,
   searchSucceeded,
+  hasEmptyProductSearch,
+  selectedProductId,
   type ProductOption,
 } from "@/features/faltantes/product-search";
 import {
@@ -38,7 +40,7 @@ export function MissingCreateForm({ defaultOpen = false }: MissingCreateFormProp
   // descarta en lugar de pisar los resultados de la consulta vigente.
   const requestIdRef = useRef(0);
   const productId = useId();
-  const quantityId = useId();
+  const sellerCodeId = useId();
   const noteId = useId();
   const resultsId = useId();
 
@@ -77,7 +79,8 @@ export function MissingCreateForm({ defaultOpen = false }: MissingCreateFormProp
 
   const isSearching = search.status === "searching";
   const hasFailed = search.status === "error";
-  const isEmpty = search.hasSearched && search.items.length === 0;
+  const isEmpty = hasEmptyProductSearch(search);
+  const selectedProduct = selectedProductId(search);
   // Si ya hay resultados en pantalla, el fallo fue de "ver más": el reintento
   // correcto es ese botón, que conserva el cursor. Este botón reinicia la
   // búsqueda, así que no debe ofrecerse como reintento en ese caso.
@@ -86,7 +89,7 @@ export function MissingCreateForm({ defaultOpen = false }: MissingCreateFormProp
   return (
     <form action={formAction} className="space-y-3 rounded-xl border border-border bg-muted/20 p-3">
       <Field label="Producto" htmlFor={productId}>
-        <input type="hidden" name="productId" value={search.selected?.id ?? ""} />
+        <input type="hidden" name="productId" value={selectedProduct} />
         <div className="space-y-2">
           <Input
             id={productId}
@@ -127,7 +130,8 @@ export function MissingCreateForm({ defaultOpen = false }: MissingCreateFormProp
           <div id={resultsId} aria-busy={isSearching} className="space-y-1">
             {isEmpty && !hasFailed ? (
               <p role="status" className="text-sm text-muted-foreground">
-                Sin resultados para esa búsqueda.
+                No hay un producto activo en el catálogo con ese nombre o código. Verificá el
+                catálogo o reportalo como faltante.
               </p>
             ) : null}
 
@@ -163,15 +167,13 @@ export function MissingCreateForm({ defaultOpen = false }: MissingCreateFormProp
         </div>
       </Field>
 
-      <Field label="Cantidad" htmlFor={quantityId}>
+      <Field label="Código vendedor (opcional)" htmlFor={sellerCodeId}>
         <Input
-          id={quantityId}
-          name="quantity"
-          type="number"
-          min={1}
-          step={1}
-          required
-          defaultValue={1}
+          id={sellerCodeId}
+          name="sellerCode"
+          type="text"
+          maxLength={40}
+          placeholder="Ej: V001, VEN-12"
         />
       </Field>
 
@@ -194,7 +196,7 @@ export function MissingCreateForm({ defaultOpen = false }: MissingCreateFormProp
         <Button type="button" variant="ghost" onClick={() => setOpen(false)} className="flex-1">
           Cancelar
         </Button>
-        <Button type="submit" disabled={isPending} className="flex-1">
+        <Button type="submit" disabled={isPending || !selectedProduct} className="flex-1">
           <Plus aria-hidden="true" className="h-4 w-4" />
           {isPending ? "Guardando…" : "Crear faltante"}
         </Button>

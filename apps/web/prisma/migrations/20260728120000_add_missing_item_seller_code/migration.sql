@@ -1,0 +1,11 @@
+-- Código del vendedor que reportó/registró el faltante (trazabilidad operativa).
+--
+-- ADITIVA y nullable: las filas existentes quedan en NULL, que es la verdad
+-- (ninguna tenía código de vendedor antes de esta columna). El alta manual
+-- catalogada y el alta desde reporte de vendedor pueden opcionalmente setearla.
+--
+-- No tiene FK: es un código libre (texto) que el vendedor/gerencia carga a mano
+-- ("V001", "VEN-12", etc.), no un id de usuario. El responsable real de la
+-- creación ya vive en `createdById` (con FK a users); `sellerCode` es un código
+-- corto de negocio, no una relación.
+ALTER TABLE "missing_items" ADD COLUMN "sellerCode" TEXT;

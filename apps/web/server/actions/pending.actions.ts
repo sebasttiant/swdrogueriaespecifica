@@ -67,12 +67,26 @@ export async function createPendingAction(
     return { error: "Revisá los datos del pendiente.", ok: false };
   }
 
+  let result: Awaited<ReturnType<typeof registerPending>>;
   try {
-    const result = await registerPending({
+    result = await registerPending({
       ...parsed.data,
       createdById: session.user.id,
     });
+  } catch (error) {
+    // Solo `registerPending` decide si hubo commit: su transacción revierte ante
+    // error. Por eso este es el ÚNICO punto que puede informar fallo de alta y
+    // habilitar un reintento seguro.
+    console.error("[pendientes] No se pudo registrar el pendiente:", error);
+    return {
+      error: "No se pudo registrar el pendiente. Intentá de nuevo.",
+      ok: false,
+    };
+  }
 
+  // Desde acá el pendiente ya existe. Auditoría e invalidación son efectos
+  // post-commit: fallar no puede convertir el éxito en error ni sugerir reintento.
+  try {
     const context = await auditContextFromHeaders(session.user.id);
 
     // Producto manual creado al vuelo: lo auditamos como efecto propio para que
@@ -138,16 +152,19 @@ export async function createPendingAction(
       });
     }
   } catch (error) {
-    // No se filtra el detalle al usuario; se loguea en server.
-    console.error("[pendientes] No se pudo registrar el pendiente:", error);
-    return {
-      error: "No se pudo registrar el pendiente. Intentá de nuevo.",
-      ok: false,
-    };
+    console.error("[pendientes] El pendiente se creó, pero no se pudo auditar:", error);
   }
 
-  revalidatePath("/pendientes");
-  revalidatePath("/faltantes");
+  // La escritura ya terminó. Un fallo de invalidación no puede dejar la Server
+  // Action rechazada ni el formulario bloqueado en "Guardando…"; la próxima
+  // navegación vuelve a leer datos frescos de todos modos.
+  for (const path of ["/pendientes", "/faltantes"]) {
+    try {
+      revalidatePath(path);
+    } catch (error) {
+      console.error("[pendientes] El pendiente se creó, pero no se pudo revalidar:", error);
+    }
+  }
   return { error: null, ok: true };
 }
 

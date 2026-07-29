@@ -22,6 +22,7 @@ function item(overrides: Partial<MissingItemListItem> = {}): MissingItemListItem
     orderedAt: null,
     orderedById: null,
     supplierId: null,
+    sellerCode: null,
     createdAt: new Date("2026-07-01T00:00:00.000Z"),
     product: {
       id: "p-1",
@@ -45,7 +46,8 @@ describe("buildMissingExportRows", () => {
     expect(row).toEqual({
       nombre: "Acetaminofén 500mg",
       laboratorio: "Genfar",
-      cantidad: 4,
+      cantidad: "",
+      codigoVendedor: "",
       estado: "Faltante",
       proveedor: "Distribuidora Norte",
     });
@@ -67,6 +69,16 @@ describe("buildMissingExportRows", () => {
 
     expect(row!.laboratorio).toBe("");
     expect(row!.proveedor).toBe("");
+  });
+
+  it("exports seller code instead of the manual quantity sentinel", () => {
+    const [manual, automatic] = buildMissingExportRows([
+      item({ originId: null, quantity: 1, sellerCode: "VEN-12" }),
+      item({ originId: "pending-1", quantity: 4, sellerCode: null }),
+    ], true);
+
+    expect(manual).toMatchObject({ cantidad: "", codigoVendedor: "VEN-12" });
+    expect(automatic).toMatchObject({ cantidad: 4, codigoVendedor: "" });
   });
 
   it("maps every status to its Spanish label", () => {
@@ -93,12 +105,12 @@ describe("buildMissingCsv", () => {
     expect(csv.charCodeAt(0)).toBe(0xfeff);
   });
 
-  it("writes the header row with the five columns", () => {
+  it("writes the header row with quantity and seller code columns", () => {
     const csv = buildMissingCsv([], true);
     const firstLine = csv.slice(1).split("\r\n")[0];
 
     expect(firstLine).toBe(
-      '"Nombre","Laboratorio","Cantidad","Estado","Proveedor"',
+      '"Nombre","Laboratorio","Cantidad","Código vendedor","Estado","Proveedor"',
     );
   });
 
@@ -110,27 +122,27 @@ describe("buildMissingCsv", () => {
     const lines = csv.slice(1).split("\r\n");
 
     expect(lines).toHaveLength(2);
-    expect(lines[1]).toBe('"Aspirina","Bayer","4","Faltante","Distribuidora Norte"');
+    expect(lines[1]).toBe('"Aspirina","Bayer","","","Faltante","Distribuidora Norte"');
   });
 
   // CSV injection: un valor que empieza con '=' no debe evaluarse en Excel.
   it("neutralizes values Excel would treat as a formula", () => {
     const csv = buildMissingCsv([
-      { nombre: "=SUM(A1:A9)", laboratorio: "Lab", cantidad: 1, estado: "Faltante", proveedor: "" },
+      { nombre: "=SUM(A1:A9)", laboratorio: "Lab", cantidad: 1, codigoVendedor: "", estado: "Faltante", proveedor: "" },
     ], true);
     const dataLine = csv.slice(1).split("\r\n")[1];
 
-    expect(dataLine).toBe('"\'=SUM(A1:A9)","Lab","1","Faltante",""');
+    expect(dataLine).toBe('"\'=SUM(A1:A9)","Lab","1","","Faltante",""');
   });
 
   // Una coma o una comilla en el nombre no debe romper la estructura del CSV.
   it("escapes commas and double quotes inside a field", () => {
     const csv = buildMissingCsv([
-      { nombre: 'Suero, "grande"', laboratorio: "Lab", cantidad: 1, estado: "Faltante", proveedor: "" },
+      { nombre: 'Suero, "grande"', laboratorio: "Lab", cantidad: 1, codigoVendedor: "", estado: "Faltante", proveedor: "" },
     ], true);
     const dataLine = csv.slice(1).split("\r\n")[1];
 
-    expect(dataLine).toBe('"Suero, ""grande""","Lab","1","Faltante",""');
+    expect(dataLine).toBe('"Suero, ""grande""","Lab","1","","Faltante",""');
   });
 });
 
@@ -158,6 +170,7 @@ describe("export · el proveedor no viaja en el archivo del vendedor", () => {
       "nombre",
       "laboratorio",
       "cantidad",
+      "codigoVendedor",
       "estado",
     ]);
     expect(missingExportColumns(true).map((column) => column.key)).toContain(

@@ -8,9 +8,28 @@ type MissingListCompactProps = {
   items: MissingItemListEntry[];
 };
 
-// Vista compacta (Mejora 3): solo lo esencial para escanear o imprimir la cola —
-// producto, laboratorio, cantidad. Sin badges, acciones ni detalle. NO reemplaza
-// la vista completa (`MissingList`): es una alternativa que se elige por ?view.
+// Vista compacta (Mejora 3): solo lo esencial para escanear o imprimir la cola.
+// Un faltante manual no tiene déficit: su `quantity = 1` es un sentinel interno;
+// en cambio, uno automático sí muestra el déficit calculado desde el pendiente.
+function compactReference(item: MissingItemListEntry) {
+  if (item.originId === null) {
+    return item.sellerCode ? (
+      <span className="font-mono">{item.sellerCode}</span>
+    ) : (
+      <span className="text-muted-foreground">—</span>
+    );
+  }
+
+  return (
+    <>
+      {item.quantity}
+      <span className="ml-1 text-xs font-normal text-muted-foreground">
+        {item.product.unit}
+      </span>
+    </>
+  );
+}
+
 export function MissingListCompact({ items }: MissingListCompactProps) {
   if (items.length === 0) {
     return (
@@ -48,10 +67,7 @@ export function MissingListCompact({ items }: MissingListCompactProps) {
               ) : null}
             </div>
             <p className="shrink-0 font-bold tabular-nums text-text">
-              {item.quantity}
-              <span className="ml-1 text-xs font-normal text-muted-foreground">
-                {item.product.unit}
-              </span>
+              {compactReference(item)}
             </p>
           </Card>
         ))}
@@ -64,7 +80,7 @@ export function MissingListCompact({ items }: MissingListCompactProps) {
             <tr>
               <th className="px-3 py-2 font-medium">Producto</th>
               <th className="px-3 py-2 font-medium">Laboratorio</th>
-              <th className="px-3 py-2 font-medium">Cantidad</th>
+              <th className="px-3 py-2 font-medium">Referencia</th>
               <th className="px-3 py-2 font-medium">Solicitado por</th>
             </tr>
           </thead>
@@ -78,7 +94,7 @@ export function MissingListCompact({ items }: MissingListCompactProps) {
                   {item.product.laboratory?.name ?? "—"}
                 </td>
                 <td className="px-3 py-2 text-muted-foreground">
-                  {item.quantity} {item.product.unit}
+                  {compactReference(item)}
                 </td>
                 <td className="px-3 py-2 text-muted-foreground">
                   {item.requestedByName ?? "—"}

@@ -110,6 +110,7 @@ function missingItemRow(
     orderedAt: null,
     orderedById: null,
     supplierId: null,
+    sellerCode: null,
     createdAt: new Date("2026-07-01T10:00:00.000Z"),
     product: {
       id: "prod-1",
@@ -371,21 +372,22 @@ describe("getMissingItems · requestedByName (trazabilidad)", () => {
 });
 
 describe("createManualMissingItem", () => {
-  it("creates a FALTANTE for an existing catalog product with originId null and note", async () => {
+  it("creates a cataloged missing item with the optional seller code", async () => {
     productRepo.findProductById.mockResolvedValue({ id: "prod-1", active: true });
     repo.createMissingItem.mockResolvedValue({
       id: "missing-manual",
       productId: "prod-1",
-      quantity: 3,
+      quantity: 1,
       originId: null,
       note: "Prioridad mostrador",
+      sellerCode: "VEN-12",
       status: "FALTANTE",
     });
 
     const result = await createManualMissingItem({
       productId: "prod-1",
-      quantity: 3,
       note: "Prioridad mostrador",
+      sellerCode: "VEN-12",
       createdById: "admin-1",
     });
 
@@ -399,10 +401,11 @@ describe("createManualMissingItem", () => {
     expect(productRepo.findProductById).toHaveBeenCalledWith("prod-1");
     expect(repo.createMissingItem).toHaveBeenCalledWith({
       productId: "prod-1",
-      quantity: 3,
+      quantity: 1,
       originId: null,
       createdById: "admin-1",
       note: "Prioridad mostrador",
+      sellerCode: "VEN-12",
     });
   });
 
@@ -410,7 +413,7 @@ describe("createManualMissingItem", () => {
     productRepo.findProductById.mockResolvedValue(null);
 
     await expect(
-      createManualMissingItem({ productId: "ghost", quantity: 1, createdById: "admin-1" }),
+      createManualMissingItem({ productId: "ghost", createdById: "admin-1" }),
     ).rejects.toThrow("Product not found");
 
     expect(repo.createMissingItem).not.toHaveBeenCalled();
@@ -420,7 +423,7 @@ describe("createManualMissingItem", () => {
     productRepo.findProductById.mockResolvedValue({ id: "inactive-product", active: false });
 
     await expect(
-      createManualMissingItem({ productId: "inactive-product", quantity: 1, createdById: "admin-1" }),
+      createManualMissingItem({ productId: "inactive-product", createdById: "admin-1" }),
     ).rejects.toThrow("Product not found");
 
     expect(repo.createMissingItem).not.toHaveBeenCalled();

@@ -111,7 +111,7 @@ function missingActions(
     <div className={cn("flex flex-col items-end gap-2", className)}>
       <MissingOrderForm
         id={missing.id}
-        neededQuantity={missing.quantity}
+        neededQuantity={missing.originId ? missing.quantity : null}
         suppliers={actions.suppliers}
         canCreateSupplier={actions.canCreateSupplier}
       />
@@ -192,10 +192,21 @@ function missingCard(
           ) : null}
         </div>
         <p className="shrink-0 text-lg font-bold tabular-nums text-text">
-          {missing.quantity}
-          <span className="ml-1 text-xs font-normal text-muted-foreground">
-            {missing.product.unit}
-          </span>
+          {missing.originId ? (
+            <>
+              {missing.quantity}
+              <span className="ml-1 text-xs font-normal text-muted-foreground">
+                {missing.product.unit}
+              </span>
+            </>
+          ) : missing.sellerCode ? (
+            <>
+              <span className="font-mono">{missing.sellerCode}</span>
+              <span className="ml-1 text-xs font-normal text-muted-foreground">vendedor</span>
+            </>
+          ) : (
+            <span className="text-muted-foreground">—</span>
+          )}
         </p>
       </div>
 
@@ -252,7 +263,15 @@ function missingRow(
       </td>
       <td className="px-3 py-2 text-muted-foreground">{missing.product.code}</td>
       <td className="px-3 py-2 text-muted-foreground">
-        {missing.quantity} {missing.product.unit}
+        {missing.originId ? (
+          <>
+            {missing.quantity} {missing.product.unit}
+          </>
+        ) : missing.sellerCode ? (
+          <span className="font-mono">{missing.sellerCode}</span>
+        ) : (
+          "—"
+        )}
       </td>
       <td className="px-3 py-2 text-sm text-muted-foreground">
         {missing.note ? `Nota: ${missing.note}` : "—"}
@@ -341,7 +360,7 @@ export function MissingList({
                   <tr>
                     <th className="px-3 py-2 font-medium">Producto</th>
                     <th className="px-3 py-2 font-medium">Código</th>
-                    <th className="px-3 py-2 font-medium">Cantidad</th>
+                    <th className="px-3 py-2 font-medium">Referencia</th>
                     <th className="px-3 py-2 font-medium">Nota</th>
                     <th className="px-3 py-2 font-medium">Solicitado por</th>
                     {canSeeStatus ? (

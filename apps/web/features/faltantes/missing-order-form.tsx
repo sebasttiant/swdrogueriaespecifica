@@ -18,9 +18,9 @@ const INITIAL_STATE: MissingItemActionState = { error: null, ok: false };
 
 type MissingOrderFormProps = {
 	id: string;
-	// Necesidad/déficit histórico del faltante (`quantity`). Se muestra SOLO como
-	// referencia: gerencia define explícitamente cuánto pedir, no se deriva de acá.
-	neededQuantity: number;
+	// Los faltantes automáticos conservan el déficit calculado. Las altas manuales
+	// usan un sentinel interno y por eso no exponen una necesidad registrada.
+	neededQuantity: number | null;
 	suppliers: SupplierOption[];
 	// Crear un proveedor al vuelo es un eje aparte del pedido (`canManageSuppliers`).
 	// Este booleano es cosmético: la Server Action lo vuelve a exigir del lado del
@@ -110,7 +110,11 @@ export function MissingOrderForm({
 			<Field
 				label="Cantidad a pedir"
 				htmlFor={orderedQuantityId}
-				hint={`Necesidad registrada: ${neededQuantity} unidades.`}
+					hint={
+						neededQuantity === null
+							? "Definí la cantidad a pedir según la necesidad actual."
+							: `Necesidad registrada: ${neededQuantity} unidades.`
+					}
 			>
 				<Input
 					id={orderedQuantityId}

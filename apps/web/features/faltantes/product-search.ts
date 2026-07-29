@@ -126,3 +126,13 @@ export function productSelected(
 ): ProductSearchState {
   return { ...state, selected: product };
 }
+
+// El formulario solo puede persistir un faltante catalogado cuando una opción
+// concreta fue elegida; escribir una búsqueda no equivale a elegir un producto.
+export function selectedProductId(state: ProductSearchState): string {
+  return state.selected?.id ?? "";
+}
+
+export function hasEmptyProductSearch(state: ProductSearchState): boolean {
+  return state.hasSearched && state.items.length === 0 && state.status !== "error";
+}

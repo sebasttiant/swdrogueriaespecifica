@@ -43,7 +43,7 @@ describe("MissingCreateForm", () => {
 
     expect(html).toContain("Nuevo faltante");
     expect(html).not.toContain('name="productId"');
-    expect(html).not.toContain('name="quantity"');
+    expect(html).not.toContain('name="sellerCode"');
     expect(html).not.toContain('name="note"');
   });
 
@@ -54,7 +54,9 @@ describe("MissingCreateForm", () => {
     expect(html).toContain("Buscá por nombre o código");
     expect(html).toContain("Buscar producto");
     expect(html).not.toContain("Paracetamol (PAR-1)");
-    expect(html).toContain('name="quantity"');
+    expect(html).toContain('name="sellerCode"');
+    expect(html).toContain("Código vendedor (opcional)");
+    expect(html).not.toContain('name="quantity"');
     expect(html).toContain('name="note"');
     expect(html).not.toContain("Producto (manual)");
     expect(html).not.toContain("manualName");
@@ -63,11 +65,18 @@ describe("MissingCreateForm", () => {
   it("does not announce an empty result set before any search ran", () => {
     const html = render({ defaultOpen: true });
 
-    expect(html).not.toContain("Sin resultados para esa búsqueda.");
+    expect(html).not.toContain("No hay un producto activo en el catálogo");
     expect(html).not.toContain("No se pudo buscar productos. Reintentá.");
     expect(html).not.toContain("Ver más resultados");
     expect(html).not.toContain("Seleccionado:");
     expect(html).toContain('aria-busy="false"');
+  });
+
+  it("keeps manual creation disabled until a catalog product is selected", () => {
+    const html = render({ defaultOpen: true });
+
+    expect(html).toContain("Crear faltante");
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>.*Crear faltante/s);
   });
 
   it("submits an empty productId until a catalog product is selected", () => {

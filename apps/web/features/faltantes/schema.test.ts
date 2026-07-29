@@ -181,10 +181,10 @@ describe("orderMissingItemSchema", () => {
 });
 
 describe("manualMissingItemCreateSchema", () => {
-  it("accepts an existing catalog product, positive quantity, and trims the optional note", () => {
+  it("accepts an existing catalog product and trims optional seller code and note", () => {
     const result = manualMissingItemCreateSchema.safeParse({
       productId: "  prod-1  ",
-      quantity: "3",
+      sellerCode: "  VEN-12  ",
       note: "  Prioridad mostrador  ",
     });
 
@@ -192,7 +192,7 @@ describe("manualMissingItemCreateSchema", () => {
     if (result.success) {
       expect(result.data).toEqual({
         productId: "prod-1",
-        quantity: 3,
+        sellerCode: "VEN-12",
         note: "Prioridad mostrador",
       });
     }
@@ -201,22 +201,23 @@ describe("manualMissingItemCreateSchema", () => {
   it("normalizes an empty note to undefined", () => {
     const result = manualMissingItemCreateSchema.safeParse({
       productId: "prod-1",
-      quantity: "1",
+      sellerCode: "   ",
       note: "   ",
     });
 
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.note).toBeUndefined();
+      expect(result.data.sellerCode).toBeUndefined();
     }
   });
 
-  it("rejects missing productId and non-positive quantities", () => {
+  it("rejects a missing productId and seller codes longer than 40 characters", () => {
     expect(
-      manualMissingItemCreateSchema.safeParse({ productId: "", quantity: "1" }).success,
+      manualMissingItemCreateSchema.safeParse({ productId: "" }).success,
     ).toBe(false);
     expect(
-      manualMissingItemCreateSchema.safeParse({ productId: "prod-1", quantity: "0" }).success,
+      manualMissingItemCreateSchema.safeParse({ productId: "prod-1", sellerCode: "x".repeat(41) }).success,
     ).toBe(false);
   });
 });
