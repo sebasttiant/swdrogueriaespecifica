@@ -76,7 +76,8 @@ export function ReportQueueList({ groups, page, hasMore }: ReportQueueListProps)
                 <li key={report.id} className="space-y-0.5">
                   <p className="break-words text-text">{report.rawName}</p>
                   <p>
-                    {report.reporter?.name ?? "Reportante no disponible"} ·{" "}
+                    {report.reporter?.name ?? "Reportante no disponible"}
+                    {report.sellerCode ? ` · ${report.sellerCode}` : ""} ·{" "}
                     {formatBogotaDate(report.createdAt, { style: "datetime" })}
                   </p>
                 </li>

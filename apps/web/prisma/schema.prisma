@@ -419,6 +419,9 @@ model MissingReport {
   id             String              @id @default(cuid())
   rawName        String
   normalizedName String
+  // Código operativo opcional informado por el vendedor. No es una relación: la
+  // identidad del reportante sigue siendo `reporterId`.
+  sellerCode     String?
   reporter       User                @relation("MissingReportReportedBy", fields: [reporterId], references: [id])
   reporterId     String
   status         MissingReportStatus @default(PENDING_REVIEW)

@@ -14,6 +14,8 @@ import { findProductById } from "@/server/repositories/product.repository";
 export type SubmitMissingReportInput = {
   // Nombre tal cual lo pegó el vendedor desde Orión. Se conserva para mostrar.
   rawName: string;
+  // Código operativo opcional informado por el vendedor.
+  sellerCode?: string;
   // Siempre desde la sesión en la capa de acción; el service no lo deriva.
   reporterId: string;
 };
@@ -40,6 +42,7 @@ export async function submitMissingReport(input: SubmitMissingReportInput) {
   return createMissingReport({
     rawName: input.rawName,
     normalizedName,
+    sellerCode: input.sellerCode,
     reporterId: input.reporterId,
   });
 }

@@ -4,6 +4,7 @@ import {
   linkMissingReportSchema,
   MAX_LINKED_REPORTS,
   MAX_MISSING_REPORT_NAME_LENGTH,
+  MAX_MISSING_REPORT_SELLER_CODE_LENGTH,
   MAX_ORDERED_QUANTITY,
   manualMissingItemCreateSchema,
   missingReportSubmitSchema,
@@ -47,6 +48,26 @@ describe("missingReportSubmitSchema", () => {
   it("lets a control-character-only name through, leaving the empty check to the service", () => {
     const result = missingReportSubmitSchema.safeParse({ rawName: "\u0000\u0001\u001f" });
     expect(result.success).toBe(true);
+  });
+
+  it("trims an optional seller code, normalizes blank input, and bounds it to 40 characters", () => {
+    const withCode = missingReportSubmitSchema.safeParse({
+      rawName: "Gasa",
+      sellerCode: "  VEN-12  ",
+    });
+    expect(withCode.success).toBe(true);
+    if (withCode.success) expect(withCode.data.sellerCode).toBe("VEN-12");
+
+    const blankCode = missingReportSubmitSchema.safeParse({ rawName: "Gasa", sellerCode: "   " });
+    expect(blankCode.success).toBe(true);
+    if (blankCode.success) expect(blankCode.data.sellerCode).toBeUndefined();
+
+    expect(
+      missingReportSubmitSchema.safeParse({
+        rawName: "Gasa",
+        sellerCode: "x".repeat(MAX_MISSING_REPORT_SELLER_CODE_LENGTH + 1),
+      }).success,
+    ).toBe(false);
   });
 });
 

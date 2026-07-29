@@ -104,6 +104,7 @@ export type ManualMissingItemCreateInput = z.infer<
 // de espacios, control chars) vive en el service, no acá: el schema solo valida
 // presencia y longitud de `rawName`, que se conserva tal cual para mostrar.
 export const MAX_MISSING_REPORT_NAME_LENGTH = 200;
+export const MAX_MISSING_REPORT_SELLER_CODE_LENGTH = 40;
 
 export const missingReportSubmitSchema = z.object({
   rawName: z
@@ -113,6 +114,12 @@ export const missingReportSubmitSchema = z.object({
     .max(MAX_MISSING_REPORT_NAME_LENGTH, {
       error: "El nombre del producto es demasiado largo.",
     }),
+  sellerCode: z
+    .string()
+    .trim()
+    .max(MAX_MISSING_REPORT_SELLER_CODE_LENGTH)
+    .optional()
+    .transform((value) => (value && value.length > 0 ? value : undefined)),
 });
 
 export type MissingReportSubmitInput = z.infer<typeof missingReportSubmitSchema>;

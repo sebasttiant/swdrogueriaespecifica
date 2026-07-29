@@ -6,7 +6,10 @@ import { useActionState, useId, useState } from "react";
 import { Button } from "@/app/_components/ui/button";
 import { Field } from "@/app/_components/ui/field";
 import { Input } from "@/app/_components/ui/input";
-import { MAX_MISSING_REPORT_NAME_LENGTH } from "@/features/faltantes/schema";
+import {
+  MAX_MISSING_REPORT_NAME_LENGTH,
+  MAX_MISSING_REPORT_SELLER_CODE_LENGTH,
+} from "@/features/faltantes/schema";
 import {
   createMissingReportAction,
   type MissingReportActionState,
@@ -35,10 +38,12 @@ export function MissingReportForm({ defaultOpen = false }: MissingReportFormProp
   // vendedor acaba de pegar tras un rechazo lo obligaría a volver a copiarlo de
   // Orión. Controlado, se limpia SOLO en éxito y se conserva en error.
   const [rawName, setRawName] = useState("");
+  const [sellerCode, setSellerCode] = useState("");
   // Una vez que el vendedor edita el campo, el resultado anterior ya no lo
   // describe: se oculta para no dejar un "enviado" viejo sobre un reporte nuevo.
   const [dirty, setDirty] = useState(false);
   const rawNameId = useId();
+  const sellerCodeId = useId();
 
   // Ajuste de estado al cambiar `state`, DURANTE el render (patrón recomendado
   // por React, no un efecto): `state` es un objeto nuevo por cada envío, así que
@@ -49,7 +54,10 @@ export function MissingReportForm({ defaultOpen = false }: MissingReportFormProp
   if (state !== lastState) {
     setLastState(state);
     setDirty(false);
-    if (state.ok) setRawName("");
+    if (state.ok) {
+      setRawName("");
+      setSellerCode("");
+    }
   }
 
   // El éxito/error viaja en `state` (useActionState) y sobrevive al colapso: el
@@ -103,6 +111,25 @@ export function MissingReportForm({ defaultOpen = false }: MissingReportFormProp
           maxLength={MAX_MISSING_REPORT_NAME_LENGTH}
           autoComplete="off"
           placeholder="Pegá el nombre desde Orión"
+        />
+      </Field>
+
+      <Field
+        label="Código del vendedor (opcional)"
+        htmlFor={sellerCodeId}
+        hint="Si tenés un código de vendedor, agregalo para gerencia."
+      >
+        <Input
+          id={sellerCodeId}
+          name="sellerCode"
+          value={sellerCode}
+          onChange={(event) => {
+            setSellerCode(event.target.value);
+            setDirty(true);
+          }}
+          maxLength={MAX_MISSING_REPORT_SELLER_CODE_LENGTH}
+          autoComplete="off"
+          placeholder="Ej. VEN-12"
         />
       </Field>
 

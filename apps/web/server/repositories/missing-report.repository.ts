@@ -13,6 +13,7 @@ import type { Prisma } from "@/lib/generated/prisma/client";
 export type CreateMissingReportData = {
   rawName: string;
   normalizedName: string;
+  sellerCode?: string;
   reporterId: string;
 };
 
@@ -21,6 +22,7 @@ export function createMissingReport(data: CreateMissingReportData) {
     data: {
       rawName: data.rawName,
       normalizedName: data.normalizedName,
+      sellerCode: data.sellerCode,
       reporterId: data.reporterId,
     },
   });
@@ -68,6 +70,7 @@ export type PendingReportRow = {
   id: string;
   rawName: string;
   normalizedName: string;
+  sellerCode: string | null;
   createdAt: Date;
   reporter: { id: string; name: string } | null;
 };
@@ -90,6 +93,7 @@ export async function listPendingReportsForNames(
       id: true,
       rawName: true,
       normalizedName: true,
+      sellerCode: true,
       createdAt: true,
       reporter: { select: { id: true, name: true } },
     },

@@ -34,10 +34,11 @@ beforeEach(() => {
 });
 
 describe("createMissingReport", () => {
-  it("persists rawName, normalizedName and reporterId", async () => {
+  it("persists rawName, normalizedName, sellerCode and reporterId", async () => {
     await createMissingReport({
       rawName: "Acetaminofén 500",
       normalizedName: "acetaminofén 500",
+      sellerCode: "VEN-12",
       reporterId: "user-1",
     });
 
@@ -45,6 +46,7 @@ describe("createMissingReport", () => {
       data: {
         rawName: "Acetaminofén 500",
         normalizedName: "acetaminofén 500",
+        sellerCode: "VEN-12",
         reporterId: "user-1",
       },
     });
@@ -129,6 +131,7 @@ describe("listPendingReportsForNames", () => {
         id: true,
         rawName: true,
         normalizedName: true,
+        sellerCode: true,
         createdAt: true,
         reporter: { select: { id: true, name: true } },
       },

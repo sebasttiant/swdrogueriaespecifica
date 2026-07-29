@@ -27,11 +27,13 @@ function report(
   rawName: string,
   createdAt: string,
   reporterName: string | null = "Ana Vendedora",
+  sellerCode: string | null = null,
 ) {
   return {
     id,
     rawName,
     normalizedName: rawName.toLowerCase(),
+    sellerCode,
     createdAt: new Date(createdAt),
     reporter: reporterName ? { id: `u-${id}`, name: reporterName } : null,
   };
@@ -140,6 +142,14 @@ describe("ReportQueueList · individual history", () => {
 
     expect(html).toContain("Gasa estéril");
     expect(html).toContain("Reportante no disponible");
+  });
+
+  it("shows the optional seller code beside the reporter name", () => {
+    const html = render([
+      group({ reports: [report("r1", "Gasa estéril", "2026-07-20T14:00:00.000Z", "Ana", "VEN-12")] }),
+    ]);
+
+    expect(html).toContain("Ana · VEN-12");
   });
 });
 

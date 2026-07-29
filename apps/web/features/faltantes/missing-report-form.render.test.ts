@@ -15,7 +15,10 @@ vi.mock("@/server/actions/missing-report.actions", () => ({
   createMissingReportAction: vi.fn(),
 }));
 
-import { MAX_MISSING_REPORT_NAME_LENGTH } from "./schema";
+import {
+  MAX_MISSING_REPORT_NAME_LENGTH,
+  MAX_MISSING_REPORT_SELLER_CODE_LENGTH,
+} from "./schema";
 import { MissingReportForm } from "./missing-report-form";
 
 type ActionState = { error: string | null; ok: boolean };
@@ -69,23 +72,25 @@ describe("MissingReportForm · collapsed by default", () => {
 });
 
 describe("MissingReportForm · open", () => {
-  it("mounts a single rawName field with the Orión placeholder", () => {
+  it("mounts rawName and optional sellerCode fields", () => {
     const html = render({ defaultOpen: true });
 
     expect(html).toContain('name="rawName"');
     expect(html).toContain("Nombre del producto");
     expect(html).toContain("Pegá el nombre desde Orión");
+    expect(html).toContain('name="sellerCode"');
+    expect(html).toContain("Código del vendedor (opcional)");
     expect(html).toContain("Enviar reporte");
   });
 
-  // Contrato exacto con la Server Action: SOLO rawName viaja. Nada de identidad,
-  // catálogo, cantidad, proveedor ni foto — el reporterId lo pone el servidor.
-  it("submits nothing but rawName", () => {
+  // Contrato exacto con la Server Action: rawName y sellerCode opcional viajan.
+  // Nada de identidad, catálogo, cantidad, proveedor ni foto — el reporterId lo
+  // pone el servidor.
+  it("submits only rawName and optional sellerCode", () => {
     const html = render({ defaultOpen: true });
 
     expect(html).not.toContain('name="reporterId"');
     expect(html).not.toContain('name="productId"');
-    expect(html).not.toContain('name="code"');
     expect(html).not.toContain('name="quantity"');
     expect(html).not.toContain('name="orderedQuantity"');
     expect(html).not.toContain('name="supplierId"');
@@ -97,6 +102,7 @@ describe("MissingReportForm · open", () => {
 
     // HTML attributes are case-insensitive; react-dom renders the prop verbatim.
     expect(html).toContain(`maxLength="${MAX_MISSING_REPORT_NAME_LENGTH}"`);
+    expect(html).toContain(`maxLength="${MAX_MISSING_REPORT_SELLER_CODE_LENGTH}"`);
     expect(html).toContain("required");
   });
 

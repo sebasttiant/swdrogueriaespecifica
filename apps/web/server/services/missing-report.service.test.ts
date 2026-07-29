@@ -53,12 +53,17 @@ beforeEach(() => {
 });
 
 describe("submitMissingReport", () => {
-  it("preserves rawName and stores the normalized form for grouping", async () => {
-    await submitMissingReport({ rawName: "  Acetaminofén   500  ", reporterId: "user-1" });
+  it("preserves rawName and sellerCode, and stores the normalized form for grouping", async () => {
+    await submitMissingReport({
+      rawName: "  Acetaminofén   500  ",
+      sellerCode: "VEN-12",
+      reporterId: "user-1",
+    });
 
     expect(repo.createMissingReport).toHaveBeenCalledWith({
       rawName: "  Acetaminofén   500  ",
       normalizedName: "acetaminofén 500",
+      sellerCode: "VEN-12",
       reporterId: "user-1",
     });
   });

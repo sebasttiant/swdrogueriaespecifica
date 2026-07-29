@@ -34,6 +34,7 @@ export async function createMissingReportAction(
 
   const parsed = missingReportSubmitSchema.safeParse({
     rawName: formData.get("rawName"),
+    sellerCode: formData.get("sellerCode") ?? undefined,
   });
   if (!parsed.success) {
     // Surface the schema's specific message (empty vs too long), como
@@ -48,6 +49,7 @@ export async function createMissingReportAction(
   try {
     report = await submitMissingReport({
       rawName: parsed.data.rawName,
+      sellerCode: parsed.data.sellerCode,
       reporterId: session.user.id,
     });
   } catch (error) {

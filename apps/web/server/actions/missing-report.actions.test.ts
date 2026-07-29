@@ -95,10 +95,23 @@ describe("createMissingReportAction", () => {
 
     expect(mocks.submitMissingReport).toHaveBeenCalledWith({
       rawName: "Gasa",
+      sellerCode: undefined,
       reporterId: "operador-1",
     });
     const arg = mocks.submitMissingReport.mock.calls[0]![0] as { reporterId: string };
     expect(arg.reporterId).not.toBe("attacker-999");
+  });
+
+  it("passes the optional sellerCode from FormData to the service", async () => {
+    grant("OPERADOR", ["canSubmitMissingReports"]);
+
+    await createMissingReportAction(PREV, reportFormData("Gasa", { sellerCode: "VEN-12" }));
+
+    expect(mocks.submitMissingReport).toHaveBeenCalledWith({
+      rawName: "Gasa",
+      sellerCode: "VEN-12",
+      reporterId: "operador-1",
+    });
   });
 
   it("rejects an empty name before persisting", async () => {
