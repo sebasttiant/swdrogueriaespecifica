@@ -164,7 +164,7 @@ else
   check_table "suppliers"
   check_table "laboratories"
   check_columns "pendings" "'deliveredQuantity','completedAt','cancelledAt','cancelledById','cancelReason'"
-  check_columns "missing_items" "'confirmedAt','confirmedById','confirmationNote','orderedAt','orderedById','supplierId'"
+  check_columns "missing_items" "'confirmedAt','confirmedById','confirmationNote','orderedAt','orderedById','supplierId','sellerCode'"
   check_columns "products" "'needsReview'"
 
   if [ "$schema_ok" -eq 1 ]; then

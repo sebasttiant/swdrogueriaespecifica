@@ -42,6 +42,7 @@ function item(overrides: Partial<MissingItemListEntry>): MissingItemListEntry {
     orderedAt: null,
     orderedById: null,
     supplierId: null,
+    sellerCode: null,
     createdAt: new Date("2026-06-01T00:00:00.000Z"),
     product: {
       id: "product-id",
@@ -160,6 +161,24 @@ describe("MissingList render contract", () => {
 
     expect(countOccurrences(html, `Nota: ${note}`)).toBe(2);
     expect(html).toMatch(new RegExp(`<th[^>]*>Nota<\\/th>`));
+  });
+
+  it("renders the seller code in both the mobile card and desktop table", () => {
+    const html = renderMissingList([
+      item({ sellerCode: "VEN-12", product: product("Manual product", "MAN-1") }),
+    ]);
+
+    expect(countOccurrences(html, "VEN-12")).toBe(2);
+    expect(html).toMatch(/<th[^>]*>Referencia<\/th>/);
+  });
+
+  it("keeps the calculated deficit for automatic missing items", () => {
+    const html = renderMissingList([
+      item({ originId: "pending-1", origin: origin({}), quantity: 4 }),
+    ]);
+
+    expect(html).toContain("4 unidad");
+    expect(html).toContain(">4<span");
   });
 });
 

@@ -160,8 +160,9 @@ export default async function FaltantesPage({
             .map((item) => ({
               id: item.id,
               productName: item.product.name,
-              quantity: item.quantity,
+              quantity: item.originId ? item.quantity : null,
               unit: item.product.unit,
+              sellerCode: item.originId ? null : item.sellerCode,
             }))}
         />
       ) : null}

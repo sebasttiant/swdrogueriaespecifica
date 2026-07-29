@@ -7,6 +7,8 @@ import {
   searchFailed,
   searchStarted,
   searchSucceeded,
+  hasEmptyProductSearch,
+  selectedProductId,
   type ProductOption,
   type ProductSearchState,
 } from "./product-search";
@@ -245,5 +247,18 @@ describe("product search · selection", () => {
 
     expect(state.hasSearched).toBe(true);
     expect(state.items).toEqual([]);
+    expect(hasEmptyProductSearch(state)).toBe(true);
+    expect(selectedProductId(state)).toBe("");
+  });
+
+  it("enables submission only after a searched result is selected", () => {
+    const searching = startFreshSearch(INITIAL_PRODUCT_SEARCH_STATE, "amoxi", 1);
+    const found = searchSucceeded(searching, 1, [option("amoxi")], null);
+
+    expect(selectedProductId(found)).toBe("");
+
+    const selected = productSelected(found, option("amoxi"));
+    expect(selectedProductId(selected)).toBe("amoxi");
+    expect(hasEmptyProductSearch(selected)).toBe(false);
   });
 });

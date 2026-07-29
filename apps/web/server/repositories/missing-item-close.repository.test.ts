@@ -8,7 +8,8 @@
 //
 // Close rule (quantity-aware, FIFO):
 //   - Fetch OPEN items for the product ordered by createdAt ASC.
-//   - Iterate: if item.quantity <= remaining, set status=RECIBIDO and subtract.
+//   - Iterate: automatic items use quantity; manual items use orderedQuantity.
+//   - A manual item without orderedQuantity is not reconciled by its sentinel.
 //   - STOP when the next item's quantity > remaining or no items remain.
 //   - NO partial closing of an item.
 //   - Returns array of closed item ids.
@@ -152,7 +153,7 @@ describe("closeMissingItemsByEntry · FIFO quantity-aware close", () => {
         confirmedAt: null,
       },
       orderBy: { createdAt: "asc" },
-      select: { id: true, quantity: true },
+    select: { id: true, quantity: true, originId: true, orderedQuantity: true },
     });
   });
 
@@ -189,5 +190,37 @@ describe("closeMissingItemsByEntry · FIFO quantity-aware close", () => {
     // m1 closes (remaining=0), m2 can't close (qty=1 > 0)
     expect(result).toEqual(["m1"]);
     expect(txMock.missingItem.update).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips an unordered manual item and continues with the next automatic deficit", async () => {
+    txMock.missingItem.findMany.mockResolvedValue([
+      { id: "manual", quantity: 1, originId: null, orderedQuantity: null },
+      { id: "automatic", quantity: 1, originId: "pending-1", orderedQuantity: null },
+    ]);
+
+    const result = await closeMissingItemsByEntry(txMock as never, {
+      productId: "prod_1",
+      availableQuantity: 1,
+    });
+
+    expect(result).toEqual(["automatic"]);
+    expect(txMock.missingItem.update).toHaveBeenCalledWith({
+      where: { id: "automatic" },
+      data: { status: "RECIBIDO" },
+    });
+  });
+
+  it("uses orderedQuantity instead of the manual sentinel for reconciliation", async () => {
+    txMock.missingItem.findMany.mockResolvedValue([
+      { id: "manual", quantity: 1, originId: null, orderedQuantity: 5 },
+    ]);
+
+    await expect(
+      closeMissingItemsByEntry(txMock as never, {
+        productId: "prod_1",
+        availableQuantity: 1,
+      }),
+    ).resolves.toEqual([]);
+    expect(txMock.missingItem.update).not.toHaveBeenCalled();
   });
 });

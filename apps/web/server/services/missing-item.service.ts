@@ -84,10 +84,15 @@ export type OrderMissingItemResult = {
 
 export type CreateManualMissingItemInput = {
   productId: string;
-  quantity: number;
   createdById?: string | null;
   note?: string;
+  sellerCode?: string | null;
 };
+
+// `MissingItem.quantity` remains mandatory because automatic shortages retain
+// their calculated deficit. Manual catalog entries do not collect a deficit;
+// management defines the purchase quantity later in `orderedQuantity`.
+const MANUAL_MISSING_ITEM_QUANTITY = 1;
 
 // Invariante: la confirmación ("OK gerencia") SOLO aplica a un faltante que
 // sigue FALTANTE y sin confirmar. Una vez que el faltante pasó a PEDIDO, la
@@ -166,10 +171,11 @@ export async function createManualMissingItem(input: CreateManualMissingItemInpu
 
   return createMissingItem({
     productId: input.productId,
-    quantity: input.quantity,
+    quantity: MANUAL_MISSING_ITEM_QUANTITY,
     originId: null,
     createdById: input.createdById ?? null,
     note: input.note,
+    sellerCode: input.sellerCode ?? null,
   });
 }
 

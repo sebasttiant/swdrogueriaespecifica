@@ -52,7 +52,7 @@ export async function createMissingItemAction(
 
   const parsed = manualMissingItemCreateSchema.safeParse({
     productId: formData.get("productId"),
-    quantity: formData.get("quantity"),
+    sellerCode: formData.get("sellerCode") ?? undefined,
     note: formData.get("note") ?? undefined,
   });
 
@@ -80,6 +80,7 @@ export async function createMissingItemAction(
       after: {
         productId: item.productId,
         quantity: item.quantity,
+        sellerCode: item.sellerCode ?? null,
         originId: null,
         source: "manual",
         hasNote: Boolean(parsed.data.note),

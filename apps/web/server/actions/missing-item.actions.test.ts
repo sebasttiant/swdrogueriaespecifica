@@ -59,7 +59,7 @@ function orderNewSupplierFormData() {
 function manualMissingFormData() {
   const data = new FormData();
   data.set("productId", "prod-1");
-  data.set("quantity", "3");
+  data.set("sellerCode", "VEN-12");
   data.set("note", "Prioridad mostrador");
   return data;
 }
@@ -357,9 +357,10 @@ describe("createMissingItemAction", () => {
     mocks.createManualMissingItem.mockResolvedValue({
       id: "missing-manual",
       productId: "prod-1",
-      quantity: 3,
+      quantity: 1,
       originId: null,
       note: "Prioridad mostrador",
+      sellerCode: "VEN-12",
       status: "FALTANTE",
     });
 
@@ -369,8 +370,8 @@ describe("createMissingItemAction", () => {
 
     expect(mocks.createManualMissingItem).toHaveBeenCalledWith({
       productId: "prod-1",
-      quantity: 3,
       note: "Prioridad mostrador",
+      sellerCode: "VEN-12",
       createdById: "admin-1",
     });
     expect(mocks.recordAudit).toHaveBeenCalledWith(
@@ -381,7 +382,8 @@ describe("createMissingItemAction", () => {
         entityId: "missing-manual",
         after: {
           productId: "prod-1",
-          quantity: 3,
+          quantity: 1,
+          sellerCode: "VEN-12",
           originId: null,
           source: "manual",
           hasNote: true,

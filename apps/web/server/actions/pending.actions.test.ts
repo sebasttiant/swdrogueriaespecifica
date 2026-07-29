@@ -51,6 +51,7 @@ function cancelFormData(overrides: Record<string, string> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.revalidatePath.mockReset();
   mocks.auditContextFromHeaders.mockResolvedValue({ userId: "user-1", channel: "web" });
 });
 
@@ -146,6 +147,41 @@ describe("createPendingAction", () => {
     expect(auditCall.after).toEqual(
       expect.objectContaining({ totalAmount: 45_000, paidAmount: 45_000 }),
     );
+  });
+
+  it("returns success when revalidation fails after persistence", async () => {
+    mocks.revalidatePath.mockImplementation(() => {
+      throw new Error("cache unavailable");
+    });
+
+    await expect(createPendingAction(PREV, createCatalogFormData())).resolves.toEqual({
+      error: null,
+      ok: true,
+    });
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/pendientes");
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/faltantes");
+  });
+
+  it("returns a terminal visible error when persistence rejects", async () => {
+    mocks.registerPending.mockRejectedValue(new Error("database unavailable"));
+
+    await expect(createPendingAction(PREV, createCatalogFormData())).resolves.toEqual({
+      error: "No se pudo registrar el pendiente. Intentá de nuevo.",
+      ok: false,
+    });
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("returns success when audit context fails after persistence", async () => {
+    mocks.auditContextFromHeaders.mockRejectedValue(new Error("headers unavailable"));
+
+    await expect(createPendingAction(PREV, createCatalogFormData())).resolves.toEqual({
+      error: null,
+      ok: true,
+    });
+    expect(mocks.registerPending).toHaveBeenCalledTimes(1);
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/pendientes");
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/faltantes");
   });
 
   it("rechaza cuando no llega ni producto del catálogo ni manual", async () => {

@@ -20,6 +20,7 @@ function item(overrides: Partial<MissingItemListEntry> = {}): MissingItemListEnt
     orderedAt: null,
     orderedById: null,
     supplierId: null,
+    sellerCode: null,
     createdAt: new Date("2026-07-01T00:00:00.000Z"),
     product: {
       id: "p-1",
@@ -46,12 +47,20 @@ function render(items: MissingItemListEntry[]): string {
 }
 
 describe("MissingListCompact", () => {
-  it("shows only product name, laboratory and quantity", () => {
-    const out = render([item()]);
+  it("shows the calculated deficit for an automatic missing item", () => {
+    const out = render([item({ originId: "pending-1" })]);
 
     expect(out).toContain("Acetaminofén 500mg");
     expect(out).toContain("Genfar");
     expect(out).toContain("4");
+  });
+
+  it("shows seller code instead of the manual quantity sentinel", () => {
+    const out = render([item({ quantity: 1, originId: null, sellerCode: "VEN-12" })]);
+
+    expect(countOccurrences(out, "VEN-12")).toBe(2);
+    expect(out).not.toContain("1 unidad");
+    expect(out).toMatch(/<th[^>]*>Referencia<\/th>/);
   });
 
   // Lo compacto es justamente NO mostrar el seguimiento ni las acciones.

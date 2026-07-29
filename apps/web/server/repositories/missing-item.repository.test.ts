@@ -371,7 +371,7 @@ describe("countConfirmedMissingItems", () => {
 });
 
 describe("createMissingItem", () => {
-  it("creates a manual missing item with originId null and a nullable note", async () => {
+  it("creates a manual missing item with originId null, note, and seller code", async () => {
     prismaMock.missingItem.create.mockResolvedValue({ id: "missing-manual" });
 
     await expect(
@@ -381,6 +381,7 @@ describe("createMissingItem", () => {
         originId: null,
         createdById: "admin-1",
         note: "Prioridad mostrador",
+        sellerCode: "VEN-12",
       }),
     ).resolves.toEqual({ id: "missing-manual" });
 
@@ -391,6 +392,7 @@ describe("createMissingItem", () => {
         originId: null,
         createdById: "admin-1",
         note: "Prioridad mostrador",
+        sellerCode: "VEN-12",
       },
     });
   });
@@ -402,6 +404,7 @@ describe("createMissingItem", () => {
 
     const args = prismaMock.missingItem.create.mock.calls[0]![0];
     expect(args.data.note).toBeNull();
+    expect(args.data.sellerCode).toBeNull();
     expect(args.data.confirmationNote).toBeUndefined();
   });
 });

@@ -37,6 +37,7 @@ export type MissingItemListItem = {
   orderedAt: Date | null;
   orderedById: string | null;
   supplierId: string | null;
+  sellerCode: string | null;
   createdAt: Date;
   product: {
     id: string;
@@ -70,6 +71,7 @@ export type CreateMissingItemData = {
   originId?: string | null;
   createdById?: string | null;
   note?: string | null;
+  sellerCode?: string | null;
 };
 
 export type MissingItemScope = "active" | "history";
@@ -101,6 +103,7 @@ const LIST_SELECT = {
   orderedAt: true,
   orderedById: true,
   supplierId: true,
+  sellerCode: true,
   createdAt: true,
   product: {
     select: {
@@ -266,6 +269,7 @@ export async function createMissingItem(
       note: data.note ?? null,
       originId: data.originId ?? null,
       createdById: data.createdById ?? null,
+      sellerCode: data.sellerCode ?? null,
     },
   });
 }
@@ -292,21 +296,27 @@ export async function closeMissingItemsByEntry(
       confirmedAt: null,
     },
     orderBy: { createdAt: "asc" },
-    select: { id: true, quantity: true },
+    select: { id: true, quantity: true, originId: true, orderedQuantity: true },
   });
 
   let remaining = params.availableQuantity;
   const closedIds: string[] = [];
 
   for (const item of openItems) {
-    if (item.quantity > remaining) break;
+    // El `quantity = 1` de un faltante manual es un sentinel técnico, no una
+    // necesidad. Solo participa después de pedirlo, usando `orderedQuantity`.
+    // Los automáticos conservan su déficit calculado en `quantity`.
+    const effectiveQuantity =
+      item.originId === null ? item.orderedQuantity : item.quantity;
+    if (effectiveQuantity === null) continue;
+    if (effectiveQuantity > remaining) break;
 
     await tx.missingItem.update({
       where: { id: item.id },
       data: { status: "RECIBIDO" },
     });
 
-    remaining -= item.quantity;
+    remaining -= effectiveQuantity;
     closedIds.push(item.id);
   }
 

@@ -29,7 +29,8 @@ const MISSING_STATUS_LABEL: Record<MissingItemStatus, string> = {
 export type MissingExportRow = {
   nombre: string;
   laboratorio: string;
-  cantidad: number;
+  cantidad: number | "";
+  codigoVendedor: string;
   estado: string;
   proveedor: string;
 };
@@ -39,6 +40,7 @@ export const MISSING_EXPORT_COLUMNS = [
   { key: "nombre", header: "Nombre" },
   { key: "laboratorio", header: "Laboratorio" },
   { key: "cantidad", header: "Cantidad" },
+  { key: "codigoVendedor", header: "Código vendedor" },
   { key: "estado", header: "Estado" },
   { key: "proveedor", header: "Proveedor" },
 ] as const satisfies readonly { key: keyof MissingExportRow; header: string }[];
@@ -72,7 +74,8 @@ export function buildMissingExportRows(
   return items.map((item) => ({
     nombre: item.product.name,
     laboratorio: item.product.laboratory?.name ?? "",
-    cantidad: item.quantity,
+    cantidad: item.originId === null ? "" : item.quantity,
+    codigoVendedor: item.originId === null ? (item.sellerCode ?? "") : "",
     estado: MISSING_STATUS_LABEL[item.status],
     proveedor: canViewSupplierIdentity ? (item.supplier?.name ?? "") : "",
   }));
@@ -137,6 +140,7 @@ export async function buildMissingWorkbookBuffer(
     nombre: 36,
     laboratorio: 24,
     cantidad: 10,
+    codigoVendedor: 18,
     estado: 14,
     proveedor: 24,
   };

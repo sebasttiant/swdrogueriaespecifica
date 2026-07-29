@@ -14,8 +14,9 @@ const INITIAL_STATE: MissingItemActionState = { error: null, ok: false };
 export type BulkSelectableItem = {
   id: string;
   productName: string;
-  quantity: number;
+  quantity: number | null;
   unit: string;
+  sellerCode: string | null;
 };
 
 type MissingBulkActionsProps = {
@@ -100,7 +101,7 @@ export function MissingBulkActions({ items }: MissingBulkActionsProps) {
               <span className="min-w-0 truncate">
                 {item.productName}
                 <span className="ml-1 text-muted-foreground">
-                  {item.quantity} {item.unit}
+                  {item.sellerCode ?? (item.quantity === null ? "—" : `${item.quantity} ${item.unit}`)}
                 </span>
               </span>
             </label>

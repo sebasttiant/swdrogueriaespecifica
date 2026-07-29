@@ -33,7 +33,7 @@ function render(
     suppliers: { id: string; name: string }[];
     canCreateSupplier: boolean;
     defaultOpen: boolean;
-    neededQuantity: number;
+    neededQuantity: number | null;
   }> = {},
 ): string {
   return renderToStaticMarkup(
@@ -42,7 +42,7 @@ function render(
       suppliers: props.suppliers ?? SUPPLIERS,
       canCreateSupplier: props.canCreateSupplier ?? true,
       defaultOpen: props.defaultOpen ?? false,
-      neededQuantity: props.neededQuantity ?? 3,
+      neededQuantity: props.neededQuantity === undefined ? 3 : props.neededQuantity,
     }),
   );
 }
@@ -145,6 +145,13 @@ describe("MissingOrderForm · ordered quantity", () => {
     expect(html).toContain("Necesidad registrada: 7");
     // El input de cantidad a pedir no arranca con la necesidad como valor.
     expect(html).not.toContain('value="7"');
+  });
+
+  it("does not present the manual quantity sentinel as a recorded need", () => {
+    const html = render({ defaultOpen: true, neededQuantity: null });
+
+    expect(html).toContain("Definí la cantidad a pedir según la necesidad actual.");
+    expect(html).not.toContain("Necesidad registrada:");
   });
 
   it("mounts the quantity field only when the form is open", () => {

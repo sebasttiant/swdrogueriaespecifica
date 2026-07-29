@@ -26,8 +26,19 @@ function bogotaNow(wall: string): Date {
 }
 
 function render(
-  props: Partial<{ now: Date; defaultCustom: boolean; zones: string[] }> = {},
+  props: Partial<{
+    now: Date;
+    defaultCustom: boolean;
+    zones: string[];
+    actionState: { error: string | null; ok: boolean };
+    isPending: boolean;
+  }> = {},
 ): string {
+  useActionStateMock.mockReturnValue([
+    props.actionState ?? { error: null, ok: false },
+    vi.fn(),
+    props.isPending ?? false,
+  ]);
   return renderToStaticMarkup(
     createElement(PendingForm, {
       products: PRODUCTS,
@@ -191,5 +202,19 @@ describe("PendingForm · dirección de entrega", () => {
     expect(html).toContain("Dirección (opcional)");
     // Opcional: no lleva `required` como cliente y teléfono.
     expect(html).not.toMatch(/id="customerAddress"[^>]*required/);
+  });
+});
+
+describe("PendingForm · terminal action state", () => {
+  it("recovers from a persistence rejection with a visible error and active submit button", () => {
+    const html = render({
+      actionState: { error: "No se pudo registrar el pendiente. Intentá de nuevo.", ok: false },
+      isPending: false,
+    });
+
+    expect(html).toContain('role="alert"');
+    expect(html).toContain("No se pudo registrar el pendiente. Intentá de nuevo.");
+    expect(html).toContain("Registrar pendiente");
+    expect(html).not.toContain("Guardando…");
   });
 });
