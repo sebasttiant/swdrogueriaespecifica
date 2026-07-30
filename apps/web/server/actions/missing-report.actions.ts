@@ -178,6 +178,15 @@ export async function linkMissingReportToProductAction(
 
 export type ResolveReportsActionState = { error: string | null; ok: boolean };
 
+// Cada resolución tiene su propia entrada de auditoría: "lo pedí", "no se pide"
+// y "llegó" son hechos distintos, y meterlos bajo una sola acción haría
+// imposible reconstruir qué pasó.
+const REPORT_RESOLUTION_AUDIT = {
+  ORDERED: AUDIT_ACTIONS.MISSING_REPORT_ORDERED,
+  DISCARDED: AUDIT_ACTIONS.MISSING_REPORT_DISCARDED,
+  RECEIVED: AUDIT_ACTIONS.MISSING_REPORT_RECEIVED,
+} as const;
+
 /**
  * Saca un grupo de reportes de la cola de revisión, sin pasar por el catálogo.
  *
@@ -202,6 +211,7 @@ export async function resolveMissingReportsAction(
   const parsed = resolveMissingReportsSchema.safeParse({
     normalizedName: formData.get("normalizedName"),
     resolution: formData.get("resolution"),
+    expectedStatus: formData.get("expectedStatus") ?? undefined,
   });
 
   if (!parsed.success) {
@@ -216,6 +226,7 @@ export async function resolveMissingReportsAction(
     result = await resolveReports({
       normalizedName: parsed.data.normalizedName,
       resolution: parsed.data.resolution,
+      expectedStatus: parsed.data.expectedStatus,
       userId: session.user.id,
     });
   } catch (error) {
@@ -232,10 +243,7 @@ export async function resolveMissingReportsAction(
   // también `auditContextFromHeaders`, que lee headers() y sí puede lanzar.
   try {
     await recordAudit({
-      action:
-        parsed.data.resolution === "ORDERED"
-          ? AUDIT_ACTIONS.MISSING_REPORT_ORDERED
-          : AUDIT_ACTIONS.MISSING_REPORT_DISCARDED,
+      action: REPORT_RESOLUTION_AUDIT[parsed.data.resolution],
       module: AUDIT_MODULES.FALTANTES,
       entity: "MissingReport",
       // Identificadores técnicos del grupo, sin nombres ni identidad de

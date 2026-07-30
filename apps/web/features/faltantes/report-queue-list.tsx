@@ -6,14 +6,19 @@ import { EmptyState } from "@/app/_components/ui/empty-state";
 import { formatBogotaDate } from "@/lib/datetime/bogota";
 import type { MissingReportQueueGroup } from "@/server/services/missing-report.service";
 
-import { ReportLinkForm } from "./report-link-form";
 import { ReportQuickActions } from "./report-quick-actions";
+import type { ReportQueueScope } from "./report-queue-scope";
 import { reportQueueHref } from "./report-queue-paging";
 
 type ReportQueueListProps = {
   groups: MissingReportQueueGroup[];
   page: number;
   hasMore: boolean;
+  // Vista activa: decide qué acciones ofrece cada fila y qué decir cuando no
+  // hay nada. Un vacío genérico haría dudar de si la acción se guardó.
+  scope: ReportQueueScope;
+  emptyTitle: string;
+  emptyDescription: string;
 };
 
 // "4" / "1": cuenta REPORTES del mismo producto, nunca suma cantidades — un
@@ -38,15 +43,16 @@ function timesReported(count: number): string {
 // gerente dijo que buscar en el catálogo demora demasiado— y solo sirve para
 // que el faltante se cierre solo cuando entre la mercadería.
 // --------------------------------------------------------------------------
-export function ReportQueueList({ groups, page, hasMore }: ReportQueueListProps) {
+export function ReportQueueList({
+  groups,
+  page,
+  hasMore,
+  scope,
+  emptyTitle,
+  emptyDescription,
+}: ReportQueueListProps) {
   if (groups.length === 0) {
-    return (
-      <EmptyState
-        icon={Inbox}
-        title="No hay reportes pendientes"
-        description="Cuando un vendedor reporte un producto faltante, aparecerá acá para revisión."
-      />
-    );
+    return <EmptyState icon={Inbox} title={emptyTitle} description={emptyDescription} />;
   }
 
   return (
@@ -73,43 +79,29 @@ export function ReportQueueList({ groups, page, hasMore }: ReportQueueListProps)
               <ReportQuickActions
                 normalizedName={group.normalizedName}
                 productName={group.displayName}
+                scope={scope}
               />
             </div>
 
-            {/* Los dos detalles como texto chico en una línea, no como
-                bloques abiertos. `defaultOpen` en el formulario evita un
-                SEGUNDO gesto: se despliega ya listo para buscar el producto. */}
-            <div className="flex flex-wrap items-center gap-x-4 text-xs">
-              <details className="group">
-                <summary className="inline-flex min-h-11 cursor-pointer list-none items-center text-muted-foreground hover:text-text [&::-webkit-details-marker]:hidden">
-                  Ver quién lo reportó
-                </summary>
-                <ul className="mb-2 space-y-2 text-muted-foreground">
-                  {group.reports.map((report) => (
-                    <li key={report.id} className="space-y-0.5">
-                      <p className="break-words text-text">{report.rawName}</p>
-                      <p>
-                        {report.reporter?.name ?? "Reportante no disponible"}
-                        {report.sellerCode ? ` · ${report.sellerCode}` : ""} ·{" "}
-                        {formatBogotaDate(report.createdAt, { style: "datetime" })}
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-              </details>
-
-              <details className="group w-full sm:w-auto">
-                <summary className="inline-flex min-h-11 cursor-pointer list-none items-center text-muted-foreground hover:text-text [&::-webkit-details-marker]:hidden">
-                  Vincular a un producto del catálogo
-                </summary>
-                <div className="mb-2">
-                  {/* Vincula el GRUPO por su nombre, igual que las dos acciones
-                      rápidas: si llega un reporte más del mismo producto entre
-                      el render y el clic, también queda cubierto. */}
-                  <ReportLinkForm normalizedName={group.normalizedName} defaultOpen />
-                </div>
-              </details>
-            </div>
+            {/* Quién reportó, bajo demanda: un renglón de texto chico, no un
+                bloque abierto que empuje la lista fuera de pantalla. */}
+            <details className="group text-xs">
+              <summary className="inline-flex min-h-11 cursor-pointer list-none items-center text-muted-foreground hover:text-text [&::-webkit-details-marker]:hidden">
+                Ver quién lo reportó
+              </summary>
+              <ul className="mb-2 space-y-2 text-muted-foreground">
+                {group.reports.map((report) => (
+                  <li key={report.id} className="space-y-0.5">
+                    <p className="break-words text-text">{report.rawName}</p>
+                    <p>
+                      {report.reporter?.name ?? "Reportante no disponible"}
+                      {report.sellerCode ? ` · ${report.sellerCode}` : ""} ·{" "}
+                      {formatBogotaDate(report.createdAt, { style: "datetime" })}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            </details>
           </div>
         ))}
       </Card>
@@ -123,7 +115,7 @@ export function ReportQueueList({ groups, page, hasMore }: ReportQueueListProps)
       >
         {page > 1 ? (
           <Link
-            href={reportQueueHref(page - 1)}
+            href={reportQueueHref(page - 1, scope)}
             className="inline-flex min-h-11 items-center px-2 font-semibold text-primary hover:underline"
           >
             Anterior
@@ -136,7 +128,7 @@ export function ReportQueueList({ groups, page, hasMore }: ReportQueueListProps)
 
         {hasMore ? (
           <Link
-            href={reportQueueHref(page + 1)}
+            href={reportQueueHref(page + 1, scope)}
             className="inline-flex min-h-11 items-center px-2 font-semibold text-primary hover:underline"
           >
             Siguiente

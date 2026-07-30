@@ -24,7 +24,12 @@ export function parseReportQueuePage(raw: string | undefined): number {
 }
 
 /** URL de una página de la cola. La primera queda en la ruta limpia. */
-export function reportQueueHref(page: number): string {
+export function reportQueueHref(page: number, scope?: string): string {
   const safePage = Math.max(1, Math.trunc(page));
-  return safePage === 1 ? REVIEW_QUEUE_PATH : `${REVIEW_QUEUE_PATH}?page=${safePage}`;
+  const params = new URLSearchParams();
+  // "pending" es la vista por defecto: no ensucia la URL que el gerente guarda.
+  if (scope && scope !== "pending") params.set("scope", scope);
+  if (safePage > 1) params.set("page", String(safePage));
+  const query = params.toString();
+  return query ? `${REVIEW_QUEUE_PATH}?${query}` : REVIEW_QUEUE_PATH;
 }

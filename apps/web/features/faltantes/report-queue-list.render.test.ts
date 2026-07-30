@@ -53,13 +53,20 @@ function group(overrides: Partial<MissingReportQueueGroup> = {}): MissingReportQ
 
 function render(
   groups: MissingReportQueueGroup[],
-  options: Partial<{ page: number; hasMore: boolean }> = {},
+  options: Partial<{
+    page: number;
+    hasMore: boolean;
+    scope: "pending" | "ordered" | "discarded";
+  }> = {},
 ): string {
   return renderToStaticMarkup(
     createElement(ReportQueueList, {
       groups,
       page: options.page ?? 1,
       hasMore: options.hasMore ?? false,
+      scope: options.scope ?? "pending",
+      emptyTitle: "No hay reportes pendientes",
+      emptyDescription: "Cuando un vendedor reporte un faltante, aparece acá.",
     }),
   );
 }
@@ -183,16 +190,19 @@ describe("ReportQueueList · superficie de mutación", () => {
   // catálogo. Lo que sigue estando prohibido acá es pedir datos de compra:
   // cantidad y proveedor son decisiones posteriores, y meterlas en esta pantalla
   // es exactamente lo que volvió inusable la cola de faltantes.
-  it("ofrece las tres salidas, sin pedir datos de compra", () => {
+  // Gerencia descartó vincular al catálogo (Daniel, 2026-07-30): buscar el
+  // producto demora demasiado para el ritmo de la cola. La pantalla ofrece dos
+  // salidas y NINGUNA pide datos de compra.
+  it("ofrece las dos salidas, sin catálogo ni datos de compra", () => {
     const html = render([group()], { page: 1, hasMore: true });
 
     expect(html).toContain("Ya lo pedí");
     expect(html).toContain("Descartar");
-    expect(html).toContain("Vincular a un producto del catálogo");
 
+    expect(html).not.toContain("Vincular");
     expect(html).not.toContain("Crear faltante");
+    expect(html).not.toContain('name="productId"');
     expect(html).not.toContain('name="quantity"');
-    expect(html).not.toContain('name="orderedQuantity"');
     expect(html).not.toContain('name="supplierId"');
     expect(html).not.toContain("Cantidad a pedir");
   });
@@ -215,45 +225,6 @@ describe("ReportQueueList · long names", () => {
   });
 });
 
-describe("ReportQueueList · linking", () => {
-  it("offers a link form for each group", () => {
-    const html = render([
-      group({ normalizedName: "a", displayName: "A", reports: [report("r1", "A", "2026-07-20T10:00:00.000Z")] }),
-      group({ normalizedName: "b", displayName: "B", reports: [report("r2", "B", "2026-07-19T10:00:00.000Z")] }),
-    ]);
-
-    expect(countOccurrences(html, "Vincular a un producto del catálogo")).toBe(2);
-  });
-
-  it("opens the link form with the disclosure, without a second Vincular producto gesture", () => {
-    const html = render([
-      group({
-        normalizedName: "a",
-        displayName: "A",
-        reports: [
-          report("r1", "A", "2026-07-20T10:00:00.000Z"),
-          report("r2", "A", "2026-07-19T10:00:00.000Z"),
-        ],
-      }),
-    ]);
-
-    expect(countOccurrences(html, "Vincular producto")).toBe(0);
-    expect(html).toContain("Buscá por nombre o código");
-    expect(html).toContain('name="normalizedName" value="a"');
-  });
-
-  it("shows no link form when the queue is empty", () => {
-    const html = render([]);
-
-    expect(html).not.toContain("Vincular producto");
-  });
-});
-
-// --------------------------------------------------------------------------
-// El reclamo de gerencia (2026-07-30): la cola solo crecía. Vincular al catálogo
-// era la ÚNICA salida, así que un producto que el vendedor pegó desde Orión y no
-// estaba cargado dejaba el reporte atrapado para siempre.
-// --------------------------------------------------------------------------
 describe("ReportQueueList · salidas rápidas", () => {
   it("ofrece resolver el grupo sin pasar por el catálogo", () => {
     const html = render([group({ displayName: "TIAMINA 300 MG" })]);
@@ -283,17 +254,13 @@ describe("ReportQueueList · salidas rápidas", () => {
       }),
     ]);
 
-    expect(countOccurrences(html, 'name="normalizedName" value="acetaminofén 500"')).toBe(3);
+    // Dos formularios: pedir y descartar. Vincular ya no existe.
+    expect(countOccurrences(html, 'name="normalizedName" value="acetaminofén 500"')).toBe(2);
     expect(html).not.toContain('name="reportIds"');
   });
 
   // Vincular no desaparece: baja a segundo plano, colapsado, para quien quiera
   // seguimiento de stock del producto.
-  it("conserva el vínculo al catálogo como acción secundaria", () => {
-    const html = render([group({})]);
-
-    expect(html).toContain("Vincular a un producto del catálogo");
-  });
 
   // Con varias tarjetas en pantalla, "Ya lo pedí" a secas no dice cuál.
   it("nombra el producto en el rótulo accesible de cada acción", () => {
@@ -301,5 +268,50 @@ describe("ReportQueueList · salidas rápidas", () => {
 
     expect(html).toContain("Marcar TIAMINA 300 MG como pedido");
     expect(html).toContain("Descartar TIAMINA 300 MG");
+  });
+});
+
+// --------------------------------------------------------------------------
+// Las mismas tres vistas que /faltantes, con las mismas palabras. Lo resuelto
+// no se borra: se consulta al lado.
+// --------------------------------------------------------------------------
+describe("ReportQueueList · vistas", () => {
+  it("en 'ya pedidos' ofrece cerrar el ciclo, no volver a pedir", () => {
+    const html = render([group()], { scope: "ordered" });
+
+    expect(html).toContain("Ya llegó");
+    expect(html).not.toContain("Ya lo pedí");
+    expect(html).not.toContain("Descartar");
+  });
+
+  // El compare-and-set: solo se marca recibido lo que estaba PEDIDO. Sin esto
+  // se podría cerrar algo que nadie compró.
+  it("el 'ya llegó' exige que el reporte siguiera pedido", () => {
+    const html = render([group()], { scope: "ordered" });
+
+    expect(html).toContain('name="resolution" value="RECEIVED"');
+    expect(html).toContain('name="expectedStatus" value="ORDERED"');
+  });
+
+  // Ya se decidió que no se pide: ofrecer una acción sería invitar a un toque
+  // que el servidor va a rechazar.
+  it("en 'descartados' no ofrece ninguna acción", () => {
+    const html = render([group()], { scope: "discarded" });
+
+    expect(html).not.toContain("Ya lo pedí");
+    expect(html).not.toContain("Descartar ");
+    expect(html).not.toContain("Ya llegó");
+  });
+
+  it("conserva la pestaña al pasar de página", () => {
+    const html = render([group()], { scope: "discarded", page: 1, hasMore: true });
+
+    expect(html).toContain("scope=discarded");
+    expect(html).toContain("page=2");
+  });
+
+  // Un vacío genérico haría dudar de si la acción se guardó.
+  it("usa el vacío que le pasa la pestaña activa", () => {
+    expect(render([])).toContain("No hay reportes pendientes");
   });
 });

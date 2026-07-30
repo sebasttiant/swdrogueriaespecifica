@@ -1,0 +1,14 @@
+-- Cierre manual del ciclo de un reporte: "ya llegó".
+--
+-- Gerencia decidió no vincular los reportes al catálogo (buscar el producto
+-- demora demasiado). Sin producto asociado, el cierre automático por entrada de
+-- inventario no los alcanza: un reporte marcado como pedido quedaría en ORDERED
+-- para siempre. Este estado le da un final.
+--
+-- Aditiva y forward-only: ninguna fila cambia de estado.
+--
+-- DEPLOYMENT NOTE (enums de PostgreSQL):
+--  - `ALTER TYPE ... ADD VALUE` no se puede revertir: no existe DROP VALUE.
+--  - El valor nuevo no se puede USAR en la misma transacción que lo agrega, así
+--    que este archivo solo agrega el valor y no escribe filas.
+ALTER TYPE "MissingReportStatus" ADD VALUE 'RECEIVED';

@@ -82,7 +82,7 @@ describe("groupPendingReportsByName", () => {
       { normalizedName: "acetaminofén", _count: { _all: 4 }, _max: { createdAt: new Date("2026-07-10") } },
     ]);
 
-    await groupPendingReportsByName({ skip: 0, take: 21 });
+    await groupPendingReportsByName({ skip: 0, take: 21, status: "PENDING_REVIEW" });
 
     expect(prismaMock.missingReport.groupBy).toHaveBeenCalledWith({
       by: ["normalizedName"],
@@ -101,7 +101,7 @@ describe("groupPendingReportsByName", () => {
       { normalizedName: "acetaminofén", _count: { _all: 4 }, _max: { createdAt } },
     ]);
 
-    const rows = await groupPendingReportsByName({ skip: 0, take: 21 });
+    const rows = await groupPendingReportsByName({ skip: 0, take: 21, status: "PENDING_REVIEW" });
 
     expect(rows).toEqual([
       { normalizedName: "acetaminofén", count: 4, latestReportedAt: createdAt },
@@ -111,7 +111,7 @@ describe("groupPendingReportsByName", () => {
 
 describe("listPendingReportsForNames", () => {
   it("returns nothing without querying when the name list is empty", async () => {
-    const rows = await listPendingReportsForNames([]);
+    const rows = await listPendingReportsForNames([], "PENDING_REVIEW");
 
     expect(rows).toEqual([]);
     expect(prismaMock.missingReport.findMany).not.toHaveBeenCalled();
@@ -120,7 +120,7 @@ describe("listPendingReportsForNames", () => {
   it("fetches PENDING_REVIEW reports for the given names, newest-first, with a minimal reporter select", async () => {
     prismaMock.missingReport.findMany.mockResolvedValue([]);
 
-    await listPendingReportsForNames(["acetaminofén", "ibuprofeno"]);
+    await listPendingReportsForNames(["acetaminofén", "ibuprofeno"], "PENDING_REVIEW");
 
     expect(prismaMock.missingReport.findMany).toHaveBeenCalledWith({
       where: {
@@ -140,7 +140,7 @@ describe("listPendingReportsForNames", () => {
   });
 
   it("does not select reporter email or any field beyond id and name", async () => {
-    await listPendingReportsForNames(["x"]);
+    await listPendingReportsForNames(["x"], "PENDING_REVIEW");
 
     const select = prismaMock.missingReport.findMany.mock.calls[0]![0].select;
     expect(select.reporter).toEqual({ select: { id: true, name: true } });

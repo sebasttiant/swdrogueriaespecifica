@@ -1,6 +1,7 @@
 import { normalizeMissingReportName } from "@/features/faltantes/missing-report-name";
+import type { ReportQueueScope } from "@/features/faltantes/report-queue-scope";
 import { prisma } from "@/lib/db/prisma";
-import { Prisma } from "@/lib/generated/prisma/client";
+import { Prisma, type MissingReportStatus } from "@/lib/generated/prisma/client";
 import { clampTake } from "@/lib/pagination";
 import { createMissingItem } from "@/server/repositories/missing-item.repository";
 import {
@@ -77,9 +78,22 @@ export type MissingReportQueue = {
   page: number;
 };
 
+// Las tres vistas de la cola, con los estados que cada una agrupa. "Ya pedidos"
+// junta ORDERED y RECEIVED porque para gerencia son el mismo tramo: lo que ya
+// compró, haya llegado o no.
+export const REPORT_QUEUE_STATUSES: Record<
+  ReportQueueScope,
+  MissingReportStatus | MissingReportStatus[]
+> = {
+  pending: "PENDING_REVIEW",
+  ordered: ["ORDERED", "RECEIVED"],
+  discarded: "DISCARDED",
+};
+
 export async function getMissingReportQueue(params: {
   page: number;
   pageSize: number;
+  scope: ReportQueueScope;
 }): Promise<MissingReportQueue> {
   const page = Math.max(1, Math.trunc(params.page));
   // `pageSize` llega del llamador (en la UI, de la URL): se acota con la misma
@@ -89,9 +103,11 @@ export async function getMissingReportQueue(params: {
 
   // Se pide un grupo de más para saber si hay página siguiente sin un count
   // extra. Paginación por offset: `groupBy` no admite cursor.
+  const status = REPORT_QUEUE_STATUSES[params.scope];
   const rows = await groupPendingReportsByName({
     skip: (page - 1) * pageSize,
     take: pageSize + 1,
+    status,
   });
 
   const hasMore = rows.length > pageSize;
@@ -101,6 +117,7 @@ export async function getMissingReportQueue(params: {
   // una consulta por grupo.
   const reports = await listPendingReportsForNames(
     pageRows.map((row) => row.normalizedName),
+    status,
   );
 
   const byName = new Map<string, PendingReportRow[]>();
@@ -241,6 +258,9 @@ export async function linkReportToProduct(input: LinkReportToProductInput) {
 export type ResolveReportsInput = {
   normalizedName: string;
   resolution: MissingReportResolution;
+  // Estado que la pantalla observó. El compare-and-set lo exige: "ya llegó"
+  // espera ORDERED, así nadie marca como recibido algo que nunca se pidió.
+  expectedStatus?: MissingReportStatus;
   // Gerente que resuelve. Viene de la sesión en la capa de acción, nunca del
   // formulario.
   userId: string;
@@ -281,6 +301,7 @@ export async function resolveReports(
         {
           normalizedName: input.normalizedName,
           resolution: input.resolution,
+          expectedStatus: input.expectedStatus,
           resolvedById: input.userId,
           resolvedAt: now,
         },

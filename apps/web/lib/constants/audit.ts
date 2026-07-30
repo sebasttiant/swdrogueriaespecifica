@@ -49,6 +49,9 @@ export const AUDIT_ACTIONS = {
   // esto solo registra la decisión de gerencia sobre el reporte.
   MISSING_REPORT_ORDERED: "missing.report.ordered",
   MISSING_REPORT_DISCARDED: "missing.report.discarded",
+  // La mercadería llegó y gerencia cerró el reporte a mano. Distinto de
+  // `MISSING_CLOSED_BY_ENTRY`: allá lo cierra el stock, acá una persona.
+  MISSING_REPORT_RECEIVED: "missing.report.received",
   // Entradas
   ENTRY_CREATE: "entry.create",
   MISSING_CLOSED_BY_ENTRY: "missing.closed.by.entry",

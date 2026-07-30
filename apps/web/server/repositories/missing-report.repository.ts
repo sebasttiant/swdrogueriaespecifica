@@ -8,7 +8,10 @@
 // --------------------------------------------------------------------------
 
 import { prisma } from "@/lib/db/prisma";
-import type { Prisma } from "@/lib/generated/prisma/client";
+import type {
+  MissingReportStatus,
+  Prisma,
+} from "@/lib/generated/prisma/client";
 
 export type CreateMissingReportData = {
   rawName: string;
@@ -36,22 +39,34 @@ export function createMissingReport(data: CreateMissingReportData) {
 // justifica ambas consultas de abajo.
 // --------------------------------------------------------------------------
 
+// Un solo estado o varios: la vista "ya pedidos" muestra junto lo pedido y lo
+// que ya llegó, porque para gerencia son el mismo tramo del ciclo.
+function statusFilter(status: MissingReportStatus | MissingReportStatus[]) {
+  return Array.isArray(status) ? { in: status } : status;
+}
+
 export type PendingReportGroupRow = {
   normalizedName: string;
   count: number;
   latestReportedAt: Date | null;
 };
 
-// Página de grupos de reportes pendientes, más reciente primero. Paginación por
-// offset: `groupBy` de Prisma no admite cursor, y la cola es de bajo volumen y
-// solo para gerencia.
+// Página de grupos de reportes, más reciente primero. Paginación por offset:
+// `groupBy` de Prisma no admite cursor, y la cola es de bajo volumen y solo
+// para gerencia.
+//
+// `status` se parametriza para que la misma consulta sirva a las tres vistas
+// —por revisar, ya pedidos, descartados— sin duplicar el groupBy. Sin default:
+// que el llamador olvide el estado debe ser un error de tipos, no una vista que
+// mezcla silenciosamente lo pendiente con lo resuelto.
 export async function groupPendingReportsByName(params: {
   skip: number;
   take: number;
+  status: MissingReportStatus | MissingReportStatus[];
 }): Promise<PendingReportGroupRow[]> {
   const rows = await prisma.missingReport.groupBy({
     by: ["normalizedName"],
-    where: { status: "PENDING_REVIEW" },
+    where: { status: statusFilter(params.status) },
     _count: { _all: true },
     _max: { createdAt: true },
     orderBy: { _max: { createdAt: "desc" } },
@@ -80,12 +95,13 @@ export type PendingReportRow = {
 // email ni otros datos.
 export async function listPendingReportsForNames(
   normalizedNames: string[],
+  status: MissingReportStatus | MissingReportStatus[],
 ): Promise<PendingReportRow[]> {
   if (normalizedNames.length === 0) return [];
 
   return prisma.missingReport.findMany({
     where: {
-      status: "PENDING_REVIEW",
+      status: statusFilter(status),
       normalizedName: { in: normalizedNames },
     },
     orderBy: { createdAt: "desc" },
@@ -151,11 +167,20 @@ export async function linkMissingReports(
 
 // Resoluciones rápidas. NO incluye LINKED: vincular escribe además el producto
 // y el faltante generado, así que tiene su propia función.
-export type MissingReportResolution = "ORDERED" | "DISCARDED";
+//
+// RECEIVED cierra el ciclo cuando la mercadería llegó. Existe porque estos
+// reportes no se vinculan al catálogo —gerencia lo descartó por lento— y sin
+// producto asociado el cierre automático por entrada de inventario no los
+// alcanza: quedarían en ORDERED para siempre.
+export type MissingReportResolution = "ORDERED" | "DISCARDED" | "RECEIVED";
 
 export type ResolveMissingReportsData = {
   normalizedName: string;
   resolution: MissingReportResolution;
+  // Estado que el llamador OBSERVÓ, y que el compare-and-set exige. Por defecto
+  // `PENDING_REVIEW`, que es la cola de trabajo; "ya llegó" espera `ORDERED`,
+  // así no puede marcarse recibido algo que nadie pidió.
+  expectedStatus?: MissingReportStatus;
   resolvedById: string;
   resolvedAt?: Date;
 };
@@ -172,7 +197,10 @@ export async function resolveMissingReports(
   client: Prisma.TransactionClient = prisma,
 ): Promise<string[]> {
   const reports = await client.missingReport.updateManyAndReturn({
-    where: { normalizedName: data.normalizedName, status: "PENDING_REVIEW" },
+    where: {
+      normalizedName: data.normalizedName,
+      status: data.expectedStatus ?? "PENDING_REVIEW",
+    },
     data: {
       status: data.resolution,
       resolvedById: data.resolvedById,

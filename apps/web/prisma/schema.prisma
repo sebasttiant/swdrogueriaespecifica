@@ -70,6 +70,14 @@ enum MissingReportStatus {
   // Gerencia decidió que no se pide (duplicado, o ya no hace falta). Sale de la
   // cola sin afirmar que se compró. Eje opuesto a ORDERED: nunca se mezclan.
   DISCARDED
+  // La mercadería llegó. Cierra el ciclo del reporte a mano, y hace falta
+  // justamente porque estos reportes no se vinculan al catálogo: sin producto
+  // asociado, el cierre automático por entrada de inventario no los alcanza y
+  // quedarían en ORDERED para siempre.
+  //
+  // NO mueve stock: eso lo hace la entrada de inventario, que es otro hecho.
+  // Mezclarlos haría creer que marcar "ya llegó" subió el inventario.
+  RECEIVED
 }
 
 enum AuditResult {

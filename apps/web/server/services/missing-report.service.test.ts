@@ -179,15 +179,15 @@ describe("getMissingReportQueue", () => {
   }
 
   it("asks for one extra group to know whether there is a next page", async () => {
-    await getMissingReportQueue({ page: 1, pageSize: 20 });
+    await getMissingReportQueue({ page: 1, pageSize: 20, scope: "pending" });
 
-    expect(repo.groupPendingReportsByName).toHaveBeenCalledWith({ skip: 0, take: 21 });
+    expect(repo.groupPendingReportsByName).toHaveBeenCalledWith({ skip: 0, take: 21, status: "PENDING_REVIEW" });
   });
 
   it("translates the page number into the right offset", async () => {
-    await getMissingReportQueue({ page: 3, pageSize: 20 });
+    await getMissingReportQueue({ page: 3, pageSize: 20, scope: "pending" });
 
-    expect(repo.groupPendingReportsByName).toHaveBeenCalledWith({ skip: 40, take: 21 });
+    expect(repo.groupPendingReportsByName).toHaveBeenCalledWith({ skip: 40, take: 21, status: "PENDING_REVIEW" });
   });
 
   it("reports hasMore and trims the extra group off the page", async () => {
@@ -203,7 +203,7 @@ describe("getMissingReportQueue", () => {
       report("rb", "b", "B", "2026-07-09"),
     ]);
 
-    const queue = await getMissingReportQueue({ page: 1, pageSize: 2 });
+    const queue = await getMissingReportQueue({ page: 1, pageSize: 2, scope: "pending" });
 
     expect(queue.hasMore).toBe(true);
     expect(queue.groups).toHaveLength(2);
@@ -213,7 +213,7 @@ describe("getMissingReportQueue", () => {
   it("reports hasMore false when the page is not full", async () => {
     repo.groupPendingReportsByName.mockResolvedValue([group("a", 1, "2026-07-10")]);
 
-    const queue = await getMissingReportQueue({ page: 1, pageSize: 20 });
+    const queue = await getMissingReportQueue({ page: 1, pageSize: 20, scope: "pending" });
 
     expect(queue.hasMore).toBe(false);
   });
@@ -225,12 +225,12 @@ describe("getMissingReportQueue", () => {
       group("gasa", 1, "2026-07-08"),
     ]);
 
-    await getMissingReportQueue({ page: 1, pageSize: 2 });
+    await getMissingReportQueue({ page: 1, pageSize: 2, scope: "pending" });
 
-    expect(repo.listPendingReportsForNames).toHaveBeenCalledWith([
-      "acetaminofén",
-      "ibuprofeno",
-    ]);
+    expect(repo.listPendingReportsForNames).toHaveBeenCalledWith(
+      ["acetaminofén", "ibuprofeno"],
+      "PENDING_REVIEW",
+    );
   });
 
   // El nombre visible es el del reporte más reciente del grupo: se muestra tal
@@ -243,7 +243,7 @@ describe("getMissingReportQueue", () => {
       report("r1", "acetaminofén", "ACETAMINOFEN", "2026-07-08"),
     ]);
 
-    const queue = await getMissingReportQueue({ page: 1, pageSize: 20 });
+    const queue = await getMissingReportQueue({ page: 1, pageSize: 20, scope: "pending" });
 
     expect(queue.groups[0]!.displayName).toBe("Acetaminofén 500mg");
     expect(queue.groups[0]!.count).toBe(4);
@@ -259,7 +259,7 @@ describe("getMissingReportQueue", () => {
       report("r3", "gasa", "GASA", "2026-07-08"),
     ]);
 
-    const queue = await getMissingReportQueue({ page: 1, pageSize: 20 });
+    const queue = await getMissingReportQueue({ page: 1, pageSize: 20, scope: "pending" });
 
     expect(queue.groups[0]!.count).toBe(3);
     expect(queue.groups[0]!.reports).toHaveLength(3);
@@ -275,7 +275,7 @@ describe("getMissingReportQueue", () => {
       report("r2", "gasa", "gasa", "2026-07-09", "Beto"),
     ]);
 
-    const queue = await getMissingReportQueue({ page: 1, pageSize: 20 });
+    const queue = await getMissingReportQueue({ page: 1, pageSize: 20, scope: "pending" });
 
     expect(queue.groups[0]!.reports.map((r) => r.reporter?.name)).toEqual(["Ana", "Beto"]);
     expect(queue.groups[0]!.reports.map((r) => r.rawName)).toEqual(["Gasa", "gasa"]);
@@ -291,7 +291,7 @@ describe("getMissingReportQueue", () => {
       report("r2", "ibuprofeno", "Ibuprofeno", "2026-07-09"),
     ]);
 
-    const queue = await getMissingReportQueue({ page: 1, pageSize: 20 });
+    const queue = await getMissingReportQueue({ page: 1, pageSize: 20, scope: "pending" });
 
     expect(queue.groups[0]!.reports.map((r) => r.id)).toEqual(["r1"]);
     expect(queue.groups[1]!.reports.map((r) => r.id)).toEqual(["r2"]);
@@ -303,7 +303,7 @@ describe("getMissingReportQueue", () => {
       report("r1", "gasa", "Gasa", "2026-07-10", null),
     ]);
 
-    const queue = await getMissingReportQueue({ page: 1, pageSize: 20 });
+    const queue = await getMissingReportQueue({ page: 1, pageSize: 20, scope: "pending" });
 
     expect(queue.groups[0]!.reports[0]!.reporter).toBeNull();
     expect(queue.groups[0]!.displayName).toBe("Gasa");
@@ -313,27 +313,27 @@ describe("getMissingReportQueue", () => {
   // convención de paginación del proyecto para que nadie pida una página
   // gigante ni un `take` <= 0 (que Prisma interpreta como lectura invertida).
   it("clamps an oversized pageSize to the project maximum", async () => {
-    await getMissingReportQueue({ page: 1, pageSize: 5000 });
+    await getMissingReportQueue({ page: 1, pageSize: 5000, scope: "pending" });
 
-    expect(repo.groupPendingReportsByName).toHaveBeenCalledWith({ skip: 0, take: 101 });
+    expect(repo.groupPendingReportsByName).toHaveBeenCalledWith({ skip: 0, take: 101, status: "PENDING_REVIEW" });
   });
 
   it("clamps a zero or negative pageSize to at least one", async () => {
-    await getMissingReportQueue({ page: 1, pageSize: 0 });
-    expect(repo.groupPendingReportsByName).toHaveBeenCalledWith({ skip: 0, take: 2 });
+    await getMissingReportQueue({ page: 1, pageSize: 0, scope: "pending" });
+    expect(repo.groupPendingReportsByName).toHaveBeenCalledWith({ skip: 0, take: 2, status: "PENDING_REVIEW" });
 
     repo.groupPendingReportsByName.mockClear();
-    await getMissingReportQueue({ page: 1, pageSize: -10 });
-    expect(repo.groupPendingReportsByName).toHaveBeenCalledWith({ skip: 0, take: 2 });
+    await getMissingReportQueue({ page: 1, pageSize: -10, scope: "pending" });
+    expect(repo.groupPendingReportsByName).toHaveBeenCalledWith({ skip: 0, take: 2, status: "PENDING_REVIEW" });
   });
 
   it("clamps page zero or negative to the first page", async () => {
-    await getMissingReportQueue({ page: 0, pageSize: 20 });
-    expect(repo.groupPendingReportsByName).toHaveBeenCalledWith({ skip: 0, take: 21 });
+    await getMissingReportQueue({ page: 0, pageSize: 20, scope: "pending" });
+    expect(repo.groupPendingReportsByName).toHaveBeenCalledWith({ skip: 0, take: 21, status: "PENDING_REVIEW" });
 
     repo.groupPendingReportsByName.mockClear();
-    await getMissingReportQueue({ page: -3, pageSize: 20 });
-    expect(repo.groupPendingReportsByName).toHaveBeenCalledWith({ skip: 0, take: 21 });
+    await getMissingReportQueue({ page: -3, pageSize: 20, scope: "pending" });
+    expect(repo.groupPendingReportsByName).toHaveBeenCalledWith({ skip: 0, take: 21, status: "PENDING_REVIEW" });
   });
 
   // Carrera entre las dos lecturas: el groupBy vio reportes pendientes que, al
@@ -348,7 +348,7 @@ describe("getMissingReportQueue", () => {
       report("r2", "ibuprofeno", "Ibuprofeno 400", "2026-07-09"),
     ]);
 
-    const queue = await getMissingReportQueue({ page: 1, pageSize: 20 });
+    const queue = await getMissingReportQueue({ page: 1, pageSize: 20, scope: "pending" });
 
     expect(queue.groups.map((g) => g.normalizedName)).toEqual(["ibuprofeno"]);
     expect(queue.groups[0]!.displayName).toBe("Ibuprofeno 400");
@@ -357,11 +357,11 @@ describe("getMissingReportQueue", () => {
   });
 
   it("returns an empty queue without asking for reports", async () => {
-    const queue = await getMissingReportQueue({ page: 1, pageSize: 20 });
+    const queue = await getMissingReportQueue({ page: 1, pageSize: 20, scope: "pending" });
 
     expect(queue.groups).toEqual([]);
     expect(queue.hasMore).toBe(false);
-    expect(repo.listPendingReportsForNames).toHaveBeenCalledWith([]);
+    expect(repo.listPendingReportsForNames).toHaveBeenCalledWith([], "PENDING_REVIEW");
   });
 });
 

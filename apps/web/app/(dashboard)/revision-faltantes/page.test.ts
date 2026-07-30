@@ -69,6 +69,7 @@ describe("RevisionFaltantesPage · page param", () => {
     expect(mocks.getMissingReportQueue).toHaveBeenCalledWith({
       page: 1,
       pageSize: DEFAULT_PAGE_SIZE,
+      scope: "pending",
     });
   });
 
@@ -78,6 +79,7 @@ describe("RevisionFaltantesPage · page param", () => {
     expect(mocks.getMissingReportQueue).toHaveBeenCalledWith({
       page: 4,
       pageSize: DEFAULT_PAGE_SIZE,
+      scope: "pending",
     });
   });
 
@@ -91,6 +93,7 @@ describe("RevisionFaltantesPage · page param", () => {
       expect(mocks.getMissingReportQueue).toHaveBeenCalledWith({
         page: 1,
         pageSize: DEFAULT_PAGE_SIZE,
+        scope: "pending",
       });
     }
   });
@@ -103,6 +106,7 @@ describe("RevisionFaltantesPage · page param", () => {
     expect(mocks.getMissingReportQueue).toHaveBeenCalledWith({
       page: MAX_REVIEW_QUEUE_PAGE,
       pageSize: DEFAULT_PAGE_SIZE,
+      scope: "pending",
     });
   });
 });

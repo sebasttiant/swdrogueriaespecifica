@@ -144,8 +144,14 @@ export type LinkMissingReportInput = z.infer<typeof linkMissingReportSchema>;
 export const resolveMissingReportsSchema = z.object({
   normalizedName: missingReportGroupKey,
   // El servidor decide qué significa cada valor; el formulario solo puede
-  // proponer uno de los dos.
-  resolution: z.enum(["ORDERED", "DISCARDED"], { error: "Acción inválida." }),
+  // proponer uno de los tres.
+  resolution: z.enum(["ORDERED", "DISCARDED", "RECEIVED"], {
+    error: "Acción inválida.",
+  }),
+  // Estado que la pantalla observó, para el compare-and-set. Solo el "ya llegó"
+  // lo envía: exige que el reporte siguiera PEDIDO, así nadie marca recibido
+  // algo que nunca se pidió. El resto de las acciones esperan la cola.
+  expectedStatus: z.literal("ORDERED").optional(),
 });
 
 export type ResolveMissingReportsInput = z.infer<
