@@ -16,6 +16,7 @@ import { MissingSummary } from "@/features/faltantes/missing-summary";
 import { canDiscard } from "@/features/faltantes/order-rules";
 import {
   MISSING_SCOPES,
+  MISSING_SCOPE_EMPTY,
   MISSING_SCOPE_LABELS,
   missingPageHref,
   missingScopeHref,
@@ -195,6 +196,8 @@ export default async function FaltantesPage({
         <MissingListCompact
           items={items}
           canAct={canOrderMissingItems}
+          emptyTitle={MISSING_SCOPE_EMPTY[scope].title}
+          emptyDescription={MISSING_SCOPE_EMPTY[scope].description}
           nextCursor={nextCursor}
           pageHref={(next) => missingPageHref(scope, view, next)}
         />

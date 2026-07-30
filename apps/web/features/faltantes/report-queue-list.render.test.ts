@@ -91,13 +91,14 @@ describe("ReportQueueList · groups", () => {
   it("states how many times the product was reported", () => {
     const html = render([group({ count: 4 })]);
 
-    expect(html).toContain("Reportado 4 veces");
+    // Texto corto: la fila tiene que caber en un renglón.
+    expect(html).toContain("4 reportes");
   });
 
   it("uses the singular for a single report", () => {
     const html = render([group({ count: 1 })]);
 
-    expect(html).toContain("Reportado 1 vez");
+    expect(html).toContain("1 reporte");
     expect(html).not.toContain("1 veces");
   });
 

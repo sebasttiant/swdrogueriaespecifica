@@ -33,7 +33,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { label: "Faltantes", href: "/faltantes", icon: PackageX, primaryMobile: true, capability: "canViewFaltantes" },
   // Sin `primaryMobile`: es una vista de gerencia, no debe ocupar un lugar en
   // la barra inferior del celular del vendedor.
-  { label: "Revisión de reportes", href: "/revision-faltantes", icon: Inbox, capability: "canReviewMissingReports" },
+  { label: "Revisión de faltantes", href: "/revision-faltantes", icon: Inbox, capability: "canReviewMissingReports" },
   { label: "Entradas", href: "/entradas", icon: PackagePlus, primaryMobile: true, capability: "canViewEntradas" },
   { label: "Productos", href: "/productos", icon: Package, capability: "canViewProductos" },
   { label: "Reportes", href: "/reportes", icon: BarChart3, capability: "canViewReports" },

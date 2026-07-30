@@ -182,22 +182,23 @@ describe("PendingList · estado de gestión (Mejora 2)", () => {
       items: [pending({ status: "PENDIENTE", deliveredQuantity: 0 })],
     });
 
-    expect(html).not.toContain("Estado de gestión");
     expect(html).not.toContain('name="status"');
   });
 
-  it("shows the four management options to purchasing (gerencia) on an open pending", () => {
+  // Los dos desenlaces reales a un toque; los intermedios siguen disponibles
+  // pero plegados. Antes esto era un selector de cuatro opciones más "Aplicar".
+  it("offers the two real outcomes to purchasing on an open pending", () => {
     const html = renderList({
       canManageStatus: true,
       items: [pending({ status: "PENDIENTE", deliveredQuantity: 0 })],
     });
 
-    expect(html).toContain("Estado de gestión");
-    expect(html).toContain('name="status"');
-    expect(html).toContain("Solicitado");
-    expect(html).toContain("En búsqueda");
-    expect(html).toContain("Cotizando");
+    expect(html).toContain("Ya lo pedí");
     expect(html).toContain("Agotado");
+    expect(html).toContain('name="status" value="SOLICITADO"');
+    // Los intermedios existen, detrás de un gesto.
+    expect(html).toContain("Otro estado");
+    expect(html).not.toContain("Aplicar");
   });
 
   // PARCIAL ya tiene una entrega en curso: la gestión no aplica ni para gerencia.
@@ -207,7 +208,7 @@ describe("PendingList · estado de gestión (Mejora 2)", () => {
       items: [pending({ status: "PARCIAL", deliveredQuantity: 4 })],
     });
 
-    expect(html).not.toContain("Estado de gestión");
+    expect(html).not.toContain('name="status"');
   });
 
   it("does not show the selector on a closed pending", () => {
@@ -216,17 +217,22 @@ describe("PendingList · estado de gestión (Mejora 2)", () => {
       items: [pending({ status: "ENTREGADO", deliveredQuantity: 10 })],
     });
 
-    expect(html).not.toContain("Estado de gestión");
+    expect(html).not.toContain('name="status"');
   });
 
-  // Si el pendiente ya está en un estado de gestión, el selector lo preselecciona.
-  it("preselects the current management status", () => {
+  // Pedido de gerencia: "en ya pedido no debería salir todas las funciones, ya
+  // está pedido". Un pendiente resuelto informa su estado y no vuelve a
+  // preguntar; cambiarlo queda detrás de un gesto explícito.
+  it("informs the settled status instead of asking again", () => {
     const html = renderList({
       canManageStatus: true,
       items: [pending({ status: "COTIZANDO", deliveredQuantity: 0 })],
     });
 
-    expect(html).toMatch(/value="COTIZANDO"[^>]*selected/);
+    expect(html).toContain("Cotizando");
+    expect(html).toContain("cambiar");
+    // No se vuelve a ofrecer el estado que ya tiene.
+    expect(html).not.toContain('name="status" value="COTIZANDO"');
   });
 });
 

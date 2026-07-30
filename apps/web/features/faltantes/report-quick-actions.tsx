@@ -19,8 +19,11 @@ type ReportQuickActionsProps = {
 // Mismo alto de dedo y misma forma que las acciones de /faltantes. Que las dos
 // pantallas se toquen igual es lo que hace que don Guillermo aprenda UN gesto y
 // no tres.
+// Compactos y de ancho fijo: con 40 reportes en una hora, dos botones a ancho
+// completo por fila convierten la cola en un scroll infinito. Se conserva el
+// alto de dedo (44px) porque se usa desde el celular.
 const ACTION_BASE =
-  "inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-lg border px-3 text-sm font-semibold transition-colors disabled:opacity-50";
+  "inline-flex min-h-11 shrink-0 items-center justify-center gap-1.5 rounded-lg border px-3 text-sm font-semibold transition-colors disabled:opacity-50";
 
 /**
  * Las dos salidas rápidas de la cola de revisión, a un toque.
@@ -47,9 +50,9 @@ export function ReportQuickActions({
 
   return (
     <div className="space-y-1">
-      <div className="flex gap-2">
-        <form action={formAction} className="flex-1">
-            <input type="hidden" name="normalizedName" value={normalizedName} />
+      <div className="flex justify-end gap-2">
+        <form action={formAction}>
+          <input type="hidden" name="normalizedName" value={normalizedName} />
           <input type="hidden" name="resolution" value="ORDERED" />
           <button
             type="submit"
@@ -58,7 +61,7 @@ export function ReportQuickActions({
             aria-label={`Marcar ${productName} como pedido`}
             className={cn(
               ACTION_BASE,
-              "w-full border-success/30 bg-success/10 text-success hover:bg-success/20",
+              "border-success/30 bg-success/10 text-success hover:bg-success/20",
             )}
           >
             <Check className="size-4" aria-hidden />
@@ -66,8 +69,8 @@ export function ReportQuickActions({
           </button>
         </form>
 
-        <form action={formAction} className="flex-1">
-            <input type="hidden" name="normalizedName" value={normalizedName} />
+        <form action={formAction}>
+          <input type="hidden" name="normalizedName" value={normalizedName} />
           <input type="hidden" name="resolution" value="DISCARDED" />
           <button
             type="submit"
@@ -75,7 +78,7 @@ export function ReportQuickActions({
             aria-label={`Descartar ${productName}`}
             className={cn(
               ACTION_BASE,
-              "w-full border-danger/30 bg-danger/10 text-danger hover:bg-danger/20",
+              "border-danger/30 bg-danger/10 text-danger hover:bg-danger/20",
             )}
           >
             <X className="size-4" aria-hidden />

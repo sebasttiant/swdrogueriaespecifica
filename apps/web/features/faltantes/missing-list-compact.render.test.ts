@@ -55,6 +55,8 @@ function render(
     createElement(MissingListCompact, {
       items,
       canAct,
+      emptyTitle: "Nada por pedir",
+      emptyDescription: "No queda ningún faltante esperando decisión.",
       nextCursor,
       pageHref: (cursor: string) => `/faltantes?view=compact&cursor=${cursor}`,
     }),
@@ -97,8 +99,10 @@ describe("MissingListCompact", () => {
     expect(out).toContain("Sin laboratorio");
   });
 
-  it("renders an empty state when there are no items", () => {
-    expect(render([])).toContain("Sin faltantes");
+  // El vacío lo dicta la pestaña, no el componente: "no hay faltantes abiertos"
+  // dentro de "Descartados" hacía dudar de si el descarte se había guardado.
+  it("usa el vacío que le pasa la pestaña activa", () => {
+    expect(render([])).toContain("Nada por pedir");
   });
 });
 

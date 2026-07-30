@@ -7,7 +7,7 @@ import { requireCapability } from "@/lib/auth/require-role";
 import { DEFAULT_PAGE_SIZE } from "@/lib/pagination";
 import { getMissingReportQueue } from "@/server/services/missing-report.service";
 
-export const metadata: Metadata = { title: "Revisión de reportes" };
+export const metadata: Metadata = { title: "Revisión de faltantes" };
 
 // Cola operativa en vivo: nunca cachear.
 export const dynamic = "force-dynamic";
@@ -38,8 +38,8 @@ export default async function RevisionFaltantesPage({
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Revisión de reportes"
-        description="Lo que los vendedores reportaron como faltante, pendiente de revisión."
+        title="Revisión de faltantes"
+        description="Lo que los vendedores reportaron. Marcá lo que ya pediste o descartá lo que no va."
       />
 
       <ReportQueueList groups={groups} page={page} hasMore={hasMore} />

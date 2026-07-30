@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { Inbox } from "lucide-react";
 
-import { Badge } from "@/app/_components/ui/badge";
 import { Card } from "@/app/_components/ui/card";
 import { EmptyState } from "@/app/_components/ui/empty-state";
 import { formatBogotaDate } from "@/lib/datetime/bogota";
@@ -17,28 +16,28 @@ type ReportQueueListProps = {
   hasMore: boolean;
 };
 
-// "Reportado 4 veces" / "Reportado 1 vez": cuenta REPORTES, nunca suma
-// cantidades — un reporte no tiene cantidad.
+// "4" / "1": cuenta REPORTES del mismo producto, nunca suma cantidades — un
+// reporte no tiene cantidad. Sirve para priorizar: lo que varios vendedores
+// anotaron el mismo día es lo que más se está pidiendo en el mostrador.
 function timesReported(count: number): string {
-  return count === 1 ? "Reportado 1 vez" : `Reportado ${count} veces`;
+  return count === 1 ? "1 reporte" : `${count} reportes`;
 }
 
-// Cola de revisión de gerencia, SOLO LECTURA. Cada tarjeta es un producto (por
-// su nombre) que uno o varios vendedores reportaron como faltante. Se muestra el
-// nombre ORIGINAL —tal como lo pegaron desde Orión—; el nombre normalizado es
-// interno y solo sirve para agrupar, así que no aparece en pantalla.
+// --------------------------------------------------------------------------
+// Cola de revisión, en formato LISTA.
 //
-// Mobile-first: una columna, tarjetas compactas, y el historial individual
-// colapsado detrás de un disclosure (mismo patrón que la cola de faltantes) para
-// que la pantalla del celular muestre varios grupos sin scroll infinito.
+// Antes cada grupo era una tarjeta alta con título, badge, fecha, disclosure y
+// dos botones a ancho completo. Con 40 reportes en una hora eso es un scroll
+// interminable: gerencia necesita ESCANEAR la lista y marcar, no leer tarjeta
+// por tarjeta.
 //
-// Tres salidas, en orden de uso real: "Ya lo pedí" y "Descartar" resuelven el
-// grupo en un toque, y vincularlo a un producto del catálogo queda colapsado
-// debajo para cuando además se quiere seguimiento de stock.
+// Ahora cada grupo es un renglón: nombre + cuántas veces + cuándo, y las dos
+// acciones a la derecha. Cabe una decisión por línea, que es el punto entero.
 //
-// Vincular era antes la ÚNICA salida, y por eso la cola solo crecía: si el
-// producto que el vendedor pegó desde Orión no estaba en el catálogo, el reporte
-// quedaba atrapado sin forma de sacarlo. Ese era el reclamo de gerencia.
+// Vincular al catálogo sobrevive plegado dentro de cada fila: es opcional —el
+// gerente dijo que buscar en el catálogo demora demasiado— y solo sirve para
+// que el faltante se cierre solo cuando entre la mercadería.
+// --------------------------------------------------------------------------
 export function ReportQueueList({ groups, page, hasMore }: ReportQueueListProps) {
   if (groups.length === 0) {
     return (
@@ -52,64 +51,68 @@ export function ReportQueueList({ groups, page, hasMore }: ReportQueueListProps)
 
   return (
     <div className="space-y-3">
-      {groups.map((group) => (
-        <Card key={group.normalizedName} className="space-y-2 p-4">
-          <div className="flex items-start justify-between gap-3">
-            <p className="min-w-0 break-words text-base font-semibold text-text">
-              {group.displayName}
-            </p>
-            <Badge tone="warning" className="shrink-0">
-              {timesReported(group.count)}
-            </Badge>
-          </div>
+      <Card className="divide-y divide-border p-0">
+        {groups.map((group) => (
+          <div key={group.normalizedName} className="space-y-1 px-3 py-2">
+            {/* Un renglón por grupo: lo que hay que leer a la izquierda, lo que
+                hay que tocar a la derecha. En celular las acciones bajan solas
+                sin romper la lectura. */}
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <p className="break-words font-medium text-text">
+                  {group.displayName}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {timesReported(group.count)}
+                  {group.latestReportedAt
+                    ? ` · ${formatBogotaDate(group.latestReportedAt, { style: "datetime" })}`
+                    : ""}
+                </p>
+              </div>
 
-          {group.latestReportedAt ? (
-            <p className="text-xs text-muted-foreground">
-              Último reporte: {formatBogotaDate(group.latestReportedAt, { style: "datetime" })}
-            </p>
-          ) : null}
-
-          <details className="group">
-            {/* `list-none` no alcanza en WebKit: iOS Safari dibuja el triángulo
-                con `::-webkit-details-marker`. El padding además da un target
-                táctil usable con una mano. */}
-            <summary className="inline-flex min-h-11 cursor-pointer list-none items-center text-xs font-medium text-muted-foreground hover:text-text [&::-webkit-details-marker]:hidden">
-              Ver quién lo reportó
-            </summary>
-            <ul className="mt-2 space-y-2 text-xs text-muted-foreground">
-              {group.reports.map((report) => (
-                <li key={report.id} className="space-y-0.5">
-                  <p className="break-words text-text">{report.rawName}</p>
-                  <p>
-                    {report.reporter?.name ?? "Reportante no disponible"}
-                    {report.sellerCode ? ` · ${report.sellerCode}` : ""} ·{" "}
-                    {formatBogotaDate(report.createdAt, { style: "datetime" })}
-                  </p>
-                </li>
-              ))}
-            </ul>
-          </details>
-
-          {/* Las dos salidas rápidas van PRIMERO: son el 95% de las decisiones.
-              Vincular al catálogo queda debajo, para cuando gerencia quiere
-              además seguimiento de stock del producto. Los tres forms llevan los
-              clave canónica de ESTE grupo; el servidor obtiene sus reportes
-              pendientes actuales. La página ya exige `canReviewMissingReports`. */}
-          <ReportQuickActions
-            normalizedName={group.normalizedName}
-            productName={group.displayName}
-          />
-
-          <details className="group">
-            <summary className="inline-flex min-h-11 cursor-pointer list-none items-center text-xs font-medium text-muted-foreground hover:text-text [&::-webkit-details-marker]:hidden">
-              Vincular a un producto del catálogo
-            </summary>
-            <div className="mt-2">
-              <ReportLinkForm normalizedName={group.normalizedName} defaultOpen />
+              <ReportQuickActions
+                normalizedName={group.normalizedName}
+                productName={group.displayName}
+              />
             </div>
-          </details>
-        </Card>
-      ))}
+
+            {/* Los dos detalles como texto chico en una línea, no como
+                bloques abiertos. `defaultOpen` en el formulario evita un
+                SEGUNDO gesto: se despliega ya listo para buscar el producto. */}
+            <div className="flex flex-wrap items-center gap-x-4 text-xs">
+              <details className="group">
+                <summary className="inline-flex min-h-11 cursor-pointer list-none items-center text-muted-foreground hover:text-text [&::-webkit-details-marker]:hidden">
+                  Ver quién lo reportó
+                </summary>
+                <ul className="mb-2 space-y-2 text-muted-foreground">
+                  {group.reports.map((report) => (
+                    <li key={report.id} className="space-y-0.5">
+                      <p className="break-words text-text">{report.rawName}</p>
+                      <p>
+                        {report.reporter?.name ?? "Reportante no disponible"}
+                        {report.sellerCode ? ` · ${report.sellerCode}` : ""} ·{" "}
+                        {formatBogotaDate(report.createdAt, { style: "datetime" })}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+
+              <details className="group w-full sm:w-auto">
+                <summary className="inline-flex min-h-11 cursor-pointer list-none items-center text-muted-foreground hover:text-text [&::-webkit-details-marker]:hidden">
+                  Vincular a un producto del catálogo
+                </summary>
+                <div className="mb-2">
+                  {/* Vincula el GRUPO por su nombre, igual que las dos acciones
+                      rápidas: si llega un reporte más del mismo producto entre
+                      el render y el clic, también queda cubierto. */}
+                  <ReportLinkForm normalizedName={group.normalizedName} defaultOpen />
+                </div>
+              </details>
+            </div>
+          </div>
+        ))}
+      </Card>
 
       {/* Paginación por offset: esta cola agrupa con `groupBy`, que no admite
           cursor. Por eso vive en su propia ruta y no comparte URL con la cola

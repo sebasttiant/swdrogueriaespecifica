@@ -34,10 +34,10 @@ export default async function PendientesPage({
 
   const { cursor, scope: rawScope, view: rawView } = await searchParams;
 
-  // Vista LISTADO: la que pidió gerencia para comprar. Eje aparte del scope
-  // (abiertos/historial); cualquier valor que no sea "lista" cae en la vista
-  // detallada de siempre, que es la del vendedor.
-  const view = rawView === "lista" ? "lista" : "detalle";
+  // LISTADO por defecto: es la vista que pidió gerencia y la que se lee de un
+  // vistazo con decenas de pendientes por hora. El detalle —cliente, teléfono,
+  // dirección, abonos, entrega— queda a un toque para quien lo necesite.
+  const view = rawView === "detalle" ? "detalle" : "lista";
 
   // El scope viene de la URL: cualquier valor que no sea exactamente "history"
   // cae en la vista operativa. Un `?scope=cualquier-cosa` no abre los cerrados.
@@ -107,7 +107,11 @@ export default async function PendientesPage({
           esta segunda: "que lo muestre en listado... un listadito". */}
       <nav aria-label="Formato de la lista" className="flex gap-2 text-sm font-semibold">
         <Link
-          href={scope === "history" ? "/pendientes?scope=history" : "/pendientes"}
+          href={
+            scope === "history"
+              ? "/pendientes?scope=history&view=detalle"
+              : "/pendientes?view=detalle"
+          }
           aria-current={view === "detalle" ? "page" : undefined}
           className={cn(
             "inline-flex min-h-11 items-center rounded-lg px-4 transition-colors",
@@ -119,11 +123,7 @@ export default async function PendientesPage({
           Detalle
         </Link>
         <Link
-          href={
-            scope === "history"
-              ? "/pendientes?scope=history&view=lista"
-              : "/pendientes?view=lista"
-          }
+          href={scope === "history" ? "/pendientes?scope=history" : "/pendientes"}
           aria-current={view === "lista" ? "page" : undefined}
           className={cn(
             "inline-flex min-h-11 items-center rounded-lg px-4 transition-colors",

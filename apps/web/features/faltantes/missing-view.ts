@@ -8,6 +8,10 @@
 
 export type MissingView = "full" | "compact";
 
+// COMPACTA por defecto. La completa muestra ocho columnas por fila y con
+// cientos de faltantes se vuelve una pared; gerencia trabaja escaneando la
+// lista, no leyendo fila por fila. La completa queda a un toque para quien
+// necesite el detalle.
 export function resolveMissingView(param?: string | null): MissingView {
-  return param === "compact" ? "compact" : "full";
+  return param === "full" ? "full" : "compact";
 }

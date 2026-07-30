@@ -87,3 +87,24 @@ export function missingPageHref(
 ): string {
   return missingHref(scope, view, cursor);
 }
+
+// Qué decir cuando una vista no tiene nada. Un mensaje genérico ("no hay
+// faltantes abiertos") dentro de "Descartados" hace dudar de si la acción se
+// guardó, que es exactamente la duda que no queremos sembrar.
+export const MISSING_SCOPE_EMPTY: Record<
+  MissingQueueScope,
+  { title: string; description: string }
+> = {
+  actionable: {
+    title: "Nada por pedir",
+    description: "No queda ningún faltante esperando decisión.",
+  },
+  ordered: {
+    title: "Todavía no pediste nada",
+    description: "Lo que marques como pedido aparece acá.",
+  },
+  discarded: {
+    title: "Nada descartado",
+    description: "Lo que descartes aparece acá; no se borra.",
+  },
+};

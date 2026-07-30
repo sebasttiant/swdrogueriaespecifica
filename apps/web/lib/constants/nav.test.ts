@@ -55,10 +55,10 @@ describe("visibleNavItems", () => {
 describe("visibleNavItems · revisión de reportes", () => {
   // La cola de revisión es de gerencia: el vendedor que reporta no la ve.
   it("solo la ven SUPERADMIN y ADMIN", () => {
-    expect(labels("SUPERADMIN")).toContain("Revisión de reportes");
-    expect(labels("ADMIN")).toContain("Revisión de reportes");
-    expect(labels("SUPERVISOR")).not.toContain("Revisión de reportes");
-    expect(labels("OPERADOR")).not.toContain("Revisión de reportes");
+    expect(labels("SUPERADMIN")).toContain("Revisión de faltantes");
+    expect(labels("ADMIN")).toContain("Revisión de faltantes");
+    expect(labels("SUPERVISOR")).not.toContain("Revisión de faltantes");
+    expect(labels("OPERADOR")).not.toContain("Revisión de faltantes");
   });
 
   // La barra inferior del celular es del flujo operativo; una vista de gerencia

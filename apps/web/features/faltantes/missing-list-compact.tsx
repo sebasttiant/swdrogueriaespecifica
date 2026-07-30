@@ -10,6 +10,11 @@ import { MissingQuickActions } from "./missing-quick-actions";
 
 type MissingListCompactProps = {
   items: MissingItemListEntry[];
+  // Qué vista se está mirando: el mensaje de "no hay nada" tiene que hablar de
+  // ESA pestaña. Decir "no hay faltantes abiertos" dentro de "Descartados" hace
+  // dudar de si el descarte se guardó.
+  emptyTitle: string;
+  emptyDescription: string;
   // Autoridad de compras. Sin esto no se ofrecen los botones ✓/✗ — y la Server
   // Action los rechaza igual, así que esconderlos es cosmética, no seguridad.
   canAct: boolean;
@@ -47,6 +52,8 @@ function compactReference(item: MissingItemListEntry) {
 export function MissingListCompact({
   items,
   canAct,
+  emptyTitle,
+  emptyDescription,
   nextCursor,
   pageHref,
 }: MissingListCompactProps) {
@@ -60,8 +67,8 @@ export function MissingListCompact({
       <Card>
         <EmptyState
           icon={PackageCheck}
-          title="Sin faltantes"
-          description="No hay faltantes abiertos por ahora."
+          title={emptyTitle}
+          description={emptyDescription}
         />
       </Card>
     );
@@ -128,7 +135,7 @@ export function MissingListCompact({
                   estado: una columna vacía sería ruido en una vista cuya razón
                   de ser es ser corta. */}
               {hasAttribution ? (
-                <th className="px-3 py-2 font-medium">Marcado por</th>
+                <th className="px-3 py-2 font-medium">Pedido por</th>
               ) : null}
               {canAct ? <th className="px-3 py-2 font-medium">Acciones</th> : null}
             </tr>
