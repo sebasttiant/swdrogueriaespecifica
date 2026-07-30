@@ -25,11 +25,12 @@ export type ProductOption = {
 
 type EntryFormProps = {
   products: ProductOption[];
+  selectedProductId?: string;
 };
 
 // Alta de entrada de inventario. Único client component del slice (necesita
 // useActionState). La lista de productos llega del server component que la monta.
-export function EntryForm({ products }: EntryFormProps) {
+export function EntryForm({ products, selectedProductId }: EntryFormProps) {
   const [state, formAction, isPending] = useActionState(
     createInventoryEntryAction,
     INITIAL_STATE,
@@ -47,7 +48,7 @@ export function EntryForm({ products }: EntryFormProps) {
     <form action={formAction} className="space-y-4">
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Producto" htmlFor="productId" className="sm:col-span-2">
-          <Select id="productId" name="productId" required>
+          <Select id="productId" name="productId" required defaultValue={selectedProductId}>
             <option value="">Elegí un producto…</option>
             {products.map((product) => (
               <option key={product.id} value={product.id}>

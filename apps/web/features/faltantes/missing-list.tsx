@@ -55,6 +55,7 @@ const STATUS: Record<
 > = {
   FALTANTE: { label: "Faltante", tone: "danger" },
   PEDIDO: { label: "Pedido", tone: "warning" },
+  EN_BODEGA: { label: "En bodega", tone: "warning" },
   RECIBIDO: { label: "Recibido", tone: "success" },
   CANCELADO: { label: "Cancelado", tone: "neutral" },
 };

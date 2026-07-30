@@ -25,6 +25,10 @@ vi.mock("@/server/repositories/inventory-entry.repository", () => ({
 }));
 vi.mock("@/server/repositories/missing-item.repository", () => ({
   closeMissingItemsByEntry: vi.fn(),
+  listArrivedMissingItems: vi.fn(),
+}));
+vi.mock("@/server/repositories/missing-report.repository", () => ({
+  markReportsReceivedByMissingItemIds: vi.fn(),
 }));
 
 import { upsertBatchQuantity } from "@/server/repositories/product-batch.repository";
@@ -33,6 +37,7 @@ import {
   listInventoryEntries,
 } from "@/server/repositories/inventory-entry.repository";
 import { closeMissingItemsByEntry } from "@/server/repositories/missing-item.repository";
+import { markReportsReceivedByMissingItemIds } from "@/server/repositories/missing-report.repository";
 import {
   registerInventoryEntry,
   getInventoryEntries,
@@ -55,6 +60,7 @@ beforeEach(() => {
   vi.mocked(upsertBatchQuantity).mockResolvedValue({ id: "batch_1" } as never);
   vi.mocked(createInventoryEntry).mockResolvedValue({ id: "entry_1" } as never);
   vi.mocked(closeMissingItemsByEntry).mockResolvedValue(["m1", "m2"]);
+  vi.mocked(markReportsReceivedByMissingItemIds).mockResolvedValue(2);
 });
 
 describe("registerInventoryEntry", () => {
@@ -132,6 +138,7 @@ describe("registerInventoryEntry", () => {
     expect(upsertBatchQuantity).toHaveBeenCalledTimes(1);
     expect(createInventoryEntry).toHaveBeenCalledTimes(1);
     expect(closeMissingItemsByEntry).toHaveBeenCalledTimes(1);
+    expect(markReportsReceivedByMissingItemIds).toHaveBeenCalledWith(tx, ["m1", "m2"]);
   });
 
   it("passes the tx client to closeMissingItemsByEntry (not the prisma singleton)", async () => {

@@ -81,6 +81,10 @@ export type CreateMissingItemData = {
   createdById?: string | null;
   note?: string | null;
   sellerCode?: string | null;
+  orderedQuantity?: number | null;
+  status?: MissingItemStatus;
+  orderedAt?: Date;
+  orderedById?: string;
 };
 
 // Vistas de la cola operativa. Cada una responde una pregunta distinta del
@@ -214,6 +218,10 @@ export async function listMissingItems(params: {
 // de cerrarse solos al llegar la mercadería y se acumulan para siempre.
 // --------------------------------------------------------------------------
 const OPEN_STATUSES: MissingItemStatus[] = ["FALTANTE", "PEDIDO"];
+const RECONCILABLE_STATUSES: MissingItemStatus[] = [
+  ...OPEN_STATUSES,
+  "EN_BODEGA",
+];
 const ACTIONABLE_STATUSES: MissingItemStatus[] = ["FALTANTE"];
 const ORDERED_STATUSES: MissingItemStatus[] = ["PEDIDO", "RECIBIDO"];
 
@@ -354,8 +362,51 @@ export async function createMissingItem(
       originId: data.originId ?? null,
       createdById: data.createdById ?? null,
       sellerCode: data.sellerCode ?? null,
+      status: data.status,
+      orderedAt: data.orderedAt,
+      orderedById: data.orderedById,
+      orderedQuantity: data.orderedQuantity,
     },
   });
+}
+
+export async function markMissingItemArrived(
+  tx: Prisma.TransactionClient,
+  data: { id: string; arrivedById: string; arrivedAt: Date },
+): Promise<number> {
+  const { count } = await tx.missingItem.updateMany({
+    where: { id: data.id, status: "PEDIDO", confirmedAt: null },
+    data: { status: "EN_BODEGA", arrivedById: data.arrivedById, arrivedAt: data.arrivedAt },
+  });
+  return count;
+}
+
+export type ArrivedMissingItem = {
+  id: string;
+  productId: string;
+  product: { name: string; code: string };
+  arrivedAt: Date | null;
+  requestedByName: string | null;
+};
+
+export async function listArrivedMissingItems(): Promise<ArrivedMissingItem[]> {
+  const items = await prisma.missingItem.findMany({
+    where: { status: "EN_BODEGA", confirmedAt: null },
+    orderBy: [{ arrivedAt: "asc" }, { id: "asc" }],
+    select: { id: true, productId: true, arrivedAt: true, product: { select: { name: true, code: true } } },
+  });
+  const reports = await prisma.missingReport.findMany({
+    where: { linkedMissingItemId: { in: items.map((item) => item.id) } },
+    select: { linkedMissingItemId: true, reporter: { select: { name: true } } },
+    orderBy: { createdAt: "asc" },
+  });
+  const names = new Map<string, string>();
+  for (const report of reports) {
+    if (report.linkedMissingItemId && !names.has(report.linkedMissingItemId)) {
+      names.set(report.linkedMissingItemId, report.reporter.name);
+    }
+  }
+  return items.map((item) => ({ ...item, requestedByName: names.get(item.id) ?? null }));
 }
 
 // --------------------------------------------------------------------------
@@ -376,11 +427,17 @@ export async function closeMissingItemsByEntry(
   const openItems = await tx.missingItem.findMany({
     where: {
       productId: params.productId,
-      status: { in: OPEN_STATUSES },
+      status: { in: RECONCILABLE_STATUSES },
       confirmedAt: null,
     },
     orderBy: { createdAt: "asc" },
-    select: { id: true, quantity: true, originId: true, orderedQuantity: true },
+    select: {
+      id: true,
+      status: true,
+      quantity: true,
+      originId: true,
+      orderedQuantity: true,
+    },
   });
 
   let remaining = params.availableQuantity;
@@ -395,10 +452,19 @@ export async function closeMissingItemsByEntry(
     if (effectiveQuantity === null) continue;
     if (effectiveQuantity > remaining) break;
 
-    await tx.missingItem.update({
-      where: { id: item.id },
+    const { count } = await tx.missingItem.updateMany({
+      where: {
+        id: item.id,
+        status: item.status,
+        confirmedAt: null,
+      },
       data: { status: "RECIBIDO" },
     });
+
+    // Otra entrada pudo cerrar esta fila entre el listado y el CAS. En ese
+    // caso esta recepción conserva su cantidad disponible para el siguiente
+    // faltante elegible y no cuenta un cierre que no hizo.
+    if (count !== 1) continue;
 
     remaining -= effectiveQuantity;
     closedIds.push(item.id);

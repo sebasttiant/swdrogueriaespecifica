@@ -48,6 +48,7 @@ enum PendingStatus {
 enum MissingItemStatus {
   FALTANTE
   PEDIDO
+  EN_BODEGA
   RECIBIDO
   CANCELADO
 }
@@ -78,6 +79,8 @@ enum MissingReportStatus {
   // NO mueve stock: eso lo hace la entrada de inventario, que es otro hecho.
   // Mezclarlos haría creer que marcar "ya llegó" subió el inventario.
   RECEIVED
+  // Llegó físicamente, pero bodega todavía no cargó el lote/entrada real.
+  EN_BODEGA
 }
 
 enum AuditResult {
@@ -123,6 +126,8 @@ model User {
   discardedMissingItems MissingItem[] @relation("MissingItemDiscardedBy")
   missingReports  MissingReport[] @relation("MissingReportReportedBy")
   resolvedMissingReports MissingReport[] @relation("MissingReportResolvedBy")
+  arrivedMissingReports MissingReport[] @relation("MissingReportArrivedBy")
+  arrivedMissingItems MissingItem[] @relation("MissingItemArrivedBy")
 
   @@index([active])
   @@index([archivedAt])
@@ -146,6 +151,9 @@ model Product {
   // Producto creado al vuelo desde un pendiente manual (no estaba en catálogo).
   // Queda marcado para que un ADMIN lo complete/apruebe (código y unidad reales).
   needsReview Boolean @default(false)
+  // Clave canónica solo para productos provisionales creados desde reportes.
+  // El unique hace idempotente la creación concurrente por nombre normalizado.
+  provisionalNormalizedName String? @unique
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -350,6 +358,9 @@ model MissingItem {
   orderedAt DateTime?
   orderedBy User? @relation("MissingItemOrderedBy", fields: [orderedById], references: [id])
   orderedById String?
+  arrivedAt DateTime?
+  arrivedBy User? @relation("MissingItemArrivedBy", fields: [arrivedById], references: [id])
+  arrivedById String?
   supplier Supplier? @relation(fields: [supplierId], references: [id])
   supplierId String?
   // Descarte de un faltante duplicado o que ya no hace falta (status CANCELADO).
@@ -367,6 +378,7 @@ model MissingItem {
   @@index([confirmedAt])
   @@index([status, confirmedAt])
   @@index([productId])
+  @@index([status, arrivedAt])
   @@index([createdAt])
   @@map("missing_items")
 }
@@ -455,6 +467,9 @@ model MissingReport {
   resolvedBy     User?               @relation("MissingReportResolvedBy", fields: [resolvedById], references: [id])
   resolvedById   String?
   resolvedAt     DateTime?
+  arrivedBy      User?               @relation("MissingReportArrivedBy", fields: [arrivedById], references: [id])
+  arrivedById    String?
+  arrivedAt      DateTime?
   createdAt      DateTime            @default(now())
   updatedAt      DateTime            @updatedAt
 

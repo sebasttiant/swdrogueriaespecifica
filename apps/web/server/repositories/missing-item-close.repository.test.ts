@@ -2,7 +2,7 @@
 // TDD — closeMissingItemsByEntry
 //
 // MissingItem HAS a `quantity` field (Int, not null).
-// OPEN statuses: FALTANTE, PEDIDO (from OPEN_STATUSES in the repository).
+// OPEN statuses: FALTANTE, PEDIDO, EN_BODEGA (from OPEN_STATUSES in the repository).
 // CLOSED/resolved status: RECIBIDO (the schema's "received/fulfilled" state).
 // MissingItem has NO resolvedAt/closedAt timestamp field.
 //
@@ -17,7 +17,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// We need a tx mock that exposes missingItem.findMany and missingItem.update.
+// We need a tx mock that exposes missingItem.findMany and missingItem.updateMany.
 // `as never` is the project-wide pattern for partial tx mocks (see
 // product-batch-upsert.repository.test.ts) — the cast tells TS we only
 // exercise the surface the function actually touches.
@@ -25,7 +25,7 @@ const { txMock } = vi.hoisted(() => {
   const txMock = {
     missingItem: {
       findMany: vi.fn(),
-      update: vi.fn(),
+      updateMany: vi.fn(),
     },
   };
   return { txMock };
@@ -46,15 +46,15 @@ import { closeMissingItemsByEntry } from "./missing-item.repository";
 
 beforeEach(() => {
   vi.clearAllMocks();
-  txMock.missingItem.update.mockResolvedValue({});
+  txMock.missingItem.updateMany.mockResolvedValue({ count: 1 });
 });
 
 describe("closeMissingItemsByEntry · FIFO quantity-aware close", () => {
   it("closes items in FIFO order (oldest first) when quantity is sufficient", async () => {
     // Two open items: oldest has qty=3, newest has qty=5. Available=8 covers both.
     txMock.missingItem.findMany.mockResolvedValue([
-      { id: "m1", quantity: 3 },
-      { id: "m2", quantity: 5 },
+      { id: "m1", status: "FALTANTE", quantity: 3 },
+      { id: "m2", status: "FALTANTE", quantity: 5 },
     ]);
 
     const result = await closeMissingItemsByEntry(txMock as never, {
@@ -63,14 +63,14 @@ describe("closeMissingItemsByEntry · FIFO quantity-aware close", () => {
     });
 
     expect(result).toEqual(["m1", "m2"]);
-    expect(txMock.missingItem.update).toHaveBeenCalledTimes(2);
+    expect(txMock.missingItem.updateMany).toHaveBeenCalledTimes(2);
     // First call closes m1, second closes m2
-    expect(txMock.missingItem.update).toHaveBeenNthCalledWith(1, {
-      where: { id: "m1" },
+    expect(txMock.missingItem.updateMany).toHaveBeenNthCalledWith(1, {
+      where: { id: "m1", status: "FALTANTE", confirmedAt: null },
       data: { status: "RECIBIDO" },
     });
-    expect(txMock.missingItem.update).toHaveBeenNthCalledWith(2, {
-      where: { id: "m2" },
+    expect(txMock.missingItem.updateMany).toHaveBeenNthCalledWith(2, {
+      where: { id: "m2", status: "FALTANTE", confirmedAt: null },
       data: { status: "RECIBIDO" },
     });
   });
@@ -78,8 +78,8 @@ describe("closeMissingItemsByEntry · FIFO quantity-aware close", () => {
   it("stops when the next open item quantity exceeds remaining available (no partial close)", async () => {
     // available=4: closes m1 (qty=3, remaining=1), then m2 (qty=5) exceeds remaining → STOP
     txMock.missingItem.findMany.mockResolvedValue([
-      { id: "m1", quantity: 3 },
-      { id: "m2", quantity: 5 },
+      { id: "m1", status: "FALTANTE", quantity: 3 },
+      { id: "m2", status: "FALTANTE", quantity: 5 },
     ]);
 
     const result = await closeMissingItemsByEntry(txMock as never, {
@@ -88,9 +88,9 @@ describe("closeMissingItemsByEntry · FIFO quantity-aware close", () => {
     });
 
     expect(result).toEqual(["m1"]);
-    expect(txMock.missingItem.update).toHaveBeenCalledTimes(1);
-    expect(txMock.missingItem.update).toHaveBeenCalledWith({
-      where: { id: "m1" },
+    expect(txMock.missingItem.updateMany).toHaveBeenCalledTimes(1);
+    expect(txMock.missingItem.updateMany).toHaveBeenCalledWith({
+      where: { id: "m1", status: "FALTANTE", confirmedAt: null },
       data: { status: "RECIBIDO" },
     });
   });
@@ -104,12 +104,12 @@ describe("closeMissingItemsByEntry · FIFO quantity-aware close", () => {
     });
 
     expect(result).toEqual([]);
-    expect(txMock.missingItem.update).not.toHaveBeenCalled();
+    expect(txMock.missingItem.updateMany).not.toHaveBeenCalled();
   });
 
   it("closes nothing when available quantity is 0", async () => {
     txMock.missingItem.findMany.mockResolvedValue([
-      { id: "m1", quantity: 1 },
+      { id: "m1", status: "FALTANTE", quantity: 1 },
     ]);
 
     const result = await closeMissingItemsByEntry(txMock as never, {
@@ -118,12 +118,12 @@ describe("closeMissingItemsByEntry · FIFO quantity-aware close", () => {
     });
 
     expect(result).toEqual([]);
-    expect(txMock.missingItem.update).not.toHaveBeenCalled();
+    expect(txMock.missingItem.updateMany).not.toHaveBeenCalled();
   });
 
   it("sets the real closed status RECIBIDO (not FALTANTE, PEDIDO, or CANCELADO)", async () => {
     txMock.missingItem.findMany.mockResolvedValue([
-      { id: "m1", quantity: 2 },
+      { id: "m1", status: "FALTANTE", quantity: 2 },
     ]);
 
     await closeMissingItemsByEntry(txMock as never, {
@@ -131,7 +131,7 @@ describe("closeMissingItemsByEntry · FIFO quantity-aware close", () => {
       availableQuantity: 5,
     });
 
-    const updateArgs = txMock.missingItem.update.mock.calls[0]![0];
+    const updateArgs = txMock.missingItem.updateMany.mock.calls[0]![0];
     expect(updateArgs.data.status).toBe("RECIBIDO");
     expect(updateArgs.data.status).not.toBe("FALTANTE");
     expect(updateArgs.data.status).not.toBe("PEDIDO");
@@ -149,18 +149,24 @@ describe("closeMissingItemsByEntry · FIFO quantity-aware close", () => {
     expect(txMock.missingItem.findMany).toHaveBeenCalledWith({
       where: {
         productId: "prod_abc",
-        status: { in: ["FALTANTE", "PEDIDO"] },
+        status: { in: ["FALTANTE", "PEDIDO", "EN_BODEGA"] },
         confirmedAt: null,
       },
       orderBy: { createdAt: "asc" },
-    select: { id: true, quantity: true, originId: true, orderedQuantity: true },
+      select: {
+        id: true,
+        status: true,
+        quantity: true,
+        originId: true,
+        orderedQuantity: true,
+      },
     });
   });
 
   it("only affects the given productId, not items from other products", async () => {
     // Only returns items for the requested product (DB filtered by productId)
     txMock.missingItem.findMany.mockResolvedValue([
-      { id: "m1", quantity: 2 }, // belongs to prod_1 (filtered by DB)
+      { id: "m1", status: "FALTANTE", quantity: 2 }, // belongs to prod_1 (filtered by DB)
     ]);
 
     const result = await closeMissingItemsByEntry(txMock as never, {
@@ -178,8 +184,8 @@ describe("closeMissingItemsByEntry · FIFO quantity-aware close", () => {
   it("closes exactly the items that fit within available quantity (exact boundary)", async () => {
     // available=5, item qty=5: should close exactly (remaining becomes 0)
     txMock.missingItem.findMany.mockResolvedValue([
-      { id: "m1", quantity: 5 },
-      { id: "m2", quantity: 1 },
+      { id: "m1", status: "FALTANTE", quantity: 5 },
+      { id: "m2", status: "FALTANTE", quantity: 1 },
     ]);
 
     const result = await closeMissingItemsByEntry(txMock as never, {
@@ -189,13 +195,13 @@ describe("closeMissingItemsByEntry · FIFO quantity-aware close", () => {
 
     // m1 closes (remaining=0), m2 can't close (qty=1 > 0)
     expect(result).toEqual(["m1"]);
-    expect(txMock.missingItem.update).toHaveBeenCalledTimes(1);
+    expect(txMock.missingItem.updateMany).toHaveBeenCalledTimes(1);
   });
 
   it("skips an unordered manual item and continues with the next automatic deficit", async () => {
     txMock.missingItem.findMany.mockResolvedValue([
-      { id: "manual", quantity: 1, originId: null, orderedQuantity: null },
-      { id: "automatic", quantity: 1, originId: "pending-1", orderedQuantity: null },
+      { id: "manual", status: "FALTANTE", quantity: 1, originId: null, orderedQuantity: null },
+      { id: "automatic", status: "FALTANTE", quantity: 1, originId: "pending-1", orderedQuantity: null },
     ]);
 
     const result = await closeMissingItemsByEntry(txMock as never, {
@@ -204,15 +210,15 @@ describe("closeMissingItemsByEntry · FIFO quantity-aware close", () => {
     });
 
     expect(result).toEqual(["automatic"]);
-    expect(txMock.missingItem.update).toHaveBeenCalledWith({
-      where: { id: "automatic" },
+    expect(txMock.missingItem.updateMany).toHaveBeenCalledWith({
+      where: { id: "automatic", status: "FALTANTE", confirmedAt: null },
       data: { status: "RECIBIDO" },
     });
   });
 
   it("uses orderedQuantity instead of the manual sentinel for reconciliation", async () => {
     txMock.missingItem.findMany.mockResolvedValue([
-      { id: "manual", quantity: 1, originId: null, orderedQuantity: 5 },
+      { id: "manual", status: "FALTANTE", quantity: 1, originId: null, orderedQuantity: 5 },
     ]);
 
     await expect(
@@ -221,6 +227,32 @@ describe("closeMissingItemsByEntry · FIFO quantity-aware close", () => {
         availableQuantity: 1,
       }),
     ).resolves.toEqual([]);
-    expect(txMock.missingItem.update).not.toHaveBeenCalled();
+    expect(txMock.missingItem.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("does not count a lost compare-and-set and uses the quantity on the next FIFO item", async () => {
+    txMock.missingItem.findMany.mockResolvedValue([
+      { id: "claimed", status: "EN_BODEGA", quantity: 5, originId: "pending-1" },
+      { id: "next", status: "EN_BODEGA", quantity: 5, originId: "pending-2" },
+    ]);
+    txMock.missingItem.updateMany
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 1 });
+
+    await expect(
+      closeMissingItemsByEntry(txMock as never, {
+        productId: "prod_1",
+        availableQuantity: 5,
+      }),
+    ).resolves.toEqual(["next"]);
+
+    expect(txMock.missingItem.updateMany).toHaveBeenNthCalledWith(1, {
+      where: { id: "claimed", status: "EN_BODEGA", confirmedAt: null },
+      data: { status: "RECIBIDO" },
+    });
+    expect(txMock.missingItem.updateMany).toHaveBeenNthCalledWith(2, {
+      where: { id: "next", status: "EN_BODEGA", confirmedAt: null },
+      data: { status: "RECIBIDO" },
+    });
   });
 });

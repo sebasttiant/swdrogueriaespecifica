@@ -289,7 +289,7 @@ describe("ReportQueueList · vistas", () => {
   it("el 'ya llegó' exige que el reporte siguiera pedido", () => {
     const html = render([group()], { scope: "ordered" });
 
-    expect(html).toContain('name="resolution" value="RECEIVED"');
+    expect(html).toContain('name="resolution" value="EN_BODEGA"');
     expect(html).toContain('name="expectedStatus" value="ORDERED"');
   });
 

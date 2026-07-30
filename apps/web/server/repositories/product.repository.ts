@@ -116,3 +116,22 @@ export async function createProduct(
 ): Promise<Product> {
   return client.product.create({ data });
 }
+
+export async function upsertProvisionalProduct(
+  client: Prisma.TransactionClient,
+  data: { normalizedName: string; displayName: string },
+): Promise<Product> {
+  return client.product.upsert({
+    where: { provisionalNormalizedName: data.normalizedName },
+    update: {},
+    create: {
+      code: `PROV-${data.normalizedName}`,
+      name: data.displayName.trim(),
+      unit: "unidad",
+      minStock: 0,
+      reorderQty: 0,
+      needsReview: true,
+      provisionalNormalizedName: data.normalizedName,
+    },
+  });
+}

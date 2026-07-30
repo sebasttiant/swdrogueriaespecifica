@@ -13,7 +13,11 @@
 
 import { prisma } from "@/lib/db/prisma";
 import type { Paginated } from "@/lib/pagination";
-import { closeMissingItemsByEntry } from "@/server/repositories/missing-item.repository";
+import {
+  closeMissingItemsByEntry,
+  listArrivedMissingItems,
+} from "@/server/repositories/missing-item.repository";
+import { markReportsReceivedByMissingItemIds } from "@/server/repositories/missing-report.repository";
 import { upsertBatchQuantity } from "@/server/repositories/product-batch.repository";
 import {
   createInventoryEntry,
@@ -65,6 +69,7 @@ export async function registerInventoryEntry(
       productId: data.productId,
       availableQuantity: data.quantity,
     });
+    await markReportsReceivedByMissingItemIds(tx, closedIds);
 
     return { entry, closedMissingCount: closedIds.length };
   });
@@ -76,4 +81,8 @@ export function getInventoryEntries(params: {
   take?: number;
 }): Promise<Paginated<InventoryEntryListItem>> {
   return listInventoryEntries(params);
+}
+
+export function getArrivedMissingItems() {
+  return listArrivedMissingItems();
 }

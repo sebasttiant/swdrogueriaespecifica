@@ -11,6 +11,7 @@ import { MissingBulkActions } from "@/features/faltantes/missing-bulk-actions";
 import { MissingList } from "@/features/faltantes/missing-list";
 import { MissingListCompact } from "@/features/faltantes/missing-list-compact";
 import { MissingReportForm } from "@/features/faltantes/missing-report-form";
+import { MyMissingReports } from "@/features/faltantes/my-missing-reports";
 import { REVIEW_QUEUE_PATH } from "@/features/faltantes/report-queue-paging";
 import { MissingSummary } from "@/features/faltantes/missing-summary";
 import { canDiscard } from "@/features/faltantes/order-rules";
@@ -32,6 +33,7 @@ import {
   getMissingItems,
   getMissingItemsSummary,
 } from "@/server/services/missing-item.service";
+import { getMyMissingReports } from "@/server/services/missing-report.service";
 
 export const metadata: Metadata = { title: "Faltantes" };
 
@@ -59,7 +61,7 @@ export default async function FaltantesPage({
   // Un único instante compartido por el resumen global y el agrupamiento de
   // la página actual, para que ambos hablen del mismo "ahora".
   const now = new Date();
-  const [{ items, nextCursor }, summary, actionableCount] = await Promise.all([
+  const [{ items, nextCursor }, summary, actionableCount, myReports] = await Promise.all([
     getMissingItems({
       cursor,
       scope: repositoryScopeFor(scope),
@@ -69,6 +71,7 @@ export default async function FaltantesPage({
     getMissingItemsSummary(now),
     // Global, no de la página actual: es "cuánto me falta por pedir".
     getActionableMissingCount(),
+    canSubmitMissingReports ? getMyMissingReports(session.user.id) : Promise.resolve([]),
   ]);
 
   // Orden deliberado y compacto: título → chips → cola. Todo lo que se
@@ -102,6 +105,8 @@ export default async function FaltantesPage({
           <MissingReportForm />
         </Card>
       ) : null}
+
+      {canSubmitMissingReports ? <MyMissingReports reports={myReports} /> : null}
 
       {canCreateMissingItems ? (
         <Card className="space-y-3 p-3 print:hidden">

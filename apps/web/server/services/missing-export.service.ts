@@ -22,6 +22,7 @@ import type { MissingItemStatus } from "@/lib/generated/prisma/client";
 const MISSING_STATUS_LABEL: Record<MissingItemStatus, string> = {
   FALTANTE: "Faltante",
   PEDIDO: "Pedido",
+  EN_BODEGA: "En bodega",
   RECIBIDO: "Recibido",
   CANCELADO: "Cancelado",
 };

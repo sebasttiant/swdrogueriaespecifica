@@ -18,7 +18,7 @@ type ReportQuickActionsProps = {
   //   pending → pedir o descartar (todavía hay que decidir).
   //   ordered → "ya llegó" (cierra el ciclo).
   //   discarded → ninguna: ya se decidió que no se pide.
-  scope: "pending" | "ordered" | "discarded";
+  scope: "pending" | "ordered" | "arrived" | "discarded";
 };
 
 // Mismo alto de dedo y misma forma que las acciones de /faltantes. Que las dos
@@ -56,7 +56,7 @@ export function ReportQuickActions({
 
   // Un reporte descartado ya no admite nada: no se vuelve a ofrecer una acción
   // que el servidor va a rechazar.
-  if (scope === "discarded") return null;
+  if (scope === "discarded" || scope === "arrived") return null;
 
   return (
     <div className="space-y-1">
@@ -105,7 +105,7 @@ export function ReportQuickActions({
           // siempre. NO mueve stock — eso lo hace la entrada de inventario.
           <form action={formAction}>
             <input type="hidden" name="normalizedName" value={normalizedName} />
-            <input type="hidden" name="resolution" value="RECEIVED" />
+            <input type="hidden" name="resolution" value="EN_BODEGA" />
             <input type="hidden" name="expectedStatus" value="ORDERED" />
             <button
               type="submit"

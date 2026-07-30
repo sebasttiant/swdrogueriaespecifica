@@ -211,6 +211,91 @@ export async function resolveMissingReports(
   return reports.map((report) => report.id);
 }
 
+export async function markReportsOrdered(
+  client: Prisma.TransactionClient,
+  data: { normalizedName: string; productId: string; missingItemId: string; resolvedById: string; resolvedAt: Date },
+): Promise<string[]> {
+  const reports = await client.missingReport.updateManyAndReturn({
+    where: { normalizedName: data.normalizedName, status: "PENDING_REVIEW" },
+    data: {
+      status: "ORDERED",
+      linkedProductId: data.productId,
+      linkedMissingItemId: data.missingItemId,
+      resolvedById: data.resolvedById,
+      resolvedAt: data.resolvedAt,
+    },
+    select: { id: true },
+  });
+  return reports.map((report) => report.id);
+}
+
+export async function findPendingGroupDisplayName(
+  client: Prisma.TransactionClient,
+  normalizedName: string,
+): Promise<string | null> {
+  const report = await client.missingReport.findFirst({
+    where: { normalizedName, status: "PENDING_REVIEW" },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    select: { rawName: true },
+  });
+  return report?.rawName ?? null;
+}
+
+export async function getOrderedGroupMissingItemId(
+  client: Prisma.TransactionClient,
+  normalizedName: string,
+): Promise<string | null> {
+  const report = await client.missingReport.findFirst({
+    where: { normalizedName, status: "ORDERED", linkedMissingItemId: { not: null } },
+    select: { linkedMissingItemId: true },
+  });
+  return report?.linkedMissingItemId ?? null;
+}
+
+export async function markReportsArrived(
+  client: Prisma.TransactionClient,
+  data: { normalizedName: string; arrivedById: string; arrivedAt: Date },
+): Promise<string[]> {
+  const reports = await client.missingReport.updateManyAndReturn({
+    where: { normalizedName: data.normalizedName, status: "ORDERED" },
+    data: { status: "EN_BODEGA", arrivedById: data.arrivedById, arrivedAt: data.arrivedAt },
+    select: { id: true },
+  });
+  return reports.map((report) => report.id);
+}
+
+export async function markReportsReceivedByMissingItemIds(
+  client: Prisma.TransactionClient,
+  missingItemIds: string[],
+): Promise<number> {
+  if (missingItemIds.length === 0) return 0;
+  const { count } = await client.missingReport.updateMany({
+    where: { linkedMissingItemId: { in: missingItemIds }, status: "EN_BODEGA" },
+    data: { status: "RECEIVED" },
+  });
+  return count;
+}
+
+export type MyMissingReport = {
+  id: string;
+  rawName: string;
+  status: MissingReportStatus;
+  createdAt: Date;
+  resolvedAt: Date | null;
+  arrivedAt: Date | null;
+};
+
+export function listMissingReportsForReporter(reporterId: string): Promise<MyMissingReport[]> {
+  return prisma.missingReport.findMany({
+    where: { reporterId },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: 100,
+    select: {
+      id: true, rawName: true, status: true, createdAt: true, resolvedAt: true, arrivedAt: true,
+    },
+  });
+}
+
 // --------------------------------------------------------------------------
 // Trazabilidad (Mejora 5): el vendedor que REPORTÓ cada faltante nacido de un
 // reporte. Un faltante vinculado tiene `createdBy` = gerencia (quien revisó),

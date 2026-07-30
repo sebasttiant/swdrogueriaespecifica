@@ -3,17 +3,22 @@ import type { ReportQueueScope } from "@/features/faltantes/report-queue-scope";
 import { prisma } from "@/lib/db/prisma";
 import { Prisma, type MissingReportStatus } from "@/lib/generated/prisma/client";
 import { clampTake } from "@/lib/pagination";
-import { createMissingItem } from "@/server/repositories/missing-item.repository";
+import { createMissingItem, markMissingItemArrived } from "@/server/repositories/missing-item.repository";
 import {
   createMissingReport,
   groupPendingReportsByName,
   linkMissingReports,
   resolveMissingReports,
+  markReportsOrdered,
+  findPendingGroupDisplayName,
+  getOrderedGroupMissingItemId,
+  markReportsArrived,
+  listMissingReportsForReporter,
   type MissingReportResolution,
   listPendingReportsForNames,
   type PendingReportRow,
 } from "@/server/repositories/missing-report.repository";
-import { findProductById } from "@/server/repositories/product.repository";
+import { findProductById, upsertProvisionalProduct } from "@/server/repositories/product.repository";
 
 export type SubmitMissingReportInput = {
   // Nombre tal cual lo pegó el vendedor desde Orión. Se conserva para mostrar.
@@ -78,15 +83,14 @@ export type MissingReportQueue = {
   page: number;
 };
 
-// Las tres vistas de la cola, con los estados que cada una agrupa. "Ya pedidos"
-// junta ORDERED y RECEIVED porque para gerencia son el mismo tramo: lo que ya
-// compró, haya llegado o no.
+// Cada vista corresponde a un tramo inequívoco del circuito físico.
 export const REPORT_QUEUE_STATUSES: Record<
   ReportQueueScope,
   MissingReportStatus | MissingReportStatus[]
 > = {
   pending: "PENDING_REVIEW",
-  ordered: ["ORDERED", "RECEIVED"],
+  ordered: "ORDERED",
+  arrived: "EN_BODEGA",
   discarded: "DISCARDED",
 };
 
@@ -280,6 +284,80 @@ export class MissingReportResolveConflictError extends Error {
     super("Missing report group was already partially reviewed");
     this.name = "MissingReportResolveConflictError";
   }
+}
+
+const REPORT_PLACEHOLDER_QUANTITY = 1;
+const REPORT_ORDER_NOTE = "Generado desde reporte de vendedor";
+
+export async function orderReports(
+  input: { normalizedName: string; userId: string },
+  now: Date = new Date(),
+): Promise<ResolveReportsResult> {
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const displayName = await findPendingGroupDisplayName(tx, input.normalizedName);
+      if (!displayName) throw new MissingReportResolveConflictError();
+      const product = await upsertProvisionalProduct(tx, {
+        normalizedName: input.normalizedName,
+        displayName,
+      });
+      const missingItem = await createMissingItem({
+        productId: product.id,
+        quantity: REPORT_PLACEHOLDER_QUANTITY,
+        originId: null,
+        createdById: input.userId,
+        note: REPORT_ORDER_NOTE,
+        status: "PEDIDO",
+        orderedQuantity: REPORT_PLACEHOLDER_QUANTITY,
+        orderedAt: now,
+        orderedById: input.userId,
+      }, tx);
+      const reportIds = await markReportsOrdered(tx, {
+        normalizedName: input.normalizedName,
+        productId: product.id,
+        missingItemId: missingItem.id,
+        resolvedById: input.userId,
+        resolvedAt: now,
+      });
+      if (reportIds.length === 0) throw new MissingReportResolveConflictError();
+      return { resolved: reportIds.length, reportIds };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  } catch (error) {
+    if (isSerializableConflict(error)) throw new MissingReportResolveConflictError();
+    throw error;
+  }
+}
+
+export async function markReportsArrivedAtWarehouse(
+  input: { normalizedName: string; userId: string },
+  now: Date = new Date(),
+): Promise<ResolveReportsResult> {
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const missingItemId = await getOrderedGroupMissingItemId(tx, input.normalizedName);
+      if (!missingItemId) throw new MissingReportResolveConflictError();
+      const reports = await markReportsArrived(tx, {
+        normalizedName: input.normalizedName,
+        arrivedById: input.userId,
+        arrivedAt: now,
+      });
+      if (reports.length === 0) throw new MissingReportResolveConflictError();
+      const changed = await markMissingItemArrived(tx, {
+        id: missingItemId,
+        arrivedById: input.userId,
+        arrivedAt: now,
+      });
+      if (changed !== 1) throw new MissingReportResolveConflictError();
+      return { resolved: reports.length, reportIds: reports };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  } catch (error) {
+    if (isSerializableConflict(error)) throw new MissingReportResolveConflictError();
+    throw error;
+  }
+}
+
+export async function getMyMissingReports(reporterId: string) {
+  return listMissingReportsForReporter(reporterId);
 }
 
 function isSerializableConflict(error: unknown): boolean {

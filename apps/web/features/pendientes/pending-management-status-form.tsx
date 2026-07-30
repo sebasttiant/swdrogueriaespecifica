@@ -21,6 +21,9 @@ const INITIAL_STATE: PendingFormState = { error: null, ok: false };
 type PendingManagementStatusFormProps = {
   pendingId: string;
   currentStatus: PendingStatus;
+  // En el listado la columna de al lado ya muestra el estado: repetirlo acá
+  // sería decir dos veces lo mismo en la misma fila.
+  hideCurrentLabel?: boolean;
 };
 
 // Los DOS desenlaces reales de un pendiente en compras, con las palabras del
@@ -63,6 +66,7 @@ const TONE = {
 export function PendingManagementStatusForm({
   pendingId,
   currentStatus,
+  hideCurrentLabel = false,
 }: PendingManagementStatusFormProps) {
   const [state, formAction, isPending] = useActionState(
     updatePendingManagementStatusAction,
@@ -81,6 +85,9 @@ export function PendingManagementStatusForm({
       <form action={formAction} key={status}>
         <input type="hidden" name="id" value={pendingId} />
         <input type="hidden" name="status" value={status} />
+        {/* Compare-and-set: se escribe solo si el pendiente sigue como esta
+            pantalla lo vio. Dos gerentes mirando la misma lista no se pisan. */}
+        <input type="hidden" name="expectedStatus" value={currentStatus} />
         <button
           type="submit"
           disabled={isPending}
@@ -100,9 +107,11 @@ export function PendingManagementStatusForm({
         // posible, pero no ocupa lugar en la pantalla de todos los días.
         <details className="group">
           <summary className="inline-flex min-h-11 cursor-pointer list-none items-center gap-2 text-xs text-muted-foreground hover:text-text [&::-webkit-details-marker]:hidden">
-            <span className="font-medium text-text">
-              {MANAGEMENT_STATUS_LABELS[currentStatus]}
-            </span>
+            {hideCurrentLabel ? null : (
+              <span className="font-medium text-text">
+                {MANAGEMENT_STATUS_LABELS[currentStatus]}
+              </span>
+            )}
             <span className="underline">cambiar</span>
           </summary>
           <div className="mt-2 flex flex-wrap gap-2">

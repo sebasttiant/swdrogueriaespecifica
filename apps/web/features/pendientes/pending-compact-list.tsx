@@ -13,7 +13,8 @@ import {
   isManagementStatus,
   MANAGEMENT_STATUS_LABELS,
 } from "./management-status";
-import { PendingQuickOrder } from "./pending-quick-order";
+import { canSetManagementStatus } from "./management-status";
+import { PendingManagementStatusForm } from "./pending-management-status-form";
 
 // --------------------------------------------------------------------------
 // Vista LISTADO de pendientes — la que pidió el gerente en la reunión del
@@ -69,10 +70,13 @@ function managementLabel(item: PendingListItem): string {
   return "Cancelado";
 }
 
-// Solo se ofrece el atajo cuando nadie fijó gestión todavía. Un pendiente que ya
-// dice "Solicitado" o "Agotado" necesita el selector completo, no este botón.
-function awaitsOrder(item: PendingListItem): boolean {
-  return item.status === "PENDIENTE";
+// El control de gestión se ofrece SIEMPRE que el estado lo admita, no solo
+// cuando el pendiente está virgen. Antes el listado mostraba el estado y punto:
+// para cambiar un "Solicitado" a "Agotado" había que irse a la vista detallada,
+// justo la que gerencia no usa. El listado es la vista principal; tiene que
+// poder resolver ahí mismo.
+function canManage(item: PendingListItem): boolean {
+  return canSetManagementStatus(item.status);
 }
 
 export function PendingCompactList({
@@ -131,10 +135,11 @@ export function PendingCompactList({
                 <span className="text-xs font-medium text-muted-foreground">
                   {managementLabel(pending)}
                 </span>
-                {canOrder && awaitsOrder(pending) ? (
-                  <PendingQuickOrder
+                {canOrder && canManage(pending) ? (
+                  <PendingManagementStatusForm
                     pendingId={pending.id}
-                    productName={pending.product.name}
+                    currentStatus={pending.status}
+                    hideCurrentLabel
                   />
                 ) : null}
               </div>
@@ -185,10 +190,11 @@ export function PendingCompactList({
                   {canOrder ? (
                     <td className="px-3 py-2">
                       <div className="flex justify-end">
-                        {awaitsOrder(pending) ? (
-                          <PendingQuickOrder
+                        {canManage(pending) ? (
+                          <PendingManagementStatusForm
                             pendingId={pending.id}
-                            productName={pending.product.name}
+                            currentStatus={pending.status}
+                            hideCurrentLabel
                           />
                         ) : null}
                       </div>

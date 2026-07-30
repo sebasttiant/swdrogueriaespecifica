@@ -5,6 +5,8 @@ const mocks = vi.hoisted(() => ({
   submitMissingReport: vi.fn(),
   linkReportToProduct: vi.fn(),
   resolveReports: vi.fn(),
+  orderReports: vi.fn(),
+  markReportsArrivedAtWarehouse: vi.fn(),
   recordAudit: vi.fn(),
   auditContextFromHeaders: vi.fn(),
   revalidatePath: vi.fn(),
@@ -23,6 +25,8 @@ vi.mock("@/server/services/missing-report.service", async (importOriginal) => {
     submitMissingReport: mocks.submitMissingReport,
     linkReportToProduct: mocks.linkReportToProduct,
     resolveReports: mocks.resolveReports,
+    orderReports: mocks.orderReports,
+    markReportsArrivedAtWarehouse: mocks.markReportsArrivedAtWarehouse,
   };
 });
 
@@ -65,6 +69,8 @@ beforeEach(() => {
     linkedReportsCount: 2,
   });
   mocks.resolveReports.mockResolvedValue({ resolved: 2, reportIds: ["r1", "r2"] });
+  mocks.orderReports.mockResolvedValue({ resolved: 2, reportIds: ["r1", "r2"] });
+  mocks.markReportsArrivedAtWarehouse.mockResolvedValue({ resolved: 2, reportIds: ["r1", "r2"] });
 });
 
 function resolveFormData(normalizedName = "tiamina", resolution = "ORDERED") {
@@ -101,9 +107,8 @@ describe("resolveMissingReportsAction", () => {
       error: null,
       ok: true,
     });
-    expect(mocks.resolveReports).toHaveBeenCalledWith({
+    expect(mocks.orderReports).toHaveBeenCalledWith({
       normalizedName: "tiamina",
-      resolution: "ORDERED",
       userId: "admin-1",
     });
     const audit = mocks.recordAudit.mock.calls[0]![0];
@@ -120,7 +125,7 @@ describe("resolveMissingReportsAction", () => {
 
   it.each([0, 1])("maps a zero or partial group resolution to a conflict", async () => {
     grant("ADMIN", ["canReviewMissingReports"]);
-    mocks.resolveReports.mockRejectedValueOnce(new MissingReportResolveConflictError());
+    mocks.orderReports.mockRejectedValueOnce(new MissingReportResolveConflictError());
 
     await expect(resolveMissingReportsAction(PREV, resolveFormData())).resolves.toEqual({
       error: "Estos reportes ya fueron revisados. Actualizá la cola.",
@@ -131,7 +136,7 @@ describe("resolveMissingReportsAction", () => {
 
   it("returns a retryable error only when persistence fails before a mutation", async () => {
     grant("ADMIN", ["canReviewMissingReports"]);
-    mocks.resolveReports.mockRejectedValueOnce(new Error("database unavailable"));
+    mocks.orderReports.mockRejectedValueOnce(new Error("database unavailable"));
 
     await expect(resolveMissingReportsAction(PREV, resolveFormData())).resolves.toEqual({
       error: "No se pudo resolver. Intentá de nuevo.",
