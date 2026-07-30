@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   requireCapability: vi.fn(),
   submitMissingReport: vi.fn(),
   linkReportToProduct: vi.fn(),
+  resolveReports: vi.fn(),
   recordAudit: vi.fn(),
   auditContextFromHeaders: vi.fn(),
   revalidatePath: vi.fn(),
@@ -21,6 +22,7 @@ vi.mock("@/server/services/missing-report.service", async (importOriginal) => {
     ...actual,
     submitMissingReport: mocks.submitMissingReport,
     linkReportToProduct: mocks.linkReportToProduct,
+    resolveReports: mocks.resolveReports,
   };
 });
 
@@ -28,10 +30,12 @@ import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
 import {
   MissingReportEmptyNameError,
   MissingReportLinkError,
+  MissingReportResolveConflictError,
 } from "@/server/services/missing-report.service";
 import {
   createMissingReportAction,
   linkMissingReportToProductAction,
+  resolveMissingReportsAction,
 } from "./missing-report.actions";
 
 const PREV = { error: null, ok: false };
@@ -60,6 +64,97 @@ beforeEach(() => {
     missingItem: { id: "missing-1" },
     linkedReportsCount: 2,
   });
+  mocks.resolveReports.mockResolvedValue({ resolved: 2, reportIds: ["r1", "r2"] });
+});
+
+function resolveFormData(normalizedName = "tiamina", resolution = "ORDERED") {
+  const data = new FormData();
+  data.set("normalizedName", normalizedName);
+  data.set("resolution", resolution);
+  return data;
+}
+
+describe("resolveMissingReportsAction", () => {
+  it("requires review capability before attempting a mutation", async () => {
+    grant("OPERADOR", []);
+
+    await expect(resolveMissingReportsAction(PREV, resolveFormData())).rejects.toThrow(
+      "REDIRECT:/dashboard",
+    );
+    expect(mocks.resolveReports).not.toHaveBeenCalled();
+  });
+
+  it("rejects an empty or invalid resolution before the service", async () => {
+    grant("ADMIN", ["canReviewMissingReports"]);
+
+    expect((await resolveMissingReportsAction(PREV, resolveFormData(""))).ok).toBe(false);
+    expect(
+      (await resolveMissingReportsAction(PREV, resolveFormData("tiamina", "LINKED"))).ok,
+    ).toBe(false);
+    expect(mocks.resolveReports).not.toHaveBeenCalled();
+  });
+
+  it("uses the session user, audits exact report ids without PII, and revalidates", async () => {
+    grant("ADMIN", ["canReviewMissingReports"]);
+
+    await expect(resolveMissingReportsAction(PREV, resolveFormData())).resolves.toEqual({
+      error: null,
+      ok: true,
+    });
+    expect(mocks.resolveReports).toHaveBeenCalledWith({
+      normalizedName: "tiamina",
+      resolution: "ORDERED",
+      userId: "admin-1",
+    });
+    const audit = mocks.recordAudit.mock.calls[0]![0];
+    expect(audit).toMatchObject({
+      action: AUDIT_ACTIONS.MISSING_REPORT_ORDERED,
+      module: AUDIT_MODULES.FALTANTES,
+      entity: "MissingReport",
+      after: { status: "ORDERED", reportIds: ["r1", "r2"], reportCount: 2 },
+    });
+    expect(JSON.stringify(audit)).not.toContain("rawName");
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/revision-faltantes");
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/faltantes");
+  });
+
+  it.each([0, 1])("maps a zero or partial group resolution to a conflict", async () => {
+    grant("ADMIN", ["canReviewMissingReports"]);
+    mocks.resolveReports.mockRejectedValueOnce(new MissingReportResolveConflictError());
+
+    await expect(resolveMissingReportsAction(PREV, resolveFormData())).resolves.toEqual({
+      error: "Estos reportes ya fueron revisados. Actualizá la cola.",
+      ok: false,
+    });
+    expect(mocks.recordAudit).not.toHaveBeenCalled();
+  });
+
+  it("returns a retryable error only when persistence fails before a mutation", async () => {
+    grant("ADMIN", ["canReviewMissingReports"]);
+    mocks.resolveReports.mockRejectedValueOnce(new Error("database unavailable"));
+
+    await expect(resolveMissingReportsAction(PREV, resolveFormData())).resolves.toEqual({
+      error: "No se pudo resolver. Intentá de nuevo.",
+      ok: false,
+    });
+  });
+
+  it.each(["audit", "headers", "revalidate"])(
+    "keeps confirmed resolution successful when %s fails post-commit",
+    async (failure) => {
+      grant("ADMIN", ["canReviewMissingReports"]);
+      if (failure === "audit") mocks.recordAudit.mockRejectedValueOnce(new Error("audit unavailable"));
+      if (failure === "headers") mocks.auditContextFromHeaders.mockRejectedValueOnce(new Error("headers unavailable"));
+      if (failure === "revalidate") mocks.revalidatePath.mockImplementationOnce(() => {
+        throw new Error("cache unavailable");
+      });
+
+      await expect(resolveMissingReportsAction(PREV, resolveFormData())).resolves.toEqual({
+        error: null,
+        ok: true,
+      });
+    },
+  );
 });
 
 describe("createMissingReportAction", () => {
@@ -201,12 +296,12 @@ describe("createMissingReportAction", () => {
 });
 
 function linkFormData(
-  reportIds: string[] = ["r1", "r2"],
+  normalizedName = "tiamina",
   productId = "prod-1",
   extra: Record<string, string> = {},
 ) {
   const data = new FormData();
-  for (const id of reportIds) data.append("reportIds", id);
+  data.set("normalizedName", normalizedName);
   data.set("productId", productId);
   for (const [k, v] of Object.entries(extra)) data.set(k, v);
   return data;
@@ -247,11 +342,11 @@ describe("linkMissingReportToProductAction", () => {
 
     await linkMissingReportToProductAction(
       PREV,
-      linkFormData(["r1"], "prod-1", { userId: "attacker-999" }),
+      linkFormData("tiamina", "prod-1", { userId: "attacker-999" }),
     );
 
     expect(mocks.linkReportToProduct).toHaveBeenCalledWith({
-      reportIds: ["r1"],
+      normalizedName: "tiamina",
       productId: "prod-1",
       userId: "admin-1",
     });
@@ -260,12 +355,12 @@ describe("linkMissingReportToProductAction", () => {
   it("rejects an empty report list or a missing product before touching the service", async () => {
     grant("ADMIN", ["canReviewMissingReports"]);
 
-    const noReports = await linkMissingReportToProductAction(PREV, linkFormData([]));
+    const noReports = await linkMissingReportToProductAction(PREV, linkFormData(""));
     expect(noReports.ok).toBe(false);
 
     const noProduct = await linkMissingReportToProductAction(
       PREV,
-      linkFormData(["r1"], ""),
+      linkFormData("tiamina", ""),
     );
     expect(noProduct.ok).toBe(false);
     expect(mocks.linkReportToProduct).not.toHaveBeenCalled();

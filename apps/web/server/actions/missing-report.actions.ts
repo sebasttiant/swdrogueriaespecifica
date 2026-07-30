@@ -19,6 +19,7 @@ import {
   resolveReports,
   MissingReportEmptyNameError,
   MissingReportLinkError,
+  MissingReportResolveConflictError,
   submitMissingReport,
 } from "@/server/services/missing-report.service";
 
@@ -118,7 +119,7 @@ export async function linkMissingReportToProductAction(
   const session = await requireCapability("canReviewMissingReports");
 
   const parsed = linkMissingReportSchema.safeParse({
-    reportIds: formData.getAll("reportIds"),
+    normalizedName: formData.get("normalizedName"),
     productId: formData.get("productId"),
   });
   if (!parsed.success) {
@@ -130,7 +131,7 @@ export async function linkMissingReportToProductAction(
   let result: Awaited<ReturnType<typeof linkReportToProduct>>;
   try {
     result = await linkReportToProduct({
-      reportIds: parsed.data.reportIds,
+      normalizedName: parsed.data.normalizedName,
       productId: parsed.data.productId,
       userId: session.user.id,
     });
@@ -199,8 +200,7 @@ export async function resolveMissingReportsAction(
   const session = await requireCapability("canReviewMissingReports");
 
   const parsed = resolveMissingReportsSchema.safeParse({
-    // `getAll`: el grupo postea un hidden por cada reporte que lo compone.
-    reportIds: formData.getAll("reportIds").map(String),
+    normalizedName: formData.get("normalizedName"),
     resolution: formData.get("resolution"),
   });
 
@@ -214,11 +214,14 @@ export async function resolveMissingReportsAction(
     // El responsable sale SIEMPRE de la sesión: un `userId` inyectado en el
     // FormData no se lee.
     result = await resolveReports({
-      reportIds: parsed.data.reportIds,
+      normalizedName: parsed.data.normalizedName,
       resolution: parsed.data.resolution,
       userId: session.user.id,
     });
   } catch (error) {
+    if (error instanceof MissingReportResolveConflictError) {
+      return { error: "Estos reportes ya fueron revisados. Actualizá la cola.", ok: false };
+    }
     console.error("[faltantes] No se pudo resolver el reporte:", error);
     return { error: "No se pudo resolver. Intentá de nuevo.", ok: false };
   }
@@ -235,12 +238,12 @@ export async function resolveMissingReportsAction(
           : AUDIT_ACTIONS.MISSING_REPORT_DISCARDED,
       module: AUDIT_MODULES.FALTANTES,
       entity: "MissingReport",
-      // El grupo es la unidad operativa; se auditan sus ids y cuántos se
-      // escribieron realmente, que puede ser menos si otro gerente llegó antes.
+      // Identificadores técnicos del grupo, sin nombres ni identidad de
+      // reportantes: la traza permite reconstruir exactamente qué se resolvió.
       after: {
         status: parsed.data.resolution,
-        reportCount: parsed.data.reportIds.length,
-        resolvedCount: result.resolved,
+        reportIds: result.reportIds,
+        reportCount: result.resolved,
       },
       context: await auditContextFromHeaders(session.user.id),
     });
@@ -256,9 +259,5 @@ export async function resolveMissingReportsAction(
     }
   }
 
-  // Una carrera no es un error: otro gerente resolvió el grupo primero.
-  if (result.resolved === 0) {
-    return { error: "Estos reportes ya fueron revisados. Actualizá la cola.", ok: false };
-  }
   return { error: null, ok: true };
 }

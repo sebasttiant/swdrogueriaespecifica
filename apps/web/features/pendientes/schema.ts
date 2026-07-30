@@ -201,6 +201,9 @@ export type PendingCancelInput = z.infer<typeof pendingCancelSchema>;
 export const pendingManagementStatusSchema = z.object({
   id: z.string().trim().min(1, "Falta el id del pendiente"),
   status: z.enum(MANAGEMENT_STATUSES),
+  // Solo el atajo de la cola conoce el estado que observó al renderizar.
+  // El selector detallado no lo envía y conserva su comportamiento actual.
+  expectedStatus: z.literal("PENDIENTE").optional(),
 });
 
 export type PendingManagementStatusInput = z.infer<

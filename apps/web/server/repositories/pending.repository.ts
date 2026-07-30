@@ -397,6 +397,9 @@ export type UpdatePendingManagementStatusData = {
   // el update sea un compare-and-set atómico: si una entrega/cancelación
   // concurrente ya movió la fila fuera de este set, no se escribe.
   eligibleStatuses: PendingStatus[];
+  // El atajo de "Ya lo pedí" compara contra lo que vio al renderizar; evita
+  // sobrescribir una decisión concurrente distinta de gerencia.
+  expectedStatus?: PendingStatus;
 };
 
 /**
@@ -409,7 +412,10 @@ export async function updatePendingManagementStatus(
   data: UpdatePendingManagementStatusData,
 ): Promise<number> {
   const { count } = await prisma.pending.updateMany({
-    where: { id: data.id, status: { in: data.eligibleStatuses } },
+    where: {
+      id: data.id,
+      status: data.expectedStatus ?? { in: data.eligibleStatuses },
+    },
     data: { status: data.status },
   });
   return count;

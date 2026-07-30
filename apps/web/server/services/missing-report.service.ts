@@ -1,5 +1,6 @@
 import { normalizeMissingReportName } from "@/features/faltantes/missing-report-name";
 import { prisma } from "@/lib/db/prisma";
+import { Prisma } from "@/lib/generated/prisma/client";
 import { clampTake } from "@/lib/pagination";
 import { createMissingItem } from "@/server/repositories/missing-item.repository";
 import {
@@ -167,7 +168,7 @@ export class MissingReportLinkError extends Error {
 }
 
 export type LinkReportToProductInput = {
-  reportIds: string[];
+  normalizedName: string;
   productId: string;
   // Gerente que vincula. Viene de la sesión en la capa de acción.
   userId: string;
@@ -188,11 +189,6 @@ export async function linkReportToProduct(input: LinkReportToProductInput) {
   // coincide (otro gerente ganó la carrera), el throw revierte la transacción y
   // el faltante recién creado no queda persistido: sin esto quedaría huérfano,
   // sin ningún reporte apuntándole y visible en la cola de faltantes.
-  // Los ids ya vienen deduplicados del schema; se recalcula acá para que el
-  // service sea correcto aunque lo llame otro camino.
-  const reportIds = [...new Set(input.reportIds)];
-  const expectedReports = reportIds.length;
-
   return prisma.$transaction(async (tx) => {
     const missingItem = await createMissingItem(
       {
@@ -205,28 +201,24 @@ export async function linkReportToProduct(input: LinkReportToProductInput) {
       tx,
     );
 
-    const linkedReportsCount = await linkMissingReports(
+    const linkedReportIds = await linkMissingReports(
       {
-        reportIds,
+        normalizedName: input.normalizedName,
         productId: input.productId,
         missingItemId: missingItem.id,
       },
       tx,
     );
 
-    // Se exige que TODOS los reportes del grupo se hayan escrito, no solo
-    // alguno. Un CAS parcial (otro gerente vinculó parte del grupo a otro
-    // producto) partiría el grupo entre dos faltantes en silencio, que es
-    // justamente lo contrario del contrato "un faltante por grupo".
-    if (linkedReportsCount !== expectedReports) {
+    if (linkedReportIds.length === 0) {
       throw new MissingReportLinkError(
         "ALREADY_LINKED",
         "Reports were already reviewed by someone else",
       );
     }
 
-    return { missingItem, linkedReportsCount };
-  });
+    return { missingItem, linkedReportsCount: linkedReportIds.length };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
 // --------------------------------------------------------------------------
@@ -247,7 +239,7 @@ export async function linkReportToProduct(input: LinkReportToProductInput) {
 // --------------------------------------------------------------------------
 
 export type ResolveReportsInput = {
-  reportIds: string[];
+  normalizedName: string;
   resolution: MissingReportResolution;
   // Gerente que resuelve. Viene de la sesión en la capa de acción, nunca del
   // formulario.
@@ -257,22 +249,52 @@ export type ResolveReportsInput = {
 export type ResolveReportsResult = {
   // Reportes efectivamente escritos por esta llamada.
   resolved: number;
+  reportIds: string[];
 };
+
+// El grupo que muestra la cola es indivisible. Si cualquier reporte dejó de
+// estar pendiente entre el render y el click, la transacción completa revierte
+// para no mezclar decisiones de gerentes distintos dentro del mismo grupo.
+export class MissingReportResolveConflictError extends Error {
+  constructor() {
+    super("Missing report group was already partially reviewed");
+    this.name = "MissingReportResolveConflictError";
+  }
+}
+
+function isSerializableConflict(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "P2034"
+  );
+}
 
 export async function resolveReports(
   input: ResolveReportsInput,
   now: Date = new Date(),
 ): Promise<ResolveReportsResult> {
-  // Los ids ya vienen deduplicados del schema; se recalcula acá para que el
-  // service sea correcto aunque lo llame otro camino.
-  const reportIds = [...new Set(input.reportIds)];
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const reportIds = await resolveMissingReports(
+        {
+          normalizedName: input.normalizedName,
+          resolution: input.resolution,
+          resolvedById: input.userId,
+          resolvedAt: now,
+        },
+        tx,
+      );
 
-  const resolved = await resolveMissingReports({
-    reportIds,
-    resolution: input.resolution,
-    resolvedById: input.userId,
-    resolvedAt: now,
-  });
+      if (reportIds.length === 0) {
+        throw new MissingReportResolveConflictError();
+      }
 
-  return { resolved };
+      return { resolved: reportIds.length, reportIds };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  } catch (error) {
+    if (isSerializableConflict(error)) throw new MissingReportResolveConflictError();
+    throw error;
+  }
 }

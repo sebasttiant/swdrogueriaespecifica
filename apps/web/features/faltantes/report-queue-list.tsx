@@ -93,10 +93,10 @@ export function ReportQueueList({ groups, page, hasMore }: ReportQueueListProps)
           {/* Las dos salidas rápidas van PRIMERO: son el 95% de las decisiones.
               Vincular al catálogo queda debajo, para cuando gerencia quiere
               además seguimiento de stock del producto. Los tres forms llevan los
-              ids de ESTE grupo: la decisión es del grupo entero, nunca de un
-              reporte suelto. La página ya exige `canReviewMissingReports`. */}
+              clave canónica de ESTE grupo; el servidor obtiene sus reportes
+              pendientes actuales. La página ya exige `canReviewMissingReports`. */}
           <ReportQuickActions
-            reportIds={group.reports.map((report) => report.id)}
+            normalizedName={group.normalizedName}
             productName={group.displayName}
           />
 
@@ -105,7 +105,7 @@ export function ReportQueueList({ groups, page, hasMore }: ReportQueueListProps)
               Vincular a un producto del catálogo
             </summary>
             <div className="mt-2">
-              <ReportLinkForm reportIds={group.reports.map((report) => report.id)} />
+              <ReportLinkForm normalizedName={group.normalizedName} defaultOpen />
             </div>
           </details>
         </Card>

@@ -29,11 +29,11 @@ function mockActionState(state: ActionState, isPending = false) {
 }
 
 function render(
-  props: Partial<{ reportIds: string[]; defaultOpen: boolean }> = {},
+  props: Partial<{ normalizedName: string; defaultOpen: boolean }> = {},
 ): string {
   return renderToStaticMarkup(
     createElement(ReportLinkForm, {
-      reportIds: props.reportIds ?? ["r1", "r2"],
+      normalizedName: props.normalizedName ?? "tiamina",
       defaultOpen: props.defaultOpen ?? false,
     }),
   );
@@ -82,14 +82,11 @@ describe("ReportLinkForm · open", () => {
     expect(html).toContain("Buscar producto");
   });
 
-  // El contrato con la acción: TODOS los reportes del grupo viajan, para que el
-  // vínculo sea del grupo entero y no de uno solo.
-  it("submits every report id of the group", () => {
-    const html = render({ reportIds: ["r1", "r2", "r3"], defaultOpen: true });
+  it("submits only the canonical group key", () => {
+    const html = render({ normalizedName: "tiamina", defaultOpen: true });
 
-    expect(html).toContain('name="reportIds" value="r1"');
-    expect(html).toContain('name="reportIds" value="r2"');
-    expect(html).toContain('name="reportIds" value="r3"');
+    expect(html).toContain('name="normalizedName" value="tiamina"');
+    expect(html).not.toContain('name="reportIds"');
   });
 
   it("submits an empty productId until a product is picked", () => {

@@ -12,7 +12,7 @@ import {
 const INITIAL_STATE: ResolveReportsActionState = { error: null, ok: false };
 
 type ReportQuickActionsProps = {
-  reportIds: string[];
+  normalizedName: string;
   productName: string;
 };
 
@@ -37,7 +37,7 @@ const ACTION_BASE =
  * de stock del producto: esto es la otra salida, no su reemplazo.
  */
 export function ReportQuickActions({
-  reportIds,
+  normalizedName,
   productName,
 }: ReportQuickActionsProps) {
   const [state, formAction, isPending] = useActionState(
@@ -45,17 +45,11 @@ export function ReportQuickActions({
     INITIAL_STATE,
   );
 
-  // Los ids del grupo viajan como hidden: la unidad operativa es el grupo (todos
-  // los reportes del mismo nombre), nunca un reporte suelto.
-  const idFields = reportIds.map((id) => (
-    <input key={id} type="hidden" name="reportIds" value={id} />
-  ));
-
   return (
     <div className="space-y-1">
       <div className="flex gap-2">
         <form action={formAction} className="flex-1">
-          {idFields}
+            <input type="hidden" name="normalizedName" value={normalizedName} />
           <input type="hidden" name="resolution" value="ORDERED" />
           <button
             type="submit"
@@ -73,7 +67,7 @@ export function ReportQuickActions({
         </form>
 
         <form action={formAction} className="flex-1">
-          {idFields}
+            <input type="hidden" name="normalizedName" value={normalizedName} />
           <input type="hidden" name="resolution" value="DISCARDED" />
           <button
             type="submit"

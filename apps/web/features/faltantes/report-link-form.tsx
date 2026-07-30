@@ -23,9 +23,7 @@ import {
 const INITIAL_STATE: LinkMissingReportActionState = { error: null, ok: false };
 
 type ReportLinkFormProps = {
-  // TODOS los reportes del grupo. Viajan juntos para que el vínculo sea del
-  // grupo entero: el servidor rechaza un vínculo parcial.
-  reportIds: string[];
+  normalizedName: string;
   defaultOpen?: boolean;
 };
 
@@ -43,7 +41,7 @@ type ReportLinkFormProps = {
 // ADMIN/SUPERADMIN tienen ambas. Si `canReviewMissingReports` se extiende a roles
 // sin `canCreateMissingItems`, esta acción fallará en silencio (redirect) con el
 // botón visible.
-export function ReportLinkForm({ reportIds, defaultOpen = false }: ReportLinkFormProps) {
+export function ReportLinkForm({ normalizedName, defaultOpen = false }: ReportLinkFormProps) {
   const [state, formAction, isPending] = useActionState(
     linkMissingReportToProductAction,
     INITIAL_STATE,
@@ -111,9 +109,7 @@ export function ReportLinkForm({ reportIds, defaultOpen = false }: ReportLinkFor
 
   return (
     <form action={formAction} className="space-y-3 rounded-xl border border-border bg-muted/20 p-3">
-      {reportIds.map((reportId) => (
-        <input key={reportId} type="hidden" name="reportIds" value={reportId} />
-      ))}
+      <input type="hidden" name="normalizedName" value={normalizedName} />
       <input type="hidden" name="productId" value={search.selected?.id ?? ""} />
 
       <Field label="Producto del catálogo" htmlFor={queryId}>

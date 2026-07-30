@@ -672,6 +672,20 @@ describe("setPendingManagementStatus", () => {
     });
   });
 
+  it("forwards expectedStatus=PENDIENTE to the repository CAS", async () => {
+    repo.updatePendingManagementStatus.mockResolvedValue(1);
+
+    await setPendingManagementStatus({
+      id: "pend-1",
+      status: "SOLICITADO",
+      expectedStatus: "PENDIENTE",
+    });
+
+    expect(repo.updatePendingManagementStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedStatus: "PENDIENTE" }),
+    );
+  });
+
   it("devuelve el pendiente actualizado cuando el CAS escribe una fila", async () => {
     repo.updatePendingManagementStatus.mockResolvedValue(1);
 

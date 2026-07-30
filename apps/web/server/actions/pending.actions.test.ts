@@ -442,6 +442,7 @@ describe("updatePendingManagementStatusAction", () => {
     expect(mocks.setPendingManagementStatus).toHaveBeenCalledWith({
       id: "pend-1",
       status: "COTIZANDO",
+      expectedStatus: undefined,
     });
     const auditCall = mocks.recordAudit.mock.calls[0]![0];
     expect(auditCall.action).toBe(AUDIT_ACTIONS.PENDING_STATUS_CHANGE);
@@ -471,4 +472,41 @@ describe("updatePendingManagementStatusAction", () => {
     expect(auditCall.result).toBe("FAILURE");
     expect(auditCall.after).toEqual({ reason: "NOT_ELIGIBLE", status: "AGOTADO" });
   });
+
+  it("passes the quick action's observed status so a concurrent decision conflicts", async () => {
+    mocks.requireCapability.mockResolvedValue({ user: { id: "adm-1", role: "ADMIN" } });
+    mocks.setPendingManagementStatus.mockResolvedValue({ pending: null, rejection: "NOT_ELIGIBLE" });
+
+    const result = await updatePendingManagementStatusAction(
+      PREV,
+      managementFormData({ expectedStatus: "PENDIENTE" }),
+    );
+
+    expect(mocks.setPendingManagementStatus).toHaveBeenCalledWith({
+      id: "pend-1",
+      status: "SOLICITADO",
+      expectedStatus: "PENDIENTE",
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it.each(["audit", "headers", "revalidate"])(
+    "returns success after a confirmed management change when %s fails",
+    async (failure) => {
+      mocks.requireCapability.mockResolvedValue({ user: { id: "adm-1", role: "ADMIN" } });
+      mocks.setPendingManagementStatus.mockResolvedValue({
+        pending: { id: "pend-1", status: "SOLICITADO" },
+        rejection: null,
+      });
+      if (failure === "audit") mocks.recordAudit.mockRejectedValueOnce(new Error("audit unavailable"));
+      if (failure === "headers") mocks.auditContextFromHeaders.mockRejectedValueOnce(new Error("headers unavailable"));
+      if (failure === "revalidate") mocks.revalidatePath.mockImplementationOnce(() => {
+        throw new Error("cache unavailable");
+      });
+
+      await expect(
+        updatePendingManagementStatusAction(PREV, managementFormData()),
+      ).resolves.toEqual({ error: null, ok: true });
+    },
+  );
 });

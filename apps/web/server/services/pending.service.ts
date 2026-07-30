@@ -425,6 +425,7 @@ export async function cancelPendingCommitment(
 export type SetPendingManagementStatusInput = {
   id: string;
   status: ManagementStatus;
+  expectedStatus?: PendingStatus;
 };
 
 export type SetPendingManagementStatusResult = {
@@ -448,6 +449,7 @@ export async function setPendingManagementStatus(
     id: input.id,
     status: input.status,
     eligibleStatuses: MANAGEMENT_ELIGIBLE_STATUSES,
+    expectedStatus: input.expectedStatus,
   });
 
   if (written !== 1) {

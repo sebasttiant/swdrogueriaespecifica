@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   linkMissingReportSchema,
-  MAX_LINKED_REPORTS,
   MAX_MISSING_REPORT_NAME_LENGTH,
   MAX_MISSING_REPORT_SELLER_CODE_LENGTH,
   MAX_ORDERED_QUANTITY,
@@ -244,14 +243,14 @@ describe("manualMissingItemCreateSchema", () => {
 });
 
 describe("linkMissingReportSchema", () => {
-  it("accepts a group of report ids and a product id", () => {
+  it("accepts a canonical group key and a product id", () => {
     const result = linkMissingReportSchema.safeParse({
-      reportIds: ["r1", "r2"],
+      normalizedName: "tiamina",
       productId: "prod-1",
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.reportIds).toEqual(["r1", "r2"]);
+      expect(result.data.normalizedName).toBe("tiamina");
       expect(result.data.productId).toBe("prod-1");
     }
   });
@@ -280,19 +279,18 @@ describe("linkMissingReportSchema", () => {
 });
 
 describe("linkMissingReportSchema · group hygiene", () => {
-  it("deduplicates repeated report ids", () => {
+  it("does not accept client-selected report ids as group membership", () => {
     const result = linkMissingReportSchema.safeParse({
-      reportIds: ["r1", "r2", "r1"],
+      normalizedName: "tiamina",
       productId: "p1",
     });
     expect(result.success).toBe(true);
-    if (result.success) expect(result.data.reportIds).toEqual(["r1", "r2"]);
+    if (result.success) expect(result.data.normalizedName).toBe("tiamina");
   });
 
-  it("caps an absurdly large group", () => {
-    const tooMany = Array.from({ length: MAX_LINKED_REPORTS + 1 }, (_, i) => `r${i}`);
+  it("caps an invalidly large canonical group key", () => {
     expect(
-      linkMissingReportSchema.safeParse({ reportIds: tooMany, productId: "p1" }).success,
+      linkMissingReportSchema.safeParse({ normalizedName: "x".repeat(201), productId: "p1" }).success,
     ).toBe(false);
   });
 });

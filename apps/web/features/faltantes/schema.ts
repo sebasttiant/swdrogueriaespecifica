@@ -124,35 +124,25 @@ export const missingReportSubmitSchema = z.object({
 
 export type MissingReportSubmitInput = z.infer<typeof missingReportSubmitSchema>;
 
-// Vinculación de un grupo de reportes a un producto del catálogo. Los ids del
-// grupo viajan juntos: todos los reportes del mismo nombre normalizado se
-// marcan a la vez, y se genera UN solo faltante canónico.
-// Cota de cordura del tamaño de un grupo: son los reportes de un mismo nombre
-// normalizado, decenas como mucho. Frena un payload absurdo.
-export const MAX_LINKED_REPORTS = 500;
+// La membresía del grupo pertenece al servidor. El cliente solo identifica el
+// grupo por su clave canónica; nunca puede escoger un subconjunto de reportes.
+const missingReportGroupKey = z
+  .string()
+  .trim()
+  .min(1, { error: "Falta el grupo de reportes." })
+  .max(MAX_MISSING_REPORT_NAME_LENGTH, { error: "El grupo de reportes no es válido." });
 
 export const linkMissingReportSchema = z.object({
-  reportIds: z
-    .array(z.string().trim().min(1))
-    .min(1, { error: "Elegí al menos un reporte." })
-    .max(MAX_LINKED_REPORTS, { error: "Demasiados reportes en un solo grupo." })
-    // Se deduplican acá para que el service pueda comparar cuántas filas escribió
-    // contra cuántas esperaba: con ids repetidos ese conteo mentiría.
-    .transform((ids) => [...new Set(ids)]),
+  normalizedName: missingReportGroupKey,
   productId: z.string().trim().min(1, { error: "Elegí un producto del catálogo." }),
 });
 
 export type LinkMissingReportInput = z.infer<typeof linkMissingReportSchema>;
 
-// Resolución rápida de un grupo de reportes: los ids y nada más. Ni producto,
-// ni cantidad, ni proveedor — justamente lo que la vuelve usable cuando el
-// producto reportado todavía no existe en el catálogo.
+// Resolución rápida de un grupo de reportes: solo su clave canónica y la
+// decisión. Ni producto, ni cantidad, ni proveedor.
 export const resolveMissingReportsSchema = z.object({
-  reportIds: z
-    .array(z.string().trim().min(1))
-    .min(1, { error: "Elegí al menos un reporte." })
-    .max(MAX_LINKED_REPORTS, { error: "Demasiados reportes en un solo grupo." })
-    .transform((ids) => [...new Set(ids)]),
+  normalizedName: missingReportGroupKey,
   // El servidor decide qué significa cada valor; el formulario solo puede
   // proponer uno de los dos.
   resolution: z.enum(["ORDERED", "DISCARDED"], { error: "Acción inválida." }),

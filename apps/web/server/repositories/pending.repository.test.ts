@@ -349,6 +349,22 @@ describe("updatePendingManagementStatus", () => {
     });
   });
 
+  it("uses expectedStatus=PENDIENTE as the exact Prisma CAS predicate", async () => {
+    prismaMock.pending.updateMany.mockResolvedValueOnce({ count: 1 });
+
+    await updatePendingManagementStatus({
+      id: "pend-1",
+      status: "SOLICITADO",
+      eligibleStatuses: ["PENDIENTE", "SOLICITADO"],
+      expectedStatus: "PENDIENTE",
+    });
+
+    expect(prismaMock.pending.updateMany).toHaveBeenCalledWith({
+      where: { id: "pend-1", status: "PENDIENTE" },
+      data: { status: "SOLICITADO" },
+    });
+  });
+
   it("devuelve 0 cuando ningún pendiente elegible coincide (inexistente o ya cerrado)", async () => {
     prismaMock.pending.updateMany.mockResolvedValueOnce({ count: 0 });
 

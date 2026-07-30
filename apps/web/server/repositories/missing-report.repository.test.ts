@@ -7,7 +7,7 @@ const { prismaMock } = vi.hoisted(() => ({
       groupBy: vi.fn(),
       findMany: vi.fn(),
       update: vi.fn(),
-      updateMany: vi.fn(),
+      updateManyAndReturn: vi.fn(),
     },
   },
 }));
@@ -31,7 +31,7 @@ beforeEach(() => {
   }));
   prismaMock.missingReport.groupBy.mockResolvedValue([]);
   prismaMock.missingReport.findMany.mockResolvedValue([]);
-  prismaMock.missingReport.updateMany.mockResolvedValue({ count: 0 });
+  prismaMock.missingReport.updateManyAndReturn.mockResolvedValue([]);
 });
 
 describe("createMissingReport", () => {
@@ -150,21 +150,21 @@ describe("listPendingReportsForNames", () => {
 
 describe("linkMissingReports", () => {
   it("marks the whole group LINKED with the product and the generated faltante", async () => {
-    prismaMock.missingReport.updateMany.mockResolvedValue({ count: 2 });
+    prismaMock.missingReport.updateManyAndReturn.mockResolvedValue([{ id: "r1" }, { id: "r2" }]);
 
     await linkMissingReports({
-      reportIds: ["r1", "r2"],
+      normalizedName: "tiamina",
       productId: "prod-1",
       missingItemId: "missing-1",
     });
 
-    expect(prismaMock.missingReport.updateMany).toHaveBeenCalledWith({
-      where: { id: { in: ["r1", "r2"] }, status: "PENDING_REVIEW" },
+    expect(prismaMock.missingReport.updateManyAndReturn).toHaveBeenCalledWith({
+      where: { normalizedName: "tiamina", status: "PENDING_REVIEW" },
       data: {
         status: "LINKED",
         linkedProductId: "prod-1",
         linkedMissingItemId: "missing-1",
-      },
+      }, select: { id: true },
     });
   });
 
@@ -172,37 +172,36 @@ describe("linkMissingReports", () => {
   // coincide, así que no se re-escribe ni se pisa su vínculo anterior.
   it("only writes over reports still pending review", async () => {
     await linkMissingReports({
-      reportIds: ["r1"],
+      normalizedName: "tiamina",
       productId: "prod-1",
       missingItemId: "missing-1",
     });
 
-    const where = prismaMock.missingReport.updateMany.mock.calls[0]![0].where;
+    const where = prismaMock.missingReport.updateManyAndReturn.mock.calls[0]![0].where;
     expect(where.status).toBe("PENDING_REVIEW");
   });
 
   it("returns how many reports it actually linked", async () => {
-    prismaMock.missingReport.updateMany.mockResolvedValue({ count: 3 });
+    prismaMock.missingReport.updateManyAndReturn.mockResolvedValue([{ id: "r1" }, { id: "r2" }, { id: "r3" }]);
 
     const linked = await linkMissingReports({
-      reportIds: ["r1", "r2", "r3"],
+      normalizedName: "tiamina",
       productId: "prod-1",
       missingItemId: "missing-1",
     });
 
-    expect(linked).toBe(3);
+    expect(linked).toEqual(["r1", "r2", "r3"]);
   });
 
   it("reports zero when the group was already linked by someone else", async () => {
-    prismaMock.missingReport.updateMany.mockResolvedValue({ count: 0 });
 
     const linked = await linkMissingReports({
-      reportIds: ["r1"],
+      normalizedName: "tiamina",
       productId: "prod-1",
       missingItemId: "missing-1",
     });
 
-    expect(linked).toBe(0);
+    expect(linked).toEqual([]);
   });
 });
 
@@ -249,62 +248,62 @@ describe("reporterNamesByLinkedItemIds", () => {
 // --------------------------------------------------------------------------
 describe("resolveMissingReports", () => {
   it("marca como pedido solo los reportes que siguen pendientes", async () => {
-    prismaMock.missingReport.updateMany.mockResolvedValue({ count: 2 });
+    prismaMock.missingReport.updateManyAndReturn.mockResolvedValue([{ id: "r-1" }, { id: "r-2" }]);
 
     const written = await resolveMissingReports({
-      reportIds: ["r-1", "r-2"],
+      normalizedName: "tiamina",
       resolution: "ORDERED",
       resolvedById: "adm-1",
     });
 
-    expect(written).toBe(2);
+    expect(written).toEqual(["r-1", "r-2"]);
     // El compare-and-set es lo que hace la operación segura ante dos gerentes
     // resolviendo el mismo grupo: el segundo no pisa la decisión del primero.
-    expect(prismaMock.missingReport.updateMany).toHaveBeenCalledWith({
-      where: { id: { in: ["r-1", "r-2"] }, status: "PENDING_REVIEW" },
+    expect(prismaMock.missingReport.updateManyAndReturn).toHaveBeenCalledWith({
+      where: { normalizedName: "tiamina", status: "PENDING_REVIEW" },
       data: { status: "ORDERED", resolvedById: "adm-1", resolvedAt: expect.any(Date) },
+      select: { id: true },
     });
   });
 
   it("descarta con su propio estado, nunca reusando el de pedido", async () => {
-    prismaMock.missingReport.updateMany.mockResolvedValue({ count: 1 });
+    prismaMock.missingReport.updateManyAndReturn.mockResolvedValue([{ id: "r-1" }]);
 
     await resolveMissingReports({
-      reportIds: ["r-1"],
+      normalizedName: "tiamina",
       resolution: "DISCARDED",
       resolvedById: "adm-1",
     });
 
-    const args = prismaMock.missingReport.updateMany.mock.calls[0]![0];
+    const args = prismaMock.missingReport.updateManyAndReturn.mock.calls[0]![0];
     expect(args.data.status).toBe("DISCARDED");
   });
 
   // Un reporte que otro gerente ya resolvió no coincide con el CAS: se informa
   // como cero escrituras en vez de pisar la decisión anterior.
   it("devuelve cero cuando ninguno seguía pendiente", async () => {
-    prismaMock.missingReport.updateMany.mockResolvedValue({ count: 0 });
 
     const written = await resolveMissingReports({
-      reportIds: ["r-1"],
+      normalizedName: "tiamina",
       resolution: "ORDERED",
       resolvedById: "adm-1",
     });
 
-    expect(written).toBe(0);
+    expect(written).toEqual([]);
   });
 
   // Vincular sigue siendo la otra salida y no se toca: quien quiera seguimiento
   // de stock del producto todavía puede hacerlo.
   it("no interfiere con el vínculo al catálogo", async () => {
-    prismaMock.missingReport.updateMany.mockResolvedValue({ count: 1 });
+    prismaMock.missingReport.updateManyAndReturn.mockResolvedValue([{ id: "r-1" }]);
 
     await linkMissingReports({
-      reportIds: ["r-1"],
+      normalizedName: "tiamina",
       productId: "p-1",
       missingItemId: "m-1",
     });
 
-    const args = prismaMock.missingReport.updateMany.mock.calls[0]![0];
+    const args = prismaMock.missingReport.updateManyAndReturn.mock.calls[0]![0];
     expect(args.data.status).toBe("LINKED");
   });
 });

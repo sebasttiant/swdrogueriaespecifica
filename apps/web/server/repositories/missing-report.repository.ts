@@ -110,7 +110,7 @@ export async function listPendingReportsForNames(
 // --------------------------------------------------------------------------
 
 export type LinkMissingReportsData = {
-  reportIds: string[];
+  normalizedName: string;
   productId: string;
   missingItemId: string;
 };
@@ -124,16 +124,17 @@ export type LinkMissingReportsData = {
 export async function linkMissingReports(
   data: LinkMissingReportsData,
   client: Prisma.TransactionClient = prisma,
-): Promise<number> {
-  const { count } = await client.missingReport.updateMany({
-    where: { id: { in: data.reportIds }, status: "PENDING_REVIEW" },
+): Promise<string[]> {
+  const reports = await client.missingReport.updateManyAndReturn({
+    where: { normalizedName: data.normalizedName, status: "PENDING_REVIEW" },
     data: {
       status: "LINKED",
       linkedProductId: data.productId,
       linkedMissingItemId: data.missingItemId,
     },
+    select: { id: true },
   });
-  return count;
+  return reports.map((report) => report.id);
 }
 
 // --------------------------------------------------------------------------
@@ -153,7 +154,7 @@ export async function linkMissingReports(
 export type MissingReportResolution = "ORDERED" | "DISCARDED";
 
 export type ResolveMissingReportsData = {
-  reportIds: string[];
+  normalizedName: string;
   resolution: MissingReportResolution;
   resolvedById: string;
   resolvedAt?: Date;
@@ -169,16 +170,17 @@ export type ResolveMissingReportsData = {
 export async function resolveMissingReports(
   data: ResolveMissingReportsData,
   client: Prisma.TransactionClient = prisma,
-): Promise<number> {
-  const { count } = await client.missingReport.updateMany({
-    where: { id: { in: data.reportIds }, status: "PENDING_REVIEW" },
+): Promise<string[]> {
+  const reports = await client.missingReport.updateManyAndReturn({
+    where: { normalizedName: data.normalizedName, status: "PENDING_REVIEW" },
     data: {
       status: data.resolution,
       resolvedById: data.resolvedById,
       resolvedAt: data.resolvedAt ?? new Date(),
     },
+    select: { id: true },
   });
-  return count;
+  return reports.map((report) => report.id);
 }
 
 // --------------------------------------------------------------------------

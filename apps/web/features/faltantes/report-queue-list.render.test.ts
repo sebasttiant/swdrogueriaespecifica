@@ -84,8 +84,8 @@ describe("ReportQueueList · groups", () => {
     ]);
 
     expect(html).toContain("Acetaminofén 500mg");
-    // El nombre normalizado es interno: sirve para agrupar, no se muestra.
-    expect(html).not.toContain("acetaminofén 500mg");
+    // La clave canónica solo viaja como valor hidden, nunca como copy visible.
+    expect(html).not.toContain(">acetaminofén 500mg<");
   });
 
   it("states how many times the product was reported", () => {
@@ -187,7 +187,7 @@ describe("ReportQueueList · superficie de mutación", () => {
 
     expect(html).toContain("Ya lo pedí");
     expect(html).toContain("Descartar");
-    expect(html).toContain("Vincular producto");
+    expect(html).toContain("Vincular a un producto del catálogo");
 
     expect(html).not.toContain("Crear faltante");
     expect(html).not.toContain('name="quantity"');
@@ -221,13 +221,10 @@ describe("ReportQueueList · linking", () => {
       group({ normalizedName: "b", displayName: "B", reports: [report("r2", "B", "2026-07-19T10:00:00.000Z")] }),
     ]);
 
-    expect(countOccurrences(html, "Vincular producto")).toBe(2);
+    expect(countOccurrences(html, "Vincular a un producto del catálogo")).toBe(2);
   });
 
-  // El form nace colapsado, así que los ids ocultos todavía no se montan: eso se
-  // verifica en el test del propio form. Acá lo observable es que cada grupo
-  // tenga SU form, uno por tarjeta.
-  it("gives every group its own form, one per card", () => {
+  it("opens the link form with the disclosure, without a second Vincular producto gesture", () => {
     const html = render([
       group({
         normalizedName: "a",
@@ -239,7 +236,9 @@ describe("ReportQueueList · linking", () => {
       }),
     ]);
 
-    expect(countOccurrences(html, "Vincular producto")).toBe(1);
+    expect(countOccurrences(html, "Vincular producto")).toBe(0);
+    expect(html).toContain("Buscá por nombre o código");
+    expect(html).toContain('name="normalizedName" value="a"');
   });
 
   it("shows no link form when the queue is empty", () => {
@@ -272,9 +271,7 @@ describe("ReportQueueList · salidas rápidas", () => {
     expect(html).toContain('name="resolution" value="DISCARDED"');
   });
 
-  // La unidad operativa es el GRUPO: marcar "uno de los cuatro reportes de
-  // tiamina" no significa nada. Cada form lleva todos los ids del grupo.
-  it("resuelve el grupo entero, nunca un reporte suelto", () => {
+  it("identifies the group by its canonical key, never client-selected report ids", () => {
     const html = render([
       group({
         reports: [
@@ -285,9 +282,8 @@ describe("ReportQueueList · salidas rápidas", () => {
       }),
     ]);
 
-    for (const id of ["r-1", "r-2", "r-3"]) {
-      expect(html).toContain(`name="reportIds" value="${id}"`);
-    }
+    expect(countOccurrences(html, 'name="normalizedName" value="acetaminofén 500"')).toBe(3);
+    expect(html).not.toContain('name="reportIds"');
   });
 
   // Vincular no desaparece: baja a segundo plano, colapsado, para quien quiera

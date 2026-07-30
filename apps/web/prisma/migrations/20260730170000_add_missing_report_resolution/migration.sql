@@ -13,6 +13,8 @@
 --    DROP VALUE. Volver atrás exige recrear el tipo.
 --  - El valor nuevo no se puede USAR en la misma transacción que lo agrega, así
 --    que este archivo solo agrega valores y no escribe filas.
+BEGIN;
+
 ALTER TYPE "MissingReportStatus" ADD VALUE 'ORDERED';
 ALTER TYPE "MissingReportStatus" ADD VALUE 'DISCARDED';
 
@@ -28,3 +30,5 @@ ALTER TABLE "missing_reports"
   ADD CONSTRAINT "missing_reports_resolvedById_fkey"
   FOREIGN KEY ("resolvedById") REFERENCES "users"("id")
   ON DELETE SET NULL ON UPDATE CASCADE;
+
+COMMIT;

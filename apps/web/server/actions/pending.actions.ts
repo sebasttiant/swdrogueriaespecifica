@@ -275,47 +275,19 @@ export async function updatePendingManagementStatusAction(
   const parsed = pendingManagementStatusSchema.safeParse({
     id: formData.get("id"),
     status: formData.get("status"),
+    expectedStatus: formData.get("expectedStatus") ?? undefined,
   });
 
   if (!parsed.success) {
     return { error: "No se pudo identificar el pendiente o el estado.", ok: false };
   }
 
+  let result: Awaited<ReturnType<typeof setPendingManagementStatus>>;
   try {
-    const result = await setPendingManagementStatus({
+    result = await setPendingManagementStatus({
       id: parsed.data.id,
       status: parsed.data.status,
-    });
-
-    // Rechazo de negocio: alguien con la capacidad intentó gestionar un
-    // pendiente que ya no lo admite. Se audita como FAILURE con el estado
-    // intentado para que la traza exista.
-    if (result.rejection) {
-      await recordAudit({
-        action: AUDIT_ACTIONS.PENDING_STATUS_CHANGE,
-        module: AUDIT_MODULES.PENDIENTES,
-        entity: "Pending",
-        entityId: parsed.data.id,
-        result: "FAILURE",
-        after: { reason: result.rejection, status: parsed.data.status },
-        context: await auditContextFromHeaders(session.user.id),
-      });
-
-      revalidatePath("/pendientes");
-      revalidatePath("/dashboard");
-      return {
-        error: MANAGEMENT_STATUS_REJECTION_MESSAGES[result.rejection],
-        ok: false,
-      };
-    }
-
-    await recordAudit({
-      action: AUDIT_ACTIONS.PENDING_STATUS_CHANGE,
-      module: AUDIT_MODULES.PENDIENTES,
-      entity: "Pending",
-      entityId: parsed.data.id,
-      after: { status: parsed.data.status },
-      context: await auditContextFromHeaders(session.user.id),
+      expectedStatus: parsed.data.expectedStatus,
     });
   } catch (error) {
     console.error("[pendientes] No se pudo actualizar el estado de gestión:", error);
@@ -325,11 +297,60 @@ export async function updatePendingManagementStatusAction(
     };
   }
 
+  // Rechazo de negocio: no hubo mutación. La auditoría y revalidación siguen
+  // siendo útiles, pero no se confunden con un éxito ya confirmado.
+  if (result.rejection) {
+    try {
+      await recordAudit({
+        action: AUDIT_ACTIONS.PENDING_STATUS_CHANGE,
+        module: AUDIT_MODULES.PENDIENTES,
+        entity: "Pending",
+        entityId: parsed.data.id,
+        result: "FAILURE",
+        after: { reason: result.rejection, status: parsed.data.status },
+        context: await auditContextFromHeaders(session.user.id),
+      });
+    } catch (error) {
+      console.error("[pendientes] No se pudo auditar el rechazo de gestión:", error);
+    }
+    for (const path of ["/pendientes", "/dashboard"]) {
+      try {
+        revalidatePath(path);
+      } catch (error) {
+        console.error("[pendientes] No se pudo revalidar tras rechazo de gestión:", error);
+      }
+    }
+    return {
+      error: MANAGEMENT_STATUS_REJECTION_MESSAGES[result.rejection],
+      ok: false,
+    };
+  }
+
+  // Desde acá el cambio ya persistió: fallos de headers/auditoría/revalidación
+  // no pueden sugerir un reintento que chocaría con el CAS.
+  try {
+    await recordAudit({
+      action: AUDIT_ACTIONS.PENDING_STATUS_CHANGE,
+      module: AUDIT_MODULES.PENDIENTES,
+      entity: "Pending",
+      entityId: parsed.data.id,
+      after: { status: parsed.data.status },
+      context: await auditContextFromHeaders(session.user.id),
+    });
+  } catch (error) {
+    console.error("[pendientes] El estado se actualizó, pero no se pudo auditar:", error);
+  }
+
   // AGOTADO saca al pendiente de los estados alertables: revalidar también el
   // dashboard para que los contadores de vencidos/próximos/urgentes no queden
   // desfasados.
-  revalidatePath("/pendientes");
-  revalidatePath("/dashboard");
+  for (const path of ["/pendientes", "/dashboard"]) {
+    try {
+      revalidatePath(path);
+    } catch (error) {
+      console.error("[pendientes] El estado se actualizó, pero no se pudo revalidar:", error);
+    }
+  }
   return { error: null, ok: true };
 }
 

@@ -16,6 +16,7 @@ const { repo } = vi.hoisted(() => ({
     groupPendingReportsByName: vi.fn(),
     listPendingReportsForNames: vi.fn(),
     linkMissingReports: vi.fn(),
+    resolveMissingReports: vi.fn(),
   },
 }));
 
@@ -35,8 +36,10 @@ import {
   getMissingReportQueue,
   linkReportToProduct,
   MissingReportLinkError,
+  MissingReportResolveConflictError,
   MissingReportEmptyNameError,
   submitMissingReport,
+  resolveReports,
 } from "./missing-report.service";
 
 beforeEach(() => {
@@ -47,9 +50,46 @@ beforeEach(() => {
   }));
   productRepo.findProductById.mockResolvedValue({ id: "prod-1", active: true });
   missingItemRepo.createMissingItem.mockResolvedValue({ id: "missing-1", productId: "prod-1" });
-  repo.linkMissingReports.mockResolvedValue(2);
+  repo.linkMissingReports.mockResolvedValue(["r1", "r2"]);
+  repo.resolveMissingReports.mockResolvedValue(["r1", "r2"]);
   repo.groupPendingReportsByName.mockResolvedValue([]);
   repo.listPendingReportsForNames.mockResolvedValue([]);
+});
+
+describe("resolveReports · atomicity", () => {
+  const input = { normalizedName: "tiamina", resolution: "ORDERED" as const, userId: "admin-1" };
+
+  it("resolves the complete group inside one transaction with attribution", async () => {
+    const now = new Date("2026-07-30T12:00:00.000Z");
+
+    await expect(resolveReports(input, now)).resolves.toEqual({ resolved: 2, reportIds: ["r1", "r2"] });
+    expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
+    expect(repo.resolveMissingReports).toHaveBeenCalledWith(
+      { normalizedName: "tiamina", resolution: "ORDERED", resolvedById: "admin-1", resolvedAt: now },
+      tx,
+    );
+  });
+
+  it("rolls back and conflicts when the group no longer has pending reports", async () => {
+    repo.resolveMissingReports.mockResolvedValueOnce([]);
+
+    await expect(resolveReports(input)).rejects.toBeInstanceOf(MissingReportResolveConflictError);
+    expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps a serializable database race to the same deterministic conflict", async () => {
+    prismaMock.$transaction.mockRejectedValueOnce({ code: "P2034" });
+
+    await expect(resolveReports(input)).rejects.toBeInstanceOf(MissingReportResolveConflictError);
+  });
+
+  it("uses the canonical group key rather than client-selected report ids", async () => {
+    await resolveReports(input);
+    expect(repo.resolveMissingReports).toHaveBeenCalledWith(
+      expect.objectContaining({ normalizedName: "tiamina" }),
+      tx,
+    );
+  });
 });
 
 describe("submitMissingReport", () => {
@@ -326,7 +366,7 @@ describe("getMissingReportQueue", () => {
 });
 
 describe("linkReportToProduct", () => {
-  const input = { reportIds: ["r1", "r2"], productId: "prod-1", userId: "admin-1" };
+  const input = { normalizedName: "tiamina", productId: "prod-1", userId: "admin-1" };
 
   it("creates exactly ONE faltante for the whole group", async () => {
     await linkReportToProduct(input);
@@ -358,7 +398,7 @@ describe("linkReportToProduct", () => {
 
     expect(repo.linkMissingReports).toHaveBeenCalledWith(
       {
-        reportIds: ["r1", "r2"],
+        normalizedName: "tiamina",
         productId: "prod-1",
         missingItemId: "missing-1",
       },
@@ -367,7 +407,7 @@ describe("linkReportToProduct", () => {
   });
 
   it("returns the faltante and how many reports were linked", async () => {
-    repo.linkMissingReports.mockResolvedValue(2);
+    repo.linkMissingReports.mockResolvedValue(["r1", "r2"]);
 
     const result = await linkReportToProduct(input);
 
@@ -411,21 +451,21 @@ describe("linkReportToProduct", () => {
   // Carrera: otro gerente vinculó el grupo primero. El CAS del repositorio no
   // escribe ninguna fila y el service lo reporta en vez de fingir éxito.
   it("rejects when no report was still pending review", async () => {
-    repo.linkMissingReports.mockResolvedValue(0);
+    repo.linkMissingReports.mockResolvedValue([]);
 
     await expect(linkReportToProduct(input)).rejects.toBeInstanceOf(MissingReportLinkError);
   });
 });
 
 describe("linkReportToProduct · atomicity", () => {
-  const input = { reportIds: ["r1"], productId: "prod-1", userId: "admin-1" };
+  const input = { normalizedName: "tiamina", productId: "prod-1", userId: "admin-1" };
 
   beforeEach(() => {
     prismaMock.$transaction.mockImplementation(
       (fn: (client: typeof tx) => unknown) => fn(tx),
     );
     // Un solo reporte en el grupo: la escritura debe cubrirlo entero.
-    repo.linkMissingReports.mockResolvedValue(1);
+    repo.linkMissingReports.mockResolvedValue(["r1"]);
   });
 
   // Crear el faltante y marcar los reportes tiene que ser TODO o NADA. Sin la
@@ -448,7 +488,7 @@ describe("linkReportToProduct · atomicity", () => {
   // Al perder la carrera, el throw revierte la transacción: el faltante creado
   // dentro de ella NO queda persistido.
   it("rolls back the created faltante when the group was already linked", async () => {
-    repo.linkMissingReports.mockResolvedValue(0);
+    repo.linkMissingReports.mockResolvedValue([]);
 
     await expect(linkReportToProduct(input)).rejects.toBeInstanceOf(
       MissingReportLinkError,
@@ -468,11 +508,11 @@ describe("linkReportToProduct · partial link", () => {
   // El caso peligroso: parte del grupo ya fue vinculada por otro gerente. Si se
   // aceptara, el grupo quedaría partido entre DOS faltantes en silencio.
   it("rejects when only SOME of the group was still pending review", async () => {
-    repo.linkMissingReports.mockResolvedValue(2); // se pidieron 3
+    repo.linkMissingReports.mockResolvedValue([]);
 
     await expect(
       linkReportToProduct({
-        reportIds: ["r1", "r2", "r3"],
+        normalizedName: "tiamina",
         productId: "prod-1",
         userId: "admin-1",
       }),
@@ -480,10 +520,10 @@ describe("linkReportToProduct · partial link", () => {
   });
 
   it("accepts only when every report in the group was linked", async () => {
-    repo.linkMissingReports.mockResolvedValue(3);
+    repo.linkMissingReports.mockResolvedValue(["r1", "r2", "r3"]);
 
     const result = await linkReportToProduct({
-      reportIds: ["r1", "r2", "r3"],
+        normalizedName: "tiamina",
       productId: "prod-1",
       userId: "admin-1",
     });
@@ -491,19 +531,18 @@ describe("linkReportToProduct · partial link", () => {
     expect(result.linkedReportsCount).toBe(3);
   });
 
-  // Ids repetidos no deben inflar lo esperado: se deduplican antes de comparar.
-  it("deduplicates repeated ids before comparing what it wrote", async () => {
-    repo.linkMissingReports.mockResolvedValue(2);
+  it("returns the server-selected report count", async () => {
+    repo.linkMissingReports.mockResolvedValue(["r1", "r2"]);
 
     const result = await linkReportToProduct({
-      reportIds: ["r1", "r2", "r1"],
+        normalizedName: "tiamina",
       productId: "prod-1",
       userId: "admin-1",
     });
 
     expect(result.linkedReportsCount).toBe(2);
     expect(repo.linkMissingReports).toHaveBeenCalledWith(
-      expect.objectContaining({ reportIds: ["r1", "r2"] }),
+      expect.objectContaining({ normalizedName: "tiamina" }),
       tx,
     );
   });
