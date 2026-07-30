@@ -16,6 +16,8 @@ import {
 } from "@/server/services/audit.service";
 import {
   linkReportToProduct,
+  markReportsArrivedAtWarehouse,
+  orderReports,
   resolveReports,
   MissingReportEmptyNameError,
   MissingReportLinkError,
@@ -184,7 +186,7 @@ export type ResolveReportsActionState = { error: string | null; ok: boolean };
 const REPORT_RESOLUTION_AUDIT = {
   ORDERED: AUDIT_ACTIONS.MISSING_REPORT_ORDERED,
   DISCARDED: AUDIT_ACTIONS.MISSING_REPORT_DISCARDED,
-  RECEIVED: AUDIT_ACTIONS.MISSING_REPORT_RECEIVED,
+  EN_BODEGA: AUDIT_ACTIONS.MISSING_REPORT_RECEIVED,
 } as const;
 
 /**
@@ -223,12 +225,18 @@ export async function resolveMissingReportsAction(
   try {
     // El responsable sale SIEMPRE de la sesión: un `userId` inyectado en el
     // FormData no se lee.
-    result = await resolveReports({
-      normalizedName: parsed.data.normalizedName,
-      resolution: parsed.data.resolution,
-      expectedStatus: parsed.data.expectedStatus,
-      userId: session.user.id,
-    });
+    if (parsed.data.resolution === "ORDERED") {
+      result = await orderReports({ normalizedName: parsed.data.normalizedName, userId: session.user.id });
+    } else if (parsed.data.resolution === "EN_BODEGA") {
+      result = await markReportsArrivedAtWarehouse({ normalizedName: parsed.data.normalizedName, userId: session.user.id });
+    } else {
+      result = await resolveReports({
+        normalizedName: parsed.data.normalizedName,
+        resolution: parsed.data.resolution,
+        expectedStatus: parsed.data.expectedStatus,
+        userId: session.user.id,
+      });
+    }
   } catch (error) {
     if (error instanceof MissingReportResolveConflictError) {
       return { error: "Estos reportes ya fueron revisados. Actualizá la cola.", ok: false };
@@ -259,7 +267,7 @@ export async function resolveMissingReportsAction(
     console.error("[faltantes] Se resolvió el reporte, pero no se pudo auditar:", error);
   }
 
-  for (const path of [REVIEW_QUEUE_PATH, "/faltantes"]) {
+  for (const path of [REVIEW_QUEUE_PATH, "/faltantes", "/entradas"]) {
     try {
       revalidatePath(path);
     } catch (error) {

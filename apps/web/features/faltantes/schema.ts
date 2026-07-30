@@ -145,7 +145,7 @@ export const resolveMissingReportsSchema = z.object({
   normalizedName: missingReportGroupKey,
   // El servidor decide qué significa cada valor; el formulario solo puede
   // proponer uno de los tres.
-  resolution: z.enum(["ORDERED", "DISCARDED", "RECEIVED"], {
+  resolution: z.enum(["ORDERED", "DISCARDED", "EN_BODEGA"], {
     error: "Acción inválida.",
   }),
   // Estado que la pantalla observó, para el compare-and-set. Solo el "ya llegó"

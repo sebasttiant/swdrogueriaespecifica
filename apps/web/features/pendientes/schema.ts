@@ -1,8 +1,12 @@
 import { z } from "zod";
 
+
 import { compactCopInput } from "@/lib/format/currency";
 import { parseBogotaWallTime } from "@/lib/datetime/bogota";
-import { MANAGEMENT_STATUSES } from "@/features/pendientes/management-status";
+import {
+  MANAGEMENT_ELIGIBLE_STATUSES,
+  MANAGEMENT_STATUSES,
+} from "@/features/pendientes/management-status";
 import { MAX_ZONE_LENGTH, normalizeZone } from "@/features/pendientes/zone";
 import {
   MAX_PHONE_INPUT_LENGTH,
@@ -201,9 +205,12 @@ export type PendingCancelInput = z.infer<typeof pendingCancelSchema>;
 export const pendingManagementStatusSchema = z.object({
   id: z.string().trim().min(1, "Falta el id del pendiente"),
   status: z.enum(MANAGEMENT_STATUSES),
-  // Solo el atajo de la cola conoce el estado que observó al renderizar.
-  // El selector detallado no lo envía y conserva su comportamiento actual.
-  expectedStatus: z.literal("PENDIENTE").optional(),
+  // Estado que la pantalla OBSERVÓ al renderizar. El compare-and-set lo exige,
+  // así dos gerentes mirando la misma lista no se pisan: si uno marcó AGOTADO,
+  // el "Ya lo pedí" del otro no lo sobrescribe. Cualquier estado elegible, no
+  // solo PENDIENTE: cambiar de "Solicitado" a "Agotado" necesita la misma
+  // protección.
+  expectedStatus: z.enum(MANAGEMENT_ELIGIBLE_STATUSES).optional(),
 });
 
 export type PendingManagementStatusInput = z.infer<

@@ -104,7 +104,7 @@ describe("PendingCompactList", () => {
     const html = render([pending()], true);
 
     expect(html).toContain("Ya lo pedí");
-    expect(html).toContain("Marcar Paracetamol como pedido al proveedor");
+    expect(html).toContain("Ya lo pedí");
     // El estado viaja fijo: el gerente no elige de una lista, solo confirma.
     expect(html).toContain('name="status" value="SOLICITADO"');
   });

@@ -9,7 +9,7 @@
 // Viaja en la URL, server-rendered, sin estado de cliente.
 // --------------------------------------------------------------------------
 
-export const REPORT_QUEUE_SCOPES = ["pending", "ordered", "discarded"] as const;
+export const REPORT_QUEUE_SCOPES = ["pending", "ordered", "arrived", "discarded"] as const;
 
 export type ReportQueueScope = (typeof REPORT_QUEUE_SCOPES)[number];
 
@@ -17,6 +17,7 @@ export type ReportQueueScope = (typeof REPORT_QUEUE_SCOPES)[number];
 export const REPORT_QUEUE_SCOPE_LABELS: Record<ReportQueueScope, string> = {
   pending: "Por pedir",
   ordered: "Ya pedidos",
+  arrived: "En bodega",
   discarded: "Descartados",
 };
 
@@ -33,6 +34,10 @@ export const REPORT_QUEUE_SCOPE_EMPTY: Record<
   ordered: {
     title: "Todavía no pediste nada",
     description: "Lo que marques como pedido aparece acá.",
+  },
+  arrived: {
+    title: "Nada esperando carga",
+    description: "Lo que llegue físicamente aparece acá hasta que bodega cargue la entrada.",
   },
   discarded: {
     title: "Nada descartado",
