@@ -13,11 +13,7 @@ import { MissingListCompact } from "@/features/faltantes/missing-list-compact";
 import { MissingReportForm } from "@/features/faltantes/missing-report-form";
 import { REVIEW_QUEUE_PATH } from "@/features/faltantes/report-queue-paging";
 import { MissingSummary } from "@/features/faltantes/missing-summary";
-import {
-  canDiscard,
-  canShowNewSupplierOrderForm,
-  canShowOrderForm,
-} from "@/features/faltantes/order-rules";
+import { canDiscard } from "@/features/faltantes/order-rules";
 import {
   MISSING_SCOPES,
   MISSING_SCOPE_LABELS,
@@ -35,7 +31,6 @@ import {
   getMissingItems,
   getMissingItemsSummary,
 } from "@/server/services/missing-item.service";
-import { getSuppliers } from "@/server/services/supplier.service";
 
 export const metadata: Metadata = { title: "Faltantes" };
 
@@ -49,7 +44,6 @@ export default async function FaltantesPage({
 	const scope = resolveMissingScope(rawScope);
 	const session = await requireCapability("canViewFaltantes");
 	const canOrderMissingItems = can(session.user.role, "canOrderMissingItems");
-	const canManageSuppliers = can(session.user.role, "canManageSuppliers");
 	const canCreateMissingItems = can(session.user.role, "canCreateMissingItems");
 	const canSubmitMissingReports = can(session.user.role, "canSubmitMissingReports");
 	const canReviewMissingReports = can(session.user.role, "canReviewMissingReports");
@@ -64,7 +58,7 @@ export default async function FaltantesPage({
   // Un único instante compartido por el resumen global y el agrupamiento de
   // la página actual, para que ambos hablen del mismo "ahora".
   const now = new Date();
-  const [{ items, nextCursor }, summary, actionableCount, suppliers] = await Promise.all([
+  const [{ items, nextCursor }, summary, actionableCount] = await Promise.all([
     getMissingItems({
       cursor,
       scope: repositoryScopeFor(scope),
@@ -74,24 +68,7 @@ export default async function FaltantesPage({
     getMissingItemsSummary(now),
     // Global, no de la página actual: es "cuánto me falta por pedir".
     getActionableMissingCount(),
-    // Los proveedores alimentan el selector del pedido. Se piden siempre que el
-    // usuario pueda pedir: sin la lista no se puede resolver si hay una rama
-    // "proveedor existente" disponible.
-    canOrderMissingItems ? getSuppliers() : Promise.resolve([]),
   ]);
-
-  // Pedir a un proveedor EXISTENTE solo exige `canOrderMissingItems`. Crear uno
-  // nuevo exige además `canManageSuppliers`. El formulario se ofrece si alguna de
-  // las dos ramas es posible; la Server Action revalida ambas del lado del server.
-  const canCreateSupplier = canShowNewSupplierOrderForm({
-    canOrderMissingItems,
-    canManageSuppliers,
-  });
-  const canOrder = canShowOrderForm({
-    canOrderMissingItems,
-    canManageSuppliers,
-    hasSuppliers: suppliers.length > 0,
-  });
 
   // Orden deliberado y compacto: título → chips → cola. Todo lo que se
   // interponga entre abrir la página y tocar una acción es peso muerto en el
@@ -226,12 +203,9 @@ export default async function FaltantesPage({
           items={items}
           nextCursor={nextCursor}
           pageHref={(next) => missingPageHref(scope, view, next)}
-          canOrder={canOrder}
           canQuickAct={canOrderMissingItems}
           canSeeStatus={canOrderMissingItems}
           canSeeSupplier={canViewSupplierIdentity}
-          suppliers={suppliers}
-          canCreateSupplier={canCreateSupplier}
           now={now}
         />
       )}

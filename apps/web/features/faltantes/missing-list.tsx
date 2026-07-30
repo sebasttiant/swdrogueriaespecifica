@@ -9,14 +9,12 @@ import type { MissingItemStatus } from "@/lib/generated/prisma/client";
 import { cn } from "@/lib/utils/cn";
 import type { MissingItemListItem } from "@/server/repositories/missing-item.repository";
 import type { MissingItemListEntry } from "@/server/services/missing-item.service";
-import type { SupplierOption } from "@/server/repositories/supplier.repository";
 import {
   computeDeadlineStatus,
   type DeadlineStatus,
 } from "../pendientes/deadline-status";
 import { groupMissingItems, type MissingGroupKey } from "./missing-grouping";
 import { getOrderMetadata, orderedQuantityLabel } from "./missing-list-helpers";
-import { MissingOrderForm } from "./missing-order-form";
 import { MissingQuickActions } from "./missing-quick-actions";
 
 type MissingListProps = {
@@ -25,23 +23,17 @@ type MissingListProps = {
   // Construye la URL de la página siguiente preservando vista y layout. Sin
   // esto, "Ver más" devolvía siempre a la cola por defecto.
   pageHref: (cursor: string) => string;
-  canOrder: boolean;
   // Autoridad de compras para las acciones de un toque (✓ pedido / ✗ descartar).
-  // Eje distinto de `canOrder`, que además exige proveedores donde elegir.
   canQuickAct: boolean;
   // Autoridad de compras (`canOrderMissingItems`): habilita ver los badges de
   // estado y vencimiento. El vendedor reporta y sigue operando; para él la cola
   // es solo producto/cantidad/código, sin el seguimiento de gerencia. Es un eje
-  // distinto de `canOrder` (que además depende de que haya proveedores).
+  // distinto de `canQuickAct`: ver en qué anda un faltante no es poder tocarlo.
   canSeeStatus: boolean;
   // Gatea la columna "Pedido" (proveedor · fecha · cantidad pedida). Un vendedor
   // NO debe saber a qué depósito le compra la droguería. Eje distinto de
   // `canSeeStatus`: saber en qué anda el faltante no es saber a quién se le pide.
   canSeeSupplier: boolean;
-  // Proveedores elegibles para el pedido. Vacío = todavía no hay ninguno, así
-  // que la única rama posible es crear uno nuevo.
-  suppliers: SupplierOption[];
-  canCreateSupplier: boolean;
   // Instante compartido con `MissingSummary` para que ambas piezas hablen del
   // mismo momento (deadline badges + agrupación de urgencia).
   now: Date;
@@ -86,8 +78,8 @@ function deadlineBadge(origin: MissingItemListItem["origin"], now: Date) {
 
 // `confirmedAt` NO es redundante con el status. Los registros del camino viejo
 // ("OK gerencia") quedaron en FALTANTE con `confirmedAt` seteado: gerencia ya
-// había pedido, pero sin registrar proveedor. No se les vuelve a ofrecer "Pedir"
-// hasta que C2 los reclasifique. Simplificar esta condición reintroduce el bug.
+// había pedido, pero sin registrar proveedor. No se les vuelve a ofrecer marcar
+// de nuevo. Simplificar esta condición reintroduce el bug.
 function canOrderItem(missing: MissingItemListItem): boolean {
   return missing.status === "FALTANTE" && missing.confirmedAt === null;
 }
@@ -96,50 +88,43 @@ function canOrderItem(missing: MissingItemListItem): boolean {
 // seguimiento (badges de estado/vencimiento). Agrupado para no arrastrar
 // parámetros posicionales por cada helper de render.
 type ActionContext = {
-  canOrder: boolean;
-  // Pedido rápido y descarte: solo exige la autoridad de compras, sin depender
-  // de que haya proveedores cargados.
+  // Pedido rápido y descarte: la única autoridad que la fila necesita.
   canQuickAct: boolean;
   canSeeStatus: boolean;
   // Identidad del proveedor. El service YA la anuló para quien no la tiene, así
   // que esto solo evita pintar una columna vacía; la protección real no vive acá.
   canSeeSupplier: boolean;
-  suppliers: SupplierOption[];
-  canCreateSupplier: boolean;
 };
 
+// --------------------------------------------------------------------------
+// La fila ofrece EXACTAMENTE DOS salidas y nada más.
+//
+// Antes convivían acá el pedido de un toque y el formulario largo con proveedor
+// y cantidad. Eran dos botones pegados llamados "Pedido" y "Pedir": nombres casi
+// idénticos, efectos distintos. Quien usa esta pantalla es un gerente de 60 años
+// desde el celular, marcando decenas de filas seguidas; esa pareja de botones
+// era un error esperando pasar.
+//
+// El formulario largo se retira de la cola de trabajo. Registrar a qué proveedor
+// y en qué cantidad se compró nunca fue algo que gerencia pidiera —trabaja por
+// laboratorio y pide por teléfono—, así que dejó de ocupar el camino principal.
+// La capacidad sigue existiendo en el servidor, con sus tests: si más adelante
+// hace falta, se ofrece desde "Ya pedidos" para completar el detalle DESPUÉS de
+// marcar, nunca antes.
+// --------------------------------------------------------------------------
 function missingActions(
   missing: MissingItemListItem,
   actions: ActionContext,
   className?: string,
 ) {
-  // El pedido RÁPIDO solo depende de la autoridad de compras; el formulario
-  // completo además necesita proveedores donde elegir. Por eso son dos
-  // condiciones distintas y no una sola.
-  const showQuick = actions.canQuickAct && canOrderItem(missing);
-  const showOrder = actions.canOrder && canOrderItem(missing);
-
-  if (!showQuick && !showOrder) return null;
+  if (!actions.canQuickAct || !canOrderItem(missing)) return null;
 
   return (
     <div className={cn("flex flex-col items-end gap-2", className)}>
-      {/* Primero el camino de un toque: es el que se usa el 95% de las veces.
-          El formulario largo queda debajo, para cuando gerencia sí quiere
-          registrar proveedor y cantidad. */}
-      {showQuick ? (
-        <MissingQuickActions
-          missingItemId={missing.id}
-          productName={missing.product.name}
-        />
-      ) : null}
-      {showOrder ? (
-        <MissingOrderForm
-          id={missing.id}
-          neededQuantity={missing.originId ? missing.quantity : null}
-          suppliers={actions.suppliers}
-          canCreateSupplier={actions.canCreateSupplier}
-        />
-      ) : null}
+      <MissingQuickActions
+        missingItemId={missing.id}
+        productName={missing.product.name}
+      />
     </div>
   );
 }
@@ -277,7 +262,7 @@ function missingRow(
   actions: ActionContext,
 ) {
   const status = STATUS[missing.status];
-  const hasActions = actions.canOrder || actions.canQuickAct;
+  const hasActions = actions.canQuickAct;
   return (
     <tr key={missing.id} className="border-b border-border last:border-0">
       <td className="px-3 py-2 font-medium text-text">
@@ -330,21 +315,15 @@ export function MissingList({
   items,
   nextCursor,
   pageHref,
-  canOrder,
   canQuickAct,
   canSeeStatus,
   canSeeSupplier,
-  suppliers,
-  canCreateSupplier,
   now,
 }: MissingListProps) {
   const actions: ActionContext = {
-    canOrder,
     canQuickAct,
     canSeeStatus,
     canSeeSupplier,
-    suppliers,
-    canCreateSupplier,
   };
 
   if (items.length === 0) {
@@ -397,7 +376,7 @@ export function MissingList({
                     {canSeeSupplier ? (
                       <th className="px-3 py-2 font-medium">Pedido</th>
                     ) : null}
-                    {canOrder ? (
+                    {canQuickAct ? (
                       <th className="px-3 py-2 text-right font-medium">Acción</th>
                     ) : null}
                   </tr>

@@ -88,22 +88,20 @@ function mockActionState(state: ActionState, isPending = false) {
   useActionStateMock.mockReturnValue([state, vi.fn(), isPending]);
 }
 
+// `canAct` = autoridad de compras. Un solo eje ahora: la fila ya no monta el
+// formulario largo, así que "poder pedir" dejó de depender de que existan
+// proveedores cargados.
 function renderMissingList(
 	items: MissingItemListEntry[],
-	canOrder = false,
+	canAct = false,
 	options: {
-		suppliers?: { id: string; name: string }[];
-		canCreateSupplier?: boolean;
-		// Ver los badges de seguimiento es un eje aparte de poder pedir. Por
-		// defecto siguen a `canOrder` (gerencia ve todo), pero los tests de
+		// Ver los badges de seguimiento es un eje aparte de poder actuar. Por
+		// defecto siguen a `canAct` (gerencia ve todo), pero los tests de
 		// Mejora 4 los fijan por separado para probar la independencia.
 		canSeeStatus?: boolean;
-		// Identidad del proveedor: eje propio. Por defecto sigue a `canOrder`
+		// Identidad del proveedor: eje propio. Por defecto sigue a `canAct`
 		// (gerencia), y los tests de la fuga lo fijan aparte.
 		canSeeSupplier?: boolean;
-		// Acciones de un toque (✓/✗). Eje propio: no dependen de que haya
-		// proveedores cargados, a diferencia del formulario largo.
-		canQuickAct?: boolean;
 	} = {},
 ): string {
 	return renderToStaticMarkup(
@@ -111,13 +109,10 @@ function renderMissingList(
 			items,
 			nextCursor: null,
 			pageHref: (cursor: string) => `/faltantes?cursor=${cursor}`,
-			canOrder,
-			canQuickAct: options.canQuickAct ?? canOrder,
-			canSeeStatus: options.canSeeStatus ?? canOrder,
-			canSeeSupplier: options.canSeeSupplier ?? canOrder,
+			canQuickAct: canAct,
+			canSeeStatus: options.canSeeStatus ?? canAct,
+			canSeeSupplier: options.canSeeSupplier ?? canAct,
 			now,
-			suppliers: options.suppliers ?? [],
-			canCreateSupplier: options.canCreateSupplier ?? true,
 		}),
 	);
 }
@@ -298,7 +293,7 @@ describe("MissingList · order visibility", () => {
 });
 
 describe("MissingList · order gating", () => {
-  it("renders the order form only for FALTANTE unconfirmed items when canOrder is true", () => {
+  it("ofrece las dos acciones solo en un FALTANTE sin confirmar", () => {
     mockActionState(IDLE);
     const html = renderMissingList(
       [
@@ -313,37 +308,43 @@ describe("MissingList · order gating", () => {
       true,
     );
 
-    expect(html).toContain('name="missingItemId" value="faltante-1"');
-    expect(html).toContain("Pedir");
-    expect(html).not.toContain('name="missingItemId" value="pedido-1"');
-    expect(html).not.toContain('name="missingItemId" value="historico-1"');
+    expect(html).toContain("Marcar Faltante como pedido");
+    expect(html).toContain("Descartar Faltante");
+    // Una fila ya pedida o ya confirmada no tiene nada que marcar.
+    expect(html).not.toContain("Marcar Pedido como pedido");
+    expect(html).not.toContain("Marcar Historico como pedido");
   });
 
-  // El formulario de pedido nace colapsado: la fila ofrece el disparador
-  // "Pedir", no un formulario abierto que empuje la lista fuera de pantalla.
-  it("renders the order form collapsed, mounting no supplier fields in the list", () => {
+  // REGRESIÓN (reportada en producción el 2026-07-30): la fila mostraba
+  // "✓ Pedido" y "Pedir" pegados. Dos botones con nombres casi idénticos y
+  // efectos distintos, en la pantalla que un gerente de 60 años usa para marcar
+  // decenas de filas seguidas desde el celular.
+  //
+  // La cola de trabajo no vuelve a montar el formulario largo: ni el disparador
+  // "Pedir", ni cantidad, ni proveedor. Marcar es un toque y nada más.
+  it("no monta el formulario de proveedor y cantidad en la cola", () => {
     mockActionState(IDLE);
     const html = renderMissingList(
       [item({ id: "faltante-1", product: product("Faltante", "FALT-1") })],
       true,
-      { suppliers: [{ id: "sup-1", name: "Distribuidora Norte" }] },
     );
 
-    expect(html).toContain("Pedir");
+    expect(html).not.toContain("Cantidad a pedir");
     expect(html).not.toContain('name="supplierId"');
+    expect(html).not.toContain('name="orderedQuantity"');
+    expect(html).not.toContain("Elegí un proveedor");
     expect(html).not.toContain("Nombre del proveedor");
-    expect(html).not.toContain("Distribuidora Norte");
   });
 
-  it("offers no action at all when the user cannot order", () => {
+  it("no ofrece ninguna acción a quien no es autoridad de compras", () => {
     mockActionState(IDLE);
     const html = renderMissingList(
       [item({ id: "faltante-1", product: product("Faltante", "FALT-1") })],
       false,
     );
 
-    expect(html).not.toContain("Pedir");
-    expect(html).not.toContain('name="missingItemId"');
+    expect(html).not.toContain("como pedido");
+    expect(html).not.toContain('name="ids"');
     // Sin la columna Acción del encabezado desktop.
     expect(html).not.toContain("Acción");
   });
@@ -500,7 +501,7 @@ describe("MissingList · action error contract", () => {
     expect(html).not.toContain('role="alert"');
   });
 
-  it("wires the order form to the stateful action, not to a fire-and-forget wrapper", () => {
+  it("cablea las acciones al hook con estado, no a un wrapper que descarta el resultado", () => {
     mockActionState(IDLE);
 
     renderMissingList(
@@ -509,12 +510,11 @@ describe("MissingList · action error contract", () => {
     );
 
     // El item se renderiza dos veces (tarjeta mobile + fila desktop, una sola
-    // visible por CSS). Cada render monta TRES acciones con estado: el
-    // formulario largo de pedido, más el ✓ y el ✗ de un toque. Un wrapper
-    // `Promise<void>` (que descarta `{ ok, error }`) no podría alimentar el
-    // hook ninguna vez.
+    // visible por CSS). Cada render monta DOS acciones con estado: el ✓ y el ✗.
+    // Un wrapper `Promise<void>` (que descarta `{ ok, error }`) no podría
+    // alimentar el hook ninguna vez, y el gerente no vería por qué falló.
     const RENDERS_PER_ITEM = 2;
-    const STATEFUL_ACTIONS_PER_RENDER = 3;
+    const STATEFUL_ACTIONS_PER_RENDER = 2;
     expect(useActionStateMock).toHaveBeenCalledTimes(
       RENDERS_PER_ITEM * STATEFUL_ACTIONS_PER_RENDER,
     );
