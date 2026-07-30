@@ -144,6 +144,24 @@ export const linkMissingReportSchema = z.object({
 
 export type LinkMissingReportInput = z.infer<typeof linkMissingReportSchema>;
 
+// Resolución rápida de un grupo de reportes: los ids y nada más. Ni producto,
+// ni cantidad, ni proveedor — justamente lo que la vuelve usable cuando el
+// producto reportado todavía no existe en el catálogo.
+export const resolveMissingReportsSchema = z.object({
+  reportIds: z
+    .array(z.string().trim().min(1))
+    .min(1, { error: "Elegí al menos un reporte." })
+    .max(MAX_LINKED_REPORTS, { error: "Demasiados reportes en un solo grupo." })
+    .transform((ids) => [...new Set(ids)]),
+  // El servidor decide qué significa cada valor; el formulario solo puede
+  // proponer uno de los dos.
+  resolution: z.enum(["ORDERED", "DISCARDED"], { error: "Acción inválida." }),
+});
+
+export type ResolveMissingReportsInput = z.infer<
+  typeof resolveMissingReportsSchema
+>;
+
 // Descarte masivo. Los ids viajan como entradas repetidas del mismo campo, que
 // es como el navegador postea un grupo de checkboxes.
 //

@@ -6,6 +6,8 @@ import {
   createMissingReport,
   groupPendingReportsByName,
   linkMissingReports,
+  resolveMissingReports,
+  type MissingReportResolution,
   listPendingReportsForNames,
   type PendingReportRow,
 } from "@/server/repositories/missing-report.repository";
@@ -225,4 +227,52 @@ export async function linkReportToProduct(input: LinkReportToProductInput) {
 
     return { missingItem, linkedReportsCount };
   });
+}
+
+// --------------------------------------------------------------------------
+// Resolución RÁPIDA de un grupo de reportes.
+//
+// Regla del gerente (reunión 2026-07-30): lee el nombre que pegó el vendedor, ya
+// sabe qué producto es, y lo pide por teléfono. Hasta ahora la única salida de
+// la cola era vincular al catálogo, así que un producto no cargado dejaba el
+// reporte atrapado y la cola solo crecía.
+//
+// Se resuelve el GRUPO entero —todos los reportes del mismo nombre—, que es la
+// unidad que la cola muestra: marcar "uno de los cuatro reportes de tiamina"
+// no significa nada operativamente.
+//
+// No crea faltante ni toca el catálogo. El precio, explícito: un reporte
+// resuelto así no se cierra solo cuando entra la mercadería, porque nadie dijo
+// qué producto es. Quien quiera ese seguimiento tiene `linkReportToProduct`.
+// --------------------------------------------------------------------------
+
+export type ResolveReportsInput = {
+  reportIds: string[];
+  resolution: MissingReportResolution;
+  // Gerente que resuelve. Viene de la sesión en la capa de acción, nunca del
+  // formulario.
+  userId: string;
+};
+
+export type ResolveReportsResult = {
+  // Reportes efectivamente escritos por esta llamada.
+  resolved: number;
+};
+
+export async function resolveReports(
+  input: ResolveReportsInput,
+  now: Date = new Date(),
+): Promise<ResolveReportsResult> {
+  // Los ids ya vienen deduplicados del schema; se recalcula acá para que el
+  // service sea correcto aunque lo llame otro camino.
+  const reportIds = [...new Set(input.reportIds)];
+
+  const resolved = await resolveMissingReports({
+    reportIds,
+    resolution: input.resolution,
+    resolvedById: input.userId,
+    resolvedAt: now,
+  });
+
+  return { resolved };
 }

@@ -137,6 +137,51 @@ export async function linkMissingReports(
 }
 
 // --------------------------------------------------------------------------
+// Salida RÁPIDA de la cola de revisión, sin pasar por el catálogo.
+//
+// Regla de negocio (reunión 2026-07-30): gerencia lee el nombre que escribió el
+// vendedor, ya sabe qué producto es y lo pide por teléfono. Obligarla a buscarlo
+// en el catálogo para poder sacarlo de la cola era el cuello de botella: si el
+// producto no estaba cargado, el reporte quedaba atrapado y la cola solo crecía.
+//
+// Vincular al catálogo sigue existiendo (`linkMissingReports`) para cuando se
+// quiera seguimiento de stock. Esto es la otra salida, no su reemplazo.
+// --------------------------------------------------------------------------
+
+// Resoluciones rápidas. NO incluye LINKED: vincular escribe además el producto
+// y el faltante generado, así que tiene su propia función.
+export type MissingReportResolution = "ORDERED" | "DISCARDED";
+
+export type ResolveMissingReportsData = {
+  reportIds: string[];
+  resolution: MissingReportResolution;
+  resolvedById: string;
+  resolvedAt?: Date;
+};
+
+/**
+ * Devuelve cuántos reportes quedaron efectivamente resueltos.
+ *
+ * El compare-and-set sobre `PENDING_REVIEW` es lo que hace segura la operación
+ * con dos gerentes trabajando la misma cola: el segundo no pisa la decisión del
+ * primero, simplemente no escribe.
+ */
+export async function resolveMissingReports(
+  data: ResolveMissingReportsData,
+  client: Prisma.TransactionClient = prisma,
+): Promise<number> {
+  const { count } = await client.missingReport.updateMany({
+    where: { id: { in: data.reportIds }, status: "PENDING_REVIEW" },
+    data: {
+      status: data.resolution,
+      resolvedById: data.resolvedById,
+      resolvedAt: data.resolvedAt ?? new Date(),
+    },
+  });
+  return count;
+}
+
+// --------------------------------------------------------------------------
 // Trazabilidad (Mejora 5): el vendedor que REPORTÓ cada faltante nacido de un
 // reporte. Un faltante vinculado tiene `createdBy` = gerencia (quien revisó),
 // así que el solicitante real vive acá, en el `reporter` del reporte cuyo

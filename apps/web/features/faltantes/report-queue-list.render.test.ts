@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/server/actions/missing-report.actions", () => ({
   linkMissingReportToProductAction: vi.fn(),
+  resolveMissingReportsAction: vi.fn(),
 }));
 vi.mock("@/server/actions/missing-item.actions", () => ({
   searchActiveProductsForMissingItemAction: vi.fn(),
@@ -176,19 +177,23 @@ describe("ReportQueueList · pagination", () => {
   });
 });
 
-describe("ReportQueueList · read-only", () => {
-  // D1d-2 es solo lectura: vincular a un producto y crear el faltante canónico
-  // es D1e. No debe haber ningún control de mutación todavía.
-  // Vincular es la ÚNICA mutación que ofrece la cola. Descartar un reporte o
-  // fijar cantidad/proveedor no son parte de este flujo.
-  it("offers linking, and no other mutation", () => {
+describe("ReportQueueList · superficie de mutación", () => {
+  // La cola ofrece TRES salidas y ninguna más: pedir, descartar y vincular al
+  // catálogo. Lo que sigue estando prohibido acá es pedir datos de compra:
+  // cantidad y proveedor son decisiones posteriores, y meterlas en esta pantalla
+  // es exactamente lo que volvió inusable la cola de faltantes.
+  it("ofrece las tres salidas, sin pedir datos de compra", () => {
     const html = render([group()], { page: 1, hasMore: true });
 
+    expect(html).toContain("Ya lo pedí");
+    expect(html).toContain("Descartar");
     expect(html).toContain("Vincular producto");
-    expect(html).not.toContain("Descartar");
+
     expect(html).not.toContain("Crear faltante");
     expect(html).not.toContain('name="quantity"');
+    expect(html).not.toContain('name="orderedQuantity"');
     expect(html).not.toContain('name="supplierId"');
+    expect(html).not.toContain("Cantidad a pedir");
   });
 
   it("never exposes a reporter's internal id in the visible text", () => {
@@ -241,5 +246,63 @@ describe("ReportQueueList · linking", () => {
     const html = render([]);
 
     expect(html).not.toContain("Vincular producto");
+  });
+});
+
+// --------------------------------------------------------------------------
+// El reclamo de gerencia (2026-07-30): la cola solo crecía. Vincular al catálogo
+// era la ÚNICA salida, así que un producto que el vendedor pegó desde Orión y no
+// estaba cargado dejaba el reporte atrapado para siempre.
+// --------------------------------------------------------------------------
+describe("ReportQueueList · salidas rápidas", () => {
+  it("ofrece resolver el grupo sin pasar por el catálogo", () => {
+    const html = render([group({ displayName: "TIAMINA 300 MG" })]);
+
+    expect(html).toContain("Ya lo pedí");
+    expect(html).toContain("Descartar");
+  });
+
+  // Las dos acciones significan cosas OPUESTAS: una afirma que se compró, la
+  // otra que nadie lo va a pedir. Viajan como valores distintos, no como un
+  // "OK" ambiguo que después nadie pueda interpretar.
+  it("manda resoluciones distintas para pedir y para descartar", () => {
+    const html = render([group({})]);
+
+    expect(html).toContain('name="resolution" value="ORDERED"');
+    expect(html).toContain('name="resolution" value="DISCARDED"');
+  });
+
+  // La unidad operativa es el GRUPO: marcar "uno de los cuatro reportes de
+  // tiamina" no significa nada. Cada form lleva todos los ids del grupo.
+  it("resuelve el grupo entero, nunca un reporte suelto", () => {
+    const html = render([
+      group({
+        reports: [
+          report("r-1", "Tiamina", "2026-07-30T09:00:00.000Z"),
+          report("r-2", "Tiamina", "2026-07-30T09:10:00.000Z"),
+          report("r-3", "Tiamina", "2026-07-30T09:20:00.000Z"),
+        ],
+      }),
+    ]);
+
+    for (const id of ["r-1", "r-2", "r-3"]) {
+      expect(html).toContain(`name="reportIds" value="${id}"`);
+    }
+  });
+
+  // Vincular no desaparece: baja a segundo plano, colapsado, para quien quiera
+  // seguimiento de stock del producto.
+  it("conserva el vínculo al catálogo como acción secundaria", () => {
+    const html = render([group({})]);
+
+    expect(html).toContain("Vincular a un producto del catálogo");
+  });
+
+  // Con varias tarjetas en pantalla, "Ya lo pedí" a secas no dice cuál.
+  it("nombra el producto en el rótulo accesible de cada acción", () => {
+    const html = render([group({ displayName: "TIAMINA 300 MG" })]);
+
+    expect(html).toContain("Marcar TIAMINA 300 MG como pedido");
+    expect(html).toContain("Descartar TIAMINA 300 MG");
   });
 });

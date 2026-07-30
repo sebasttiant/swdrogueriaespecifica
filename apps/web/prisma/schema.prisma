@@ -62,6 +62,14 @@ enum MissingReportStatus {
   // faltante canónico. Sale de la cola de revisión, pero la fila se conserva:
   // es el rastro de quién reportó y cuándo.
   LINKED
+  // Gerencia ya lo compró, sin vincularlo al catálogo. Es la salida rápida de la
+  // cola: el gerente lee el nombre que escribió el vendedor, sabe qué producto
+  // es y lo pide por teléfono. Exigirle buscarlo en el catálogo para poder
+  // marcarlo era el cuello de botella que hacía crecer la cola sin freno.
+  ORDERED
+  // Gerencia decidió que no se pide (duplicado, o ya no hace falta). Sale de la
+  // cola sin afirmar que se compró. Eje opuesto a ORDERED: nunca se mezclan.
+  DISCARDED
 }
 
 enum AuditResult {
@@ -106,6 +114,7 @@ model User {
   orderedMissingItems MissingItem[] @relation("MissingItemOrderedBy")
   discardedMissingItems MissingItem[] @relation("MissingItemDiscardedBy")
   missingReports  MissingReport[] @relation("MissingReportReportedBy")
+  resolvedMissingReports MissingReport[] @relation("MissingReportResolvedBy")
 
   @@index([active])
   @@index([archivedAt])
@@ -431,6 +440,13 @@ model MissingReport {
   // impedir que un producto se archive.
   linkedProductId     String?
   linkedMissingItemId String?
+  // Quién resolvió el reporte por la vía rápida (ORDERED/DISCARDED) y cuándo.
+  // La cola la trabajan dos personas a la vez: sin esto había que preguntar por
+  // teléfono quién había marcado qué. Null mientras sigue pendiente, y también
+  // en los reportes que se resolvieron vinculándolos al catálogo.
+  resolvedBy     User?               @relation("MissingReportResolvedBy", fields: [resolvedById], references: [id])
+  resolvedById   String?
+  resolvedAt     DateTime?
   createdAt      DateTime            @default(now())
   updatedAt      DateTime            @updatedAt
 

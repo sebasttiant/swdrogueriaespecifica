@@ -5,7 +5,9 @@ import { revalidatePath } from "next/cache";
 import {
   linkMissingReportSchema,
   missingReportSubmitSchema,
+  resolveMissingReportsSchema,
 } from "@/features/faltantes/schema";
+import { REVIEW_QUEUE_PATH } from "@/features/faltantes/report-queue-paging";
 import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
 import { requireCapability } from "@/lib/auth/require-role";
 import {
@@ -14,6 +16,7 @@ import {
 } from "@/server/services/audit.service";
 import {
   linkReportToProduct,
+  resolveReports,
   MissingReportEmptyNameError,
   MissingReportLinkError,
   submitMissingReport,
@@ -170,4 +173,92 @@ export async function linkMissingReportToProductAction(
   }
 
   return { error: null, ok: true, missingItemId: result.missingItem.id };
+}
+
+export type ResolveReportsActionState = { error: string | null; ok: boolean };
+
+/**
+ * Saca un grupo de reportes de la cola de revisión, sin pasar por el catálogo.
+ *
+ * Regla del gerente (reunión 2026-07-30): "yo marco los chulitos y ya". Lee el
+ * nombre que pegó el vendedor, sabe qué producto es y lo pide por teléfono.
+ * Antes la única salida era vincular al catálogo, así que un producto que no
+ * estaba cargado dejaba el reporte atrapado y la cola solo crecía.
+ *
+ * Dos resoluciones con significados OPUESTOS, nunca un "OK" ambiguo:
+ *   ORDERED   → gerencia ya lo compró.
+ *   DISCARDED → nadie lo va a pedir.
+ *
+ * Gateada con `canReviewMissingReports`, igual que vincular: decidir qué pasa
+ * con lo que reportó un vendedor es una decisión de gerencia.
+ */
+export async function resolveMissingReportsAction(
+  _prev: ResolveReportsActionState,
+  formData: FormData,
+): Promise<ResolveReportsActionState> {
+  const session = await requireCapability("canReviewMissingReports");
+
+  const parsed = resolveMissingReportsSchema.safeParse({
+    // `getAll`: el grupo postea un hidden por cada reporte que lo compone.
+    reportIds: formData.getAll("reportIds").map(String),
+    resolution: formData.get("resolution"),
+  });
+
+  if (!parsed.success) {
+    const message = parsed.error.issues[0]?.message ?? "Revisá la selección.";
+    return { error: message, ok: false };
+  }
+
+  let result: Awaited<ReturnType<typeof resolveReports>>;
+  try {
+    // El responsable sale SIEMPRE de la sesión: un `userId` inyectado en el
+    // FormData no se lee.
+    result = await resolveReports({
+      reportIds: parsed.data.reportIds,
+      resolution: parsed.data.resolution,
+      userId: session.user.id,
+    });
+  } catch (error) {
+    console.error("[faltantes] No se pudo resolver el reporte:", error);
+    return { error: "No se pudo resolver. Intentá de nuevo.", ok: false };
+  }
+
+  // A partir de acá la decisión YA está registrada. Auditoría y revalidación son
+  // best-effort: si fallan, se registra el error pero NO se le dice al gerente
+  // que falló, porque volvería a marcar algo ya hecho. El try/catch cubre
+  // también `auditContextFromHeaders`, que lee headers() y sí puede lanzar.
+  try {
+    await recordAudit({
+      action:
+        parsed.data.resolution === "ORDERED"
+          ? AUDIT_ACTIONS.MISSING_REPORT_ORDERED
+          : AUDIT_ACTIONS.MISSING_REPORT_DISCARDED,
+      module: AUDIT_MODULES.FALTANTES,
+      entity: "MissingReport",
+      // El grupo es la unidad operativa; se auditan sus ids y cuántos se
+      // escribieron realmente, que puede ser menos si otro gerente llegó antes.
+      after: {
+        status: parsed.data.resolution,
+        reportCount: parsed.data.reportIds.length,
+        resolvedCount: result.resolved,
+      },
+      context: await auditContextFromHeaders(session.user.id),
+    });
+  } catch (error) {
+    console.error("[faltantes] Se resolvió el reporte, pero no se pudo auditar:", error);
+  }
+
+  for (const path of [REVIEW_QUEUE_PATH, "/faltantes"]) {
+    try {
+      revalidatePath(path);
+    } catch (error) {
+      console.error("[faltantes] Se resolvió el reporte, pero no se pudo revalidar:", error);
+    }
+  }
+
+  // Una carrera no es un error: otro gerente resolvió el grupo primero.
+  if (result.resolved === 0) {
+    return { error: "Estos reportes ya fueron revisados. Actualizá la cola.", ok: false };
+  }
+  return { error: null, ok: true };
 }

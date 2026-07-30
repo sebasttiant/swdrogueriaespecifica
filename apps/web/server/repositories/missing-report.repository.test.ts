@@ -18,6 +18,7 @@ import {
   createMissingReport,
   groupPendingReportsByName,
   linkMissingReports,
+  resolveMissingReports,
   listPendingReportsForNames,
   reporterNamesByLinkedItemIds,
 } from "./missing-report.repository";
@@ -239,5 +240,71 @@ describe("reporterNamesByLinkedItemIds", () => {
     const result = await reporterNamesByLinkedItemIds(["m-1"]);
 
     expect(result.get("m-1")).toBe("Primero");
+  });
+});
+
+// --------------------------------------------------------------------------
+// Salidas rápidas de la cola. Hasta ahora un reporte solo salía vinculándolo al
+// catálogo; si el producto no estaba cargado, quedaba atrapado para siempre.
+// --------------------------------------------------------------------------
+describe("resolveMissingReports", () => {
+  it("marca como pedido solo los reportes que siguen pendientes", async () => {
+    prismaMock.missingReport.updateMany.mockResolvedValue({ count: 2 });
+
+    const written = await resolveMissingReports({
+      reportIds: ["r-1", "r-2"],
+      resolution: "ORDERED",
+      resolvedById: "adm-1",
+    });
+
+    expect(written).toBe(2);
+    // El compare-and-set es lo que hace la operación segura ante dos gerentes
+    // resolviendo el mismo grupo: el segundo no pisa la decisión del primero.
+    expect(prismaMock.missingReport.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ["r-1", "r-2"] }, status: "PENDING_REVIEW" },
+      data: { status: "ORDERED", resolvedById: "adm-1", resolvedAt: expect.any(Date) },
+    });
+  });
+
+  it("descarta con su propio estado, nunca reusando el de pedido", async () => {
+    prismaMock.missingReport.updateMany.mockResolvedValue({ count: 1 });
+
+    await resolveMissingReports({
+      reportIds: ["r-1"],
+      resolution: "DISCARDED",
+      resolvedById: "adm-1",
+    });
+
+    const args = prismaMock.missingReport.updateMany.mock.calls[0]![0];
+    expect(args.data.status).toBe("DISCARDED");
+  });
+
+  // Un reporte que otro gerente ya resolvió no coincide con el CAS: se informa
+  // como cero escrituras en vez de pisar la decisión anterior.
+  it("devuelve cero cuando ninguno seguía pendiente", async () => {
+    prismaMock.missingReport.updateMany.mockResolvedValue({ count: 0 });
+
+    const written = await resolveMissingReports({
+      reportIds: ["r-1"],
+      resolution: "ORDERED",
+      resolvedById: "adm-1",
+    });
+
+    expect(written).toBe(0);
+  });
+
+  // Vincular sigue siendo la otra salida y no se toca: quien quiera seguimiento
+  // de stock del producto todavía puede hacerlo.
+  it("no interfiere con el vínculo al catálogo", async () => {
+    prismaMock.missingReport.updateMany.mockResolvedValue({ count: 1 });
+
+    await linkMissingReports({
+      reportIds: ["r-1"],
+      productId: "p-1",
+      missingItemId: "m-1",
+    });
+
+    const args = prismaMock.missingReport.updateMany.mock.calls[0]![0];
+    expect(args.data.status).toBe("LINKED");
   });
 });

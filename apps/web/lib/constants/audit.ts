@@ -44,6 +44,11 @@ export const AUDIT_ACTIONS = {
   MISSING_DISCARDED: "missing.discarded",
   MISSING_REPORT_CREATE: "missing.report.create",
   MISSING_REPORT_LINKED: "missing.report.linked",
+  // Salida rápida de la cola de revisión, sin pasar por el catálogo. NO son
+  // alias de `MISSING_REPORT_LINKED`: vincular genera un faltante canónico,
+  // esto solo registra la decisión de gerencia sobre el reporte.
+  MISSING_REPORT_ORDERED: "missing.report.ordered",
+  MISSING_REPORT_DISCARDED: "missing.report.discarded",
   // Entradas
   ENTRY_CREATE: "entry.create",
   MISSING_CLOSED_BY_ENTRY: "missing.closed.by.entry",
