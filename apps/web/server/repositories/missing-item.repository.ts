@@ -36,6 +36,8 @@ export type MissingItemListItem = {
   confirmationNote: string | null;
   orderedAt: Date | null;
   orderedById: string | null;
+  discardedAt: Date | null;
+  discardedById: string | null;
   supplierId: string | null;
   sellerCode: string | null;
   createdAt: Date;
@@ -63,6 +65,13 @@ export type MissingItemListItem = {
   // (reporte → reporter; si no, este createdBy). Mismo criterio de visibilidad
   // que `confirmedBy`: nombre de staff, no PII de cliente.
   createdBy: { id: string; name: string } | null;
+  // Quién PIDIÓ y quién DESCARTÓ. La cola la trabajan dos personas a la vez
+  // (gerencia y compras) y hasta ahora no se distinguía quién tocó qué: el
+  // gerente tuvo que preguntarlo en voz alta durante la reunión del 2026-07-30
+  // ("¿quién colocó esto? ... ah, eso lo colocó Andrés"). Igual que los otros
+  // responsables: la relación es la única fuente del nombre, y solo id+nombre.
+  orderedBy: { id: string; name: string } | null;
+  discardedBy: { id: string; name: string } | null;
 };
 
 export type CreateMissingItemData = {
@@ -74,7 +83,16 @@ export type CreateMissingItemData = {
   sellerCode?: string | null;
 };
 
-export type MissingItemScope = "active" | "history";
+// Vistas de la cola operativa. Cada una responde una pregunta distinta del
+// gerente, con sus palabras: "por pedir" / "ya pedidos" / "descartados".
+//
+// `actionable` es el default: la cola de trabajo real. NO es sinónimo de
+// "abierto" —ver `ACTIONABLE_STATUSES` vs `OPEN_STATUSES` más abajo—.
+export type MissingItemScope =
+  | "actionable"
+  | "ordered"
+  | "discarded"
+  | "history";
 
 export type ConfirmMissingItemData = {
   id: string;
@@ -83,11 +101,16 @@ export type ConfirmMissingItemData = {
   note?: string;
 };
 
+// Proveedor y cantidad son OPCIONALES a propósito: el pedido rápido registra el
+// hecho ("gerencia ya compró esto") sin frenar al gerente para elegir proveedor
+// y cantidad, que puede completar después con el formulario largo. La base ya
+// los acepta nulos —`supplierId String?`, `orderedQuantity Int?` con CHECK
+// "IS NULL OR > 0"—, así que esto NO necesita migración.
 export type OrderMissingItemData = {
-  supplierId: string;
+  supplierId?: string | null;
   orderedById: string;
   orderedAt: Date;
-  orderedQuantity: number;
+  orderedQuantity?: number | null;
 };
 
 const LIST_SELECT = {
@@ -102,6 +125,8 @@ const LIST_SELECT = {
   confirmationNote: true,
   orderedAt: true,
   orderedById: true,
+  discardedAt: true,
+  discardedById: true,
   supplierId: true,
   sellerCode: true,
   createdAt: true,
@@ -126,6 +151,10 @@ const LIST_SELECT = {
   confirmedBy: { select: { id: true, name: true } },
   // Trazabilidad (Mejora 5): quién creó el faltante. Solo id y nombre.
   createdBy: { select: { id: true, name: true } },
+  // Quién pidió y quién descartó, para que la vista lo muestre. Mismo criterio
+  // de minimización que los anteriores: nunca email, rol ni credenciales.
+  orderedBy: { select: { id: true, name: true } },
+  discardedBy: { select: { id: true, name: true } },
 } as const;
 
 export async function listMissingItems(params: {
@@ -149,12 +178,12 @@ export async function listMissingItems(params: {
     if (!exists) cursorId = null;
   }
 
+  const where = whereForScope(params.scope);
+
   const rows = await prisma.missingItem.findMany({
     take: take + 1,
     ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
-    ...(params.scope === "history"
-      ? {}
-      : { where: { confirmedAt: null, status: { in: OPEN_STATUSES } } }),
+    ...(where ? { where } : {}),
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     select: LIST_SELECT,
   });
@@ -167,12 +196,67 @@ export async function listMissingItems(params: {
   return { items, nextCursor };
 }
 
-// Estados "abiertos": el faltante sigue requiriendo gestión (no resuelto).
+// --------------------------------------------------------------------------
+// DOS EJES DISTINTOS. No los unifiques: comparten valores hoy por casualidad,
+// no por significado, y mezclarlos ya causó un bug silencioso una vez.
+//
+//   OPEN_STATUSES      = "todavía no se resolvió". Un PEDIDO entra acá porque
+//                        la mercadería no llegó: sigue contando como abierto,
+//                        sigue venciendo, y —lo más importante— sigue siendo
+//                        candidato del cierre FIFO cuando entra el stock.
+//
+//   ACTIONABLE_STATUSES = "todavía requiere que gerencia HAGA algo". Un PEDIDO
+//                        NO entra: ya se compró, no hay nada que decidir.
+//
+// Regla del gerente (reunión 2026-07-30): "cuando ellos le pongan el okay, que
+// desaparezca de la lista". Eso es el eje ACTIONABLE, y solo afecta a la cola.
+// Si alguna vez sacás PEDIDO de OPEN_STATUSES, los faltantes ya pedidos dejan
+// de cerrarse solos al llegar la mercadería y se acumulan para siempre.
+// --------------------------------------------------------------------------
 const OPEN_STATUSES: MissingItemStatus[] = ["FALTANTE", "PEDIDO"];
+const ACTIONABLE_STATUSES: MissingItemStatus[] = ["FALTANTE"];
+const ORDERED_STATUSES: MissingItemStatus[] = ["PEDIDO", "RECIBIDO"];
+
+/**
+ * Filtro de cada vista. `undefined` = sin filtro (historial completo).
+ *
+ * La rama `ordered` incluye los PEDIDOS HISTÓRICOS: filas que quedaron en
+ * `FALTANTE` con `confirmedAt` del flujo viejo "OK gerencia". Son órdenes
+ * reales; sin esta rama no aparecerían en ninguna vista operativa. Nunca se
+ * reescriben ni se migran: se leen donde corresponde.
+ */
+function whereForScope(scope: MissingItemScope | undefined) {
+  switch (scope) {
+    case "history":
+      return undefined;
+    case "ordered":
+      return {
+        OR: [
+          { status: { in: ORDERED_STATUSES } },
+          { status: "FALTANTE" as const, confirmedAt: { not: null } },
+        ],
+      };
+    case "discarded":
+      return { status: "CANCELADO" as const };
+    default:
+      return { confirmedAt: null, status: { in: ACTIONABLE_STATUSES } };
+  }
+}
 
 export function countOpenMissingItems(): Promise<number> {
   return prisma.missingItem.count({
     where: { confirmedAt: null, status: { in: OPEN_STATUSES } },
+  });
+}
+
+/**
+ * Cuántos faltantes siguen esperando que gerencia los pida. Es el número que le
+ * importa al gerente ("cuánto me falta"), y NO es `countOpenMissingItems`: ese
+ * incluye los ya pedidos, que siguen abiertos pero no requieren trabajo.
+ */
+export function countActionableMissingItems(): Promise<number> {
+  return prisma.missingItem.count({
+    where: { confirmedAt: null, status: { in: ACTIONABLE_STATUSES } },
   });
 }
 
@@ -378,10 +462,10 @@ export async function orderMissingItem(
       status: "PEDIDO",
       orderedAt: data.orderedAt,
       orderedById: data.orderedById,
-      supplierId: data.supplierId,
+      supplierId: data.supplierId ?? null,
       // La cantidad pedida entra en el MISMO update atómico que el status: si
       // el CAS no coincide (pedido concurrente), tampoco se escribe la cantidad.
-      orderedQuantity: data.orderedQuantity,
+      orderedQuantity: data.orderedQuantity ?? null,
     },
   });
   return count;

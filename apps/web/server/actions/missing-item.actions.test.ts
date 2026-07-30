@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   getActiveProductsForMissingItem: vi.fn(),
   orderMissingItem: vi.fn(),
   discardMissingItems: vi.fn(),
+  markMissingItemsOrdered: vi.fn(),
   recordAudit: vi.fn(),
   requireCapability: vi.fn(),
   revalidatePath: vi.fn(),
@@ -21,6 +22,7 @@ vi.mock("@/server/services/missing-item.service", () => ({
   createManualMissingItem: mocks.createManualMissingItem,
   orderMissingItem: mocks.orderMissingItem,
   discardMissingItems: mocks.discardMissingItems,
+  markMissingItemsOrdered: mocks.markMissingItemsOrdered,
 }));
 vi.mock("@/server/services/product.service", () => ({
   getActiveProductsForMissingItem: mocks.getActiveProductsForMissingItem,
@@ -30,6 +32,7 @@ import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
 import {
   createMissingItemAction,
   discardMissingItemsAction,
+  markMissingItemsOrderedAction,
   orderMissingItemAction,
   searchActiveProductsForMissingItemAction,
 } from "./missing-item.actions";
@@ -621,5 +624,159 @@ describe("discardMissingItemsAction", () => {
 
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/seguía abierto/i);
+  });
+});
+
+// --------------------------------------------------------------------------
+// Pedido rápido — el "chulito". Es la acción que Guillermo va a tocar cientos
+// de veces por día desde el celular, así que su contrato es el más estricto:
+// autorizar antes de cualquier efecto, y no exigirle nada más que el id.
+// --------------------------------------------------------------------------
+function quickOrderFormData(ids: string[]) {
+  const data = new FormData();
+  for (const id of ids) data.append("ids", id);
+  return data;
+}
+
+describe("markMissingItemsOrderedAction", () => {
+  const PREV_STATE = { error: null, ok: false };
+
+  beforeEach(() => {
+    mocks.recordAudit.mockReset();
+    mocks.revalidatePath.mockReset();
+    mocks.auditContextFromHeaders.mockResolvedValue({ userId: "adm-1", channel: "web" });
+    mocks.requireCapability.mockResolvedValue({ user: { id: "adm-1", role: "ADMIN" } });
+  });
+
+  // Esconder el botón no es seguridad: la acción es un endpoint HTTP real.
+  it("exige la capacidad de compras y corta antes de tocar la base", async () => {
+    mocks.requireCapability.mockRejectedValueOnce(new Error("REDIRECT:/dashboard"));
+
+    await expect(
+      markMissingItemsOrderedAction(PREV_STATE, quickOrderFormData(["m-1"])),
+    ).rejects.toThrow("REDIRECT:/dashboard");
+
+    expect(mocks.requireCapability).toHaveBeenCalledWith("canOrderMissingItems");
+    expect(mocks.markMissingItemsOrdered).not.toHaveBeenCalled();
+  });
+
+  it("marca como pedido usando SOLO el id, sin proveedor ni cantidad", async () => {
+    mocks.markMissingItemsOrdered.mockResolvedValue({ ordered: ["m-1"], skipped: [] });
+
+    const result = await markMissingItemsOrderedAction(
+      PREV_STATE,
+      quickOrderFormData(["m-1"]),
+    );
+
+    expect(result).toEqual({ error: null, ok: true });
+    expect(mocks.markMissingItemsOrdered).toHaveBeenCalledWith({
+      ids: ["m-1"],
+      orderedById: "adm-1",
+    });
+  });
+
+  // El responsable sale SIEMPRE de la sesión. Un `orderedById` inyectado en el
+  // FormData no se lee: nadie firma un pedido a nombre de otro.
+  it("ignora una identidad forjada en el FormData", async () => {
+    mocks.markMissingItemsOrdered.mockResolvedValue({ ordered: ["m-1"], skipped: [] });
+    const forged = quickOrderFormData(["m-1"]);
+    forged.set("orderedById", "otro-gerente");
+
+    await markMissingItemsOrderedAction(PREV_STATE, forged);
+
+    expect(mocks.markMissingItemsOrdered).toHaveBeenCalledWith({
+      ids: ["m-1"],
+      orderedById: "adm-1",
+    });
+  });
+
+  it("lee todos los ids del lote, no solo el primero", async () => {
+    mocks.markMissingItemsOrdered.mockResolvedValue({
+      ordered: ["m-1", "m-2", "m-3"],
+      skipped: [],
+    });
+
+    await markMissingItemsOrderedAction(
+      PREV_STATE,
+      quickOrderFormData(["m-1", "m-2", "m-3"]),
+    );
+
+    expect(mocks.markMissingItemsOrdered).toHaveBeenCalledWith({
+      ids: ["m-1", "m-2", "m-3"],
+      orderedById: "adm-1",
+    });
+  });
+
+  // Quién pidió QUÉ es la pregunta que el gerente hizo en voz alta durante la
+  // reunión. Una entrada por faltante: el lote es comodidad de pantalla, no una
+  // unidad de negocio.
+  it("audita una entrada por faltante efectivamente pedido", async () => {
+    mocks.markMissingItemsOrdered.mockResolvedValue({
+      ordered: ["m-1", "m-2"],
+      skipped: ["m-3"],
+    });
+
+    await markMissingItemsOrderedAction(
+      PREV_STATE,
+      quickOrderFormData(["m-1", "m-2", "m-3"]),
+    );
+
+    expect(mocks.recordAudit).toHaveBeenCalledTimes(2);
+    expect(mocks.recordAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: AUDIT_ACTIONS.MISSING_ITEM_ORDERED,
+        module: AUDIT_MODULES.FALTANTES,
+        entity: "MissingItem",
+        entityId: "m-1",
+      }),
+    );
+  });
+
+  // Una carrera no es un error del sistema: otro gerente llegó primero.
+  it("informa sin fingir éxito cuando ninguno seguía abierto", async () => {
+    mocks.markMissingItemsOrdered.mockResolvedValue({ ordered: [], skipped: ["m-1"] });
+
+    const result = await markMissingItemsOrderedAction(
+      PREV_STATE,
+      quickOrderFormData(["m-1"]),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/seguía abierto/i);
+  });
+
+  it("rechaza una selección vacía sin llamar al servicio", async () => {
+    const result = await markMissingItemsOrderedAction(PREV_STATE, quickOrderFormData([]));
+
+    expect(result.ok).toBe(false);
+    expect(mocks.markMissingItemsOrdered).not.toHaveBeenCalled();
+  });
+
+  // El pedido YA se registró: que se caiga la auditoría no puede decirle al
+  // gerente que falló, porque volvería a tocar el chulito sobre algo ya hecho.
+  it("no reporta fallo si la auditoría se cae DESPUÉS de registrar el pedido", async () => {
+    mocks.markMissingItemsOrdered.mockResolvedValue({ ordered: ["m-1"], skipped: [] });
+    mocks.auditContextFromHeaders.mockRejectedValueOnce(new Error("headers caídos"));
+
+    const result = await markMissingItemsOrderedAction(
+      PREV_STATE,
+      quickOrderFormData(["m-1"]),
+    );
+
+    expect(result).toEqual({ error: null, ok: true });
+  });
+
+  it("no reporta fallo si la revalidación se cae DESPUÉS de registrar el pedido", async () => {
+    mocks.markMissingItemsOrdered.mockResolvedValue({ ordered: ["m-1"], skipped: [] });
+    mocks.revalidatePath.mockImplementation(() => {
+      throw new Error("cache caída");
+    });
+
+    const result = await markMissingItemsOrderedAction(
+      PREV_STATE,
+      quickOrderFormData(["m-1"]),
+    );
+
+    expect(result).toEqual({ error: null, ok: true });
   });
 });

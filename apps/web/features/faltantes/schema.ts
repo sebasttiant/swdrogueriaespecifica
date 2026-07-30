@@ -151,15 +151,30 @@ export type LinkMissingReportInput = z.infer<typeof linkMissingReportSchema>;
 // contra cuántas esperaba: con ids repetidos ese conteo mentiría.
 export const MAX_BULK_MISSING_ITEMS = 200;
 
+// Selección de faltantes de un lote. Es literalmente el mismo campo en las dos
+// acciones masivas (descartar y marcar como pedido), así que se declara una vez.
+const bulkMissingItemIds = z
+  .array(z.string().trim().min(1))
+  .min(1, { error: "Elegí al menos un faltante." })
+  .max(MAX_BULK_MISSING_ITEMS, { error: "Demasiados faltantes en una sola acción." })
+  .transform((ids) => [...new Set(ids)]);
+
 export const discardMissingItemsSchema = z.object({
-  ids: z
-    .array(z.string().trim().min(1))
-    .min(1, { error: "Elegí al menos un faltante." })
-    .max(MAX_BULK_MISSING_ITEMS, { error: "Demasiados faltantes en una sola acción." })
-    .transform((ids) => [...new Set(ids)]),
+  ids: bulkMissingItemIds,
   // El motivo es opcional pero se conserva: "por qué se descartó" es justo lo
   // que alguien va a preguntar cuando el faltante desaparezca de la cola.
   reason: optionalText(200),
 });
 
 export type DiscardMissingItemsInput = z.infer<typeof discardMissingItemsSchema>;
+
+// Pedido rápido ("chulito"): SOLO los ids. Ni proveedor ni cantidad, que es
+// justamente lo que lo vuelve usable con 847 faltantes. Se completan después
+// con `orderMissingItemSchema` si gerencia los necesita.
+export const markMissingItemsOrderedSchema = z.object({
+  ids: bulkMissingItemIds,
+});
+
+export type MarkMissingItemsOrderedInput = z.infer<
+  typeof markMissingItemsOrderedSchema
+>;

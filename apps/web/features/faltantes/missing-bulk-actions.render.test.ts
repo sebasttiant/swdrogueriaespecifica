@@ -11,6 +11,7 @@ vi.mock("react", async (importOriginal) => {
 
 vi.mock("@/server/actions/missing-item.actions", () => ({
   discardMissingItemsAction: vi.fn(),
+  markMissingItemsOrderedAction: vi.fn(),
 }));
 
 import { MissingBulkActions } from "./missing-bulk-actions";

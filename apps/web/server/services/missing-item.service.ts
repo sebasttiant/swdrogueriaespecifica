@@ -9,6 +9,7 @@ import { prisma } from "@/lib/db/prisma";
 import type { Paginated } from "@/lib/pagination";
 import {
   confirmMissingItem,
+  countActionableMissingItems,
   countConfirmedMissingItems,
   countOpenMissingItems,
   countOrderedMissingItems,
@@ -20,6 +21,7 @@ import {
   listOpenMissingItemsForExport,
   orderMissingItem as persistOrderedMissingItem,
   type MissingItemListItem,
+  type MissingItemScope,
 } from "@/server/repositories/missing-item.repository";
 import { reporterNamesByLinkedItemIds } from "@/server/repositories/missing-report.repository";
 import {
@@ -110,6 +112,9 @@ export type MissingItemListEntry = MissingItemListItem & {
 export async function getMissingItems(params: {
   cursor?: string | null;
   take?: number;
+  // Vista de la cola. Sin valor = `actionable` (lo que falta por pedir), que es
+  // el default del repositorio.
+  scope?: MissingItemScope;
   // Requerido (sin default): que falte el flag debe ser un error de tipos,
   // nunca una fuga silenciosa de PII. `false` fuerza la minimización abajo.
   canViewCustomerIdentity: boolean;
@@ -177,6 +182,12 @@ export async function createManualMissingItem(input: CreateManualMissingItemInpu
     note: input.note,
     sellerCode: input.sellerCode ?? null,
   });
+}
+
+// Cuántos faltantes esperan que gerencia los pida: el número de la pestaña
+// "Por pedir". Distinto del KPI de abiertos, que incluye los ya pedidos.
+export function getActionableMissingCount(): Promise<number> {
+  return countActionableMissingItems();
 }
 
 // Conteo de faltantes abiertos para el KPI del dashboard.
@@ -371,6 +382,65 @@ export type BulkResult = {
   // No es un error: es el resultado honesto de una carrera.
   skipped: string[];
 };
+
+export type BulkOrderInput = {
+  ids: readonly string[];
+  orderedById: string;
+};
+
+export type BulkOrderResult = {
+  // Filas efectivamente marcadas como pedidas por esta llamada.
+  ordered: string[];
+  // Ya no estaban FALTANTE al tomar el lock: otro las pidió o descartó primero,
+  // o son pedidos históricos ya confirmados. No es un error.
+  skipped: string[];
+};
+
+/**
+ * Pedido RÁPIDO: registra que gerencia ya compró, sin proveedor ni cantidad.
+ *
+ * Regla del gerente (reunión 2026-07-30): "yo marco los chulitos y ya lo que ya
+ * pidió, un check que ya pidió y listo". Con 847 faltantes y un flujo de trabajo
+ * por laboratorio, exigir un formulario por fila es lo que volvió inusable la
+ * pantalla. El proveedor y la cantidad se completan después, con
+ * `orderMissingItem`, si hacen falta.
+ *
+ * NO es lo mismo que el viejo "OK gerencia": aquello escribía `confirmedAt` sin
+ * tocar el status, lo que dejaba filas que nunca se cerraban solas al llegar el
+ * stock. Acá el faltante pasa a `PEDIDO` de verdad, así que sigue siendo
+ * candidato del cierre FIFO.
+ *
+ * Acepta uno o muchos ids con el MISMO camino de código, y con el mismo molde
+ * que `discardMissingItems`: una transacción y un lock POR fila, para que un
+ * lote de 80 no bloquee la cola entera ni se caiga por una fila que otro tocó.
+ */
+export async function markMissingItemsOrdered(
+  input: BulkOrderInput,
+  now: Date = new Date(),
+): Promise<BulkOrderResult> {
+  const ordered: string[] = [];
+  const skipped: string[] = [];
+
+  for (const id of input.ids) {
+    const written = await prisma.$transaction(async (tx) => {
+      const locked = await lockMissingItemForUpdate(tx, id);
+      // Inexistente, ya fuera de FALTANTE (idempotencia del doble toque), o
+      // pedido histórico con `confirmedAt`: nada que escribir.
+      if (!locked) return 0;
+      if (!canTransitionToOrdered(locked.status)) return 0;
+      if (locked.confirmedAt !== null) return 0;
+
+      return persistOrderedMissingItem(tx, id, {
+        orderedById: input.orderedById,
+        orderedAt: now,
+      });
+    });
+
+    (written > 0 ? ordered : skipped).push(id);
+  }
+
+  return { ordered, skipped };
+}
 
 export async function discardMissingItems(
   input: BulkDiscardInput,

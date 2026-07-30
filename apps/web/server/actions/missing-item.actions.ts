@@ -7,6 +7,7 @@ import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
 import {
   manualMissingItemCreateSchema,
   discardMissingItemsSchema,
+  markMissingItemsOrderedSchema,
   orderMissingItemSchema,
 } from "@/features/faltantes/schema";
 import {
@@ -16,6 +17,7 @@ import {
 import {
   createManualMissingItem,
   discardMissingItems,
+  markMissingItemsOrdered,
   orderMissingItem,
   type OrderMissingItemInput,
   type OrderRejection,
@@ -305,6 +307,94 @@ export async function discardMissingItemsAction(
   // Una carrera no es un error: otro gerente llegó primero. Se informa sin
   // pretender que el lote falló.
   if (result.discarded.length === 0) {
+    return { error: "Ninguno de los faltantes elegidos seguía abierto.", ok: false };
+  }
+  return { error: null, ok: true };
+}
+
+/**
+ * Pedido RÁPIDO de faltantes — el "chulito" de gerencia.
+ *
+ * Regla de negocio (reunión 2026-07-30): "yo marco los chulitos y ya lo que ya
+ * pidió, un check que ya pidió y listo". Con 847 faltantes en cola y un flujo
+ * de trabajo por laboratorio, exigir el formulario de proveedor + cantidad por
+ * cada fila es lo que volvió la pantalla inusable.
+ *
+ * Sirve a UNA fila y a un lote de 80 con el mismo camino: el formulario de la
+ * fila postea un solo `ids`, el de la selección postea muchos.
+ *
+ * Gateada con `canOrderMissingItems`, igual que el pedido completo y el
+ * descarte: afirmar "ya lo compré" es autoridad de compras. Y NO es un alias
+ * del descarte — marcar como pedido dice que la mercadería viene en camino;
+ * descartar dice que nadie la va a pedir. Un botón ambiguo para las dos cosas
+ * es el error que obligó a revertir "OK gerencia".
+ */
+export async function markMissingItemsOrderedAction(
+  _prev: MissingItemActionState,
+  formData: FormData,
+): Promise<MissingItemActionState> {
+  const session = await requireCapability("canOrderMissingItems");
+
+  const parsed = markMissingItemsOrderedSchema.safeParse({
+    // `getAll`: los checkboxes del lote postean el mismo nombre repetido.
+    ids: formData.getAll("ids").map(String),
+  });
+
+  if (!parsed.success) {
+    const message = parsed.error.issues[0]?.message ?? "Revisá la selección.";
+    return { error: message, ok: false };
+  }
+
+  let result: Awaited<ReturnType<typeof markMissingItemsOrdered>>;
+  try {
+    // El responsable sale SIEMPRE de la sesión: un `orderedById` inyectado en el
+    // FormData no se lee, así que nadie firma un pedido a nombre de otro.
+    result = await markMissingItemsOrdered({
+      ids: parsed.data.ids,
+      orderedById: session.user.id,
+    });
+  } catch (error) {
+    console.error("[faltantes] No se pudieron marcar como pedidos:", error);
+    return { error: "No se pudo marcar como pedido. Intentá de nuevo.", ok: false };
+  }
+
+  // A partir de acá el pedido YA está registrado. Auditoría y revalidación son
+  // best-effort: si fallan, se registra el error pero NO se le dice al gerente
+  // que falló, porque volvería a tocar el chulito sobre algo ya hecho. Mismo
+  // criterio que `createMissingReportAction`. El try/catch cubre también
+  // `auditContextFromHeaders`, que lee headers() y sí puede lanzar.
+  try {
+    const context = await auditContextFromHeaders(session.user.id);
+    // Una entrada por faltante: el lote es una comodidad de la pantalla, no una
+    // unidad de negocio. "¿Quién pidió esto?" es la pregunta que el gerente hizo
+    // en voz alta durante la reunión.
+    for (const id of result.ordered) {
+      await recordAudit({
+        action: AUDIT_ACTIONS.MISSING_ITEM_ORDERED,
+        module: AUDIT_MODULES.FALTANTES,
+        entity: "MissingItem",
+        entityId: id,
+        // Pedido rápido: sin proveedor ni cantidad todavía. Se deja explícito
+        // para que la auditoría no aparente datos que nadie cargó.
+        after: { status: "PEDIDO", supplierId: null, orderedQuantity: null },
+        context,
+      });
+    }
+  } catch (error) {
+    console.error("[faltantes] Se marcó como pedido, pero no se pudo auditar:", error);
+  }
+
+  for (const path of ["/faltantes", "/dashboard"]) {
+    try {
+      revalidatePath(path);
+    } catch (error) {
+      console.error("[faltantes] Se marcó como pedido, pero no se pudo revalidar:", error);
+    }
+  }
+
+  // Una carrera no es un error: otro gerente llegó primero, o la fila ya estaba
+  // pedida. Se informa sin fingir que el lote falló.
+  if (result.ordered.length === 0) {
     return { error: "Ninguno de los faltantes elegidos seguía abierto.", ok: false };
   }
   return { error: null, ok: true };

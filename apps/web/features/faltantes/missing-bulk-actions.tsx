@@ -6,6 +6,7 @@ import { Button } from "@/app/_components/ui/button";
 import { Input } from "@/app/_components/ui/input";
 import {
   discardMissingItemsAction,
+  markMissingItemsOrderedAction,
   type MissingItemActionState,
 } from "@/server/actions/missing-item.actions";
 
@@ -26,19 +27,27 @@ type MissingBulkActionsProps = {
 };
 
 /**
- * Selección múltiple para cerrar de una vez los faltantes que no representan
- * trabajo: los que un segundo vendedor anotó por duplicado, o los que ya no
- * hacen falta.
+ * Selección múltiple sobre la cola. Resuelve literalmente lo que pidió el
+ * gerente: "no, okay, borrame del uno al 80".
  *
- * Este componente solo ofrece DESCARTAR. Marcar como pedido vive en el
- * formulario "Pedir" de cada fila, porque exige proveedor y cantidad reales:
- * un botón masivo que dijera "OK" para ambas cosas es exactamente la
- * ambigüedad que ya hubo que revertir una vez.
+ * Ofrece las DOS salidas, en formularios separados y con textos opuestos:
  *
- * La página monta esto solo para la autoridad de compras; la Server Action
- * revalida la capacidad del lado del servidor de todas formas.
+ *   ✓ Marcar como pedido → gerencia ya lo compró; la mercadería viene en camino.
+ *   ✗ Descartar          → nadie lo va a pedir (duplicado o ya no hace falta).
+ *
+ * Siguen siendo dos acciones distintas, nunca un "OK" ambiguo: esa ambigüedad
+ * es la que ya hubo que revertir una vez. Antes acá solo vivía el descarte
+ * porque pedir exigía proveedor y cantidad; con el pedido rápido esa exigencia
+ * desapareció y la simetría es posible.
+ *
+ * La página monta esto solo para la autoridad de compras; ambas Server Actions
+ * revalidan la capacidad del lado del servidor de todas formas.
  */
 export function MissingBulkActions({ items }: MissingBulkActionsProps) {
+  const [orderState, orderAction, isOrdering] = useActionState(
+    markMissingItemsOrderedAction,
+    INITIAL_STATE,
+  );
   const [state, formAction, isPending] = useActionState(
     discardMissingItemsAction,
     INITIAL_STATE,
@@ -65,8 +74,16 @@ export function MissingBulkActions({ items }: MissingBulkActionsProps) {
     );
   }
 
+  const selectedIds = [...selected];
+
+  // Los ids viajan como hidden en CADA formulario: las casillas viven fuera de
+  // ambos para que una sola selección alimente las dos acciones.
+  const selectionFields = selectedIds.map((id) => (
+    <input key={id} type="hidden" name="ids" value={id} />
+  ));
+
   return (
-    <form action={formAction} className="space-y-3 rounded-lg border border-border p-3">
+    <div className="space-y-3 rounded-lg border border-border p-3">
       <div className="flex items-center justify-between gap-3">
         <label className="flex items-center gap-2 text-sm font-medium text-text">
           <input
@@ -92,7 +109,6 @@ export function MissingBulkActions({ items }: MissingBulkActionsProps) {
             <label className="flex min-h-11 items-center gap-2 text-sm text-text">
               <input
                 type="checkbox"
-                name="ids"
                 value={item.id}
                 checked={selected.has(item.id)}
                 onChange={() => toggle(item.id)}
@@ -109,23 +125,50 @@ export function MissingBulkActions({ items }: MissingBulkActionsProps) {
         ))}
       </ul>
 
-      <div className="space-y-1.5">
-        <label htmlFor={reasonId} className="text-sm font-medium text-text">
-          Motivo (opcional)
-        </label>
-        {/* Queda guardado: "por qué se descartó" es justo lo que alguien va a
-            preguntar cuando el faltante desaparezca de la cola. */}
-        <Input
-          id={reasonId}
-          name="reason"
-          maxLength={200}
-          placeholder="Duplicado, ya no se necesita…"
-        />
-      </div>
+      {/* Acción principal: "ya los pedí". Es la que el gerente usa decenas de
+          veces por día, así que va primero y no pide ningún dato más. */}
+      <form action={orderAction}>
+        {selectionFields}
+        <Button type="submit" disabled={isOrdering || selected.size === 0}>
+          {isOrdering
+            ? "Marcando…"
+            : `Marcar como pedido ${selected.size || ""}`.trim()}
+        </Button>
+      </form>
 
-      <Button type="submit" variant="danger" disabled={isPending || selected.size === 0}>
-        {isPending ? "Descartando…" : `Descartar ${selected.size || ""}`.trim()}
-      </Button>
+      {orderState.error ? (
+        <p role="alert" className="text-sm font-medium text-danger">
+          {orderState.error}
+        </p>
+      ) : null}
+      {orderState.ok ? (
+        <p role="status" className="text-sm font-medium text-success">
+          Marcados como pedidos. Salieron de la cola y quedan en «Ya pedidos».
+        </p>
+      ) : null}
+
+      {/* Descarte: el motivo vive en ESTE formulario, no en el de pedido, donde
+          no significaría nada. */}
+      <form action={formAction} className="space-y-3 border-t border-border pt-3">
+        {selectionFields}
+        <div className="space-y-1.5">
+          <label htmlFor={reasonId} className="text-sm font-medium text-text">
+            Motivo (opcional)
+          </label>
+          {/* Queda guardado: "por qué se descartó" es justo lo que alguien va a
+              preguntar cuando el faltante desaparezca de la cola. */}
+          <Input
+            id={reasonId}
+            name="reason"
+            maxLength={200}
+            placeholder="Duplicado, ya no se necesita…"
+          />
+        </div>
+
+        <Button type="submit" variant="danger" disabled={isPending || selected.size === 0}>
+          {isPending ? "Descartando…" : `Descartar ${selected.size || ""}`.trim()}
+        </Button>
+      </form>
 
       {state.error ? (
         <p role="alert" className="text-sm font-medium text-danger">
@@ -137,6 +180,6 @@ export function MissingBulkActions({ items }: MissingBulkActionsProps) {
           Faltantes descartados.
         </p>
       ) : null}
-    </form>
+    </div>
   );
 }

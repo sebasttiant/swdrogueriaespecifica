@@ -18,11 +18,20 @@ import {
   canShowNewSupplierOrderForm,
   canShowOrderForm,
 } from "@/features/faltantes/order-rules";
+import {
+  MISSING_SCOPES,
+  MISSING_SCOPE_LABELS,
+  missingPageHref,
+  missingScopeHref,
+  repositoryScopeFor,
+  resolveMissingScope,
+} from "@/features/faltantes/missing-scope";
 import { resolveMissingView } from "@/features/faltantes/missing-view";
 import { can } from "@/lib/auth/permissions";
 import { cn } from "@/lib/utils/cn";
 import { requireCapability } from "@/lib/auth/require-role";
 import {
+  getActionableMissingCount,
   getMissingItems,
   getMissingItemsSummary,
 } from "@/server/services/missing-item.service";
@@ -33,10 +42,11 @@ export const metadata: Metadata = { title: "Faltantes" };
 export default async function FaltantesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ cursor?: string; view?: string }>;
+  searchParams: Promise<{ cursor?: string; view?: string; scope?: string }>;
 }) {
-	const { cursor, view: rawView } = await searchParams;
+	const { cursor, view: rawView, scope: rawScope } = await searchParams;
 	const view = resolveMissingView(rawView);
+	const scope = resolveMissingScope(rawScope);
 	const session = await requireCapability("canViewFaltantes");
 	const canOrderMissingItems = can(session.user.role, "canOrderMissingItems");
 	const canManageSuppliers = can(session.user.role, "canManageSuppliers");
@@ -54,9 +64,16 @@ export default async function FaltantesPage({
   // Un único instante compartido por el resumen global y el agrupamiento de
   // la página actual, para que ambos hablen del mismo "ahora".
   const now = new Date();
-  const [{ items, nextCursor }, summary, suppliers] = await Promise.all([
-    getMissingItems({ cursor, canViewCustomerIdentity, canViewSupplierIdentity }),
+  const [{ items, nextCursor }, summary, actionableCount, suppliers] = await Promise.all([
+    getMissingItems({
+      cursor,
+      scope: repositoryScopeFor(scope),
+      canViewCustomerIdentity,
+      canViewSupplierIdentity,
+    }),
     getMissingItemsSummary(now),
+    // Global, no de la página actual: es "cuánto me falta por pedir".
+    getActionableMissingCount(),
     // Los proveedores alimentan el selector del pedido. Se piden siempre que el
     // usuario pueda pedir: sin la lista no se puede resolver si hay una rama
     // "proveedor existente" disponible.
@@ -115,12 +132,42 @@ export default async function FaltantesPage({
         </Card>
       ) : null}
 
+      {/* Pestañas por estado. Son el corazón del pedido de gerencia: la cola
+          muestra SOLO lo que falta por pedir, y lo resuelto se consulta acá al
+          lado sin haberse borrado. Altura de dedo (44px) porque se usan desde
+          el celular. */}
+      <nav
+        aria-label="Estado de los faltantes"
+        className="flex flex-wrap gap-2 text-sm font-semibold print:hidden"
+      >
+        {MISSING_SCOPES.map((option) => (
+          <Link
+            key={option}
+            href={missingScopeHref(option, view)}
+            aria-current={scope === option ? "page" : undefined}
+            className={cn(
+              "inline-flex min-h-11 items-center gap-2 rounded-lg px-4 transition-colors",
+              scope === option
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted/60 text-muted-foreground hover:bg-muted",
+            )}
+          >
+            <span>{MISSING_SCOPE_LABELS[option]}</span>
+            {/* Solo la cola de trabajo lleva número: es el único que responde
+                "cuánto me falta". En las otras dos sería ruido. */}
+            {option === "actionable" ? (
+              <span className="tabular-nums">{actionableCount}</span>
+            ) : null}
+          </Link>
+        ))}
+      </nav>
+
       {/* Toggle de vista (completa/compacta) + export. Se ocultan al imprimir:
           el PDF es la lista, no los controles. */}
       <div className="flex flex-col gap-3 print:hidden sm:flex-row sm:items-center sm:justify-between">
         <nav aria-label="Vista de faltantes" className="flex gap-2 text-sm font-semibold">
           <Link
-            href="/faltantes"
+            href={missingScopeHref(scope, "full")}
             aria-current={view === "full" ? "page" : undefined}
             className={cn(
               "rounded-lg px-3 py-1.5 transition-colors",
@@ -132,7 +179,7 @@ export default async function FaltantesPage({
             Completa
           </Link>
           <Link
-            href="/faltantes?view=compact"
+            href={missingScopeHref(scope, "compact")}
             aria-current={view === "compact" ? "page" : undefined}
             className={cn(
               "rounded-lg px-3 py-1.5 transition-colors",
@@ -168,12 +215,19 @@ export default async function FaltantesPage({
       ) : null}
 
       {view === "compact" ? (
-        <MissingListCompact items={items} />
+        <MissingListCompact
+          items={items}
+          canAct={canOrderMissingItems}
+          nextCursor={nextCursor}
+          pageHref={(next) => missingPageHref(scope, view, next)}
+        />
       ) : (
         <MissingList
           items={items}
           nextCursor={nextCursor}
+          pageHref={(next) => missingPageHref(scope, view, next)}
           canOrder={canOrder}
+          canQuickAct={canOrderMissingItems}
           canSeeStatus={canOrderMissingItems}
           canSeeSupplier={canViewSupplierIdentity}
           suppliers={suppliers}

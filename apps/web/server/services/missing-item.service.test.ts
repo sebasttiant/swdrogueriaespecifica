@@ -81,6 +81,7 @@ import {
   createManualMissingItem,
   getMissingItems,
   getMissingItemsSummary,
+  markMissingItemsOrdered,
   orderMissingItem,
 } from "./missing-item.service";
 import type { MissingItemListItem } from "@/server/repositories/missing-item.repository";
@@ -109,6 +110,10 @@ function missingItemRow(
     confirmationNote: null,
     orderedAt: null,
     orderedById: null,
+    orderedBy: null,
+    discardedAt: null,
+    discardedById: null,
+    discardedBy: null,
     supplierId: null,
     sellerCode: null,
     createdAt: new Date("2026-07-01T10:00:00.000Z"),
@@ -1051,5 +1056,129 @@ describe("discardMissingItems", () => {
 
     expect(result.discarded).toEqual([]);
     expect(result.skipped).toEqual(["m-1"]);
+  });
+});
+
+// --------------------------------------------------------------------------
+// Pedido rápido — el "chulito" de gerencia.
+//
+// Regla de negocio (reunión 2026-07-30): "Yo marco los chulitos y ya lo que ya
+// pidió, un check que ya pidió y listo". Guillermo trabaja por laboratorio y ya
+// sabe a quién le compra: exigirle proveedor y cantidad por cada fila, con 847
+// faltantes, es el cuello de botella que hizo inusable la pantalla.
+//
+// Mismo camino de código para UNA fila y para OCHENTA: un solo flujo que
+// mantener y que testear.
+// --------------------------------------------------------------------------
+describe("markMissingItemsOrdered", () => {
+  const NOW = new Date("2026-07-30T15:00:00.000Z");
+
+  it("marca como pedido SIN proveedor ni cantidad", async () => {
+    repo.lockMissingItemForUpdate.mockResolvedValue(missing());
+    repo.orderMissingItem.mockResolvedValue(1);
+
+    const result = await markMissingItemsOrdered(
+      { ids: ["m-1"], orderedById: "adm-1" },
+      NOW,
+    );
+
+    expect(result.ordered).toEqual(["m-1"]);
+    expect(result.skipped).toEqual([]);
+    expect(repo.orderMissingItem).toHaveBeenCalledWith(tx, "m-1", {
+      orderedById: "adm-1",
+      orderedAt: NOW,
+    });
+  });
+
+  it("procesa un lote grande bajo un lock por fila", async () => {
+    repo.lockMissingItemForUpdate.mockResolvedValue(missing());
+    repo.orderMissingItem.mockResolvedValue(1);
+    const ids = Array.from({ length: 80 }, (_, index) => `m-${index}`);
+
+    const result = await markMissingItemsOrdered(
+      { ids, orderedById: "adm-1" },
+      NOW,
+    );
+
+    expect(result.ordered).toHaveLength(80);
+    expect(prismaMock.$transaction).toHaveBeenCalledTimes(80);
+  });
+
+  // Idempotencia: el doble toque en el celular es la norma, no la excepción.
+  // Un faltante que ya está PEDIDO no se vuelve a escribir, así que su
+  // `orderedAt` y su responsable originales quedan intactos.
+  it("es idempotente: repetir el check no pisa el pedido original", async () => {
+    repo.lockMissingItemForUpdate.mockResolvedValue(missing({ status: "PEDIDO" }));
+
+    const result = await markMissingItemsOrdered(
+      { ids: ["m-1"], orderedById: "otro-gerente" },
+      NOW,
+    );
+
+    expect(result.ordered).toEqual([]);
+    expect(result.skipped).toEqual(["m-1"]);
+    expect(repo.orderMissingItem).not.toHaveBeenCalled();
+  });
+
+  // Un faltante con "OK gerencia" del flujo viejo ya representa una orden real.
+  // Volver a pedirlo produciría el estado imposible PEDIDO + confirmedAt.
+  it("no toca un faltante confirmado del flujo histórico", async () => {
+    repo.lockMissingItemForUpdate.mockResolvedValue(
+      missing({ confirmedAt: new Date("2026-07-01T10:00:00.000Z") }),
+    );
+
+    const result = await markMissingItemsOrdered(
+      { ids: ["m-1"], orderedById: "adm-1" },
+      NOW,
+    );
+
+    expect(result.skipped).toEqual(["m-1"]);
+    expect(repo.orderMissingItem).not.toHaveBeenCalled();
+  });
+
+  it("saltea un id que no existe sin romper el lote", async () => {
+    repo.lockMissingItemForUpdate.mockResolvedValue(null);
+
+    const result = await markMissingItemsOrdered(
+      { ids: ["fantasma"], orderedById: "adm-1" },
+      NOW,
+    );
+
+    expect(result.ordered).toEqual([]);
+    expect(result.skipped).toEqual(["fantasma"]);
+    expect(repo.orderMissingItem).not.toHaveBeenCalled();
+  });
+
+  // Perdió el compare-and-set contra una escritura concurrente entre el lock y
+  // el update: no se escribió, así que no se reporta como pedido.
+  it("cuenta como salteado cuando el compare-and-set no escribe", async () => {
+    repo.lockMissingItemForUpdate.mockResolvedValue(missing());
+    repo.orderMissingItem.mockResolvedValue(0);
+
+    const result = await markMissingItemsOrdered(
+      { ids: ["m-1"], orderedById: "adm-1" },
+      NOW,
+    );
+
+    expect(result.ordered).toEqual([]);
+    expect(result.skipped).toEqual(["m-1"]);
+  });
+
+  // Selección mixta: aplica sobre lo elegible e informa el resto. Rechazar el
+  // lote entero por una fila obligaría a rehacer la selección de 80.
+  it("aplica sobre las elegibles e informa las salteadas", async () => {
+    repo.lockMissingItemForUpdate
+      .mockResolvedValueOnce(missing())
+      .mockResolvedValueOnce(missing({ status: "CANCELADO" }))
+      .mockResolvedValueOnce(missing());
+    repo.orderMissingItem.mockResolvedValue(1);
+
+    const result = await markMissingItemsOrdered(
+      { ids: ["m-1", "m-2", "m-3"], orderedById: "adm-1" },
+      NOW,
+    );
+
+    expect(result.ordered).toEqual(["m-1", "m-3"]);
+    expect(result.skipped).toEqual(["m-2"]);
   });
 });

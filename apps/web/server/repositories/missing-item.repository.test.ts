@@ -48,15 +48,36 @@ beforeEach(() => {
 });
 
 describe("listMissingItems · active confirmation filter", () => {
-  it("lists only active missing items by default", async () => {
+  // La cola operativa muestra SOLO lo que todavía requiere que gerencia haga
+  // algo. Un PEDIDO ya fue comprado: sigue abierto (se cierra cuando llega el
+  // stock) pero no requiere acción, así que sale de la cola.
+  //
+  // Regla de negocio confirmada por el gerente (reunión 2026-07-30):
+  // "Cuando ellos le pongan el okay, que desaparezca de la lista."
+  it("lists only items that still need action by default", async () => {
     await listMissingItems({});
 
     expect(prismaMock.missingItem.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
           confirmedAt: null,
-          status: { in: ["FALTANTE", "PEDIDO"] },
+          status: { in: ["FALTANTE"] },
         },
+      }),
+    );
+  });
+
+  // REGRESIÓN CRÍTICA: sacar PEDIDO de la cola NO puede sacarlo del eje
+  // "sigue abierto". Si se colara en el filtro del cierre FIFO, los faltantes
+  // ya pedidos nunca se cerrarían solos al entrar el stock.
+  it("does not remove PEDIDO from the still-open axis used elsewhere", async () => {
+    await countOverdueMissingItems(new Date("2026-07-30T12:00:00.000Z"));
+
+    expect(prismaMock.missingItem.count).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: { in: ["FALTANTE", "PEDIDO"] },
+        }),
       }),
     );
   });
@@ -66,6 +87,28 @@ describe("listMissingItems · active confirmation filter", () => {
 
     const args = prismaMock.missingItem.findMany.mock.calls[0]![0];
     expect(args.where).toBeUndefined();
+  });
+
+  // "Ya pedidos": lo que gerencia compró. Incluye los pedidos históricos
+  // (`FALTANTE` + `confirmedAt`), que son órdenes reales anteriores al flujo
+  // actual. Sin esta rama esas filas no aparecerían en NINGUNA vista operativa.
+  it("lists ordered items, including legacy confirmed rows", async () => {
+    await listMissingItems({ scope: "ordered" });
+
+    const args = prismaMock.missingItem.findMany.mock.calls[0]![0];
+    expect(args.where).toEqual({
+      OR: [
+        { status: { in: ["PEDIDO", "RECIBIDO"] } },
+        { status: "FALTANTE", confirmedAt: { not: null } },
+      ],
+    });
+  });
+
+  it("lists discarded items on their own scope", async () => {
+    await listMissingItems({ scope: "discarded" });
+
+    const args = prismaMock.missingItem.findMany.mock.calls[0]![0];
+    expect(args.where).toEqual({ status: "CANCELADO" });
   });
 
   // La cantidad pedida se muestra en la vista de Pedidos; el listado tiene que
@@ -82,6 +125,26 @@ describe("listMissingItems · active confirmation filter", () => {
 
     const args = prismaMock.missingItem.findMany.mock.calls[0]![0];
     expect(args.select.confirmedBy).toEqual({ select: { id: true, name: true } });
+  });
+
+  // Atribución operativa. Respaldo del gerente (reunión 2026-07-30, min 2:52):
+  // "Espérate, ¿quién colocó esto? ... Ah, eso lo colocó Andrés."
+  // Son dos personas trabajando la misma cola y hoy no se distingue quién tocó
+  // qué. Mismo criterio de minimización que `confirmedBy`: SOLO id y nombre,
+  // nunca email, rol ni credenciales.
+  it("selects who ordered and who discarded, limited to id and name", async () => {
+    await listMissingItems({});
+
+    const args = prismaMock.missingItem.findMany.mock.calls[0]![0];
+    expect(args.select.orderedBy).toEqual({ select: { id: true, name: true } });
+    expect(args.select.discardedBy).toEqual({ select: { id: true, name: true } });
+  });
+
+  it("selects discardedAt so the discard can be dated in its view", async () => {
+    await listMissingItems({});
+
+    const args = prismaMock.missingItem.findMany.mock.calls[0]![0];
+    expect(args.select.discardedAt).toBe(true);
   });
 });
 
@@ -112,6 +175,34 @@ describe("lockMissingItemForUpdate", () => {
 });
 
 describe("orderMissingItem", () => {
+  // Pedido rápido ("chulito"): gerencia registra que YA compró, sin frenarse a
+  // elegir proveedor ni cantidad. Ambos quedan null y se completan después con
+  // el formulario largo. La base ya los acepta nulos (`supplierId String?`,
+  // `orderedQuantity Int?` con CHECK "IS NULL OR > 0"): sin migración.
+  it("writes a quick order with no supplier and no quantity", async () => {
+    const tx = txClient();
+    const orderedAt = new Date("2026-07-30T12:00:00.000Z");
+
+    const written = await orderMissingItem(tx as never, "missing-1", {
+      orderedById: "admin-1",
+      orderedAt,
+    });
+
+    expect(written).toBe(1);
+    expect(tx.missingItem.updateMany).toHaveBeenCalledWith({
+      // El compare-and-set es EL MISMO que el del pedido completo: pedir rápido
+      // no afloja la protección contra la escritura concurrente.
+      where: { id: "missing-1", status: "FALTANTE", confirmedAt: null },
+      data: {
+        status: "PEDIDO",
+        orderedAt,
+        orderedById: "admin-1",
+        supplierId: null,
+        orderedQuantity: null,
+      },
+    });
+  });
+
   it("only writes when the row is still FALTANTE and unconfirmed, returning the row count", async () => {
     const tx = txClient();
     const orderedAt = new Date("2026-07-09T12:00:00.000Z");

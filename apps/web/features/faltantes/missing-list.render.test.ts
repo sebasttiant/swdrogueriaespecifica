@@ -18,6 +18,8 @@ vi.mock("react", async (importOriginal) => {
 // next/cache al entorno de test.
 vi.mock("@/server/actions/missing-item.actions", () => ({
 	orderMissingItemAction: vi.fn(),
+	markMissingItemsOrderedAction: vi.fn(),
+	discardMissingItemsAction: vi.fn(),
 }));
 
 import { formatBogotaDate } from "@/lib/datetime/bogota";
@@ -41,6 +43,10 @@ function item(overrides: Partial<MissingItemListEntry>): MissingItemListEntry {
     confirmationNote: null,
     orderedAt: null,
     orderedById: null,
+    orderedBy: null,
+    discardedAt: null,
+    discardedById: null,
+    discardedBy: null,
     supplierId: null,
     sellerCode: null,
     createdAt: new Date("2026-06-01T00:00:00.000Z"),
@@ -95,13 +101,18 @@ function renderMissingList(
 		// Identidad del proveedor: eje propio. Por defecto sigue a `canOrder`
 		// (gerencia), y los tests de la fuga lo fijan aparte.
 		canSeeSupplier?: boolean;
+		// Acciones de un toque (✓/✗). Eje propio: no dependen de que haya
+		// proveedores cargados, a diferencia del formulario largo.
+		canQuickAct?: boolean;
 	} = {},
 ): string {
 	return renderToStaticMarkup(
 		createElement(MissingList, {
 			items,
 			nextCursor: null,
+			pageHref: (cursor: string) => `/faltantes?cursor=${cursor}`,
 			canOrder,
+			canQuickAct: options.canQuickAct ?? canOrder,
 			canSeeStatus: options.canSeeStatus ?? canOrder,
 			canSeeSupplier: options.canSeeSupplier ?? canOrder,
 			now,
@@ -498,10 +509,15 @@ describe("MissingList · action error contract", () => {
     );
 
     // El item se renderiza dos veces (tarjeta mobile + fila desktop, una sola
-    // visible por CSS), así que hay dos instancias del formulario y dos llamadas
-    // a `useActionState`. Un wrapper `Promise<void>` (que descarta
-    // `{ ok, error }`) no podría alimentar el hook ninguna vez.
-    expect(useActionStateMock).toHaveBeenCalledTimes(2);
+    // visible por CSS). Cada render monta TRES acciones con estado: el
+    // formulario largo de pedido, más el ✓ y el ✗ de un toque. Un wrapper
+    // `Promise<void>` (que descarta `{ ok, error }`) no podría alimentar el
+    // hook ninguna vez.
+    const RENDERS_PER_ITEM = 2;
+    const STATEFUL_ACTIONS_PER_RENDER = 3;
+    expect(useActionStateMock).toHaveBeenCalledTimes(
+      RENDERS_PER_ITEM * STATEFUL_ACTIONS_PER_RENDER,
+    );
   });
 });
 

@@ -17,11 +17,18 @@ import {
 import { groupMissingItems, type MissingGroupKey } from "./missing-grouping";
 import { getOrderMetadata, orderedQuantityLabel } from "./missing-list-helpers";
 import { MissingOrderForm } from "./missing-order-form";
+import { MissingQuickActions } from "./missing-quick-actions";
 
 type MissingListProps = {
   items: MissingItemListEntry[];
   nextCursor: string | null;
+  // Construye la URL de la página siguiente preservando vista y layout. Sin
+  // esto, "Ver más" devolvía siempre a la cola por defecto.
+  pageHref: (cursor: string) => string;
   canOrder: boolean;
+  // Autoridad de compras para las acciones de un toque (✓ pedido / ✗ descartar).
+  // Eje distinto de `canOrder`, que además exige proveedores donde elegir.
+  canQuickAct: boolean;
   // Autoridad de compras (`canOrderMissingItems`): habilita ver los badges de
   // estado y vencimiento. El vendedor reporta y sigue operando; para él la cola
   // es solo producto/cantidad/código, sin el seguimiento de gerencia. Es un eje
@@ -90,6 +97,9 @@ function canOrderItem(missing: MissingItemListItem): boolean {
 // parámetros posicionales por cada helper de render.
 type ActionContext = {
   canOrder: boolean;
+  // Pedido rápido y descarte: solo exige la autoridad de compras, sin depender
+  // de que haya proveedores cargados.
+  canQuickAct: boolean;
   canSeeStatus: boolean;
   // Identidad del proveedor. El service YA la anuló para quien no la tiene, así
   // que esto solo evita pintar una columna vacía; la protección real no vive acá.
@@ -103,18 +113,33 @@ function missingActions(
   actions: ActionContext,
   className?: string,
 ) {
+  // El pedido RÁPIDO solo depende de la autoridad de compras; el formulario
+  // completo además necesita proveedores donde elegir. Por eso son dos
+  // condiciones distintas y no una sola.
+  const showQuick = actions.canQuickAct && canOrderItem(missing);
   const showOrder = actions.canOrder && canOrderItem(missing);
 
-  if (!showOrder) return null;
+  if (!showQuick && !showOrder) return null;
 
   return (
     <div className={cn("flex flex-col items-end gap-2", className)}>
-      <MissingOrderForm
-        id={missing.id}
-        neededQuantity={missing.originId ? missing.quantity : null}
-        suppliers={actions.suppliers}
-        canCreateSupplier={actions.canCreateSupplier}
-      />
+      {/* Primero el camino de un toque: es el que se usa el 95% de las veces.
+          El formulario largo queda debajo, para cuando gerencia sí quiere
+          registrar proveedor y cantidad. */}
+      {showQuick ? (
+        <MissingQuickActions
+          missingItemId={missing.id}
+          productName={missing.product.name}
+        />
+      ) : null}
+      {showOrder ? (
+        <MissingOrderForm
+          id={missing.id}
+          neededQuantity={missing.originId ? missing.quantity : null}
+          suppliers={actions.suppliers}
+          canCreateSupplier={actions.canCreateSupplier}
+        />
+      ) : null}
     </div>
   );
 }
@@ -252,7 +277,7 @@ function missingRow(
   actions: ActionContext,
 ) {
   const status = STATUS[missing.status];
-  const hasActions = actions.canOrder;
+  const hasActions = actions.canOrder || actions.canQuickAct;
   return (
     <tr key={missing.id} className="border-b border-border last:border-0">
       <td className="px-3 py-2 font-medium text-text">
@@ -304,7 +329,9 @@ function missingRow(
 export function MissingList({
   items,
   nextCursor,
+  pageHref,
   canOrder,
+  canQuickAct,
   canSeeStatus,
   canSeeSupplier,
   suppliers,
@@ -313,6 +340,7 @@ export function MissingList({
 }: MissingListProps) {
   const actions: ActionContext = {
     canOrder,
+    canQuickAct,
     canSeeStatus,
     canSeeSupplier,
     suppliers,
@@ -388,8 +416,8 @@ export function MissingList({
       {nextCursor ? (
         <div className="pt-1 text-center">
           <Link
-            href={`/faltantes?cursor=${encodeURIComponent(nextCursor)}`}
-            className="text-sm font-semibold text-primary hover:underline"
+            href={pageHref(nextCursor)}
+            className="inline-flex min-h-11 items-center px-4 text-sm font-semibold text-primary hover:underline"
           >
             Ver más
           </Link>
