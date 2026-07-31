@@ -159,7 +159,16 @@ function alertScopeFor(role: SessionRole, userId: string): AlertScope {
 }
 
 export async function AlertBar({ userId, role }: AlertBarProps) {
-  const counts = await getOperationalAlertsCached(alertScopeFor(role, userId));
+  // Mismo criterio que el aviso de gerencia: si la consulta falla, no se
+  // muestra el aviso y la pantalla sigue funcionando. Un contador caído no
+  // puede impedirle a nadie registrar un pendiente.
+  let counts: AlertCounts;
+  try {
+    counts = await getOperationalAlertsCached(alertScopeFor(role, userId));
+  } catch (error) {
+    console.error("[alertas] No se pudo calcular el aviso operativo:", error);
+    return null;
+  }
   const totalCount = totalAlerts(counts);
 
   if (totalCount === 0) return null;
