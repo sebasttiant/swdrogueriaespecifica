@@ -71,6 +71,7 @@ import {
   getPendingDashboard,
   getPendings,
   invoicePending,
+  resolvePartialPending,
   registerPending,
   setPendingManagementStatus,
 } from "./pending.service";
@@ -867,5 +868,76 @@ describe("setPendingManagementStatus", () => {
     });
 
     expect(result.pending?.status).toBe("AGOTADO");
+  });
+});
+
+// --------------------------------------------------------------------------
+// Llegó solo una parte: el vendedor entrega lo que hay y pregunta. Las tres
+// respuestas ya existían en la operación —dos son las notas que el vendedor
+// escribe hoy en su tabla ("cliente espera", "va con pedido")—.
+// --------------------------------------------------------------------------
+describe("resolvePartialPending", () => {
+  const now = new Date("2026-07-09T12:00:00.000Z");
+
+  it("si el cliente espera, deja la nota y NO cierra el pendiente", async () => {
+    mockLockedPending(pendingForDelivery({ status: "PARCIAL", quantity: 5, deliveredQuantity: 3 }));
+    tx.pending.findUnique.mockResolvedValue({ note: null });
+
+    await expect(
+      resolvePartialPending({ id: "pend-1", decision: "espera", actorId: "op-1" }, now),
+    ).resolves.toBeNull();
+
+    expect(tx.pending.update).toHaveBeenCalledWith({
+      where: { id: "pend-1" },
+      data: { note: "Cliente espera los 2 restantes" },
+    });
+    expect(tx.pending.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("conserva la nota que el vendedor ya había escrito", async () => {
+    mockLockedPending(pendingForDelivery({ status: "PARCIAL", quantity: 5, deliveredQuantity: 3 }));
+    tx.pending.findUnique.mockResolvedValue({ note: "Va con pedido" });
+
+    await resolvePartialPending({ id: "pend-1", decision: "va_con_pedido", actorId: "op-1" }, now);
+
+    expect(tx.pending.update).toHaveBeenCalledWith({
+      where: { id: "pend-1" },
+      data: { note: "Va con pedido · Los 2 restantes van con otro pedido" },
+    });
+  });
+
+  it("si no los espera, cierra como ENTREGADO y libera la necesidad de compra", async () => {
+    mockLockedPending(pendingForDelivery({ status: "PARCIAL", quantity: 5, deliveredQuantity: 3 }));
+    mockCasWrote(1);
+
+    await expect(
+      resolvePartialPending({ id: "pend-1", decision: "cerrar", actorId: "op-1" }, now),
+    ).resolves.toBeNull();
+
+    expect(tx.pending.updateMany).toHaveBeenCalledWith({
+      where: { id: "pend-1", status: "PARCIAL" },
+      data: expect.objectContaining({ status: "ENTREGADO", customerStatus: "ENTREGADO" }),
+    });
+    expect(tx.missingItem.updateMany).toHaveBeenCalledWith({
+      where: { originId: "pend-1", status: { in: ["FALTANTE", "PEDIDO", "EN_BODEGA"] } },
+      data: { status: "CANCELADO" },
+    });
+  });
+
+  it("no resuelve un pendiente sin entrega parcial", async () => {
+    mockLockedPending(pendingForDelivery({ status: "PENDIENTE" }));
+
+    await expect(
+      resolvePartialPending({ id: "pend-1", decision: "cerrar", actorId: "op-1" }, now),
+    ).resolves.toBe("NOT_PARTIAL");
+  });
+
+  it("rechaza resolver un pendiente ajeno", async () => {
+    mockLockedPending(pendingForDelivery({ status: "PARCIAL", createdById: "otro" }));
+
+    await expect(
+      resolvePartialPending({ id: "pend-1", decision: "espera", actorId: "op-1" }, now),
+    ).resolves.toBe("NOT_OWNER");
+    expect(tx.pending.update).not.toHaveBeenCalled();
   });
 });

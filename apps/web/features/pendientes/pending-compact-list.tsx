@@ -18,6 +18,7 @@ import { PendingManagementStatusForm } from "./pending-management-status-form";
 import { PendingCustomerLifecycleForm } from "./pending-customer-lifecycle-form";
 import { PendingDeliverForm } from "./pending-deliver-form";
 import { PendingCancelForm } from "./pending-cancel-form";
+import { PendingPartialDecisionForm } from "./pending-partial-decision-form";
 
 // --------------------------------------------------------------------------
 // Vista LISTADO de pendientes — la que pidió el gerente en la reunión del
@@ -184,10 +185,21 @@ function customerActions(item: PendingListItem, ctx: CustomerActionsContext) {
       />
     ) : null;
 
+  // Solo con una entrega parcial en curso: sin ninguna entrega no hay resto
+  // sobre el que el cliente decida, y cerrar de cero es una cancelación.
+  const partialDecision =
+    ctx.canDeliver && item.status === "PARCIAL" && item.quantity > item.deliveredQuantity ? (
+      <PendingPartialDecisionForm
+        key="partial-decision"
+        pendingId={item.id}
+        remaining={item.quantity - item.deliveredQuantity}
+      />
+    ) : null;
+
   const cancel = ctx.canCancel ? <PendingCancelForm key="cancel" pendingId={item.id} /> : null;
 
-  if (!invoice && !deliver && !cancel) return null;
-  return [invoice, deliver, cancel];
+  if (!invoice && !deliver && !partialDecision && !cancel) return null;
+  return [invoice, deliver, partialDecision, cancel];
 }
 
 // El vendedor puede actuar sobre su pendiente mientras no esté cerrado.

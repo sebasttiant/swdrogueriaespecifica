@@ -462,6 +462,101 @@ export async function cancelPendingCommitment(
   });
 }
 
+// --------------------------------------------------------------------------
+// Cerrar un pendiente con lo que efectivamente se entregó.
+//
+// Cuando llega solo una parte, el vendedor despacha eso y le pregunta al
+// cliente. A veces el cliente espera el resto —y el pendiente sigue abierto,
+// que es el comportamiento de siempre—. Otras veces dice que ya no lo quiere,
+// o pide juntarlo con otro pedido. Sin esta salida ese pendiente quedaba
+// abierto para siempre, ensuciando la cola de todos con algo que ya se resolvió
+// en el mostrador.
+//
+// No es una cancelación: hubo entrega. Se cierra como ENTREGADO con la cantidad
+// real, y el motivo queda escrito.
+// --------------------------------------------------------------------------
+export type PartialDecision = "espera" | "va_con_pedido" | "cerrar";
+
+export type ResolvePartialPendingInput = {
+  id: string;
+  decision: PartialDecision;
+  actorId: string;
+  canManageAll?: boolean;
+};
+
+export type ResolvePartialPendingRejection = "NOT_OWNER" | "NOT_PARTIAL";
+
+// Las dos respuestas que el vendedor trae del mostrador, con las palabras que
+// ya usan en su tabla: "cliente espera" y "va con pedido" son NOTAS que el
+// vendedor deja, no estados nuevos del sistema. Se registran igual que siempre.
+const DECISION_NOTE: Record<Exclude<PartialDecision, "cerrar">, (remaining: number) => string> = {
+  espera: (remaining) => `Cliente espera los ${remaining} restantes`,
+  va_con_pedido: (remaining) => `Los ${remaining} restantes van con otro pedido`,
+};
+
+/**
+ * Registra qué pasa con lo que faltó cuando solo llegó una parte.
+ *
+ * El vendedor despacha lo que hay y le pregunta al cliente. Hay tres
+ * respuestas, y las tres existían ya en la operación:
+ *
+ *   espera         → el cliente aguarda el resto; el pendiente sigue abierto
+ *   va_con_pedido  → se le junta con otro pedido; el pendiente sigue abierto
+ *   cerrar         → el cliente no lo espera; se cierra con lo entregado
+ *
+ * Las dos primeras solo dejan la nota: el pendiente sigue vivo y su necesidad
+ * de compra también. La tercera cierra, y ahí sí lo que el cliente ya no espera
+ * deja de ser algo que comprar.
+ */
+export async function resolvePartialPending(
+  input: ResolvePartialPendingInput,
+  now: Date = new Date(),
+): Promise<ResolvePartialPendingRejection | null> {
+  return prisma.$transaction(async (tx) => {
+    const current = await lockPendingForUpdate(tx, input.id);
+    if (!current) throw new Error("Pending not found");
+    if (!input.canManageAll && current.createdById !== input.actorId) return "NOT_OWNER";
+
+    // Solo desde PARCIAL: sin ninguna entrega no hay resto que decidir, y
+    // cerrar de cero es una cancelación, con su propio flujo y su propio motivo.
+    if (current.status !== "PARCIAL") return "NOT_PARTIAL";
+
+    const remaining = Math.max(current.quantity - current.deliveredQuantity, 0);
+
+    if (input.decision !== "cerrar") {
+      const note = DECISION_NOTE[input.decision](remaining);
+      const existing = await tx.pending.findUnique({
+        where: { id: current.id },
+        select: { note: true },
+      });
+      await tx.pending.update({
+        where: { id: current.id },
+        data: { note: existing?.note ? `${existing.note} · ${note}` : note },
+      });
+      return null;
+    }
+
+    const { count } = await tx.pending.updateMany({
+      where: { id: current.id, status: "PARCIAL" },
+      data: {
+        status: "ENTREGADO",
+        customerStatus: "ENTREGADO",
+        completedAt: now,
+        cancelReason: `Cerrado sin los ${remaining} restantes: el cliente no los espera`,
+      },
+    });
+    if (count !== 1) throw new PendingConcurrentModificationError(current.id);
+
+    await releasePendingReservations(tx, current.id);
+    await tx.missingItem.updateMany({
+      where: { originId: current.id, status: { in: ["FALTANTE", "PEDIDO", "EN_BODEGA"] } },
+      data: { status: "CANCELADO" },
+    });
+
+    return null;
+  });
+}
+
 export type CustomerLifecycleInput = { id: string; actorId: string; canManageAll?: boolean; quantity?: number };
 export type CustomerLifecycleRejection = "NOT_OWNER" | "NOT_AVAILABLE" | "NOT_CONTACTABLE" | "NOT_CONTACTED" | "NOT_INVOICED" | "ALREADY_TERMINAL";
 
