@@ -26,11 +26,15 @@ export type ProductOption = {
 type EntryFormProps = {
   products: ProductOption[];
   selectedProductId?: string;
+  // Cantidad que la cola de bodega ya sabe que falta cargar. Llega escrita para
+  // que recibir una caja no obligue a recordar ni buscar cuánto se había
+  // pedido; sigue siendo editable porque el proveedor a veces manda de menos.
+  selectedQuantity?: number;
 };
 
 // Alta de entrada de inventario. Único client component del slice (necesita
 // useActionState). La lista de productos llega del server component que la monta.
-export function EntryForm({ products, selectedProductId }: EntryFormProps) {
+export function EntryForm({ products, selectedProductId, selectedQuantity }: EntryFormProps) {
   const [operationId, setOperationId] = useState(() => crypto.randomUUID());
   const [state, formAction, isPending] = useActionState(async (previousState: EntryFormState, formData: FormData) => {
     const result = await createInventoryEntryAction(previousState, formData);
@@ -68,7 +72,7 @@ export function EntryForm({ products, selectedProductId }: EntryFormProps) {
             min={1}
             step={1}
             required
-            defaultValue={1}
+            defaultValue={selectedQuantity ?? 1}
           />
         </Field>
         <Field label="Código de lote" htmlFor="batchCode">
