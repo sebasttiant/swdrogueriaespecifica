@@ -46,7 +46,11 @@ function render(
   items: PendingListItem[],
   canOrder = true,
   nextCursor: string | null = null,
-  capabilities: { canDeliver?: boolean; canContactOrInvoice?: boolean } = {},
+  capabilities: {
+    canDeliver?: boolean;
+    canContactOrInvoice?: boolean;
+    canFollowUp?: boolean;
+  } = {},
 ): string {
   return renderToStaticMarkup(
     createElement(PendingCompactList, {
@@ -54,6 +58,7 @@ function render(
       canOrder,
       canDeliver: capabilities.canDeliver,
       canContactOrInvoice: capabilities.canContactOrInvoice,
+      canFollowUp: capabilities.canFollowUp,
       nextCursor,
       pageHref: (cursor) => `/pendientes?cursor=${encodeURIComponent(cursor)}&view=lista`,
     }),
@@ -353,5 +358,77 @@ describe("PendingCompactList · señales de la reunión", () => {
 
     expect(html).not.toContain("podés facturar");
     expect(html).toContain("listo para entregar");
+  });
+});
+
+// --------------------------------------------------------------------------
+// Seguimiento y trazabilidad: VER la jornada completa. Quien gestiona TODOS los
+// pendientes supervisa, y para eso tiene que leer cliente, zona, saldo y la
+// nota del vendedor sobre la MISMA fila. Abrir el detalle de cada uno, con 36
+// en la cola a las 9:30 de la mañana, no es supervisar.
+//
+// El vendedor no lo lleva: sus filas son suyas y ya sabe a quién le vende.
+// --------------------------------------------------------------------------
+describe("PendingCompactList · seguimiento", () => {
+  const conCliente = () =>
+    pending({
+      customerName: "María Gómez",
+      customerPhone: "3001234567",
+      zone: "Norte",
+      totalAmount: 50_000,
+      paidAmount: 20_000,
+      note: "Cliente espera los 2 restantes",
+    });
+
+  it("pone cliente, teléfono, zona, saldo y nota sobre la fila", () => {
+    const html = render([conCliente()], true, null, { canFollowUp: true });
+
+    expect(html).toContain("María Gómez");
+    expect(html).toContain("3001234567");
+    expect(html).toContain("Norte");
+    expect(html).toContain("Cliente espera los 2 restantes");
+    // Lo que importa al entregar es lo que falta cobrar, no lo ya abonado.
+    expect(html).toContain("Debe");
+  });
+
+  it("muestra la HORA comprometida, no solo el día", () => {
+    const html = render([conCliente()], true, null, { canFollowUp: true });
+    const sinSeguimiento = render([conCliente()]);
+
+    expect(html).toContain(":");
+    expect(sinSeguimiento).not.toContain("María Gómez");
+  });
+
+  it("no le muestra datos de cliente a quien no hace seguimiento", () => {
+    const html = render([conCliente()], true, null, { canContactOrInvoice: true });
+
+    expect(html).not.toContain("María Gómez");
+    expect(html).not.toContain("3001234567");
+    expect(html).not.toContain("Cliente espera los 2 restantes");
+  });
+
+  it("no inventa saldo cuando no se acordó un total", () => {
+    const html = render(
+      [pending({ customerName: "Ana", totalAmount: null, paidAmount: 0 })],
+      true,
+      null,
+      { canFollowUp: true },
+    );
+
+    expect(html).toContain("Ana");
+    expect(html).not.toContain("Debe");
+    expect(html).not.toContain("Pagado");
+  });
+
+  it("marca como pagado lo que ya cubrió el total", () => {
+    const html = render(
+      [pending({ customerName: "Ana", totalAmount: 50_000, paidAmount: 50_000 })],
+      true,
+      null,
+      { canFollowUp: true },
+    );
+
+    expect(html).toContain("Pagado");
+    expect(html).not.toContain("Debe");
   });
 });

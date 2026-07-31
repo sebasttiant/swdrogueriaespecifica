@@ -150,6 +150,11 @@ export default async function PendientesPage({
           canDeliver={canDeliver}
           canContactOrInvoice={canContactOrInvoice}
           canCancel={canCancel}
+          // Seguimiento y trazabilidad: quien gestiona TODOS los pendientes
+          // supervisa la jornada, y para eso tiene que VERLA completa —cliente,
+          // zona, saldo y la nota del vendedor— sobre la misma fila. El
+          // vendedor no lo necesita: sus filas son suyas y ya las conoce.
+          canFollowUp={canManageAll && canViewCustomerIdentity}
           nextCursor={pendings.nextCursor}
           pageHref={(nextCursor) =>
             `/pendientes?cursor=${encodeURIComponent(nextCursor)}&view=lista${
