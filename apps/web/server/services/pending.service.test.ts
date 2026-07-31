@@ -1022,8 +1022,14 @@ describe("updatePending", () => {
     );
 
     expect(result.rejection).toBeNull();
-    const written = tx.pending.update.mock.calls[0][0].data;
-    expect(written).not.toHaveProperty("sellerEditedAt");
+    expect(tx.pending.update).toHaveBeenCalledTimes(1);
+    // El cupo del vendedor es SUYO: una corrección de gerencia no puede
+    // gastárselo, así que ni siquiera escribe la columna.
+    expect(tx.pending.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.not.objectContaining({ sellerEditedAt: expect.anything() }),
+      }),
+    );
   });
 
   it("rechaza corregir un pendiente ajeno", async () => {
