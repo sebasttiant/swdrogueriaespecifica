@@ -5,10 +5,12 @@ import { Badge } from "@/app/_components/ui/badge";
 import { Card } from "@/app/_components/ui/card";
 import { EmptyState } from "@/app/_components/ui/empty-state";
 import { formatBogotaDate } from "@/lib/datetime/bogota";
+import { formatCop } from "@/lib/format/currency";
 import { cn } from "@/lib/utils/cn";
 import type { PendingListItem } from "@/server/repositories/pending.repository";
 
 import { computeDeadlineStatus } from "./deadline-status";
+import { derivePaymentState } from "./payment-state";
 import {
   isManagementStatus,
   MANAGEMENT_STATUS_LABELS,
@@ -52,6 +54,11 @@ type PendingCompactListProps = {
   canDeliver?: boolean;
   canContactOrInvoice?: boolean;
   canCancel?: boolean;
+  // Seguimiento = VER la jornada completa. Quien administra necesita leer, sobre
+  // la MISMA fila, a qué cliente va, a qué zona, cuánto falta cobrar y qué anotó
+  // el vendedor. Sin eso supervisar es abrir el detalle de cada pendiente, uno
+  // por uno, con 36 en la cola a las 9:30 de la mañana.
+  canFollowUp?: boolean;
 };
 
 // Urgencia como texto + color, nunca solo color: la mitad de las decisiones se
@@ -152,6 +159,55 @@ function fulfillmentNotice(
   return null;
 }
 
+// --------------------------------------------------------------------------
+// La línea de SEGUIMIENTO.
+//
+// Seguimiento acá es VER, no actuar. Quien administra necesita mirar la jornada
+// completa y entenderla sin abrir nada: a qué cliente va cada pendiente, a qué
+// zona, cuánto falta cobrar y qué anotó el vendedor —"cliente espera", "va con
+// pedido"—. Esa es la trazabilidad que pidieron: el día entero legible de
+// corrido. Averiguarlo abriendo el detalle de cada uno, con 36 en la cola, no
+// es supervisar.
+//
+// Va como una sola línea secundaria y no como columnas nuevas, a propósito: seis
+// columnas más obligarían a scroll horizontal, y esto también se mira desde el
+// celular. Los datos vacíos simplemente no aparecen; nada de guiones de relleno.
+// --------------------------------------------------------------------------
+function outstandingBalance(item: PendingListItem): number | null {
+  if (item.totalAmount === null) return null;
+  return Math.max(item.totalAmount - item.paidAmount, 0);
+}
+
+function FollowUpLine({ item }: { item: PendingListItem }) {
+  const balance = outstandingBalance(item);
+  const isPaid = derivePaymentState(item) === "PAGADO";
+  const where = [item.zone, item.customerAddress].filter(Boolean).join(" · ");
+
+  const hasAnything =
+    item.customerName || item.customerPhone || where || balance !== null || item.note;
+  if (!hasAnything) return null;
+
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+      {item.customerName ? (
+        <span className="font-medium text-text">{item.customerName}</span>
+      ) : null}
+
+      {item.customerPhone ? <span>{item.customerPhone}</span> : null}
+
+      {where ? <span>{where}</span> : null}
+
+      {balance !== null && balance > 0 ? (
+        <span className="font-semibold text-danger">Debe {formatCop(balance)}</span>
+      ) : isPaid ? (
+        <span className="font-medium text-success">Pagado</span>
+      ) : null}
+
+      {item.note ? <span className="italic">“{item.note}”</span> : null}
+    </div>
+  );
+}
+
 // Las acciones del DUEÑO del pendiente, en el orden en que ocurren:
 // facturar, entregar, y cancelar como salida. Se arma una sola vez y se usa en
 // las dos vistas para que móvil y escritorio no puedan divergir — que fue
@@ -230,6 +286,7 @@ export function PendingCompactList({
   canDeliver = false,
   canContactOrInvoice = false,
   canCancel = false,
+  canFollowUp = false,
 }: PendingCompactListProps) {
   if (items.length === 0) {
     return (
@@ -271,8 +328,14 @@ export function PendingCompactList({
                   <p className="truncate text-xs text-muted-foreground">
                     {pending.createdBy?.name ?? "Sin vendedor"}
                     {" · "}
-                    {formatBogotaDate(pending.promisedAt, { style: "date" })}
+                    {/* Quien hace seguimiento necesita la HORA comprometida, no
+                        solo el día: "para hoy" y "para hoy a las 4" son dos
+                        promesas distintas frente al cliente. */}
+                    {formatBogotaDate(pending.promisedAt, {
+                      style: canFollowUp ? "datetime" : "date",
+                    })}
                   </p>
+                  {canFollowUp ? <FollowUpLine item={pending} /> : null}
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1">
                   <p className="font-bold tabular-nums text-text">
@@ -351,6 +414,7 @@ export function PendingCompactList({
                 <tr key={pending.id} className="border-b border-border last:border-0">
                   <td className="px-3 py-2 font-medium text-text">
                     {pending.product.name}
+                    {canFollowUp ? <FollowUpLine item={pending} /> : null}
                   </td>
                   <td className="px-3 py-2 tabular-nums text-muted-foreground">
                     <span className="inline-flex items-center gap-2">
@@ -363,8 +427,10 @@ export function PendingCompactList({
                   <td className="px-3 py-2 text-muted-foreground">
                     {pending.createdBy?.name ?? "—"}
                   </td>
-                  <td className={cn("px-3 py-2", urgency.tone === "danger" && "font-semibold text-danger")}>
-                    {formatBogotaDate(pending.promisedAt, { style: "date" })}
+                  <td className={cn("px-3 py-2 whitespace-nowrap", urgency.tone === "danger" && "font-semibold text-danger")}>
+                    {formatBogotaDate(pending.promisedAt, {
+                      style: canFollowUp ? "datetime" : "date",
+                    })}
                   </td>
                   <td className="px-3 py-2">
                     <div className="flex flex-col items-start gap-1">
