@@ -1,5 +1,3 @@
-import { unstable_cache } from "next/cache";
-
 import type { AlertCounts } from "@/lib/alertas/signature";
 import { getExpiringBatchCounts } from "@/server/services/product-batch.service";
 import {
@@ -70,17 +68,20 @@ export async function getOperationalAlerts(
 // desde el AppShell. Estos avisos son advisory (posponibles 8h), así que 60s de
 // desfase es irrelevante y evita recomputar ~5 count-queries por página. La
 // alerta de gerencia (crítica) NO se cachea: se mantiene siempre en vivo.
-// El alcance forma parte de la CLAVE de caché, no solo del cálculo. Cachear
-// avisos acotados a una persona bajo una clave compartida le serviría a un
-// vendedor los pendientes de otro: la privacidad se rompería en el caché, no
-// en la consulta.
+// Sin caché, a propósito.
+//
+// Antes esto envolvía las consultas en `unstable_cache`. Al acotar los avisos
+// por persona hubo que meter el alcance en la clave, y eso obligó a construir
+// el wrapper en CADA request en vez de una vez por módulo: justo lo que Next
+// no espera, y con la aplicación quedando colgada en "Guardando…" cuando el
+// aviso se re-renderizaba dentro de una Server Action.
+//
+// Son cuatro `count()` sobre columnas indexadas para una droguería con un
+// puñado de usuarios. El caché ahorraba milisegundos y costaba que el aviso
+// mintiera hasta un minuto después de cada entrega, de cada cancelación y de
+// cada reset de datos. Mal negocio.
 export function getOperationalAlertsCached(
   scope: AlertScope = { kind: "global" },
 ): Promise<AlertCounts> {
-  const scopeKey = scope.kind === "owner" ? `owner:${scope.ownerId}` : scope.kind;
-  return unstable_cache(
-    () => getOperationalAlerts(new Date(), scope),
-    ["operational-alerts-v2", scopeKey],
-    { revalidate: 60 },
-  )();
+  return getOperationalAlerts(new Date(), scope);
 }
