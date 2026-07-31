@@ -1,7 +1,5 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
 
 import { PageHeader } from "@/app/_components/app-shell/page-header";
 import { Card } from "@/app/_components/ui/card";
@@ -57,14 +55,6 @@ export default async function EditarPendientePage({
 
   return (
     <div className="space-y-6">
-      <Link
-        href="/pendientes"
-        className="inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-primary hover:underline"
-      >
-        <ArrowLeft className="size-4" aria-hidden />
-        Volver a pendientes
-      </Link>
-
       <PageHeader
         title="Corregir pendiente"
         description="Se corrigen los datos del pedido. El estado y las entregas no cambian por acá."
