@@ -72,6 +72,7 @@ import {
   getPendings,
   invoicePending,
   resolvePartialPending,
+  updatePending,
   registerPending,
   setPendingManagementStatus,
 } from "./pending.service";
@@ -939,5 +940,143 @@ describe("resolvePartialPending", () => {
       resolvePartialPending({ id: "pend-1", decision: "espera", actorId: "op-1" }, now),
     ).resolves.toBe("NOT_OWNER");
     expect(tx.pending.update).not.toHaveBeenCalled();
+  });
+});
+
+// --------------------------------------------------------------------------
+// Corregir un pendiente. Dos autoridades sobre la misma acción: gerencia sin
+// límite sobre cualquiera, el vendedor una sola vez sobre el suyo.
+//
+// Equivocarse al cargar pasa; corregir en bucle es reescribir la historia de un
+// compromiso con un cliente sin que nadie pueda ver cuál fue la promesa.
+// --------------------------------------------------------------------------
+describe("updatePending", () => {
+  const now = new Date("2026-07-09T12:00:00.000Z");
+
+  const correction = {
+    productId: "prod-1",
+    quantity: 12,
+    promisedAt: new Date("2026-08-01T15:00:00.000Z"),
+    customerName: "Ana corregida",
+    customerPhone: "3001112233",
+  };
+
+  function lockedForEdit(overrides: Record<string, unknown> = {}) {
+    tx.$queryRaw.mockResolvedValue([
+      {
+        id: "pend-1",
+        productId: "prod-1",
+        quantity: 10,
+        status: "PENDIENTE",
+        createdById: "op-1",
+        deliveredQuantity: 0,
+        invoicedQuantity: 0,
+        sellerEditedAt: null,
+        customerName: "Ana",
+        customerPhone: "3009998877",
+        customerAddress: null,
+        note: null,
+        zone: null,
+        totalAmount: null,
+        paidAmount: 0,
+        promisedAt: new Date("2026-07-10T10:00:00.000Z"),
+        ...overrides,
+      },
+    ]);
+  }
+
+  it("el vendedor corrige el suyo y consume su única oportunidad", async () => {
+    lockedForEdit();
+
+    const result = await updatePending(
+      { ...correction, id: "pend-1", actorId: "op-1", canManageAll: false },
+      now,
+    );
+
+    expect(result.rejection).toBeNull();
+    expect(tx.pending.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ quantity: 12, sellerEditedAt: now }),
+      }),
+    );
+  });
+
+  it("rechaza la segunda corrección del vendedor", async () => {
+    lockedForEdit({ sellerEditedAt: new Date("2026-07-08T10:00:00.000Z") });
+
+    const result = await updatePending(
+      { ...correction, id: "pend-1", actorId: "op-1", canManageAll: false },
+      now,
+    );
+
+    expect(result.rejection).toBe("ALREADY_EDITED");
+    expect(tx.pending.update).not.toHaveBeenCalled();
+  });
+
+  it("gerencia corrige sin límite y NO consume el cupo del vendedor", async () => {
+    lockedForEdit({ sellerEditedAt: new Date("2026-07-08T10:00:00.000Z") });
+
+    const result = await updatePending(
+      { ...correction, id: "pend-1", actorId: "adm-1", canManageAll: true },
+      now,
+    );
+
+    expect(result.rejection).toBeNull();
+    expect(tx.pending.update).toHaveBeenCalledTimes(1);
+    // El cupo del vendedor es SUYO: una corrección de gerencia no puede
+    // gastárselo, así que ni siquiera escribe la columna.
+    expect(tx.pending.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.not.objectContaining({ sellerEditedAt: expect.anything() }),
+      }),
+    );
+  });
+
+  it("rechaza corregir un pendiente ajeno", async () => {
+    lockedForEdit({ createdById: "otro" });
+
+    const result = await updatePending(
+      { ...correction, id: "pend-1", actorId: "op-1", canManageAll: false },
+      now,
+    );
+
+    expect(result.rejection).toBe("NOT_OWNER");
+  });
+
+  it("no corrige un pendiente ya cerrado", async () => {
+    lockedForEdit({ status: "ENTREGADO" });
+
+    const result = await updatePending(
+      { ...correction, id: "pend-1", actorId: "adm-1", canManageAll: true },
+      now,
+    );
+
+    expect(result.rejection).toBe("ALREADY_CLOSED");
+  });
+
+  it("no deja bajar la cantidad por debajo de lo ya facturado o entregado", async () => {
+    lockedForEdit({ invoicedQuantity: 8, deliveredQuantity: 5 });
+
+    const result = await updatePending(
+      { ...correction, quantity: 4, id: "pend-1", actorId: "adm-1", canManageAll: true },
+      now,
+    );
+
+    expect(result.rejection).toBe("BELOW_COMMITTED");
+    expect(tx.pending.update).not.toHaveBeenCalled();
+  });
+
+  it("al cambiar de producto cancela el faltante que ya no sirve", async () => {
+    lockedForEdit();
+
+    await updatePending(
+      { ...correction, productId: "prod-2", id: "pend-1", actorId: "adm-1", canManageAll: true },
+      now,
+    );
+
+    expect(tx.missingItem.updateMany).toHaveBeenCalledWith({
+      where: { originId: "pend-1", status: { in: ["FALTANTE", "PEDIDO", "EN_BODEGA"] } },
+      data: { status: "CANCELADO" },
+    });
   });
 });

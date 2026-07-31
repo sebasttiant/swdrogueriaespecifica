@@ -465,3 +465,80 @@ export async function updatePendingManagementStatus(
   });
   return count;
 }
+
+// --------------------------------------------------------------------------
+// Edición de los datos de un pendiente.
+//
+// Escribe SOLO los campos del pedido —producto, cantidad, promesa y cliente—.
+// El ciclo de vida (status, entregado, facturado, cancelado) no se toca por acá:
+// eso lo mueven las acciones propias de cada transición, con sus reglas y su
+// auditoría. Corregir un dato mal cargado no puede tener el poder de saltear
+// una entrega.
+// --------------------------------------------------------------------------
+export type UpdatePendingDetailsData = {
+  id: string;
+  productId: string;
+  quantity: number;
+  promisedAt: Date;
+  customerName: string;
+  customerPhone: string;
+  customerAddress?: string;
+  note?: string;
+  zone?: string;
+  totalAmount?: number;
+  paidAmount?: number;
+  /** Marca el cupo de corrección del vendedor. Gerencia no lo consume. */
+  sellerEditedAt?: Date;
+};
+
+export async function updatePendingDetails(
+  tx: Prisma.TransactionClient,
+  data: UpdatePendingDetailsData,
+): Promise<void> {
+  const { id, sellerEditedAt, ...fields } = data;
+  await tx.pending.update({
+    where: { id },
+    data: {
+      ...fields,
+      customerAddress: fields.customerAddress ?? null,
+      note: fields.note ?? null,
+      zone: fields.zone ?? null,
+      totalAmount: fields.totalAmount ?? null,
+      paidAmount: fields.paidAmount ?? 0,
+      ...(sellerEditedAt ? { sellerEditedAt } : {}),
+    },
+  });
+}
+
+/** Datos del pendiente que la edición necesita leer bajo el lock. */
+export type PendingForEdit = {
+  id: string;
+  productId: string;
+  quantity: number;
+  status: PendingStatus;
+  createdById: string | null;
+  deliveredQuantity: number;
+  invoicedQuantity: number;
+  sellerEditedAt: Date | null;
+  customerName: string | null;
+  customerPhone: string | null;
+  customerAddress: string | null;
+  note: string | null;
+  zone: string | null;
+  totalAmount: number | null;
+  paidAmount: number;
+  promisedAt: Date;
+};
+
+export async function lockPendingForEdit(
+  client: Prisma.TransactionClient,
+  id: string,
+): Promise<PendingForEdit | null> {
+  const rows = await client.$queryRaw<PendingForEdit[]>`
+    SELECT id, "productId", quantity, status, "createdById", "deliveredQuantity",
+           "invoicedQuantity", "sellerEditedAt", "customerName", "customerPhone",
+           "customerAddress", note, zone, "totalAmount", "paidAmount", "promisedAt"
+    FROM pendings WHERE id = ${id} FOR UPDATE
+  `;
+  return rows[0] ?? null;
+}

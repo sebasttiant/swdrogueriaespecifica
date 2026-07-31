@@ -38,6 +38,10 @@ export const AUDIT_ACTIONS = {
   // propia respuesta a quién, cuándo y por cuánto.
   PENDING_CONTACTED: "pending.contacted",
   PENDING_INVOICED: "pending.invoiced",
+  // Corregir los datos del pedido. Distinto de cambiar de estado: acá lo que se
+  // reescribe es la promesa (producto, cantidad, fecha, cliente), y por eso la
+  // auditoría guarda el ANTES además del después.
+  PENDING_UPDATE: "pending.update",
   // Faltantes
   MISSING_AUTO_CREATE: "missing.auto.create",
   MISSING_CREATE: "missing.create",

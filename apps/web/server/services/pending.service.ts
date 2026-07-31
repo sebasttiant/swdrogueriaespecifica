@@ -31,6 +31,9 @@ import {
   updatePendingManagementStatus,
   type PendingListItem,
   type PendingScope,
+  lockPendingForEdit,
+  updatePendingDetails,
+  type PendingForEdit,
 } from "@/server/repositories/pending.repository";
 import { createProduct } from "@/server/repositories/product.repository";
 import { createMissingItem } from "@/server/repositories/missing-item.repository";
@@ -658,4 +661,149 @@ export async function setPendingManagementStatus(
   }
 
   return { pending: { id: input.id, status: input.status }, rejection: null };
+}
+
+// --------------------------------------------------------------------------
+// Corregir los datos de un pendiente.
+//
+// Dos autoridades distintas sobre la misma acción:
+//
+//   Gerencia  → cualquier pendiente, las veces que haga falta. Es su potestad:
+//               corrige lo que el vendedor cargó mal y ajusta lo que se
+//               renegoció con el cliente.
+//   Vendedor  → solo el suyo y UNA SOLA VEZ. Equivocarse al cargar pasa;
+//               corregir en bucle es reescribir la historia de un compromiso.
+//
+// Lo que no se toca por acá: el ciclo de vida. Un pendiente ya entregado o
+// cancelado es historia, y corregir un dato no puede reabrirlo. Y la cantidad
+// nunca puede quedar por debajo de lo ya facturado o entregado: eso no sería
+// una corrección, sería dejar la fila mintiendo sobre lo que ya pasó.
+// --------------------------------------------------------------------------
+export type UpdatePendingInput = {
+  id: string;
+  productId: string;
+  quantity: number;
+  promisedAt: Date;
+  customerName: string;
+  customerPhone: string;
+  customerAddress?: string;
+  note?: string;
+  zone?: string;
+  totalAmount?: number;
+  paidAmount?: number;
+  actorId: string;
+  canManageAll: boolean;
+};
+
+export type UpdatePendingRejection =
+  | "NOT_OWNER"
+  | "ALREADY_EDITED"
+  | "ALREADY_CLOSED"
+  | "BELOW_COMMITTED";
+
+export type UpdatePendingResult = {
+  rejection: UpdatePendingRejection | null;
+  /** Estado previo, para que la auditoría pueda decir qué cambió. */
+  before: PendingForEdit | null;
+};
+
+export async function updatePending(
+  input: UpdatePendingInput,
+  now: Date = new Date(),
+): Promise<UpdatePendingResult> {
+  return prisma.$transaction(async (tx) => {
+    const current = await lockPendingForEdit(tx, input.id);
+    if (!current) throw new Error("Pending not found");
+
+    if (!input.canManageAll) {
+      if (current.createdById !== input.actorId) return { rejection: "NOT_OWNER", before: null };
+      // El cupo del vendedor: una corrección y ya.
+      if (current.sellerEditedAt !== null) return { rejection: "ALREADY_EDITED", before: null };
+    }
+
+    if (current.status === "ENTREGADO" || current.status === "CANCELADO") {
+      return { rejection: "ALREADY_CLOSED", before: null };
+    }
+
+    // Bajar la cantidad por debajo de lo ya facturado o entregado dejaría la
+    // fila afirmando algo que contradice lo que realmente pasó.
+    const committed = Math.max(current.deliveredQuantity, current.invoicedQuantity);
+    if (input.quantity < committed) return { rejection: "BELOW_COMMITTED", before: null };
+
+    await updatePendingDetails(tx, {
+      id: current.id,
+      productId: input.productId,
+      quantity: input.quantity,
+      promisedAt: input.promisedAt,
+      customerName: input.customerName,
+      customerPhone: input.customerPhone,
+      customerAddress: input.customerAddress,
+      note: input.note,
+      zone: input.zone,
+      totalAmount: input.totalAmount,
+      paidAmount: input.paidAmount,
+      ...(input.canManageAll ? {} : { sellerEditedAt: now }),
+    });
+
+    // Cambiar de producto invalida el faltante que este pendiente originó: se
+    // generó para conseguir OTRA cosa. Se cancela para que nadie compre lo que
+    // ya nadie pidió; el déficit del producto nuevo lo levanta la próxima
+    // lectura de disponibilidad.
+    if (current.productId !== input.productId) {
+      await tx.missingItem.updateMany({
+        where: { originId: current.id, status: { in: ["FALTANTE", "PEDIDO", "EN_BODEGA"] } },
+        data: { status: "CANCELADO" },
+      });
+      await releasePendingReservations(tx, current.id);
+      await tx.pending.update({
+        where: { id: current.id },
+        data: {
+          inventoryReadyQuantity: 0,
+          reservedInventoryQuantity: 0,
+          availabilityStatus: "ESPERANDO",
+        },
+      });
+    }
+
+    return { rejection: null, before: current };
+  });
+}
+
+/**
+ * Un pendiente para el formulario de corrección.
+ *
+ * Devuelve null cuando no existe o cuando quien pregunta no puede corregirlo:
+ * la página no tiene que distinguir "no existe" de "no es tuyo" —ambas cosas
+ * terminan en la misma pantalla— y no revelar cuál de las dos es evita
+ * confirmarle a alguien que un pendiente ajeno existe.
+ */
+export async function getPendingForEdit(params: {
+  id: string;
+  actorId: string;
+  canManageAll: boolean;
+}): Promise<PendingForEdit | null> {
+  const pending = await prisma.pending.findUnique({
+    where: { id: params.id },
+    select: {
+      id: true,
+      productId: true,
+      quantity: true,
+      status: true,
+      createdById: true,
+      deliveredQuantity: true,
+      invoicedQuantity: true,
+      sellerEditedAt: true,
+      customerName: true,
+      customerPhone: true,
+      customerAddress: true,
+      note: true,
+      zone: true,
+      totalAmount: true,
+      paidAmount: true,
+      promisedAt: true,
+    },
+  });
+  if (!pending) return null;
+  if (!params.canManageAll && pending.createdById !== params.actorId) return null;
+  return pending;
 }

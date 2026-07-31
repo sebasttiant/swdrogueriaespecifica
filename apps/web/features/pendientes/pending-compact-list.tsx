@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ClipboardCheck } from "lucide-react";
+import { ClipboardCheck, Pencil } from "lucide-react";
 
 import { Badge } from "@/app/_components/ui/badge";
 import { Card } from "@/app/_components/ui/card";
@@ -54,6 +54,9 @@ type PendingCompactListProps = {
   canDeliver?: boolean;
   canContactOrInvoice?: boolean;
   canCancel?: boolean;
+  // Corregir los datos del pedido. Gerencia sobre cualquiera; el vendedor sobre
+  // el suyo y una sola vez, límite que hace cumplir el servidor.
+  canEdit?: boolean;
   // Seguimiento = VER la jornada completa. Quien administra necesita leer, sobre
   // la MISMA fila, a qué cliente va, a qué zona, cuánto falta cobrar y qué anotó
   // el vendedor. Sin eso supervisar es abrir el detalle de cada pendiente, uno
@@ -216,6 +219,10 @@ type CustomerActionsContext = {
   canContactOrInvoice: boolean;
   canDeliver: boolean;
   canCancel: boolean;
+  // Gerencia corrige cualquier pendiente; el vendedor solo el suyo y una vez.
+  // Acá solo se decide si OFRECER el enlace: quién puede de verdad lo resuelve
+  // la página de edición y, en última instancia, la Server Action.
+  canEdit: boolean;
 };
 
 function customerActions(item: PendingListItem, ctx: CustomerActionsContext) {
@@ -254,8 +261,19 @@ function customerActions(item: PendingListItem, ctx: CustomerActionsContext) {
 
   const cancel = ctx.canCancel ? <PendingCancelForm key="cancel" pendingId={item.id} /> : null;
 
-  if (!invoice && !deliver && !partialDecision && !cancel) return null;
-  return [invoice, deliver, partialDecision, cancel];
+  const edit = ctx.canEdit ? (
+    <Link
+      key="edit"
+      href={`/pendientes/${item.id}/editar`}
+      className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-border px-3 text-sm font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-text"
+    >
+      <Pencil className="size-4" aria-hidden />
+      Corregir
+    </Link>
+  ) : null;
+
+  if (!invoice && !deliver && !partialDecision && !edit && !cancel) return null;
+  return [invoice, deliver, partialDecision, edit, cancel];
 }
 
 // El vendedor puede actuar sobre su pendiente mientras no esté cerrado.
@@ -286,6 +304,7 @@ export function PendingCompactList({
   canDeliver = false,
   canContactOrInvoice = false,
   canCancel = false,
+  canEdit = false,
   canFollowUp = false,
 }: PendingCompactListProps) {
   if (items.length === 0) {
@@ -317,6 +336,7 @@ export function PendingCompactList({
             canContactOrInvoice,
             canDeliver,
             canCancel,
+            canEdit,
           });
           return (
             <Card key={pending.id} className="space-y-2 p-3">
@@ -392,7 +412,7 @@ export function PendingCompactList({
               <th className="px-3 py-2 font-medium">Vendedor</th>
               <th className="px-3 py-2 font-medium">Para</th>
               <th className="px-3 py-2 font-medium">Estado</th>
-              {canOrder || canContactOrInvoice || canDeliver || canCancel ? (
+              {canOrder || canContactOrInvoice || canDeliver || canCancel || canEdit ? (
                 <th className="px-3 py-2 text-right font-medium">Acción</th>
               ) : null}
             </tr>
@@ -409,6 +429,7 @@ export function PendingCompactList({
                 canContactOrInvoice,
                 canDeliver,
                 canCancel,
+                canEdit,
               });
               return (
                 <tr key={pending.id} className="border-b border-border last:border-0">
@@ -441,7 +462,7 @@ export function PendingCompactList({
                       {notice ? <Badge tone={notice.tone}>{notice.label}</Badge> : null}
                     </div>
                   </td>
-                  {canOrder || canContactOrInvoice || canDeliver || canCancel ? (
+                  {canOrder || canContactOrInvoice || canDeliver || canCancel || canEdit ? (
                     <td className="px-3 py-2">
                       <div className="flex flex-wrap justify-end gap-2">
                         {/* `canOrder` es autoridad de COMPRAS. Sin este chequeo

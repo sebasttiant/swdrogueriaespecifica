@@ -278,6 +278,61 @@ async function main() {
   assert(cerrado.status === "ENTREGADO", "queda entregado, no cancelado: hubo entrega");
   assert(cerrado.deliveredQuantity === 3, "se cierra con las 3 que realmente recibió");
 
+  console.log("\nEscenario: corregir un pendiente");
+  const { updatePending } = await import("@/server/services/pending.service");
+  const paraEditar = await registerPending({ ...base, quantity: 4, customerName: "Cliente E" });
+
+  const correccion = {
+    id: paraEditar.pending.id,
+    productId: product.id,
+    quantity: 6,
+    promisedAt: new Date(Date.now() + 172_800_000),
+    customerName: "Cliente E corregido",
+    customerPhone: "3009999999",
+  };
+
+  assert(
+    (await updatePending({ ...correccion, actorId: intruder.id, canManageAll: false })).rejection ===
+      "NOT_OWNER",
+    "un vendedor ajeno no corrige un pendiente que no es suyo",
+  );
+
+  assert(
+    (await updatePending({ ...correccion, actorId: seller.id, canManageAll: false })).rejection ===
+      null,
+    "el vendedor dueño corrige su pendiente",
+  );
+  const corregido = await prisma.pending.findUniqueOrThrow({ where: { id: paraEditar.pending.id } });
+  assert(corregido.quantity === 6, "la cantidad quedó corregida");
+  assert(corregido.customerName === "Cliente E corregido", "el cliente quedó corregido");
+  assert(corregido.sellerEditedAt !== null, "queda registrado cuándo corrigió");
+
+  assert(
+    (await updatePending({ ...correccion, quantity: 7, actorId: seller.id, canManageAll: false }))
+      .rejection === "ALREADY_EDITED",
+    "el vendedor NO puede corregir una segunda vez",
+  );
+
+  assert(
+    (await updatePending({ ...correccion, quantity: 8, actorId: intruder.id, canManageAll: true }))
+      .rejection === null,
+    "gerencia corrige cualquier pendiente, sin límite",
+  );
+  const porGerencia = await prisma.pending.findUniqueOrThrow({
+    where: { id: paraEditar.pending.id },
+  });
+  assert(porGerencia.quantity === 8, "la corrección de gerencia se aplicó");
+  assert(
+    porGerencia.sellerEditedAt?.getTime() === corregido.sellerEditedAt?.getTime(),
+    "gerencia NO consume el cupo del vendedor",
+  );
+
+  assert(
+    (await updatePending({ ...correccion, quantity: 8, actorId: intruder.id, canManageAll: true }))
+      .rejection === null,
+    "gerencia puede corregir de nuevo",
+  );
+
   console.log("\nTODO VERIFICADO CONTRA POSTGRESQL REAL\n");
 }
 

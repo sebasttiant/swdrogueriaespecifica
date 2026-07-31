@@ -1,0 +1,15 @@
+-- Una sola corrección del vendedor sobre su propio pendiente.
+--
+-- Equivocarse al cargar pasa —un dígito del teléfono, la cantidad, la fecha—.
+-- Corregir en bucle es otra cosa: es reescribir la historia de un compromiso
+-- con un cliente sin que nadie pueda saber cuál fue la promesa original.
+--
+-- Guardar CUÁNDO corrigió, y no un booleano, hace que el dato responda además
+-- a "en qué momento cambió" cuando haya que reconstruir un reclamo.
+--
+-- Gerencia no tiene este límite y sus ediciones NO tocan esta columna: es el
+-- cupo del vendedor, no un contador global de cambios.
+--
+-- Aditiva y forward-only: las filas existentes quedan en NULL, es decir con su
+-- corrección todavía disponible. Es lo correcto: nadie la usó todavía.
+ALTER TABLE "pendings" ADD COLUMN "sellerEditedAt" TIMESTAMP(3);
