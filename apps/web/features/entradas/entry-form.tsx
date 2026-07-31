@@ -81,6 +81,10 @@ export function EntryForm({ products, selectedProductId, selectedQuantity }: Ent
             name="batchCode"
             placeholder="Ej: LOTE-2026-001"
             required
+            // Cuando se viene desde la cola de bodega, producto y cantidad ya
+            // llegan resueltos: el cursor arranca donde sí hay que escribir,
+            // que es lo único que se lee de la caja.
+            autoFocus={selectedProductId !== undefined}
           />
           <p className="mt-1 text-xs text-muted-foreground">
             Si el lote ya existe para este producto, se suma la cantidad.

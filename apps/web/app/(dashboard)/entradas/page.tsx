@@ -53,7 +53,14 @@ export default async function EntradasPage({
 
       <Card id="nueva-entrada" className="scroll-mt-24 space-y-4">
         <CardTitle>Nueva entrada</CardTitle>
+        {/* `key` fuerza a REMONTAR el formulario cuando cambia el producto que
+            se viene a cargar.
+            Sin esto, tocar "Cargar entrada" navegaba a la MISMA ruta con otros
+            parámetros: React reconciliaba en vez de remontar, y el `defaultValue`
+            del selector —que solo se aplica al montar— quedaba ignorado. El
+            producto viajaba en la URL y el campo se veía vacío igual. */}
         <EntryForm
+          key={`${productId ?? "sin-producto"}:${suggestedQuantity ?? 0}`}
           products={productOptions}
           selectedProductId={productId}
           selectedQuantity={suggestedQuantity}

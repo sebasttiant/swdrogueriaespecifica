@@ -2,9 +2,13 @@ import Link from "next/link";
 
 import { Alert, type AlertTone } from "@/app/_components/ui/alert";
 import { alertSignature, type AlertCounts } from "@/lib/alertas/signature";
+import { can } from "@/lib/auth/permissions";
 import type { SessionRole } from "@/lib/auth/session";
 import { cn } from "@/lib/utils/cn";
-import { getOperationalAlertsCached } from "@/server/services/operational-alerts.service";
+import {
+  getOperationalAlertsCached,
+  type AlertScope,
+} from "@/server/services/operational-alerts.service";
 
 import {
   AlertSnoozeWrapper,
@@ -141,8 +145,21 @@ function OperationalAlertContent({
   );
 }
 
+// El aviso le habla al responsable, no a quien pase por ahí.
+//
+// Gerencia ve el estado de toda la droguería. El vendedor ve SOLO las entregas
+// que él prometió: un lote por vencer no lo resuelve él. Y quien no tiene
+// pendientes a cargo —bodega— no recibe nada. Antes esta barra le mostraba a
+// bodega "Próximas 1", que son entregas a clientes: trabajo ajeno convertido en
+// ruido, en la única pantalla que esa persona usa.
+function alertScopeFor(role: SessionRole, userId: string): AlertScope {
+  if (can(role, "canManageAllPendings")) return { kind: "global" };
+  if (can(role, "canViewPendientes")) return { kind: "owner", ownerId: userId };
+  return { kind: "none" };
+}
+
 export async function AlertBar({ userId, role }: AlertBarProps) {
-  const counts = await getOperationalAlertsCached();
+  const counts = await getOperationalAlertsCached(alertScopeFor(role, userId));
   const totalCount = totalAlerts(counts);
 
   if (totalCount === 0) return null;
