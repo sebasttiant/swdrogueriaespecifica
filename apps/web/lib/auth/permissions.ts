@@ -239,6 +239,11 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     "canSubmitMissingReports",
     "canConfirmMissingItems",
     "canViewCustomerIdentity",
+    // Supervisión: ve y opera la cola completa, no solo lo que registró. Ya
+    // entregaba y cancelaba pendientes de cualquiera antes de que existiera el
+    // alcance por vendedor; sin esta capacidad el alcance lo habría encerrado
+    // en sus propias filas.
+    "canManageAllPendings",
     "canDeliverPendings",
     "canCancelPendings",
   ],

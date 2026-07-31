@@ -26,8 +26,12 @@ export default async function PendientesPage({
 }) {
   const session = await requireCapability("canViewPendientes");
   const canManageAll = can(session.user.role, "canManageAllPendings");
-  // Vendedor: solo sus filas y por eso solo PII de sus propios clientes.
-  const canViewCustomerIdentity = canManageAll || session.user.role === "OPERADOR";
+  // Quien no gestiona todo recibe la lista acotada a sus propias filas (abajo,
+  // vía `ownerId`), así que ve los datos de SUS clientes: son los que tiene que
+  // llamar. Ver los de todos es lo que exige la capacidad.
+  const canViewCustomerIdentity = canManageAll
+    ? can(session.user.role, "canViewCustomerIdentity")
+    : true;
   const canDeliver = can(session.user.role, "canDeliverPendings");
   const canCancel = can(session.user.role, "canCancelPendings");
   const canContactOrInvoice = can(session.user.role, "canContactOwnPendings") || can(session.user.role, "canInvoiceOwnPendings");
