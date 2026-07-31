@@ -24,6 +24,11 @@ export type PendingListItem = {
   invoicedQuantity?: number;
   contactedAt?: Date | null;
   invoicedAt?: Date | null;
+  // Qué respondió el cliente sobre lo que faltó, y si el vendedor ya usó su
+  // única corrección. La fila los necesita para no volver a ofrecer algo que ya
+  // se resolvió.
+  partialDecision?: "ESPERA" | "VA_CON_PEDIDO" | null;
+  sellerEditedAt?: Date | null;
   promisedAt: Date;
   customerName: string | null;
   // Teléfono canónico (solo dígitos). Null en los pendientes anteriores a que
@@ -74,6 +79,8 @@ const LIST_SELECT = {
   invoicedQuantity: true,
   contactedAt: true,
   invoicedAt: true,
+  partialDecision: true,
+  sellerEditedAt: true,
   promisedAt: true,
   customerName: true,
   customerPhone: true,

@@ -888,9 +888,15 @@ describe("resolvePartialPending", () => {
       resolvePartialPending({ id: "pend-1", decision: "espera", actorId: "op-1" }, now),
     ).resolves.toBeNull();
 
+    // La decisión se PERSISTE, no solo su nota: sin esto la fila no sabía que
+    // ya se había respondido y volvía a preguntar para siempre.
     expect(tx.pending.update).toHaveBeenCalledWith({
       where: { id: "pend-1" },
-      data: { note: "Cliente espera los 2 restantes" },
+      data: {
+        note: "Cliente espera los 2 restantes",
+        partialDecision: "ESPERA",
+        partialDecisionAt: now,
+      },
     });
     expect(tx.pending.updateMany).not.toHaveBeenCalled();
   });
@@ -903,7 +909,11 @@ describe("resolvePartialPending", () => {
 
     expect(tx.pending.update).toHaveBeenCalledWith({
       where: { id: "pend-1" },
-      data: { note: "Va con pedido · Los 2 restantes van con otro pedido" },
+      data: {
+        note: "Va con pedido · Los 2 restantes van con otro pedido",
+        partialDecision: "VA_CON_PEDIDO",
+        partialDecisionAt: now,
+      },
     });
   });
 

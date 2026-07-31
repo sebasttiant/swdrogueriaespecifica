@@ -154,6 +154,7 @@ export default async function PendientesPage({
           // sola vez. El cupo del vendedor lo hace cumplir el servidor; acá solo
           // se ofrece el enlace a quien puede llegar a usarlo.
           canEdit={canManageAll || can(session.user.role, "canCreatePendientes")}
+          canManageAll={canManageAll}
           // Seguimiento y trazabilidad: quien gestiona TODOS los pendientes
           // supervisa la jornada, y para eso tiene que VERLA completa —cliente,
           // zona, saldo y la nota del vendedor— sobre la misma fila. El
