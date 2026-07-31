@@ -259,6 +259,10 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     "canContactOwnPendings",
     "canInvoiceOwnPendings",
     "canDeliverPendings",
+    // Cancelar SU pendiente: el cliente que desistió es suyo y la llamada la
+    // recibe él. El alcance lo pone `canManageAllPendings`, que el vendedor no
+    // tiene: el service rechaza cualquier pendiente ajeno.
+    "canCancelPendings",
   ],
   // Recepción física: deliberadamente sin pendientes, PII ni acciones comerciales.
   BODEGA: ["canViewEntradas", "canViewProductos", "canCreateEntries"],

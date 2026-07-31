@@ -1,11 +1,11 @@
 "use client";
 
 import { useActionState } from "react";
+import { FileText } from "lucide-react";
 
 import { Button } from "@/app/_components/ui/button";
 import { Input } from "@/app/_components/ui/input";
 import {
-  contactPendingAction,
   invoicePendingAction,
   type PendingFormState,
 } from "@/server/actions/pending.actions";
@@ -21,83 +21,61 @@ type PendingCustomerLifecycleFormProps = {
     | "ENTREGADO"
     | "CANCELADO"
     | undefined;
-  availableQuantity: number;
+  /** Lo que el cliente pidió. Es el techo de lo que se puede facturar. */
+  quantity: number;
   invoicedQuantity: number;
 };
 
 // --------------------------------------------------------------------------
-// El tramo comercial del pendiente, dentro del mismo panel compacto: contactar
-// al cliente, y después facturarle lo que ya está en bodega.
+// "Ya le facturé" — el paso del vendedor sobre su propio pendiente.
 //
-// Se muestra UNA acción a la vez, la que corresponde al momento. El vendedor no
-// elige entre botones: lee el único que hay y lo toca. Facturar antes de
-// entregar es una regla del negocio, no una preferencia de la pantalla, así que
-// la Server Action la revalida igual aunque acá no se ofrezca el control.
+// Una sola acción, sin pasos previos. Antes había que registrar un contacto y
+// esperar a que el sistema viera stock, y hasta entonces el vendedor no tenía
+// NINGÚN control sobre su pedido. En la droguería el orden real es al revés:
+// la persona factura y el sistema lo registra.
 //
-// La cantidad a facturar se puede repetir: si llegaron 6 de 10 hoy y 4 mañana,
-// el vendedor factura 6 ahora y los 4 restantes cuando entren, sin perder lo ya
-// facturado.
+// La cantidad viene precargada con lo que falta por facturar, porque el caso
+// normal es facturar todo de una. Se puede bajar cuando el cliente se lleva
+// una parte.
 // --------------------------------------------------------------------------
 export function PendingCustomerLifecycleForm({
   pendingId,
   customerStatus,
-  availableQuantity,
+  quantity,
   invoicedQuantity,
 }: PendingCustomerLifecycleFormProps) {
-  const [contactState, contactAction, contacting] = useActionState(
-    contactPendingAction,
-    INITIAL_STATE,
-  );
-  const [invoiceState, invoiceAction, invoicing] = useActionState(
+  const [state, invoiceAction, invoicing] = useActionState(
     invoicePendingAction,
     INITIAL_STATE,
   );
 
-  if (customerStatus === "POR_CONTACTAR") {
-    return (
-      <form action={contactAction}>
-        <input type="hidden" name="id" value={pendingId} />
-        <Button type="submit" disabled={contacting}>
-          Contactar cliente
-        </Button>
-        {contactState.error ? (
-          <p role="alert" className="mt-1 text-xs text-danger">
-            {contactState.error}
-          </p>
-        ) : null}
-      </form>
-    );
-  }
+  const remainingToInvoice = Math.max(quantity - invoicedQuantity, 0);
+  if (customerStatus === "ENTREGADO" || customerStatus === "CANCELADO") return null;
+  if (remainingToInvoice === 0) return null;
 
-  // Solo lo que llegó y todavía no se facturó. Nunca se vuelve a ofrecer lo ya
-  // facturado: ese es el error que produce facturas dobles del mismo pedido.
-  const additionalAvailable = Math.max(availableQuantity - invoicedQuantity, 0);
-  const canInvoice =
-    (customerStatus === "CONTACTADO" || customerStatus === "FACTURADO") &&
-    additionalAvailable > 0;
-
-  if (!canInvoice) return null;
+  const isPartial = invoicedQuantity > 0;
 
   return (
     <form action={invoiceAction} className="flex flex-wrap items-center gap-2">
       <input type="hidden" name="id" value={pendingId} />
+      {/* Facturar todo es el caso normal; el número solo se toca en la
+          excepción, así que no roba el foco de la acción. */}
       <Input
         aria-label="Cantidad a facturar"
         name="quantity"
         type="number"
         min={1}
-        max={additionalAvailable}
-        defaultValue={additionalAvailable}
-        className="w-24"
+        max={remainingToInvoice}
+        defaultValue={remainingToInvoice}
+        className="w-20"
       />
       <Button type="submit" disabled={invoicing}>
-        {customerStatus === "FACTURADO"
-          ? "Facturar disponible adicional"
-          : "Marcar facturado"}
+        <FileText className="size-4" aria-hidden />
+        {isPartial ? "Facturar el resto" : "Ya le facturé"}
       </Button>
-      {invoiceState.error ? (
+      {state.error ? (
         <p role="alert" className="basis-full text-xs text-danger">
-          {invoiceState.error}
+          {state.error}
         </p>
       ) : null}
     </form>

@@ -755,6 +755,55 @@ describe("customer lifecycle ownership and incremental invoice", () => {
     await expect(invoicePending({ id: "pend-1", actorId: "op-1", quantity: 4 }, now)).resolves.toBeNull();
     expect(tx.pending.update).toHaveBeenCalledWith({ where: { id: "pend-1" }, data: expect.objectContaining({ customerStatus: "FACTURADO", invoicedQuantity: 10 }) });
   });
+
+  // Quien factura es la persona, mirando su propia caja; el sistema se entera
+  // después. Exigirle un contacto previo, o esperar a que bodega cargara la
+  // mercancía, dejaba al vendedor sin ninguna acción sobre su propio pendiente.
+  it("factura sin contacto previo y sin que el sistema haya visto llegar stock", async () => {
+    mockLockedPending(
+      pendingForDelivery({
+        customerStatus: "POR_CONTACTAR",
+        inventoryReadyQuantity: 0,
+        invoicedQuantity: 0,
+        quantity: 10,
+      }),
+    );
+
+    await expect(
+      invoicePending({ id: "pend-1", actorId: "op-1", quantity: 10 }, now),
+    ).resolves.toBeNull();
+    expect(tx.pending.update).toHaveBeenCalledWith({
+      where: { id: "pend-1" },
+      data: expect.objectContaining({ customerStatus: "FACTURADO", invoicedQuantity: 10 }),
+    });
+  });
+
+  it("no deja facturar más de lo que el cliente pidió", async () => {
+    mockLockedPending(pendingForDelivery({ quantity: 10, invoicedQuantity: 8 }));
+
+    await expect(
+      invoicePending({ id: "pend-1", actorId: "op-1", quantity: 5 }, now),
+    ).resolves.toBe("NOT_AVAILABLE");
+    expect(tx.pending.update).not.toHaveBeenCalled();
+  });
+
+  it("no factura un pendiente ya cerrado", async () => {
+    mockLockedPending(pendingForDelivery({ customerStatus: "CANCELADO" }));
+
+    await expect(
+      invoicePending({ id: "pend-1", actorId: "op-1", quantity: 1 }, now),
+    ).resolves.toBe("ALREADY_TERMINAL");
+    expect(tx.pending.update).not.toHaveBeenCalled();
+  });
+
+  it("rechaza facturar un pendiente ajeno", async () => {
+    mockLockedPending(pendingForDelivery({ createdById: "otro-vendedor" }));
+
+    await expect(
+      invoicePending({ id: "pend-1", actorId: "op-1", quantity: 1 }, now),
+    ).resolves.toBe("NOT_OWNER");
+    expect(tx.pending.update).not.toHaveBeenCalled();
+  });
 });
 
 describe("setPendingManagementStatus", () => {

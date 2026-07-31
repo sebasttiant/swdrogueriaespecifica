@@ -484,15 +484,42 @@ export async function contactPending(input: CustomerLifecycleInput, now = new Da
   });
 }
 
-export async function invoicePending(input: CustomerLifecycleInput, now = new Date()): Promise<CustomerLifecycleRejection | null> {
+/**
+ * El vendedor marca que ya le facturó al cliente.
+ *
+ * No se le exige haber registrado un contacto previo ni esperar a que el
+ * sistema vea stock disponible: quien factura es la persona, mirando su propia
+ * caja, y el software se entera después. Exigirle disponibilidad lo dejaba sin
+ * ninguna acción sobre su pendiente hasta que bodega cargara la mercancía.
+ *
+ * El único techo es lo que el cliente pidió: no se puede facturar de más.
+ */
+export async function invoicePending(
+  input: CustomerLifecycleInput,
+  now = new Date(),
+): Promise<CustomerLifecycleRejection | null> {
   return prisma.$transaction(async (tx) => {
     const pending = await lockOwnedPending(tx, input);
     if (!pending) return "NOT_OWNER";
-    if (pending.customerStatus !== "CONTACTADO" && pending.customerStatus !== "FACTURADO") return "NOT_CONTACTED";
-    const quantity = input.quantity ?? pending.inventoryReadyQuantity - pending.invoicedQuantity;
+    if (pending.customerStatus === "ENTREGADO" || pending.customerStatus === "CANCELADO") {
+      return "ALREADY_TERMINAL";
+    }
+
+    const quantity = input.quantity ?? pending.quantity - pending.invoicedQuantity;
     const invoicedQuantity = pending.invoicedQuantity + quantity;
-    if (!Number.isInteger(quantity) || quantity <= 0 || invoicedQuantity > pending.inventoryReadyQuantity) return "NOT_AVAILABLE";
-    await tx.pending.update({ where: { id: pending.id }, data: { customerStatus: "FACTURADO", invoicedQuantity, invoicedAt: now, invoicedById: input.actorId } });
+    if (!Number.isInteger(quantity) || quantity <= 0 || invoicedQuantity > pending.quantity) {
+      return "NOT_AVAILABLE";
+    }
+
+    await tx.pending.update({
+      where: { id: pending.id },
+      data: {
+        customerStatus: "FACTURADO",
+        invoicedQuantity,
+        invoicedAt: now,
+        invoicedById: input.actorId,
+      },
+    });
     return null;
   });
 }
