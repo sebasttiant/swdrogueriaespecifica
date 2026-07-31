@@ -3,8 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // Mock the Prisma singleton — we verify $transaction is called once.
 const { prismaMock, tx } = vi.hoisted(() => {
   const tx = {
-    productBatch: { upsert: vi.fn() },
+    productBatch: { upsert: vi.fn(), update: vi.fn() },
     inventoryEntry: { create: vi.fn() },
+    inventoryAllocation: { create: vi.fn() },
+    missingItem: { update: vi.fn() },
+    pending: { findUniqueOrThrow: vi.fn(), update: vi.fn() },
+    $queryRaw: vi.fn(),
   };
   const prismaMock = {
     $transaction: vi.fn((fn: (client: typeof tx) => unknown) => fn(tx)),
@@ -17,10 +21,13 @@ vi.mock("@/lib/db/prisma", () => ({ prisma: prismaMock }));
 // Mock the repositories so we assert their calls through the tx client
 // rather than re-testing Prisma internals here.
 vi.mock("@/server/repositories/product-batch.repository", () => ({
+  reserveReceivedBatchQuantity: vi.fn(),
+  reserveBatchForPending: vi.fn(),
   upsertBatchQuantity: vi.fn(),
 }));
 vi.mock("@/server/repositories/inventory-entry.repository", () => ({
   createInventoryEntry: vi.fn(),
+  findInventoryEntryByIdempotencyKey: vi.fn(),
   listInventoryEntries: vi.fn(),
 }));
 vi.mock("@/server/repositories/missing-item.repository", () => ({
@@ -31,14 +38,19 @@ vi.mock("@/server/repositories/missing-report.repository", () => ({
   markReportsReceivedByMissingItemIds: vi.fn(),
 }));
 
-import { upsertBatchQuantity } from "@/server/repositories/product-batch.repository";
+import {
+  reserveReceivedBatchQuantity,
+  upsertBatchQuantity,
+} from "@/server/repositories/product-batch.repository";
 import {
   createInventoryEntry,
+  findInventoryEntryByIdempotencyKey,
   listInventoryEntries,
 } from "@/server/repositories/inventory-entry.repository";
 import { closeMissingItemsByEntry } from "@/server/repositories/missing-item.repository";
 import { markReportsReceivedByMissingItemIds } from "@/server/repositories/missing-report.repository";
 import {
+  IdempotencyPayloadConflictError,
   registerInventoryEntry,
   getInventoryEntries,
 } from "./inventory-entry.service";
@@ -59,8 +71,10 @@ beforeEach(() => {
   );
   vi.mocked(upsertBatchQuantity).mockResolvedValue({ id: "batch_1" } as never);
   vi.mocked(createInventoryEntry).mockResolvedValue({ id: "entry_1" } as never);
+  vi.mocked(findInventoryEntryByIdempotencyKey).mockResolvedValue(null);
   vi.mocked(closeMissingItemsByEntry).mockResolvedValue(["m1", "m2"]);
   vi.mocked(markReportsReceivedByMissingItemIds).mockResolvedValue(2);
+  tx.$queryRaw.mockResolvedValue([]);
 });
 
 describe("registerInventoryEntry", () => {
@@ -166,6 +180,90 @@ describe("registerInventoryEntry", () => {
     const result = await registerInventoryEntry(BASE_INPUT);
 
     expect(result.closedMissingCount).toBe(0);
+  });
+
+  it("returns the existing entry for a retry with the same idempotency key", async () => {
+    vi.mocked(findInventoryEntryByIdempotencyKey).mockResolvedValue({ id: "entry_existing" } as never);
+    const result = await registerInventoryEntry({ ...BASE_INPUT, idempotencyKey: "key-1" });
+    expect(result).toEqual(expect.objectContaining({ entry: { id: "entry_existing" }, idempotent: true }));
+    expect(createInventoryEntry).not.toHaveBeenCalled();
+  });
+
+  it("rejects a reused idempotency key when the normalized note changes", async () => {
+    await registerInventoryEntry({ ...BASE_INPUT, idempotencyKey: "key-note" });
+    const requestFingerprint = vi.mocked(createInventoryEntry).mock.calls[0]![1].requestFingerprint;
+    vi.mocked(findInventoryEntryByIdempotencyKey).mockResolvedValue({
+      id: "entry_existing",
+      requestFingerprint,
+    } as never);
+
+    await expect(registerInventoryEntry({
+      ...BASE_INPUT,
+      note: "Otra nota",
+      idempotencyKey: "key-note",
+    })).rejects.toBeInstanceOf(IdempotencyPayloadConflictError);
+  });
+
+  it("recovers the winning entry when concurrent inserts race on the unique key", async () => {
+    vi.mocked(findInventoryEntryByIdempotencyKey)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: "entry_winner" } as never);
+    vi.mocked(createInventoryEntry).mockRejectedValue({ code: "P2002" });
+    const result = await registerInventoryEntry({ ...BASE_INPUT, idempotencyKey: "key-race" });
+    expect(result).toEqual(expect.objectContaining({ entry: { id: "entry_winner" }, idempotent: true }));
+  });
+
+  it("creates independent entries for distinct idempotency keys", async () => {
+    await registerInventoryEntry({ ...BASE_INPUT, idempotencyKey: "key-a" });
+    await registerInventoryEntry({ ...BASE_INPUT, idempotencyKey: "key-b" });
+    expect(createInventoryEntry).toHaveBeenCalledTimes(2);
+  });
+
+  it("allocates a partial entry FIFO and advances the linked Pending availability", async () => {
+    tx.$queryRaw.mockResolvedValue([{ id: "missing-1", quantity: 10, receivedQuantity: 0, originId: "pending-1" }]);
+    tx.pending.findUniqueOrThrow.mockResolvedValue({ quantity: 10, inventoryReadyQuantity: 4, reservedInventoryQuantity: 4 });
+    await registerInventoryEntry({ ...BASE_INPUT, quantity: 6, idempotencyKey: "fifo-6" });
+    expect(tx.inventoryAllocation.create).toHaveBeenCalledWith({ data: { inventoryEntryId: "entry_1", missingItemId: "missing-1", pendingId: "pending-1", quantity: 6 } });
+    expect(tx.pending.update).toHaveBeenCalledWith({ where: { id: "pending-1" }, data: { inventoryReadyQuantity: 10, reservedInventoryQuantity: 10, availabilityStatus: "DISPONIBLE_COMPLETO" } });
+    expect(reserveReceivedBatchQuantity).toHaveBeenCalledWith(tx, "batch_1", 6);
+  });
+
+  it("marks reports received only after their MissingItem is fully received", async () => {
+    tx.$queryRaw
+      .mockResolvedValueOnce([
+        { id: "missing-partial", quantity: 10, orderedQuantity: null, receivedQuantity: 0, originId: "pending-1" },
+      ])
+      .mockResolvedValueOnce([
+        { id: "missing-full", quantity: 4, orderedQuantity: null, receivedQuantity: 0, originId: "pending-2" },
+      ]);
+    tx.pending.findUniqueOrThrow
+      .mockResolvedValueOnce({ quantity: 10, inventoryReadyQuantity: 0, reservedInventoryQuantity: 0 })
+      .mockResolvedValueOnce({ quantity: 4, inventoryReadyQuantity: 0, reservedInventoryQuantity: 0 });
+
+    await registerInventoryEntry({ ...BASE_INPUT, quantity: 6, idempotencyKey: "partial-report" });
+    await registerInventoryEntry({ ...BASE_INPUT, quantity: 4, idempotencyKey: "full-report" });
+
+    expect(tx.missingItem.update).toHaveBeenNthCalledWith(1, {
+      where: { id: "missing-partial" },
+      data: { receivedQuantity: 6, status: "EN_BODEGA" },
+    });
+    expect(markReportsReceivedByMissingItemIds).toHaveBeenNthCalledWith(1, tx, []);
+    expect(markReportsReceivedByMissingItemIds).toHaveBeenNthCalledWith(2, tx, ["missing-full"]);
+  });
+
+  it("keeps FIFO allocations reserved instead of leaving them globally sellable", async () => {
+    tx.$queryRaw.mockResolvedValue([
+      { id: "missing-1", quantity: 4, receivedQuantity: 0, originId: "pending-1" },
+      { id: "missing-2", quantity: 6, receivedQuantity: 0, originId: "pending-2" },
+    ]);
+    tx.pending.findUniqueOrThrow
+      .mockResolvedValueOnce({ quantity: 4, inventoryReadyQuantity: 0, reservedInventoryQuantity: 0 })
+      .mockResolvedValueOnce({ quantity: 6, inventoryReadyQuantity: 0, reservedInventoryQuantity: 0 });
+
+    await registerInventoryEntry({ ...BASE_INPUT, quantity: 10, idempotencyKey: "fifo-all" });
+
+    expect(reserveReceivedBatchQuantity).toHaveBeenCalledWith(tx, "batch_1", 10);
+    expect(tx.inventoryAllocation.create).toHaveBeenCalledTimes(2);
   });
 });
 

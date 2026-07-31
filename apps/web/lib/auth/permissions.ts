@@ -38,6 +38,7 @@ export const USER_ROLES = [
   "ADMIN",
   "SUPERVISOR",
   "OPERADOR",
+  "BODEGA",
 ] as const satisfies readonly SessionRole[];
 
 // Administrative roles: may manage users and mutate the catalog. The system
@@ -68,6 +69,7 @@ const ROLE_RANK: Record<SessionRole, number> = {
   ADMIN: 3,
   SUPERVISOR: 2,
   OPERADOR: 1,
+  BODEGA: 1,
 };
 
 /**
@@ -211,6 +213,9 @@ export const CAPABILITIES = [
   // (todos reportan; solo gerencia revisa). ADMIN/SUPERADMIN la heredan de
   // `[...CAPABILITIES]`; no se agrega a SUPERVISOR/OPERADOR.
   "canReviewMissingReports",
+  "canManageAllPendings",
+  "canContactOwnPendings",
+  "canInvoiceOwnPendings",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -234,6 +239,11 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     "canSubmitMissingReports",
     "canConfirmMissingItems",
     "canViewCustomerIdentity",
+    // Supervisión: ve y opera la cola completa, no solo lo que registró. Ya
+    // entregaba y cancelaba pendientes de cualquiera antes de que existiera el
+    // alcance por vendedor; sin esta capacidad el alcance lo habría encerrado
+    // en sus propias filas.
+    "canManageAllPendings",
     "canDeliverPendings",
     "canCancelPendings",
   ],
@@ -246,8 +256,12 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     "canCreatePendientes",
     "canCreateEntries",
     "canSubmitMissingReports",
+    "canContactOwnPendings",
+    "canInvoiceOwnPendings",
     "canDeliverPendings",
   ],
+  // Recepción física: deliberadamente sin pendientes, PII ni acciones comerciales.
+  BODEGA: ["canViewEntradas", "canViewProductos", "canCreateEntries"],
 };
 
 /** Whether `role` holds `capability`. The single check for module/action access. */

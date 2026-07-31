@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   auditContextFromHeaders: vi.fn(),
   cancelPendingCommitment: vi.fn(),
+  contactPending: vi.fn(),
   deliverPending: vi.fn(),
+  invoicePending: vi.fn(),
   recordAudit: vi.fn(),
   registerPending: vi.fn(),
   setPendingManagementStatus: vi.fn(),
@@ -19,7 +21,9 @@ vi.mock("@/server/services/audit.service", () => ({
 }));
 vi.mock("@/server/services/pending.service", () => ({
   cancelPendingCommitment: mocks.cancelPendingCommitment,
+  contactPending: mocks.contactPending,
   deliverPending: mocks.deliverPending,
+  invoicePending: mocks.invoicePending,
   registerPending: mocks.registerPending,
   setPendingManagementStatus: mocks.setPendingManagementStatus,
 }));
@@ -27,8 +31,10 @@ vi.mock("@/server/services/pending.service", () => ({
 import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
 import {
   cancelPendingAction,
+  contactPendingAction,
   createPendingAction,
   deliverPendingAction,
+  invoicePendingAction,
   updatePendingManagementStatusAction,
 } from "./pending.actions";
 
@@ -509,4 +515,96 @@ describe("updatePendingManagementStatusAction", () => {
       ).resolves.toEqual({ error: null, ok: true });
     },
   );
+});
+
+// --------------------------------------------------------------------------
+// Tramo comercial: contactar y facturar.
+//
+// Facturar es la transición que habilita la entrega y mueve cantidades, así que
+// tiene que dejar rastro. Y tiene que ser SEGURA ante un fallo posterior al
+// commit: si la auditoría o la revalidación caen después de que la factura ya
+// quedó registrada, devolver un error haría que el vendedor reintente y
+// termine facturando dos veces el mismo pedido.
+// --------------------------------------------------------------------------
+describe("contactPendingAction / invoicePendingAction", () => {
+  function lifecycleFormData(overrides: Record<string, string> = {}) {
+    const data = new FormData();
+    data.set("id", "pend-1");
+    for (const [key, value] of Object.entries(overrides)) data.set(key, value);
+    return data;
+  }
+
+  it("registra la factura con actor, cantidad y estado resultante", async () => {
+    mocks.requireCapability.mockResolvedValue({ user: { id: "sel-1", role: "OPERADOR" } });
+    mocks.invoicePending.mockResolvedValue(null);
+
+    const result = await invoicePendingAction(PREV, lifecycleFormData({ quantity: "6" }));
+
+    expect(result).toEqual({ error: null, ok: true });
+    expect(mocks.invoicePending).toHaveBeenCalledWith({
+      id: "pend-1",
+      quantity: 6,
+      actorId: "sel-1",
+      canManageAll: false,
+    });
+    expect(mocks.recordAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: AUDIT_ACTIONS.PENDING_INVOICED,
+        module: AUDIT_MODULES.PENDIENTES,
+        entity: "Pending",
+        entityId: "pend-1",
+        after: { invoicedQuantity: 6, customerStatus: "FACTURADO" },
+      }),
+    );
+  });
+
+  it("audita el intento rechazado sobre un pendiente ajeno", async () => {
+    mocks.requireCapability.mockResolvedValue({ user: { id: "sel-2", role: "OPERADOR" } });
+    mocks.invoicePending.mockResolvedValue("NOT_OWNER");
+
+    const result = await invoicePendingAction(PREV, lifecycleFormData({ quantity: "2" }));
+
+    expect(result.ok).toBe(false);
+    expect(mocks.recordAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: AUDIT_ACTIONS.PENDING_INVOICED,
+        result: "FAILURE",
+        after: { reason: "NOT_OWNER", attemptedQuantity: 2 },
+      }),
+    );
+  });
+
+  it("no le pide a nadie que reintente una factura ya registrada", async () => {
+    mocks.requireCapability.mockResolvedValue({ user: { id: "sel-1", role: "OPERADOR" } });
+    mocks.invoicePending.mockResolvedValue(null);
+    mocks.recordAudit.mockRejectedValueOnce(new Error("audit unavailable"));
+    mocks.revalidatePath.mockImplementationOnce(() => {
+      throw new Error("cache unavailable");
+    });
+
+    await expect(
+      invoicePendingAction(PREV, lifecycleFormData({ quantity: "4" })),
+    ).resolves.toEqual({ error: null, ok: true });
+  });
+
+  it("no le pide a nadie que reintente un contacto ya registrado", async () => {
+    mocks.requireCapability.mockResolvedValue({ user: { id: "sel-1", role: "OPERADOR" } });
+    mocks.contactPending.mockResolvedValue(null);
+    mocks.auditContextFromHeaders.mockRejectedValueOnce(new Error("headers unavailable"));
+
+    await expect(contactPendingAction(PREV, lifecycleFormData())).resolves.toEqual({
+      error: null,
+      ok: true,
+    });
+  });
+
+  it("rechaza una cantidad a facturar que no sea un entero positivo", async () => {
+    mocks.requireCapability.mockResolvedValue({ user: { id: "sel-1", role: "OPERADOR" } });
+
+    for (const quantity of ["0", "-3", "2.5", "abc", ""]) {
+      const result = await invoicePendingAction(PREV, lifecycleFormData({ quantity }));
+      expect(result.ok).toBe(false);
+    }
+    expect(mocks.invoicePending).not.toHaveBeenCalled();
+  });
 });

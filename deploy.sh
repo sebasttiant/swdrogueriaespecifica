@@ -57,6 +57,48 @@ docker compose build "$WEB_SERVICE" "$MIGRATE_SERVICE" "$SEED_SERVICE"
 echo "==> Starting database..."
 docker compose up -d "$DB_SERVICE"
 
+# --------------------------------------------------------------------------
+# Punto de restauración de la BASE DE DATOS.
+#
+# El tar de arriba respalda el código, NO los datos: Postgres vive en el volumen
+# `postgres_data`, fuera de APP_DIR. Sin este dump, una migración que salga mal
+# deja el negocio sin forma de volver atrás — y las migraciones de enum de
+# PostgreSQL no se revierten (no existe DROP VALUE), así que el único rollback
+# real es restaurar este archivo.
+#
+# Aborta el deploy si el dump falla: desplegar sin punto de retorno es
+# exactamente el riesgo que este paso existe para evitar.
+# --------------------------------------------------------------------------
+echo "==> Waiting for database before dumping..."
+db_deadline=$(( $(date +%s) + HEALTH_TIMEOUT ))
+until docker compose exec -T "$DB_SERVICE" sh -lc 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' >/dev/null 2>&1; do
+  if [ "$(date +%s)" -ge "$db_deadline" ]; then
+    echo "ERROR: la base no aceptó conexiones a tiempo; no se puede respaldar."
+    docker compose logs --tail=80 "$DB_SERVICE"
+    exit 1
+  fi
+  sleep 2
+done
+
+DB_DUMP_FILE="$BACKUP_DIR/drogueria-db-before-deploy-$(date +%Y%m%d-%H%M%S).sql.gz"
+echo "==> Dumping database to $DB_DUMP_FILE ..."
+if ! docker compose exec -T "$DB_SERVICE" sh -lc \
+       'pg_dump --clean --if-exists -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
+     | gzip > "$DB_DUMP_FILE"; then
+  echo "ERROR: falló el respaldo de la base. El deploy se detiene ANTES de migrar."
+  rm -f "$DB_DUMP_FILE"
+  exit 1
+fi
+
+# Un dump vacío o truncado es peor que no tener dump: da una falsa sensación de
+# respaldo. Se verifica que el archivo sea un gzip legible y no esté vacío.
+if ! gzip -t "$DB_DUMP_FILE" 2>/dev/null || [ ! -s "$DB_DUMP_FILE" ]; then
+  echo "ERROR: el respaldo quedó vacío o corrupto ($DB_DUMP_FILE). El deploy se detiene."
+  exit 1
+fi
+echo "    ✓ Respaldo verificado: $DB_DUMP_FILE ($(du -h "$DB_DUMP_FILE" | cut -f1))"
+echo "    Para restaurar:  gunzip -c '$DB_DUMP_FILE' | docker compose exec -T $DB_SERVICE sh -lc 'psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\"'"
+
 echo "==> Waiting for database..."
 deadline=$(( $(date +%s) + HEALTH_TIMEOUT ))
 until db_status="$(docker compose ps -q "$DB_SERVICE" | xargs -r docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' 2>/dev/null)"; [ "$db_status" = "healthy" ] || [ "$db_status" = "running" ]; do
@@ -166,6 +208,14 @@ else
   check_columns "pendings" "'deliveredQuantity','completedAt','cancelledAt','cancelledById','cancelReason'"
   check_columns "missing_items" "'confirmedAt','confirmedById','confirmationNote','orderedAt','orderedById','supplierId','sellerCode'"
   check_columns "products" "'needsReview'"
+  # Ciclo de cumplimiento (compra -> bodega -> facturación -> entrega). Si estas
+  # faltan, la app arranca igual pero el vendedor nunca ve "disponible para
+  # facturar" y las entregas parciales no cierran.
+  check_table "inventory_allocations"
+  check_table "pending_inventory_reservations"
+  check_columns "pendings" "'purchaseStatus','availabilityStatus','customerStatus','inventoryReadyQuantity','reservedInventoryQuantity','invoicedQuantity','contactedAt','contactedById','invoicedAt','invoicedById'"
+  check_columns "missing_items" "'receivedQuantity','arrivedAt','arrivedById'"
+  check_columns "inventory_entries" "'idempotencyKey','requestFingerprint'"
 
   if [ "$schema_ok" -eq 1 ]; then
     echo "    ✓ Esquema del ciclo operativo aplicado por completo."

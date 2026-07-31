@@ -29,6 +29,30 @@ enum UserRole {
   ADMIN
   SUPERVISOR
   OPERADOR
+  BODEGA
+}
+
+enum PendingPurchaseStatus {
+  POR_PEDIR
+  SOLICITADO
+  BUSQUEDA
+  COTIZANDO
+  AGOTADO
+}
+
+enum PendingAvailabilityStatus {
+  ESPERANDO
+  LLEGO_BODEGA
+  DISPONIBLE_PARCIAL
+  DISPONIBLE_COMPLETO
+}
+
+enum PendingCustomerStatus {
+  POR_CONTACTAR
+  CONTACTADO
+  FACTURADO
+  ENTREGADO
+  CANCELADO
 }
 
 enum PendingStatus {
@@ -118,6 +142,8 @@ model User {
   // tiene más de una relación con `User`.
   pendingsCancelled Pending[] @relation("PendingCancelledBy")
   pendingDeliveries PendingDelivery[] @relation("PendingDeliveredBy")
+  contactedPendings Pending[] @relation("PendingContactedBy")
+  invoicedPendings Pending[] @relation("PendingInvoicedBy")
   missingItems    MissingItem[] @relation("MissingItemCreatedBy")
   confirmedMissingItems MissingItem[] @relation("MissingItemConfirmedBy")
   inventoryEntries InventoryEntry[]
@@ -224,6 +250,7 @@ model ProductBatch {
   status    BatchStatus @default(DISPONIBLE)
   createdAt DateTime    @default(now())
   updatedAt DateTime    @updatedAt
+  pendingReservations PendingInventoryReservation[]
 
   @@unique([productId, batchCode])
   @@index([expiresAt]) // alertas de vencimiento globales (futuro)
@@ -242,6 +269,20 @@ model Pending {
   productId    String
   quantity     Int
   status       PendingStatus @default(PENDIENTE)
+  // Ejes independientes: compras, disponibilidad física y relación comercial.
+  // `status` se conserva para compatibilidad histórica de listados existentes.
+  purchaseStatus PendingPurchaseStatus @default(POR_PEDIR)
+  availabilityStatus PendingAvailabilityStatus @default(ESPERANDO)
+  customerStatus PendingCustomerStatus @default(POR_CONTACTAR)
+  inventoryReadyQuantity Int @default(0)
+  reservedInventoryQuantity Int @default(0)
+  invoicedQuantity Int @default(0)
+  contactedAt DateTime?
+  contactedBy User? @relation("PendingContactedBy", fields: [contactedById], references: [id])
+  contactedById String?
+  invoicedAt DateTime?
+  invoicedBy User? @relation("PendingInvoicedBy", fields: [invoicedById], references: [id])
+  invoicedById String?
   // Promesa de entrega al cliente: cuándo le respondemos. Obligatoria: en
   // droguería el pendiente es operativo y necesita una fecha/hora comprometida.
   promisedAt   DateTime
@@ -301,10 +342,14 @@ model Pending {
 
   // Faltantes generados a partir de este pendiente (lógica de Fase 2)
   missingItems MissingItem[]
+  inventoryAllocations InventoryAllocation[]
+  inventoryReservations PendingInventoryReservation[]
 
   @@index([status])
   @@index([productId])
   @@index([createdAt])
+  @@index([createdById, createdAt])
+  @@index([availabilityStatus, customerStatus])
   @@map("pendings")
 }
 
@@ -337,6 +382,7 @@ model MissingItem {
   product     Product           @relation(fields: [productId], references: [id])
   productId   String
   quantity    Int
+  receivedQuantity Int @default(0)
   // Cantidad que gerencia efectivamente pidió al proveedor. Distinta de
   // `quantity` (necesidad/déficit histórico): null mientras el faltante sigue
   // abierto, y en registros anteriores a esta columna. Nunca se deriva de
@@ -368,11 +414,16 @@ model MissingItem {
   // imposible distinguir después un descarte de una confirmación, que es el
   // error que ya obligó a revertir "OK gerencia".
   discardedAt   DateTime?
-  discardedBy   User?    @relation("MissingItemDiscardedBy", fields: [discardedById], references: [id])
+  // `onDelete: Restrict` is what the database has enforced since this column
+  // shipped, and it is the behaviour we want: the actor of a discard must not
+  // disappear from the audit trail. Declaring it keeps the datamodel and the
+  // database identical instead of reporting drift on every future migration.
+  discardedBy   User?    @relation("MissingItemDiscardedBy", fields: [discardedById], references: [id], onDelete: Restrict)
   discardedById String?
   discardReason String?
   createdAt   DateTime          @default(now())
   updatedAt   DateTime          @updatedAt
+  inventoryAllocations InventoryAllocation[]
 
   @@index([status])
   @@index([confirmedAt])
@@ -392,14 +443,55 @@ model InventoryEntry {
   product     Product  @relation(fields: [productId], references: [id])
   productId   String
   quantity    Int
+  idempotencyKey String @unique @default(uuid())
+  requestFingerprint String
   note        String?
   createdBy   User?    @relation(fields: [createdById], references: [id])
   createdById String?
   createdAt   DateTime @default(now())
+  allocations InventoryAllocation[]
 
   @@index([productId])
   @@index([createdAt])
+  @@index([idempotencyKey, requestFingerprint])
   @@map("inventory_entries")
+}
+
+// Una asignación es una reserva cuantificada de una entrada física para un
+// faltante concreto. El service la crea FIFO bajo locks; por eso una unidad no
+// puede ser asignada dos veces ni un retry duplicar el ledger.
+model InventoryAllocation {
+  id String @id @default(cuid())
+  inventoryEntry InventoryEntry @relation(fields: [inventoryEntryId], references: [id], onDelete: Restrict)
+  inventoryEntryId String
+  missingItem MissingItem @relation(fields: [missingItemId], references: [id], onDelete: Restrict)
+  missingItemId String
+  pending Pending? @relation(fields: [pendingId], references: [id], onDelete: SetNull)
+  pendingId String?
+  quantity Int
+  createdAt DateTime @default(now())
+
+  @@unique([inventoryEntryId, missingItemId])
+  @@index([missingItemId])
+  @@index([pendingId])
+  @@map("inventory_allocations")
+}
+
+// Saldo reservado por pendiente y lote. Es el ledger que permite devolver solo
+// unidades no entregadas al lote físico exacto cuando un pedido se cancela.
+model PendingInventoryReservation {
+  id String @id @default(cuid())
+  pending Pending @relation(fields: [pendingId], references: [id], onDelete: Restrict)
+  pendingId String
+  batch ProductBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  batchId String
+  quantity Int
+  createdAt DateTime @default(now())
+
+  @@unique([pendingId, batchId])
+  @@index([pendingId])
+  @@index([batchId])
+  @@map("pending_inventory_reservations")
 }
 
 // --------------------------------------------------------------------------

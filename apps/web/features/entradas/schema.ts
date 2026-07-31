@@ -39,6 +39,7 @@ export const inventoryEntryCreateSchema = z.object({
       return parsed;
     }),
   note: optionalText(280),
+  idempotencyKey: z.string().uuid(),
 });
 
 export type InventoryEntryCreateInput = z.infer<

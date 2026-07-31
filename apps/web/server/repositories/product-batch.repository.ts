@@ -188,6 +188,21 @@ export async function upsertBatchQuantity(
   });
 }
 
+/**
+ * Removes units from the sellable balance of the batch that received them.
+ * Allocations are reservations, so they must not remain available globally.
+ */
+export function reserveReceivedBatchQuantity(
+  client: Prisma.TransactionClient,
+  batchId: string,
+  quantity: number,
+) {
+  return client.productBatch.update({
+    where: { id: batchId },
+    data: { quantity: { decrement: quantity } },
+  });
+}
+
 // Stock vendible: DISPONIBLE + con stock + no vencido. SUM por SQL, no en JS.
 // `client` permite leer el stock dentro de la misma transacción que lo consume
 // (pending.service), manteniendo la lectura consistente con las escrituras.
@@ -206,4 +221,104 @@ export async function stockByProduct(
     _sum: { quantity: true },
   });
   return result._sum.quantity ?? 0;
+}
+
+/**
+ * Reserves sellable stock for a newly-created Pending. Rows are locked in FEFO
+ * order before decrementing, so concurrent Pending creation cannot promise the
+ * same units twice. The Pending stores the aggregate reservation for traceability.
+ */
+export async function reserveSellableStockForPending(
+  client: Prisma.TransactionClient,
+  productId: string,
+  requestedQuantity: number,
+  now: Date = new Date(),
+  pendingId?: string,
+): Promise<number> {
+  const rows = await client.$queryRaw<Array<{ id: string; quantity: number }>>`
+    SELECT id, quantity FROM product_batches
+    WHERE "productId" = ${productId} AND status = 'DISPONIBLE'
+      AND quantity > 0 AND "expiresAt" > ${now}
+    ORDER BY "expiresAt" ASC, id ASC FOR UPDATE
+  `;
+  let remaining = requestedQuantity;
+  for (const row of rows) {
+    if (remaining === 0) break;
+    const reserved = Math.min(row.quantity, remaining);
+    await client.productBatch.update({
+      where: { id: row.id },
+      data: { quantity: { decrement: reserved } },
+    });
+    if (pendingId) {
+      await client.pendingInventoryReservation.upsert({
+        where: { pendingId_batchId: { pendingId, batchId: row.id } },
+        create: { pendingId, batchId: row.id, quantity: reserved },
+        update: { quantity: { increment: reserved } },
+      });
+    }
+    remaining -= reserved;
+  }
+  return requestedQuantity - remaining;
+}
+
+export async function reserveBatchForPending(
+  client: Prisma.TransactionClient,
+  pendingId: string,
+  batchId: string,
+  quantity: number,
+) {
+  return client.pendingInventoryReservation.upsert({
+    where: { pendingId_batchId: { pendingId, batchId } },
+    create: { pendingId, batchId, quantity },
+    update: { quantity: { increment: quantity } },
+  });
+}
+
+/** Restores every unconsumed reservation to the physical lot it came from. */
+export async function releasePendingReservations(
+  client: Prisma.TransactionClient,
+  pendingId: string,
+): Promise<number> {
+  const reservations = (await client.pendingInventoryReservation.findMany({
+    where: { pendingId }, orderBy: { createdAt: "asc" },
+  })) ?? [];
+  if (reservations.length === 0) return 0;
+  let released = 0;
+  for (const reservation of reservations) {
+    await client.productBatch.update({
+      where: { id: reservation.batchId },
+      data: { quantity: { increment: reservation.quantity } },
+    });
+    released += reservation.quantity;
+  }
+  await client.pendingInventoryReservation.deleteMany({ where: { pendingId } });
+  return released;
+}
+
+/** Consumes reserved lots FIFO when the customer receives units. */
+export async function consumePendingReservations(
+  client: Prisma.TransactionClient,
+  pendingId: string,
+  quantity: number,
+): Promise<void> {
+  const reservations = (await client.pendingInventoryReservation.findMany({
+    where: { pendingId }, orderBy: { createdAt: "asc" },
+  })) ?? [];
+  // Rows created before the reservation ledger have no lot traceability. They
+  // remain deliverable; only new reservations may consume this ledger.
+  if (reservations.length === 0) return;
+  let remaining = quantity;
+  for (const reservation of reservations) {
+    if (remaining === 0) break;
+    const consumed = Math.min(reservation.quantity, remaining);
+    if (consumed === reservation.quantity) {
+      await client.pendingInventoryReservation.delete({ where: { id: reservation.id } });
+    } else {
+      await client.pendingInventoryReservation.update({
+        where: { id: reservation.id }, data: { quantity: { decrement: consumed } },
+      });
+    }
+    remaining -= consumed;
+  }
+  if (remaining !== 0) throw new Error("Pending reservation invariant violated");
 }

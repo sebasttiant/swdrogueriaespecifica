@@ -40,6 +40,7 @@ describe("getAdminOverviewMetrics", () => {
         ADMIN: 1,
         SUPERVISOR: 1,
         OPERADOR: 1,
+        BODEGA: 0,
       },
     });
   });

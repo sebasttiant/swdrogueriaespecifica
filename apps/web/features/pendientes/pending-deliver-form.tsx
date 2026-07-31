@@ -35,6 +35,7 @@ export function PendingDeliverForm({
 
   return (
     <form action={formAction} className="flex flex-col gap-1">
+      <p className="text-xs text-muted-foreground">Entregar disponible: {remaining}</p>
       <div className="flex items-end gap-2">
         <input type="hidden" name="id" value={pendingId} />
         <div className="w-20">

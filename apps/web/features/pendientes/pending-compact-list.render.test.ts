@@ -9,6 +9,9 @@ vi.mock("react", async (importOriginal) => {
 
 vi.mock("@/server/actions/pending.actions", () => ({
   updatePendingManagementStatusAction: vi.fn(),
+  contactPendingAction: vi.fn(),
+  invoicePendingAction: vi.fn(),
+  deliverPendingAction: vi.fn(),
 }));
 
 import { createElement } from "react";
@@ -43,11 +46,14 @@ function render(
   items: PendingListItem[],
   canOrder = true,
   nextCursor: string | null = null,
+  capabilities: { canDeliver?: boolean; canContactOrInvoice?: boolean } = {},
 ): string {
   return renderToStaticMarkup(
     createElement(PendingCompactList, {
       items,
       canOrder,
+      canDeliver: capabilities.canDeliver,
+      canContactOrInvoice: capabilities.canContactOrInvoice,
       nextCursor,
       pageHref: (cursor) => `/pendientes?cursor=${encodeURIComponent(cursor)}&view=lista`,
     }),
@@ -118,7 +124,7 @@ describe("PendingCompactList", () => {
   // Un pendiente que ya tiene estado de gestión necesita el selector completo
   // (en búsqueda, cotizando, agotado), no este atajo.
   it("no ofrece el okay sobre un pendiente ya gestionado", () => {
-    const html = render([pending({ status: "SOLICITADO" })], true);
+    const html = render([pending({ status: "SOLICITADO", purchaseStatus: "SOLICITADO" })], true);
 
     expect(html).not.toContain("Ya lo pedí");
     expect(html).toContain("Solicitado");
@@ -176,7 +182,87 @@ describe("PendingCompactList", () => {
     expect(html).toContain("/pendientes?cursor=next%20cursor&amp;view=lista");
   });
 
-  it("posts the observed PENDIENTE state for the quick-order compare-and-set", () => {
-    expect(render([pending()])).toContain('name="expectedStatus" value="PENDIENTE"');
+  it("posts the observed purchase status for the quick-order compare-and-set", () => {
+    expect(render([pending()])).toContain('name="expectedStatus" value="POR_PEDIR"');
+  });
+
+  it("uses purchaseStatus, not legacy status, for management label and action", () => {
+    const html = render([pending({ status: "SOLICITADO", purchaseStatus: "POR_PEDIR" })]);
+
+    expect(html).toContain("Por pedir");
+    expect(html).toContain("Ya lo pedí");
+  });
+
+  it("shows seller contact actions in the desktop table without purchase authority", () => {
+    const html = render(
+      [pending({ customerStatus: "POR_CONTACTAR", inventoryReadyQuantity: 10, purchaseStatus: "SOLICITADO" })],
+      false,
+      null,
+      { canContactOrInvoice: true },
+    );
+
+    expect(countOccurrences(html, "Contactar cliente")).toBe(2);
+    expect(html).not.toContain("Ya lo pedí");
+  });
+
+  it("shows seller invoice actions in the desktop table", () => {
+    const html = render(
+      [pending({ customerStatus: "CONTACTADO", inventoryReadyQuantity: 10, invoicedQuantity: 0, purchaseStatus: "SOLICITADO" })],
+      false,
+      null,
+      { canContactOrInvoice: true, canDeliver: true },
+    );
+
+    expect(countOccurrences(html, "Marcar facturado")).toBe(2);
+  });
+
+  it("shows seller delivery actions in the desktop table", () => {
+    const html = render(
+      [pending({ customerStatus: "FACTURADO", inventoryReadyQuantity: 10, invoicedQuantity: 10, purchaseStatus: "SOLICITADO" })],
+      false,
+      null,
+      { canDeliver: true },
+    );
+
+    expect(countOccurrences(html, "Entregar disponible: 10")).toBe(2);
+  });
+
+  // El vendedor no vigila la bodega: la fila tiene que avisarle. Sin este aviso
+  // el pendiente se ve igual antes y después de que llegue su mercancía.
+  it("avisa que la mercancía llegó y ya se puede facturar", () => {
+    const html = render(
+      [pending({ customerStatus: "CONTACTADO", inventoryReadyQuantity: 10, invoicedQuantity: 0 })],
+      false,
+      null,
+      { canContactOrInvoice: true },
+    );
+
+    expect(countOccurrences(html, "Disponible para facturar")).toBe(2);
+  });
+
+  it("distingue la llegada parcial de la completa", () => {
+    const html = render(
+      [pending({ quantity: 10, customerStatus: "CONTACTADO", inventoryReadyQuantity: 6, invoicedQuantity: 0 })],
+      false,
+      null,
+      { canContactOrInvoice: true },
+    );
+
+    expect(countOccurrences(html, "Disponible para facturar: 6 de 10")).toBe(2);
+  });
+
+  it("no avisa disponibilidad sobre un pendiente ya cerrado", () => {
+    const html = render([
+      pending({
+        status: "ENTREGADO",
+        customerStatus: "ENTREGADO",
+        inventoryReadyQuantity: 10,
+        invoicedQuantity: 10,
+        deliveredQuantity: 10,
+      }),
+    ]);
+
+    expect(html).not.toContain("Disponible para facturar");
+    expect(html).not.toContain("listo para entregar");
   });
 });

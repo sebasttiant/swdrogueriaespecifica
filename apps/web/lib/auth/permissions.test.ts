@@ -20,12 +20,13 @@ describe("assignableRolesFor", () => {
       "ADMIN",
       "SUPERVISOR",
       "OPERADOR",
+      "BODEGA",
     ]);
   });
 
   it("ADMIN puede asignar ADMIN, SUPERVISOR y OPERADOR, pero NO SUPERADMIN", () => {
     const roles = assignableRolesFor("ADMIN");
-    expect(roles).toEqual(["ADMIN", "SUPERVISOR", "OPERADOR"]);
+    expect(roles).toEqual(["ADMIN", "SUPERVISOR", "OPERADOR", "BODEGA"]);
     expect(roles).not.toContain("SUPERADMIN");
   });
 
@@ -297,7 +298,7 @@ describe("canReviewMissingReports (capability)", () => {
 
 describe("rolesWithCapability", () => {
   it("preserva el orden de USER_ROLES", () => {
-    expect(rolesWithCapability("canViewDashboard")).toEqual([...USER_ROLES]);
+    expect(rolesWithCapability("canViewDashboard")).toEqual(["SUPERADMIN", "ADMIN", "SUPERVISOR", "OPERADOR"]);
   });
 
   it("canViewReports solo la tienen los administradores", () => {
@@ -323,8 +324,8 @@ describe("rolesWithCapability", () => {
     ]);
   });
 
-  it("canDeliverPendings incluye a los cuatro roles (el mostrador entrega)", () => {
-    expect(rolesWithCapability("canDeliverPendings")).toEqual([...USER_ROLES]);
+  it("canDeliverPendings excluye BODEGA", () => {
+    expect(rolesWithCapability("canDeliverPendings")).toEqual(["SUPERADMIN", "ADMIN", "SUPERVISOR", "OPERADOR"]);
   });
 
   it("canCancelPendings excluye a OPERADOR (cancelar necesita firma superior)", () => {
@@ -340,5 +341,42 @@ describe("rolesWithCapability", () => {
       "SUPERADMIN",
       "ADMIN",
     ]);
+  });
+});
+
+// --------------------------------------------------------------------------
+// Alcance de pendientes. `canManageAllPendings` decide si la lista se acota a
+// las filas propias, así que quitarla a un rol no le recorta una acción: le
+// esconde la cola entera. SUPERVISOR ya entregaba y cancelaba pendientes de
+// cualquiera, y tiene que seguir viéndolos.
+// --------------------------------------------------------------------------
+describe("canManageAllPendings (alcance de la cola)", () => {
+  it("la tienen los administradores y la supervisión, nunca el vendedor", () => {
+    expect(rolesWithCapability("canManageAllPendings")).toEqual([
+      "SUPERADMIN",
+      "ADMIN",
+      "SUPERVISOR",
+    ]);
+  });
+
+  it("el vendedor solo puede contactar y facturar lo suyo", () => {
+    expect(can("OPERADOR", "canContactOwnPendings")).toBe(true);
+    expect(can("OPERADOR", "canInvoiceOwnPendings")).toBe(true);
+    expect(can("OPERADOR", "canManageAllPendings")).toBe(false);
+  });
+
+  it("BODEGA no toca pendientes ni datos de clientes", () => {
+    for (const capability of [
+      "canViewPendientes",
+      "canCreatePendientes",
+      "canManageAllPendings",
+      "canContactOwnPendings",
+      "canInvoiceOwnPendings",
+      "canDeliverPendings",
+      "canCancelPendings",
+      "canViewCustomerIdentity",
+    ] as const) {
+      expect(can("BODEGA", capability)).toBe(false);
+    }
   });
 });

@@ -26,6 +26,7 @@ import {
 import { PendingCancelForm } from "./pending-cancel-form";
 import { PendingDeliverForm } from "./pending-deliver-form";
 import { PendingManagementStatusForm } from "./pending-management-status-form";
+import { PendingCustomerLifecycleForm } from "./pending-customer-lifecycle-form";
 
 type PendingListProps = {
   items: PendingListItem[];
@@ -37,6 +38,7 @@ type PendingListProps = {
   // Autoridad de compras (`canOrderMissingItems`): habilita el selector de
   // estado de gestión. El vendedor no lo tiene y solo ve el badge.
   canManageStatus: boolean;
+  canContactOrInvoice?: boolean;
   // El scope viaja en el link de la página siguiente: sin esto, paginar dentro
   // del historial devolvería al usuario a la vista activa sin avisar.
   scope: PendingScope;
@@ -94,6 +96,7 @@ export function PendingList({
   canDeliver,
   canCancel,
   canManageStatus,
+  canContactOrInvoice = false,
   scope,
 }: PendingListProps) {
   if (items.length === 0) {
@@ -129,8 +132,11 @@ export function PendingList({
         const remaining = remainingQuantity(pending.quantity, pending.deliveredQuantity);
         // Selector de gestión: solo compras, y solo mientras el estado lo admita.
         const showManagement =
-          canManageStatus && canSetManagementStatus(pending.status);
+          canManageStatus && canSetManagementStatus(pending.purchaseStatus ?? pending.status);
         const showDeliverCancel = isOpen && (canDeliver || canCancel);
+        // Filas previas a las columnas nuevas conservan su render histórico; las
+        // filas nuevas siempre traen customerStatus y exigen FACTURADO.
+        const canDeliverNow = canDeliver && (pending.customerStatus === "FACTURADO" || pending.customerStatus === undefined);
         // Estado de pago derivado de los montos, nunca de una columna guardada.
         const paymentState = derivePaymentState(pending);
         const balance = remainingAmount(pending);
@@ -202,16 +208,17 @@ export function PendingList({
 
             {showManagement || showDeliverCancel ? (
               <div className="flex flex-col gap-3 border-t border-border pt-3">
-                {showManagement ? (
+                 {showManagement ? (
                   <PendingManagementStatusForm
                     pendingId={pending.id}
-                    currentStatus={pending.status}
+                    currentStatus={pending.purchaseStatus ?? pending.status}
                   />
-                ) : null}
+                 ) : null}
+                {canContactOrInvoice && (pending.customerStatus !== "POR_CONTACTAR" || (pending.inventoryReadyQuantity ?? 0) > 0) ? <PendingCustomerLifecycleForm pendingId={pending.id} customerStatus={pending.customerStatus} availableQuantity={pending.inventoryReadyQuantity ?? 0} invoicedQuantity={pending.invoicedQuantity ?? 0} /> : null}
                 {showDeliverCancel ? (
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    {canDeliver ? (
-                      <PendingDeliverForm pendingId={pending.id} remaining={remaining} />
+                    {canDeliverNow ? (
+                      <PendingDeliverForm pendingId={pending.id} remaining={pending.invoicedQuantity === undefined || pending.inventoryReadyQuantity === undefined ? remaining : Math.min(remaining, Math.max(pending.invoicedQuantity - pending.deliveredQuantity, 0), Math.max(pending.inventoryReadyQuantity - pending.deliveredQuantity, 0))} />
                     ) : null}
                     {canCancel ? <PendingCancelForm pendingId={pending.id} /> : null}
                   </div>

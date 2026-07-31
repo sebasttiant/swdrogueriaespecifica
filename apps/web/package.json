@@ -17,6 +17,7 @@
     "db:seed": "prisma db seed",
     "db:demo": "tsx prisma/seed-demo.ts",
     "db:wipe": "tsx prisma/wipe.ts",
+    "db:verify": "tsx prisma/verify-fulfillment-invariants.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {

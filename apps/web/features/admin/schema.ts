@@ -13,6 +13,7 @@ export const ROLE_LABELS: Record<(typeof ASSIGNABLE_ROLES)[number], string> = {
   ADMIN: "Administrador",
   SUPERVISOR: "Supervisor",
   OPERADOR: "Operador",
+  BODEGA: "Bodega",
 };
 
 // Normalizamos (trim + minúsculas) ANTES de validar el formato del email, para
