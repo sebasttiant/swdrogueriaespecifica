@@ -210,7 +210,14 @@ export const pendingManagementStatusSchema = z.object({
   // el "Ya lo pedí" del otro no lo sobrescribe. Cualquier estado elegible, no
   // solo PENDIENTE: cambiar de "Solicitado" a "Agotado" necesita la misma
   // protección.
-  expectedStatus: z.enum(MANAGEMENT_ELIGIBLE_STATUSES).optional(),
+  // `POR_PEDIR` es el "todavía sin gestionar" del eje de COMPRAS, y es lo que
+  // la pantalla observa hoy. Faltaba acá: el formulario lo posteaba, Zod lo
+  // rechazaba, y gerencia recibía "No se pudo identificar el pendiente o el
+  // estado" en TODOS los pendientes. `PENDIENTE` se sigue aceptando porque es
+  // el valor que muestran las filas anteriores a la separación de ejes.
+  expectedStatus: z
+    .enum(["POR_PEDIR", ...MANAGEMENT_ELIGIBLE_STATUSES])
+    .optional(),
 });
 
 export type PendingManagementStatusInput = z.infer<
