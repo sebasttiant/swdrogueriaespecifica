@@ -23,7 +23,15 @@ export async function ManagementMissingAlert({
 }: ManagementMissingAlertProps) {
   if (!isAdminRole(role)) return null;
 
-  const alert = await getManagementMissingAlert(now);
+  // Un aviso es información de apoyo: si su consulta falla, la respuesta correcta
+  // es no mostrar nada, no tumbar la pantalla que la persona vino a usar.
+  let alert: Awaited<ReturnType<typeof getManagementMissingAlert>>;
+  try {
+    alert = await getManagementMissingAlert(now);
+  } catch (error) {
+    console.error("[alertas] No se pudo calcular el aviso de gerencia:", error);
+    return null;
+  }
   if (!alert.active) return null;
 
   return (
