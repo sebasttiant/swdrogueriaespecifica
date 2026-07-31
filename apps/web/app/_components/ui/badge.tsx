@@ -2,7 +2,7 @@ import type { HTMLAttributes } from "react";
 
 import { cn } from "@/lib/utils/cn";
 
-type BadgeTone = "neutral" | "primary" | "success" | "warning" | "danger";
+type BadgeTone = "neutral" | "primary" | "success" | "warning" | "danger" | "accent";
 
 type BadgeProps = HTMLAttributes<HTMLSpanElement> & {
   tone?: BadgeTone;
@@ -14,6 +14,10 @@ const TONES: Record<BadgeTone, string> = {
   success: "bg-success/15 text-success",
   warning: "bg-warning/15 text-warning-foreground",
   danger: "bg-danger/10 text-danger",
+  // Violeta: en la tabla que gerencia viene usando desde siempre, el morado
+  // significa "no es una unidad, son varias". Se conserva ese color para que la
+  // lectura sea la misma que ya tienen aprendida.
+  accent: "bg-violet-500/15 text-violet-700 dark:text-violet-300",
 };
 
 export function Badge({ tone = "neutral", className, ...props }: BadgeProps) {

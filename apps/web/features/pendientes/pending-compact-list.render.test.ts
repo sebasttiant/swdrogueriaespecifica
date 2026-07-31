@@ -247,7 +247,7 @@ describe("PendingCompactList", () => {
       { canContactOrInvoice: true },
     );
 
-    expect(countOccurrences(html, "Ya llegó")).toBe(2);
+    expect(countOccurrences(html, "Cargado · podés facturar")).toBe(2);
   });
 
   it("distingue la llegada parcial de la completa", () => {
@@ -258,7 +258,7 @@ describe("PendingCompactList", () => {
       { canContactOrInvoice: true },
     );
 
-    expect(countOccurrences(html, "Ya llegó: 6 de 10")).toBe(2);
+    expect(countOccurrences(html, "Cargado: 6 de 10")).toBe(2);
   });
 
   it("no avisa disponibilidad sobre un pendiente ya cerrado", () => {
@@ -272,7 +272,7 @@ describe("PendingCompactList", () => {
       }),
     ]);
 
-    expect(html).not.toContain("Ya llegó");
+    expect(html).not.toContain("podés facturar");
     expect(html).not.toContain("listo para entregar");
   });
 });
@@ -294,5 +294,64 @@ describe("PendingCompactList · autoridad de compras", () => {
     const html = render([pending()], true);
 
     expect(countOccurrences(html, "Ya lo pedí")).toBe(2);
+  });
+});
+
+// --------------------------------------------------------------------------
+// Los colores que gerencia ya tiene aprendidos de su tabla de siempre
+// (reunión, minuto 5:19 y 7:13). Cada uno lleva TEXTO además de color: estas
+// filas se leen en un celular al sol, y el color solo no alcanza.
+//
+//   verde    → llegó a la droguería, todavía sin cargar al sistema
+//   amarillo → bodega ya lo cargó; el vendedor puede llamar y facturar
+//   morado   → no es una unidad, son varias
+// --------------------------------------------------------------------------
+describe("PendingCompactList · señales de la reunión", () => {
+  it("avisa que llegó a la droguería aunque todavía no esté cargado", () => {
+    const html = render([
+      pending({ availabilityStatus: "LLEGO_BODEGA", inventoryReadyQuantity: 0 }),
+    ]);
+
+    expect(countOccurrences(html, "Llegó a la droguería")).toBe(2);
+    expect(html).not.toContain("podés facturar");
+  });
+
+  it("cambia el aviso cuando bodega ya lo cargó", () => {
+    const html = render([
+      pending({ availabilityStatus: "DISPONIBLE_COMPLETO", inventoryReadyQuantity: 10 }),
+    ]);
+
+    expect(countOccurrences(html, "Cargado · podés facturar")).toBe(2);
+    expect(html).not.toContain("Llegó a la droguería");
+  });
+
+  it("distingue lo cargado parcialmente", () => {
+    const html = render([
+      pending({ quantity: 10, availabilityStatus: "DISPONIBLE_PARCIAL", inventoryReadyQuantity: 6 }),
+    ]);
+
+    expect(countOccurrences(html, "Cargado: 6 de 10 · podés facturar")).toBe(2);
+  });
+
+  it("marca cuando se piden varias unidades, no una sola", () => {
+    expect(countOccurrences(render([pending({ quantity: 25 })]), "Varias")).toBe(2);
+  });
+
+  it("no marca 'Varias' cuando es una sola unidad", () => {
+    expect(render([pending({ quantity: 1 })])).not.toContain("Varias");
+  });
+
+  it("deja de avisar disponibilidad cuando el pendiente ya se facturó", () => {
+    const html = render([
+      pending({
+        customerStatus: "FACTURADO",
+        invoicedQuantity: 10,
+        availabilityStatus: "DISPONIBLE_COMPLETO",
+        inventoryReadyQuantity: 10,
+      }),
+    ]);
+
+    expect(html).not.toContain("podés facturar");
+    expect(html).toContain("listo para entregar");
   });
 });

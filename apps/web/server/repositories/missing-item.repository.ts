@@ -378,6 +378,29 @@ export async function markMissingItemArrived(
     where: { id: data.id, status: "PEDIDO", confirmedAt: null },
     data: { status: "EN_BODEGA", arrivedById: data.arrivedById, arrivedAt: data.arrivedAt },
   });
+  if (count === 0) return 0;
+
+  // La llegada física también es noticia para el cliente que lo está
+  // esperando. En la reunión eso es el VERDE: "ya llegó a la droguería, pero
+  // no lo han cargado al sistema". Sin este salto el pendiente del vendedor no
+  // se enteraba de nada hasta que bodega terminara de cargar el lote.
+  //
+  // Solo avanza desde ESPERANDO: si el pendiente ya está disponible (amarillo)
+  // retroceder a verde sería mentirle al vendedor.
+  const arrived = await tx.missingItem.findUnique({
+    where: { id: data.id },
+    select: { originId: true },
+  });
+  if (arrived?.originId) {
+    await tx.pending.updateMany({
+      where: {
+        id: arrived.originId,
+        availabilityStatus: "ESPERANDO",
+        status: { notIn: ["ENTREGADO", "CANCELADO"] },
+      },
+      data: { availabilityStatus: "LLEGO_BODEGA" },
+    });
+  }
   return count;
 }
 

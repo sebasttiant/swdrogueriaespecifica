@@ -121,18 +121,30 @@ function outstanding(item: PendingListItem): { toInvoice: number; toDeliver: num
 // Va como texto además de color porque estas filas se leen en un celular al sol.
 function fulfillmentNotice(
   item: PendingListItem,
-): { label: string; tone: "success" | "primary" } | null {
+): { label: string; tone: "success" | "primary" | "warning" } | null {
   if (isTerminal(item)) return null;
+
   const available = item.inventoryReadyQuantity ?? 0;
-  if (item.customerStatus !== "FACTURADO" && available > 0) {
+  const notInvoiced = item.customerStatus !== "FACTURADO";
+
+  // AMARILLO — bodega ya lo subió al sistema. Es el aviso que espera el
+  // vendedor: "ya te llegó, te lo vamos a mandar".
+  if (notInvoiced && available > 0) {
     return {
       label:
         available < item.quantity
-          ? `Ya llegó: ${available} de ${item.quantity}`
-          : "Ya llegó · podés facturar",
-      tone: "success",
+          ? `Cargado: ${available} de ${item.quantity} · podés facturar`
+          : "Cargado · podés facturar",
+      tone: "warning",
     };
   }
+
+  // VERDE — llegó a la droguería pero todavía no está cargado. El vendedor ya
+  // puede avisarle al cliente; facturarlo todavía no.
+  if (notInvoiced && item.availabilityStatus === "LLEGO_BODEGA") {
+    return { label: "Llegó a la droguería · sin cargar", tone: "success" };
+  }
+
   if (outstanding(item).toDeliver > 0) {
     return { label: "Facturado · listo para entregar", tone: "primary" };
   }
@@ -257,6 +269,10 @@ export function PendingCompactList({
                       {pending.product.unit}
                     </span>
                   </p>
+                  {/* El morado de la reunión: avisa que no se pide una unidad
+                      sino varias. Con 36 pendientes a las 9:30 de la mañana,
+                      leer mal la cantidad significa pedir de menos. */}
+                  {pending.quantity > 1 ? <Badge tone="accent">Varias</Badge> : null}
                   <Badge tone={urgency.tone}>{urgency.label}</Badge>
                 </div>
               </div>
@@ -325,7 +341,12 @@ export function PendingCompactList({
                     {pending.product.name}
                   </td>
                   <td className="px-3 py-2 tabular-nums text-muted-foreground">
-                    {pending.quantity} {pending.product.unit}
+                    <span className="inline-flex items-center gap-2">
+                      <span className={cn(pending.quantity > 1 && "font-semibold text-text")}>
+                        {pending.quantity} {pending.product.unit}
+                      </span>
+                      {pending.quantity > 1 ? <Badge tone="accent">Varias</Badge> : null}
+                    </span>
                   </td>
                   <td className="px-3 py-2 text-muted-foreground">
                     {pending.createdBy?.name ?? "—"}
