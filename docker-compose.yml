@@ -12,6 +12,14 @@ services:
   postgres:
     image: postgres:18.4-alpine
     restart: unless-stopped
+    # `max_connections` por defecto es 100. La app abre hasta 30 (ver
+    # DATABASE_POOL_MAX) y todavía tienen que caber las migraciones del deploy,
+    # el seed, los respaldos y cualquier `psql` de soporte, todos a la vez.
+    # 200 deja aire de sobra sin costar memoria relevante en este VPS.
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=200"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER es obligatorio}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD es obligatorio}
