@@ -534,7 +534,13 @@ export async function resolvePartialPending(
       });
       await tx.pending.update({
         where: { id: current.id },
-        data: { note: existing?.note ? `${existing.note} · ${note}` : note },
+        data: {
+          note: existing?.note ? `${existing.note} · ${note}` : note,
+          // Se guarda la decisión, no solo su nota. Sin esto la fila no sabía
+          // que ya se había respondido y volvía a preguntar para siempre.
+          partialDecision: input.decision === "espera" ? "ESPERA" : "VA_CON_PEDIDO",
+          partialDecisionAt: now,
+        },
       });
       return null;
     }

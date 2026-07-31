@@ -47,6 +47,14 @@ enum PendingAvailabilityStatus {
   DISPONIBLE_COMPLETO
 }
 
+// Qué respondió el cliente sobre lo que faltó de una entrega parcial. Solo las
+// respuestas que dejan el pendiente ABIERTO: "no los espera" lo cierra, y eso
+// ya se ve en el estado.
+enum PendingPartialDecision {
+  ESPERA
+  VA_CON_PEDIDO
+}
+
 enum PendingCustomerStatus {
   POR_CONTACTAR
   CONTACTADO
@@ -288,6 +296,11 @@ model Pending {
   // un compromiso con un cliente. Gerencia no tiene ese límite.
   // Null = todavía no lo corrigió. Las ediciones de gerencia NO lo tocan.
   sellerEditedAt DateTime?
+  // La respuesta del cliente sobre el resto, ya registrada. Sin esto la fila no
+  // sabía que la pregunta ya se había contestado y la volvía a hacer para
+  // siempre: la nota se escribía, pero nada la delataba.
+  partialDecision   PendingPartialDecision?
+  partialDecisionAt DateTime?
   // Promesa de entrega al cliente: cuándo le respondemos. Obligatoria: en
   // droguería el pendiente es operativo y necesita una fecha/hora comprometida.
   promisedAt   DateTime

@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 
 import { requireCapability } from "@/lib/auth/require-role";
 import { can } from "@/lib/auth/permissions";
@@ -732,5 +733,8 @@ export async function updatePendingAction(
     },
   );
   revalidatePendingViews("Corrección del pendiente");
-  return { error: null, ok: true };
+  // La corrección se hace en su propia pantalla, así que terminar significa
+  // volver al listado. Quedarse en el formulario en blanco no le decía a nadie
+  // si había guardado. `redirect` lanza: nada después de esta línea corre.
+  redirect("/pendientes");
 }

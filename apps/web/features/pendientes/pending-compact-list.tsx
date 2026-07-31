@@ -57,6 +57,8 @@ type PendingCompactListProps = {
   // Corregir los datos del pedido. Gerencia sobre cualquiera; el vendedor sobre
   // el suyo y una sola vez, límite que hace cumplir el servidor.
   canEdit?: boolean;
+  // Alcance global: decide si el límite de una corrección aplica a quien mira.
+  canManageAll?: boolean;
   // Seguimiento = VER la jornada completa. Quien administra necesita leer, sobre
   // la MISMA fila, a qué cliente va, a qué zona, cuánto falta cobrar y qué anotó
   // el vendedor. Sin eso supervisar es abrir el detalle de cada pendiente, uno
@@ -162,6 +164,18 @@ function fulfillmentNotice(
   return null;
 }
 
+// Lo que el cliente respondió sobre lo que faltó. Se muestra para que la fila
+// diga que la pregunta ya se contestó, en vez de volver a hacerla.
+const PARTIAL_DECISION_LABELS = {
+  ESPERA: "El cliente espera el resto",
+  VA_CON_PEDIDO: "El resto va con otro pedido",
+} as const;
+
+function partialDecisionLabel(item: PendingListItem): string | null {
+  if (!item.partialDecision) return null;
+  return PARTIAL_DECISION_LABELS[item.partialDecision];
+}
+
 // --------------------------------------------------------------------------
 // La línea de SEGUIMIENTO.
 //
@@ -223,6 +237,7 @@ type CustomerActionsContext = {
   // Acá solo se decide si OFRECER el enlace: quién puede de verdad lo resuelve
   // la página de edición y, en última instancia, la Server Action.
   canEdit: boolean;
+  canManageAll: boolean;
 };
 
 function customerActions(item: PendingListItem, ctx: CustomerActionsContext) {
@@ -251,7 +266,12 @@ function customerActions(item: PendingListItem, ctx: CustomerActionsContext) {
   // Solo con una entrega parcial en curso: sin ninguna entrega no hay resto
   // sobre el que el cliente decida, y cerrar de cero es una cancelación.
   const partialDecision =
-    ctx.canDeliver && item.status === "PARCIAL" && item.quantity > item.deliveredQuantity ? (
+    ctx.canDeliver &&
+    item.status === "PARCIAL" &&
+    item.quantity > item.deliveredQuantity &&
+    // Ya respondida: preguntar de nuevo hacía ver la acción como si no hubiera
+    // funcionado. La respuesta se ve abajo, en el estado de la fila.
+    !item.partialDecision ? (
       <PendingPartialDecisionForm
         key="partial-decision"
         pendingId={item.id}
@@ -261,7 +281,10 @@ function customerActions(item: PendingListItem, ctx: CustomerActionsContext) {
 
   const cancel = ctx.canCancel ? <PendingCancelForm key="cancel" pendingId={item.id} /> : null;
 
-  const edit = ctx.canEdit ? (
+  // Al vendedor que ya usó su única corrección no se le ofrece: antes el botón
+  // seguía ahí y lo llevaba a un 404 crudo, que parece un error del sistema y
+  // no el límite que es.
+  const edit = ctx.canEdit && (ctx.canManageAll || item.sellerEditedAt == null) ? (
     <Link
       key="edit"
       href={`/pendientes/${item.id}/editar`}
@@ -305,6 +328,7 @@ export function PendingCompactList({
   canContactOrInvoice = false,
   canCancel = false,
   canEdit = false,
+  canManageAll = false,
   canFollowUp = false,
 }: PendingCompactListProps) {
   if (items.length === 0) {
@@ -332,11 +356,13 @@ export function PendingCompactList({
           const notice = fulfillmentNotice(pending);
           const lifecycle = lifecycleLabel(pending);
           const purchase = purchaseNote(pending);
+          const decision = partialDecisionLabel(pending);
           const actions = customerActions(pending, {
             canContactOrInvoice,
             canDeliver,
             canCancel,
             canEdit,
+            canManageAll,
           });
           return (
             <Card key={pending.id} className="space-y-2 p-3">
@@ -377,6 +403,9 @@ export function PendingCompactList({
                   <Badge tone={lifecycle.tone}>{lifecycle.label}</Badge>
                   {purchase ? (
                     <span className="text-xs text-muted-foreground">{purchase}</span>
+                  ) : null}
+                  {decision ? (
+                    <span className="text-xs text-muted-foreground">{decision}</span>
                   ) : null}
                 </div>
                 {canOrder && canManage(pending) ? (
@@ -425,11 +454,13 @@ export function PendingCompactList({
               const notice = fulfillmentNotice(pending);
               const lifecycle = lifecycleLabel(pending);
               const purchase = purchaseNote(pending);
+              const decision = partialDecisionLabel(pending);
               const actions = customerActions(pending, {
                 canContactOrInvoice,
                 canDeliver,
                 canCancel,
                 canEdit,
+                canManageAll,
               });
               return (
                 <tr key={pending.id} className="border-b border-border last:border-0">
@@ -458,6 +489,9 @@ export function PendingCompactList({
                       <Badge tone={lifecycle.tone}>{lifecycle.label}</Badge>
                       {purchase ? (
                         <span className="text-xs text-muted-foreground">{purchase}</span>
+                      ) : null}
+                      {decision ? (
+                        <span className="text-xs text-muted-foreground">{decision}</span>
                       ) : null}
                       {notice ? <Badge tone={notice.tone}>{notice.label}</Badge> : null}
                     </div>
