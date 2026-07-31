@@ -141,18 +141,25 @@ describe("PendingCompactList", () => {
     ["PARCIAL", "Entrega parcial"],
     ["ENTREGADO", "Entregado"],
     ["CANCELADO", "Cancelado"],
-  ] as const)("does not label %s as 'Por pedir'", (status, label) => {
+  ] as const)("no rotula %s como 'Pendiente'", (status, label) => {
     const html = render([pending({ status })], true);
 
     expect(html).toContain(label);
-    expect(html).not.toContain("Por pedir");
+    expect(html).not.toContain(">Pendiente<");
   });
 
-  // "Por pedir" dice qué hacer; "Pendiente" solo nombra un estado.
-  it("dice 'Por pedir' en lo que todavía espera decisión", () => {
+  // El estado del pedido arranca en "Pendiente" y avanza a Facturado, Entregado
+  // o Cancelado. Lo que gerencia anota sobre la compra es otro eje y va aparte.
+  it("dice 'Pendiente' en lo que todavía no se facturó", () => {
     const html = render([pending()]);
 
-    expect(html).toContain("Por pedir");
+    expect(html).toContain("Pendiente");
+  });
+
+  it("pasa a 'Facturado' cuando el vendedor ya facturó", () => {
+    const html = render([pending({ customerStatus: "FACTURADO", invoicedQuantity: 10 })]);
+
+    expect(html).toContain("Facturado");
   });
 
   // La urgencia se comunica con texto y color, nunca solo con color: se lee en
@@ -186,22 +193,25 @@ describe("PendingCompactList", () => {
     expect(render([pending()])).toContain('name="expectedStatus" value="POR_PEDIR"');
   });
 
-  it("uses purchaseStatus, not legacy status, for management label and action", () => {
+  it("usa purchaseStatus, no el status histórico, para la acción de compras", () => {
     const html = render([pending({ status: "SOLICITADO", purchaseStatus: "POR_PEDIR" })]);
 
-    expect(html).toContain("Por pedir");
+    expect(html).toContain("Pendiente");
     expect(html).toContain("Ya lo pedí");
   });
 
-  it("shows seller contact actions in the desktop table without purchase authority", () => {
+  // El vendedor tiene que poder facturar SU pendiente desde el primer momento,
+  // sin autoridad de compras y sin esperar a que llegue mercancía. Antes esta
+  // fila no le ofrecía ninguna acción.
+  it("le da al vendedor la acción de facturar en las dos vistas", () => {
     const html = render(
-      [pending({ customerStatus: "POR_CONTACTAR", inventoryReadyQuantity: 10, purchaseStatus: "SOLICITADO" })],
+      [pending({ customerStatus: "POR_CONTACTAR", inventoryReadyQuantity: 0, purchaseStatus: "SOLICITADO" })],
       false,
       null,
       { canContactOrInvoice: true },
     );
 
-    expect(countOccurrences(html, "Contactar cliente")).toBe(2);
+    expect(countOccurrences(html, "Ya le facturé")).toBe(2);
     expect(html).not.toContain("Ya lo pedí");
   });
 
@@ -213,7 +223,7 @@ describe("PendingCompactList", () => {
       { canContactOrInvoice: true, canDeliver: true },
     );
 
-    expect(countOccurrences(html, "Marcar facturado")).toBe(2);
+    expect(countOccurrences(html, "Ya le facturé")).toBe(2);
   });
 
   it("shows seller delivery actions in the desktop table", () => {
@@ -237,7 +247,7 @@ describe("PendingCompactList", () => {
       { canContactOrInvoice: true },
     );
 
-    expect(countOccurrences(html, "Disponible para facturar")).toBe(2);
+    expect(countOccurrences(html, "Ya llegó")).toBe(2);
   });
 
   it("distingue la llegada parcial de la completa", () => {
@@ -248,7 +258,7 @@ describe("PendingCompactList", () => {
       { canContactOrInvoice: true },
     );
 
-    expect(countOccurrences(html, "Disponible para facturar: 6 de 10")).toBe(2);
+    expect(countOccurrences(html, "Ya llegó: 6 de 10")).toBe(2);
   });
 
   it("no avisa disponibilidad sobre un pendiente ya cerrado", () => {
@@ -262,7 +272,7 @@ describe("PendingCompactList", () => {
       }),
     ]);
 
-    expect(html).not.toContain("Disponible para facturar");
+    expect(html).not.toContain("Ya llegó");
     expect(html).not.toContain("listo para entregar");
   });
 });

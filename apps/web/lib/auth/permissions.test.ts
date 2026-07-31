@@ -176,11 +176,16 @@ describe("capabilities · can()", () => {
     expect(can("OPERADOR", "canDeliverPendings")).toBe(true);
   });
 
-  it("canCancelPendings: OPERADOR queda excluido (cancelar rompe un compromiso con el cliente)", () => {
+  // El vendedor cancela SU pendiente: el cliente que desiste lo llama a él. Lo
+  // que lo limita no es la capacidad sino el alcance —`canManageAllPendings`,
+  // que no tiene—, y el service rechaza cualquier pendiente ajeno.
+  it("canCancelPendings: la tiene el vendedor, pero solo sobre lo suyo", () => {
     expect(can("SUPERADMIN", "canCancelPendings")).toBe(true);
     expect(can("ADMIN", "canCancelPendings")).toBe(true);
     expect(can("SUPERVISOR", "canCancelPendings")).toBe(true);
-    expect(can("OPERADOR", "canCancelPendings")).toBe(false);
+    expect(can("OPERADOR", "canCancelPendings")).toBe(true);
+    expect(can("OPERADOR", "canManageAllPendings")).toBe(false);
+    expect(can("BODEGA", "canCancelPendings")).toBe(false);
   });
 
   it("SUPERVISOR tiene capabilities operativas y puede confirmar faltantes", () => {
@@ -328,11 +333,12 @@ describe("rolesWithCapability", () => {
     expect(rolesWithCapability("canDeliverPendings")).toEqual(["SUPERADMIN", "ADMIN", "SUPERVISOR", "OPERADOR"]);
   });
 
-  it("canCancelPendings excluye a OPERADOR (cancelar necesita firma superior)", () => {
+  it("canCancelPendings llega al vendedor; BODEGA queda afuera", () => {
     expect(rolesWithCapability("canCancelPendings")).toEqual([
       "SUPERADMIN",
       "ADMIN",
       "SUPERVISOR",
+      "OPERADOR",
     ]);
   });
 

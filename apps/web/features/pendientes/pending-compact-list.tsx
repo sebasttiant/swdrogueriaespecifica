@@ -17,6 +17,7 @@ import { canSetManagementStatus } from "./management-status";
 import { PendingManagementStatusForm } from "./pending-management-status-form";
 import { PendingCustomerLifecycleForm } from "./pending-customer-lifecycle-form";
 import { PendingDeliverForm } from "./pending-deliver-form";
+import { PendingCancelForm } from "./pending-cancel-form";
 
 // --------------------------------------------------------------------------
 // Vista LISTADO de pendientes — la que pidió el gerente en la reunión del
@@ -49,6 +50,7 @@ type PendingCompactListProps = {
   pageHref: (cursor: string) => string;
   canDeliver?: boolean;
   canContactOrInvoice?: boolean;
+  canCancel?: boolean;
 };
 
 // Urgencia como texto + color, nunca solo color: la mitad de las decisiones se
@@ -75,28 +77,41 @@ function isTerminal(item: PendingListItem): boolean {
   );
 }
 
-function managementLabel(item: PendingListItem): string {
-  if (item.customerStatus === "ENTREGADO" || item.status === "ENTREGADO") return "Entregado";
-  if (item.customerStatus === "CANCELADO" || item.status === "CANCELADO") return "Cancelado";
-  if (item.status === "PARCIAL") return "Entrega parcial";
+// El estado que le importa al negocio, con las palabras de la reunión:
+// Pendiente → Facturado → Entregado o Cancelado.
+//
+// Lo que gerencia anota sobre la COMPRA (solicitado, en búsqueda, cotizando,
+// agotado) es otro eje y viaja aparte, en `purchaseNote`: es información para
+// el vendedor mientras su pendiente sigue pendiente, no el estado del pedido.
+function lifecycleLabel(item: PendingListItem): { label: string; tone: "neutral" | "primary" | "success" | "danger" } {
+  if (item.customerStatus === "ENTREGADO" || item.status === "ENTREGADO") {
+    return { label: "Entregado", tone: "success" };
+  }
+  if (item.customerStatus === "CANCELADO" || item.status === "CANCELADO") {
+    return { label: "Cancelado", tone: "danger" };
+  }
+  if (item.status === "PARCIAL") return { label: "Entrega parcial", tone: "primary" };
+  if (item.customerStatus === "FACTURADO") return { label: "Facturado", tone: "primary" };
+  return { label: "Pendiente", tone: "neutral" };
+}
+
+// La gestión de compras, cuando la hay. Se muestra DEBAJO del estado y solo
+// mientras el pendiente sigue abierto: una vez facturado o entregado, saber que
+// alguna vez estuvo "en búsqueda" ya no cambia ninguna decisión.
+function purchaseNote(item: PendingListItem): string | null {
+  if (isTerminal(item) || item.customerStatus === "FACTURADO") return null;
   const purchaseStatus = item.purchaseStatus ?? "POR_PEDIR";
-  return isManagementStatus(purchaseStatus)
-    ? MANAGEMENT_STATUS_LABELS[purchaseStatus]
-    : "Por pedir";
+  return isManagementStatus(purchaseStatus) ? MANAGEMENT_STATUS_LABELS[purchaseStatus] : null;
 }
 
 // Cuánto de este pendiente ya está en bodega y todavía no se facturó, y cuánto
 // se facturó y todavía no se entregó. Son las dos cifras que definen qué puede
 // hacer el vendedor ahora mismo; el resto de la fila es contexto.
 function outstanding(item: PendingListItem): { toInvoice: number; toDeliver: number } {
-  const ready = item.inventoryReadyQuantity ?? 0;
   const invoiced = item.invoicedQuantity ?? 0;
   return {
-    toInvoice: Math.max(ready - invoiced, 0),
-    toDeliver: Math.max(
-      Math.min(invoiced, ready, item.quantity) - item.deliveredQuantity,
-      0,
-    ),
+    toInvoice: Math.max(item.quantity - invoiced, 0),
+    toDeliver: Math.max(Math.min(invoiced, item.quantity) - item.deliveredQuantity, 0),
   };
 }
 
@@ -108,24 +123,69 @@ function fulfillmentNotice(
   item: PendingListItem,
 ): { label: string; tone: "success" | "primary" } | null {
   if (isTerminal(item)) return null;
-  const { toInvoice, toDeliver } = outstanding(item);
-  if (toInvoice > 0) {
+  const available = item.inventoryReadyQuantity ?? 0;
+  if (item.customerStatus !== "FACTURADO" && available > 0) {
     return {
       label:
-        toInvoice < item.quantity
-          ? `Disponible para facturar: ${toInvoice} de ${item.quantity}`
-          : "Disponible para facturar",
+        available < item.quantity
+          ? `Ya llegó: ${available} de ${item.quantity}`
+          : "Ya llegó · podés facturar",
       tone: "success",
     };
   }
-  if (toDeliver > 0) return { label: "Facturado · listo para entregar", tone: "primary" };
+  if (outstanding(item).toDeliver > 0) {
+    return { label: "Facturado · listo para entregar", tone: "primary" };
+  }
   return null;
 }
 
-// El panel comercial solo aparece cuando hay una decisión real que tomar:
-// o ya se contactó al cliente, o acaba de llegar mercancía para facturarle.
+// Las acciones del DUEÑO del pendiente, en el orden en que ocurren:
+// facturar, entregar, y cancelar como salida. Se arma una sola vez y se usa en
+// las dos vistas para que móvil y escritorio no puedan divergir — que fue
+// exactamente el bug que dejó al vendedor sin acciones en el computador.
+type CustomerActionsContext = {
+  canContactOrInvoice: boolean;
+  canDeliver: boolean;
+  canCancel: boolean;
+};
+
+function customerActions(item: PendingListItem, ctx: CustomerActionsContext) {
+  if (isTerminal(item)) return null;
+
+  const invoice =
+    ctx.canContactOrInvoice && showsCustomerActions(item) ? (
+      <PendingCustomerLifecycleForm
+        key="invoice"
+        pendingId={item.id}
+        customerStatus={item.customerStatus}
+        quantity={item.quantity}
+        invoicedQuantity={item.invoicedQuantity ?? 0}
+      />
+    ) : null;
+
+  const deliver =
+    ctx.canDeliver && outstanding(item).toDeliver > 0 ? (
+      <PendingDeliverForm
+        key="deliver"
+        pendingId={item.id}
+        remaining={outstanding(item).toDeliver}
+      />
+    ) : null;
+
+  const cancel = ctx.canCancel ? <PendingCancelForm key="cancel" pendingId={item.id} /> : null;
+
+  if (!invoice && !deliver && !cancel) return null;
+  return [invoice, deliver, cancel];
+}
+
+// El vendedor puede actuar sobre su pendiente mientras no esté cerrado.
+//
+// Antes esto exigía que el sistema YA hubiera visto llegar la mercancía, y el
+// resultado era una fila sin una sola acción: el vendedor miraba su propio
+// pedido sin poder hacer nada con él. Quien factura es la persona; el software
+// se entera después.
 function showsCustomerActions(item: PendingListItem): boolean {
-  return item.customerStatus !== "POR_CONTACTAR" || outstanding(item).toInvoice > 0;
+  return !isTerminal(item);
 }
 
 // El control de gestión se ofrece SIEMPRE que el estado lo admita, no solo
@@ -145,6 +205,7 @@ export function PendingCompactList({
   pageHref,
   canDeliver = false,
   canContactOrInvoice = false,
+  canCancel = false,
 }: PendingCompactListProps) {
   if (items.length === 0) {
     return (
@@ -169,6 +230,13 @@ export function PendingCompactList({
             computeDeadlineStatus(pending.promisedAt, pending.status, now)
           ];
           const notice = fulfillmentNotice(pending);
+          const lifecycle = lifecycleLabel(pending);
+          const purchase = purchaseNote(pending);
+          const actions = customerActions(pending, {
+            canContactOrInvoice,
+            canDeliver,
+            canCancel,
+          });
           return (
             <Card key={pending.id} className="space-y-2 p-3">
               <div className="flex items-start justify-between gap-3">
@@ -193,10 +261,13 @@ export function PendingCompactList({
                 </div>
               </div>
 
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-medium text-muted-foreground">
-                  {managementLabel(pending)}
-                </span>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone={lifecycle.tone}>{lifecycle.label}</Badge>
+                  {purchase ? (
+                    <span className="text-xs text-muted-foreground">{purchase}</span>
+                  ) : null}
+                </div>
                 {canOrder && canManage(pending) ? (
                   <PendingManagementStatusForm
                     pendingId={pending.id}
@@ -210,22 +281,9 @@ export function PendingCompactList({
                   {notice.label}
                 </Badge>
               ) : null}
-              {canContactOrInvoice || canDeliver ? (
+              {actions ? (
                 <div className="flex flex-wrap gap-2 border-t border-border pt-2">
-                  {canContactOrInvoice && showsCustomerActions(pending) ? (
-                    <PendingCustomerLifecycleForm
-                      pendingId={pending.id}
-                      customerStatus={pending.customerStatus}
-                      availableQuantity={pending.inventoryReadyQuantity ?? 0}
-                      invoicedQuantity={pending.invoicedQuantity ?? 0}
-                    />
-                  ) : null}
-                  {canDeliver && pending.customerStatus === "FACTURADO" ? (
-                    <PendingDeliverForm
-                      pendingId={pending.id}
-                      remaining={outstanding(pending).toDeliver}
-                    />
-                  ) : null}
+                  {actions}
                 </div>
               ) : null}
             </Card>
@@ -243,7 +301,7 @@ export function PendingCompactList({
               <th className="px-3 py-2 font-medium">Vendedor</th>
               <th className="px-3 py-2 font-medium">Para</th>
               <th className="px-3 py-2 font-medium">Estado</th>
-              {canOrder || canContactOrInvoice || canDeliver ? (
+              {canOrder || canContactOrInvoice || canDeliver || canCancel ? (
                 <th className="px-3 py-2 text-right font-medium">Acción</th>
               ) : null}
             </tr>
@@ -254,6 +312,13 @@ export function PendingCompactList({
                 computeDeadlineStatus(pending.promisedAt, pending.status, now)
               ];
               const notice = fulfillmentNotice(pending);
+              const lifecycle = lifecycleLabel(pending);
+              const purchase = purchaseNote(pending);
+              const actions = customerActions(pending, {
+                canContactOrInvoice,
+                canDeliver,
+                canCancel,
+              });
               return (
                 <tr key={pending.id} className="border-b border-border last:border-0">
                   <td className="px-3 py-2 font-medium text-text">
@@ -270,13 +335,14 @@ export function PendingCompactList({
                   </td>
                   <td className="px-3 py-2">
                     <div className="flex flex-col items-start gap-1">
-                      <Badge tone={isManagementStatus(pending.purchaseStatus ?? "POR_PEDIR") ? "primary" : "neutral"}>
-                        {managementLabel(pending)}
-                      </Badge>
+                      <Badge tone={lifecycle.tone}>{lifecycle.label}</Badge>
+                      {purchase ? (
+                        <span className="text-xs text-muted-foreground">{purchase}</span>
+                      ) : null}
                       {notice ? <Badge tone={notice.tone}>{notice.label}</Badge> : null}
                     </div>
                   </td>
-                  {canOrder || canContactOrInvoice || canDeliver ? (
+                  {canOrder || canContactOrInvoice || canDeliver || canCancel ? (
                     <td className="px-3 py-2">
                       <div className="flex flex-wrap justify-end gap-2">
                         {/* `canOrder` es autoridad de COMPRAS. Sin este chequeo
@@ -290,20 +356,7 @@ export function PendingCompactList({
                             hideCurrentLabel
                           />
                         ) : null}
-                        {canContactOrInvoice && showsCustomerActions(pending) ? (
-                          <PendingCustomerLifecycleForm
-                            pendingId={pending.id}
-                            customerStatus={pending.customerStatus}
-                            availableQuantity={pending.inventoryReadyQuantity ?? 0}
-                            invoicedQuantity={pending.invoicedQuantity ?? 0}
-                          />
-                        ) : null}
-                        {canDeliver && pending.customerStatus === "FACTURADO" ? (
-                          <PendingDeliverForm
-                            pendingId={pending.id}
-                            remaining={outstanding(pending).toDeliver}
-                          />
-                        ) : null}
+                        {actions}
                       </div>
                     </td>
                   ) : null}

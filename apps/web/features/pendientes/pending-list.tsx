@@ -214,11 +214,32 @@ export function PendingList({
                     currentStatus={pending.purchaseStatus ?? pending.status}
                   />
                  ) : null}
-                {canContactOrInvoice && (pending.customerStatus !== "POR_CONTACTAR" || (pending.inventoryReadyQuantity ?? 0) > 0) ? <PendingCustomerLifecycleForm pendingId={pending.id} customerStatus={pending.customerStatus} availableQuantity={pending.inventoryReadyQuantity ?? 0} invoicedQuantity={pending.invoicedQuantity ?? 0} /> : null}
+                {/* Facturar: mismo criterio que el listado. No se le exige al
+                    vendedor esperar a que el sistema vea llegar la mercancía. */}
+                {canContactOrInvoice ? (
+                  <PendingCustomerLifecycleForm
+                    pendingId={pending.id}
+                    customerStatus={pending.customerStatus}
+                    quantity={pending.quantity}
+                    invoicedQuantity={pending.invoicedQuantity ?? 0}
+                  />
+                ) : null}
                 {showDeliverCancel ? (
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     {canDeliverNow ? (
-                      <PendingDeliverForm pendingId={pending.id} remaining={pending.invoicedQuantity === undefined || pending.inventoryReadyQuantity === undefined ? remaining : Math.min(remaining, Math.max(pending.invoicedQuantity - pending.deliveredQuantity, 0), Math.max(pending.inventoryReadyQuantity - pending.deliveredQuantity, 0))} />
+                      <PendingDeliverForm
+                        pendingId={pending.id}
+                        // Se entrega lo facturado y no entregado; el techo sigue
+                        // siendo lo que el cliente pidió.
+                        remaining={
+                          pending.invoicedQuantity === undefined
+                            ? remaining
+                            : Math.min(
+                                remaining,
+                                Math.max(pending.invoicedQuantity - pending.deliveredQuantity, 0),
+                              )
+                        }
+                      />
                     ) : null}
                     {canCancel ? <PendingCancelForm pendingId={pending.id} /> : null}
                   </div>

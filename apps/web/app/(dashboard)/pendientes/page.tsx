@@ -108,11 +108,23 @@ export default async function PendientesPage({
         </Link>
       </nav>
 
-      {/* Detalle vs Listado. "Detalle" es la vista del vendedor —cliente,
-          teléfono, dirección, abonos—; "Listado" es la de compras, con lo
-          mínimo para decidir qué conseguir. El gerente pidió explícitamente
-          esta segunda: "que lo muestre en listado... un listadito". */}
+      {/* Listado PRIMERO: es la vista con la que se trabaja —producto,
+          cantidad, vendedor, estado y la acción— y por eso va antes. "Detalle"
+          queda segundo, para cuando hace falta el cliente, el teléfono, la
+          dirección o los abonos. */}
       <nav aria-label="Formato de la lista" className="flex gap-2 text-sm font-semibold">
+        <Link
+          href={scope === "history" ? "/pendientes?scope=history" : "/pendientes"}
+          aria-current={view === "lista" ? "page" : undefined}
+          className={cn(
+            "inline-flex min-h-11 items-center rounded-lg px-4 transition-colors",
+            view === "lista"
+              ? "bg-primary text-primary-foreground"
+              : "bg-muted/60 text-muted-foreground hover:bg-muted",
+          )}
+        >
+          Listado
+        </Link>
         <Link
           href={
             scope === "history"
@@ -129,18 +141,6 @@ export default async function PendientesPage({
         >
           Detalle
         </Link>
-        <Link
-          href={scope === "history" ? "/pendientes?scope=history" : "/pendientes"}
-          aria-current={view === "lista" ? "page" : undefined}
-          className={cn(
-            "inline-flex min-h-11 items-center rounded-lg px-4 transition-colors",
-            view === "lista"
-              ? "bg-primary text-primary-foreground"
-              : "bg-muted/60 text-muted-foreground hover:bg-muted",
-          )}
-        >
-          Listado
-        </Link>
       </nav>
 
       {view === "lista" ? (
@@ -149,6 +149,7 @@ export default async function PendientesPage({
           canOrder={canManageStatus}
           canDeliver={canDeliver}
           canContactOrInvoice={canContactOrInvoice}
+          canCancel={canCancel}
           nextCursor={pendings.nextCursor}
           pageHref={(nextCursor) =>
             `/pendientes?cursor=${encodeURIComponent(nextCursor)}&view=lista${

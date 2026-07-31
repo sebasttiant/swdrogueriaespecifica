@@ -57,6 +57,17 @@ export default async function FaltantesPage({
 	// Descargar la cola a un archivo: solo gerencia. El vendedor ve la cola pero
 	// no se la lleva.
 	const canExportFaltantes = can(session.user.role, "canExportFaltantes");
+	// --------------------------------------------------------------------------
+	// La COLA de faltantes —pestañas por estado, listado completo, casillas de
+	// descarte— es la mesa de trabajo de gerencia, no del vendedor.
+	//
+	// El vendedor reporta y se va: "yo tengo un faltante, lo coloco, coloco mi
+	// nombre y ya dejo que Andrés y don Guillermo hagan lo que quieran con eso".
+	// Mostrarle "Por pedir" y "Descartados" le pedía opinar sobre decisiones que
+	// no toma. Él ve SUS reportes y en qué estado quedaron, y nada más.
+	// --------------------------------------------------------------------------
+	const canSeeMissingQueue =
+		canOrderMissingItems || can(session.user.role, "canConfirmMissingItems");
 
   // Un único instante compartido por el resumen global y el agrupamiento de
   // la página actual, para que ambos hablen del mismo "ahora".
@@ -119,6 +130,7 @@ export default async function FaltantesPage({
           muestra SOLO lo que falta por pedir, y lo resuelto se consulta acá al
           lado sin haberse borrado. Altura de dedo (44px) porque se usan desde
           el celular. */}
+      {canSeeMissingQueue ? (
       <nav
         aria-label="Estado de los faltantes"
         className="flex flex-wrap gap-2 text-sm font-semibold print:hidden"
@@ -144,9 +156,11 @@ export default async function FaltantesPage({
           </Link>
         ))}
       </nav>
+      ) : null}
 
       {/* Toggle de vista (completa/compacta) + export. Se ocultan al imprimir:
           el PDF es la lista, no los controles. */}
+      {canSeeMissingQueue ? (
       <div className="flex flex-col gap-3 print:hidden sm:flex-row sm:items-center sm:justify-between">
         <nav aria-label="Vista de faltantes" className="flex gap-2 text-sm font-semibold">
           <Link
@@ -179,6 +193,7 @@ export default async function FaltantesPage({
             revalida la capacidad igual: esto solo evita ofrecer el botón. */}
         {canExportFaltantes ? <MissingExportActions /> : null}
       </div>
+      ) : null}
 
       {/* Cierre rápido de duplicados: solo la autoridad de compras. El vendedor
           no ve ni las casillas. Se ofrecen únicamente los faltantes que la
@@ -197,26 +212,28 @@ export default async function FaltantesPage({
         />
       ) : null}
 
-      {view === "compact" ? (
-        <MissingListCompact
-          items={items}
-          canAct={canOrderMissingItems}
-          emptyTitle={MISSING_SCOPE_EMPTY[scope].title}
-          emptyDescription={MISSING_SCOPE_EMPTY[scope].description}
-          nextCursor={nextCursor}
-          pageHref={(next) => missingPageHref(scope, view, next)}
-        />
-      ) : (
-        <MissingList
-          items={items}
-          nextCursor={nextCursor}
-          pageHref={(next) => missingPageHref(scope, view, next)}
-          canQuickAct={canOrderMissingItems}
-          canSeeStatus={canOrderMissingItems}
-          canSeeSupplier={canViewSupplierIdentity}
-          now={now}
-        />
-      )}
+      {canSeeMissingQueue ? (
+        view === "compact" ? (
+          <MissingListCompact
+            items={items}
+            canAct={canOrderMissingItems}
+            emptyTitle={MISSING_SCOPE_EMPTY[scope].title}
+            emptyDescription={MISSING_SCOPE_EMPTY[scope].description}
+            nextCursor={nextCursor}
+            pageHref={(next) => missingPageHref(scope, view, next)}
+          />
+        ) : (
+          <MissingList
+            items={items}
+            nextCursor={nextCursor}
+            pageHref={(next) => missingPageHref(scope, view, next)}
+            canQuickAct={canOrderMissingItems}
+            canSeeStatus={canOrderMissingItems}
+            canSeeSupplier={canViewSupplierIdentity}
+            now={now}
+          />
+        )
+      ) : null}
     </div>
   );
 }
