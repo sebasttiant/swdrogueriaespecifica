@@ -12,6 +12,7 @@ import {
 import {
   cancelPendingCommitment,
   resolvePartialPending,
+  updatePending,
   deliverPending,
   contactPending,
   invoicePending,
@@ -25,6 +26,7 @@ import {
   pendingCreateSchema,
   pendingDeliverSchema,
   pendingManagementStatusSchema,
+  pendingUpdateSchema,
 } from "@/features/pendientes/schema";
 
 // --------------------------------------------------------------------------
@@ -627,5 +629,108 @@ export async function resolvePartialPendingAction(
     { partialDecision: decision },
   );
   revalidatePendingViews("Decisión sobre la entrega parcial");
+  return { error: null, ok: true };
+}
+
+const UPDATE_REJECTION_MESSAGES = {
+  NOT_OWNER: "Solo podés corregir un pendiente que hayas creado vos.",
+  ALREADY_EDITED: "Ya corregiste este pendiente. Pedile el cambio a gerencia.",
+  ALREADY_CLOSED: "Este pendiente ya está cerrado y no se puede corregir.",
+  BELOW_COMMITTED: "La cantidad no puede ser menor a lo ya facturado o entregado.",
+} as const;
+
+/**
+ * Corrige los datos de un pendiente.
+ *
+ * Gerencia puede sobre cualquiera y sin límite; el vendedor solo sobre el suyo
+ * y una sola vez. La autoridad real la decide el service: acá solo se le pasa
+ * si quien pide tiene alcance global.
+ *
+ * La auditoría guarda el ANTES y el DESPUÉS. Es una corrección de la promesa
+ * hecha a un cliente: sin el estado previo no hay forma de reconstruir qué se
+ * le había prometido originalmente.
+ */
+export async function updatePendingAction(
+  _prev: PendingFormState,
+  formData: FormData,
+): Promise<PendingFormState> {
+  const session = await requireCapability("canCreatePendientes");
+
+  const parsed = pendingUpdateSchema.safeParse({
+    id: formData.get("id"),
+    productId: formData.get("productId"),
+    quantity: formData.get("quantity"),
+    promisedAt: formData.get("promisedAt") ?? undefined,
+    customerName: formData.get("customerName") ?? undefined,
+    customerPhone: formData.get("customerPhone") ?? undefined,
+    customerAddress: formData.get("customerAddress") ?? undefined,
+    note: formData.get("note") ?? undefined,
+    zone: formData.get("zone") ?? undefined,
+    totalAmount: formData.get("totalAmount") ?? undefined,
+    paidAmount: formData.get("paidAmount") ?? undefined,
+  });
+
+  if (!parsed.success) {
+    return { error: "Revisá los datos del pendiente.", ok: false };
+  }
+
+  let result: Awaited<ReturnType<typeof updatePending>>;
+  try {
+    result = await updatePending({
+      ...parsed.data,
+      actorId: session.user.id,
+      canManageAll: can(session.user.role, "canManageAllPendings"),
+    });
+  } catch (error) {
+    console.error("[pendientes] No se pudo corregir el pendiente:", error);
+    return { error: "No se pudo guardar la corrección. Intentá de nuevo.", ok: false };
+  }
+
+  if (result.rejection) {
+    await recordPendingLifecycleAudit(
+      AUDIT_ACTIONS.PENDING_UPDATE,
+      parsed.data.id,
+      session.user.id,
+      { reason: result.rejection },
+      "FAILURE",
+    );
+    return { error: UPDATE_REJECTION_MESSAGES[result.rejection], ok: false };
+  }
+
+  const before = result.before;
+  await recordPendingLifecycleAudit(
+    AUDIT_ACTIONS.PENDING_UPDATE,
+    parsed.data.id,
+    session.user.id,
+    {
+      before: before
+        ? {
+            productId: before.productId,
+            quantity: before.quantity,
+            promisedAt: before.promisedAt.toISOString(),
+            customerName: before.customerName,
+            customerPhone: before.customerPhone,
+            customerAddress: before.customerAddress,
+            zone: before.zone,
+            totalAmount: before.totalAmount,
+            paidAmount: before.paidAmount,
+            note: before.note,
+          }
+        : null,
+      after: {
+        productId: parsed.data.productId,
+        quantity: parsed.data.quantity,
+        promisedAt: parsed.data.promisedAt.toISOString(),
+        customerName: parsed.data.customerName,
+        customerPhone: parsed.data.customerPhone,
+        customerAddress: parsed.data.customerAddress ?? null,
+        zone: parsed.data.zone ?? null,
+        totalAmount: parsed.data.totalAmount ?? null,
+        paidAmount: parsed.data.paidAmount ?? 0,
+        note: parsed.data.note ?? null,
+      },
+    },
+  );
+  revalidatePendingViews("Corrección del pendiente");
   return { error: null, ok: true };
 }

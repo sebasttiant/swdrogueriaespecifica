@@ -283,6 +283,11 @@ model Pending {
   invoicedAt DateTime?
   invoicedBy User? @relation("PendingInvoicedBy", fields: [invoicedById], references: [id])
   invoicedById String?
+  // Cuándo el VENDEDOR corrigió su propio pendiente. Puede hacerlo una sola vez:
+  // equivocarse al cargar pasa, corregir en bucle es reescribir la historia de
+  // un compromiso con un cliente. Gerencia no tiene ese límite.
+  // Null = todavía no lo corrigió. Las ediciones de gerencia NO lo tocan.
+  sellerEditedAt DateTime?
   // Promesa de entrega al cliente: cuándo le respondemos. Obligatoria: en
   // droguería el pendiente es operativo y necesita una fecha/hora comprometida.
   promisedAt   DateTime

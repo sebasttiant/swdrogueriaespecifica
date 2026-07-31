@@ -223,3 +223,75 @@ export const pendingManagementStatusSchema = z.object({
 export type PendingManagementStatusInput = z.infer<
   typeof pendingManagementStatusSchema
 >;
+
+// --------------------------------------------------------------------------
+// Edición de un pendiente por parte de quien administra.
+//
+// Es la potestad de gerencia sobre cualquier pendiente: corregir lo que el
+// vendedor cargó mal, cambiar la promesa que se renegoció con el cliente, o
+// ajustar el producto cuando se pidió el que no era.
+//
+// A diferencia del alta, acá el producto SIEMPRE es del catálogo: crear uno al
+// vuelo es parte de registrar, no de corregir. Si hace falta uno nuevo, se carga
+// al catálogo y se elige.
+// --------------------------------------------------------------------------
+export const pendingUpdateSchema = z
+  .object({
+    id: z.string().trim().min(1, "Falta el id del pendiente"),
+    productId: z.string().trim().min(1, { error: "Elegí un producto." }),
+    quantity: z.coerce
+      .number()
+      .int("La cantidad debe ser un número entero")
+      .min(1, "La cantidad debe ser al menos 1"),
+    promisedAt: z
+      .string({ error: "Indicá la fecha y hora prometida" })
+      .transform((value, ctx) => {
+        const parsed = parseBogotaWallTime(value);
+        if (parsed === null) {
+          ctx.addIssue({ code: "custom", message: "Indicá una fecha y hora válida" });
+          return z.NEVER;
+        }
+        return parsed;
+      }),
+    customerName: z
+      .string({ error: "Escribí el nombre del cliente." })
+      .trim()
+      .min(1, { error: "Escribí el nombre del cliente." })
+      .max(120, { error: "El nombre del cliente es demasiado largo." }),
+    customerPhone: z
+      .string({ error: "Escribí el teléfono del cliente." })
+      .trim()
+      .min(1, { error: "Escribí el teléfono del cliente." })
+      .max(MAX_PHONE_INPUT_LENGTH, { error: "El teléfono no es válido." })
+      .transform((value, ctx) => {
+        const normalized = normalizePhone(value);
+        if (normalized === null) {
+          ctx.addIssue({
+            code: "custom",
+            message: "El teléfono no es válido. Ej: 300 123 4567",
+          });
+          return z.NEVER;
+        }
+        return normalized;
+      }),
+    customerAddress: optionalText(200),
+    note: optionalText(280),
+    zone: optionalText(MAX_ZONE_LENGTH),
+    totalAmount: optionalAmount,
+    paidAmount: optionalAmount,
+  })
+  .superRefine((data, ctx) => {
+    if (
+      data.totalAmount !== undefined &&
+      data.paidAmount !== undefined &&
+      data.paidAmount > data.totalAmount
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["paidAmount"],
+        message: "El abono no puede superar el valor total.",
+      });
+    }
+  });
+
+export type PendingUpdateInput = z.infer<typeof pendingUpdateSchema>;
