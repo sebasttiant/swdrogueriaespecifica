@@ -6,7 +6,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // escrituras viven en UNA sola transacción y que el error no se traga.
 const { prismaMock, tx } = vi.hoisted(() => {
   const tx = {
-    pending: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
+    pending: {
+      aggregate: vi.fn(),
+      create: vi.fn(),
+      findUnique: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn(),
+    },
     pendingDelivery: { create: vi.fn() },
     missingItem: { create: vi.fn(), updateMany: vi.fn() },
     pendingInventoryReservation: { findMany: vi.fn(), upsert: vi.fn(), deleteMany: vi.fn(), delete: vi.fn(), update: vi.fn() },
@@ -77,8 +83,15 @@ const baseInput = {
   createdById: "user_1",
 };
 
-function mockStock(quantity: number) {
-  tx.$queryRaw.mockResolvedValue(quantity > 0 ? [{ id: "batch-1", quantity }] : []);
+// Stock FÍSICO en estantería, y cuánto de ese stock ya está comprometido con
+// otros pendientes abiertos. La disponibilidad de un pendiente nuevo sale de la
+// resta: se LEE el lote, nunca se lo modifica.
+function mockStock(quantity: number, committedToOtherPendings = 0) {
+  tx.$queryRaw.mockResolvedValue([]);
+  tx.productBatch.aggregate.mockResolvedValue({ _sum: { quantity } });
+  tx.pending.aggregate.mockResolvedValue({
+    _sum: { inventoryReadyQuantity: committedToOtherPendings },
+  });
 }
 
 // Typed fixture for `listPendings`/`listUrgentPendings` rows — mirrors
@@ -110,6 +123,10 @@ beforeEach(() => {
   prismaMock.$transaction.mockImplementation(
     (fn: (client: typeof tx) => unknown) => fn(tx),
   );
+  // Prisma devuelve un arreglo vacío, nunca undefined. Sin este default el
+  // mock obligaba al código de producción a defenderse de un caso que la base
+  // no produce.
+  tx.pendingInventoryReservation.findMany.mockResolvedValue([]);
 });
 
 describe("registerPending", () => {
@@ -124,8 +141,31 @@ describe("registerPending", () => {
     expect(result.missingItem).toBeNull();
     expect(tx.missingItem.create).not.toHaveBeenCalled();
     expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
-    expect(tx.productBatch.update).toHaveBeenCalledWith({ where: { id: "batch-1" }, data: { quantity: { decrement: 5 } } });
-    expect(tx.pending.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ inventoryReadyQuantity: 5, reservedInventoryQuantity: 5 }) }));
+    // Registrar el pedido de un cliente NO puede mover el conteo físico del
+    // lote: el inventario de la droguería solo baja cuando hay una venta.
+    expect(tx.productBatch.update).not.toHaveBeenCalled();
+    expect(tx.pending.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          inventoryReadyQuantity: 5,
+          reservedInventoryQuantity: 5,
+        }),
+      }),
+    );
+  });
+
+  it("no promete dos veces las mismas unidades a dos clientes", async () => {
+    tx.pending.create.mockResolvedValue({ id: "pend_b" });
+    tx.missingItem.create.mockResolvedValue({ id: "miss_b", quantity: 4 });
+    // 5 en estantería, 4 ya comprometidas con otro pendiente abierto: a este
+    // pedido de 5 solo le queda 1, y los otros 4 hay que comprarlos.
+    mockStock(5, 4);
+
+    const result = await registerPending(baseInput);
+
+    expect(result.sellableStock).toBe(1);
+    expect(result.missingQuantity).toBe(4);
+    expect(tx.productBatch.update).not.toHaveBeenCalled();
   });
 
   it("con stock insuficiente: crea el pendiente y un faltante por el déficit", async () => {
@@ -456,7 +496,7 @@ describe("cancelPendingCommitment", () => {
     });
   });
 
-  it("releases each unconsumed lot and cancels the linked open MissingItem", async () => {
+  it("libera el compromiso y cancela el faltante, sin inventar stock", async () => {
     mockLockedPending(pendingForDelivery({ status: "PARCIAL", deliveredQuantity: 4 }));
     mockCasWrote(1);
     tx.pendingInventoryReservation.findMany.mockResolvedValue([
@@ -466,12 +506,10 @@ describe("cancelPendingCommitment", () => {
 
     await cancelPendingCommitment({ id: "pend-1", cancelledById: "sup-1", canManageAll: true }, now);
 
-    expect(tx.productBatch.update).toHaveBeenNthCalledWith(1, {
-      where: { id: "batch-a" }, data: { quantity: { increment: 2 } },
-    });
-    expect(tx.productBatch.update).toHaveBeenNthCalledWith(2, {
-      where: { id: "batch-b" }, data: { quantity: { increment: 4 } },
-    });
+    // Cancelar libera unidades que quedan disponibles para otro cliente, pero
+    // esas unidades nunca salieron del lote: sumarlas de vuelta inventaría
+    // mercancía que jamás estuvo en la estantería.
+    expect(tx.productBatch.update).not.toHaveBeenCalled();
     expect(tx.pendingInventoryReservation.deleteMany).toHaveBeenCalledWith({ where: { pendingId: "pend-1" } });
     expect(tx.missingItem.updateMany).toHaveBeenCalledWith({
       where: { originId: "pend-1", status: { in: ["FALTANTE", "PEDIDO", "EN_BODEGA"] } },

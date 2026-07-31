@@ -35,9 +35,9 @@ import {
 import { createProduct } from "@/server/repositories/product.repository";
 import { createMissingItem } from "@/server/repositories/missing-item.repository";
 import {
+  claimableStockForPending,
   consumePendingReservations,
   releasePendingReservations,
-  reserveSellableStockForPending,
 } from "@/server/repositories/product-batch.repository";
 import { prisma } from "@/lib/db/prisma";
 import type { Paginated } from "@/lib/pagination";
@@ -224,8 +224,8 @@ export async function registerPending(
     }
     if (!productId) throw new Error("registerPending: producto no resuelto");
 
-    // The Pending must exist before reservations can reference it. Create it
-    // first with zero availability, then reserve lots under the same transaction.
+    // El pendiente se crea primero; recién después se calcula qué parte de lo
+    // pedido ya está en la droguería. Ese cálculo NO mueve el stock físico.
     const pending = await createPending(
       {
         productId, quantity: data.quantity, promisedAt: data.promisedAt,
@@ -235,12 +235,25 @@ export async function registerPending(
         createdById: data.createdById ?? null,
       }, tx,
     );
-    const sellableStock = await reserveSellableStockForPending(tx, productId, data.quantity, new Date(), pending.id);
-    const inventoryReadyQuantity = sellableStock;
-    await tx.pending.update({ where: { id: pending.id }, data: {
-      inventoryReadyQuantity, reservedInventoryQuantity: inventoryReadyQuantity,
-      availabilityStatus: inventoryReadyQuantity === 0 ? "ESPERANDO" : inventoryReadyQuantity === data.quantity ? "DISPONIBLE_COMPLETO" : "DISPONIBLE_PARCIAL",
-    }});
+    const inventoryReadyQuantity = await claimableStockForPending(
+      tx,
+      productId,
+      data.quantity,
+      new Date(),
+    );
+    await tx.pending.update({
+      where: { id: pending.id },
+      data: {
+        inventoryReadyQuantity,
+        reservedInventoryQuantity: inventoryReadyQuantity,
+        availabilityStatus:
+          inventoryReadyQuantity === 0
+            ? "ESPERANDO"
+            : inventoryReadyQuantity === data.quantity
+              ? "DISPONIBLE_COMPLETO"
+              : "DISPONIBLE_PARCIAL",
+      },
+    });
 
     // Lectura dentro de la misma transacción para que el déficit sea coherente.
     const missingQuantity = computeMissingQuantity(data.quantity, inventoryReadyQuantity);
@@ -258,7 +271,13 @@ export async function registerPending(
       );
     }
 
-    return { pending, missingItem, createdProduct, sellableStock, missingQuantity };
+    return {
+      pending,
+      missingItem,
+      createdProduct,
+      sellableStock: inventoryReadyQuantity,
+      missingQuantity,
+    };
   });
 }
 

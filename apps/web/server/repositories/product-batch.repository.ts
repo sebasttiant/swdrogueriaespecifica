@@ -224,41 +224,40 @@ export async function stockByProduct(
 }
 
 /**
- * Reserves sellable stock for a newly-created Pending. Rows are locked in FEFO
- * order before decrementing, so concurrent Pending creation cannot promise the
- * same units twice. The Pending stores the aggregate reservation for traceability.
+ * Units a new Pending can claim, WITHOUT touching physical stock.
+ *
+ * Registering a customer request must never move `product_batches.quantity`:
+ * that column is the physical count of what is on the shelf. Decrementing it
+ * because a customer asked for something made the pharmacy's inventory drift
+ * downwards with no sale behind it.
+ *
+ * What must not happen twice is promising the SAME units to two customers, and
+ * that is solved by reading: the units already committed to other open Pendings
+ * are subtracted from the readable stock. The lot rows are locked — selected,
+ * never written — so two simultaneous registrations of the same product cannot
+ * both claim the same remainder.
  */
-export async function reserveSellableStockForPending(
+export async function claimableStockForPending(
   client: Prisma.TransactionClient,
   productId: string,
   requestedQuantity: number,
   now: Date = new Date(),
-  pendingId?: string,
 ): Promise<number> {
-  const rows = await client.$queryRaw<Array<{ id: string; quantity: number }>>`
-    SELECT id, quantity FROM product_batches
+  await client.$queryRaw`
+    SELECT id FROM product_batches
     WHERE "productId" = ${productId} AND status = 'DISPONIBLE'
       AND quantity > 0 AND "expiresAt" > ${now}
     ORDER BY "expiresAt" ASC, id ASC FOR UPDATE
   `;
-  let remaining = requestedQuantity;
-  for (const row of rows) {
-    if (remaining === 0) break;
-    const reserved = Math.min(row.quantity, remaining);
-    await client.productBatch.update({
-      where: { id: row.id },
-      data: { quantity: { decrement: reserved } },
-    });
-    if (pendingId) {
-      await client.pendingInventoryReservation.upsert({
-        where: { pendingId_batchId: { pendingId, batchId: row.id } },
-        create: { pendingId, batchId: row.id, quantity: reserved },
-        update: { quantity: { increment: reserved } },
-      });
-    }
-    remaining -= reserved;
-  }
-  return requestedQuantity - remaining;
+
+  const physical = await stockByProduct(productId, now, client);
+  const committed = await client.pending.aggregate({
+    where: { productId, status: { notIn: ["ENTREGADO", "CANCELADO"] } },
+    _sum: { inventoryReadyQuantity: true },
+  });
+
+  const free = Math.max(physical - (committed._sum.inventoryReadyQuantity ?? 0), 0);
+  return Math.min(requestedQuantity, free);
 }
 
 export async function reserveBatchForPending(
@@ -274,25 +273,25 @@ export async function reserveBatchForPending(
   });
 }
 
-/** Restores every unconsumed reservation to the physical lot it came from. */
+/**
+ * Frees every unconsumed commitment of a Pending so those units become
+ * claimable again by other customers.
+ *
+ * It clears the ledger and nothing else. Physical lots are deliberately left
+ * untouched: a commitment never decremented them, so incrementing them here
+ * would invent stock that was never on the shelf.
+ */
 export async function releasePendingReservations(
   client: Prisma.TransactionClient,
   pendingId: string,
 ): Promise<number> {
-  const reservations = (await client.pendingInventoryReservation.findMany({
-    where: { pendingId }, orderBy: { createdAt: "asc" },
-  })) ?? [];
+  const reservations = await client.pendingInventoryReservation.findMany({
+    where: { pendingId },
+  });
   if (reservations.length === 0) return 0;
-  let released = 0;
-  for (const reservation of reservations) {
-    await client.productBatch.update({
-      where: { id: reservation.batchId },
-      data: { quantity: { increment: reservation.quantity } },
-    });
-    released += reservation.quantity;
-  }
+
   await client.pendingInventoryReservation.deleteMany({ where: { pendingId } });
-  return released;
+  return reservations.reduce((total, reservation) => total + reservation.quantity, 0);
 }
 
 /** Consumes reserved lots FIFO when the customer receives units. */

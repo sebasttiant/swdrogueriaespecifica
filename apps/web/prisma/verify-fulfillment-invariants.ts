@@ -110,12 +110,21 @@ async function main() {
     where: { productId: product.id },
     _sum: { quantity: true },
   });
-  assert((remaining._sum.quantity ?? 0) === 0, "el lote queda en 0: nada se promete dos veces");
+  assert(
+    (remaining._sum.quantity ?? 0) === 5,
+    `el lote físico NO se toca al registrar pedidos (obtenido: ${remaining._sum.quantity ?? 0})`,
+  );
 
-  const reservations = await prisma.pendingInventoryReservation.aggregate({
-    _sum: { quantity: true },
+  // El compromiso vive en el pendiente, no en el lote: es lo que permite saber
+  // cuánto del stock ya tiene dueño sin alterar el conteo de la estantería.
+  const committed = await prisma.pending.aggregate({
+    where: { productId: product.id, status: { notIn: ["ENTREGADO", "CANCELADO"] } },
+    _sum: { inventoryReadyQuantity: true },
   });
-  assert((reservations._sum.quantity ?? 0) === 5, "las 5 unidades quedan reservadas y trazadas");
+  assert(
+    (committed._sum.inventoryReadyQuantity ?? 0) === 5,
+    `las 5 unidades quedan comprometidas y trazadas (obtenido: ${committed._sum.inventoryReadyQuantity ?? 0})`,
+  );
 
   console.log("\nEscenario: se cancela el pedido B");
   const cancelled = await cancelPendingCommitment({
@@ -131,8 +140,8 @@ async function main() {
     _sum: { quantity: true },
   });
   assert(
-    (afterCancel._sum.quantity ?? 0) === 1,
-    `la unidad reservada por B vuelve al lote (obtenido: ${afterCancel._sum.quantity ?? 0})`,
+    (afterCancel._sum.quantity ?? 0) === 5,
+    `cancelar tampoco inventa stock en el lote (obtenido: ${afterCancel._sum.quantity ?? 0})`,
   );
 
   const ghost = await prisma.missingItem.aggregate({
@@ -190,7 +199,7 @@ async function main() {
     where: { productId: product.id },
     _sum: { quantity: true },
   });
-  assert((leftover._sum.quantity ?? 0) === 0, "el lote no queda en negativo ni sobra stock inventado");
+  assert((leftover._sum.quantity ?? 0) === 5, "el lote sigue intacto bajo concurrencia");
   const concurrentMissing = await prisma.missingItem.aggregate({
     where: { productId: product.id, status: { in: ["FALTANTE", "PEDIDO", "EN_BODEGA"] } },
     _sum: { quantity: true },

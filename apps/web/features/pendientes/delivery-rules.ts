@@ -56,7 +56,11 @@ export function validateDelivery(
 ): DeliveryRejection | null {
   if (input.status === "ENTREGADO") return "ALREADY_DELIVERED";
   if (input.status === "CANCELADO") return "ALREADY_CANCELLED";
-  if (input.customerStatus !== undefined && input.customerStatus !== "FACTURADO") return "NOT_INVOICED";
+  // Facturar antes de entregar. `undefined` es una fila anterior a este eje: no
+  // se le exige una factura que nunca se le pudo registrar.
+  if (input.customerStatus !== undefined && input.customerStatus !== "FACTURADO") {
+    return "NOT_INVOICED";
+  }
 
   if (
     !Number.isInteger(input.deliverQuantity) ||
@@ -65,7 +69,12 @@ export function validateDelivery(
     return "NON_POSITIVE_QUANTITY";
   }
 
-  const remaining = Math.min(remainingQuantity(input.quantity, input.deliveredQuantity), (input.invoicedQuantity ?? input.quantity) - input.deliveredQuantity);
+  // No se entrega más de lo pedido ni más de lo facturado. Con entregas
+  // parciales el techo real es el menor de los dos.
+  const remaining = Math.min(
+    remainingQuantity(input.quantity, input.deliveredQuantity),
+    (input.invoicedQuantity ?? input.quantity) - input.deliveredQuantity,
+  );
   if (input.deliverQuantity > remaining) return "EXCEEDS_REMAINING";
 
   return null;
