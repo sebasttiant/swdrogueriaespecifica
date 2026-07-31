@@ -279,7 +279,11 @@ export function PendingCompactList({
                   {canOrder || canContactOrInvoice || canDeliver ? (
                     <td className="px-3 py-2">
                       <div className="flex flex-wrap justify-end gap-2">
-                        {canManage(pending) ? (
+                        {/* `canOrder` es autoridad de COMPRAS. Sin este chequeo
+                            el vendedor veía "Ya lo pedí" y "Agotado" en la tabla
+                            de escritorio —solo la vista móvil lo filtraba—, y
+                            marcaba decisiones que no son suyas. */}
+                        {canOrder && canManage(pending) ? (
                           <PendingManagementStatusForm
                             pendingId={pending.id}
                             currentStatus={pending.purchaseStatus ?? "POR_PEDIR"}

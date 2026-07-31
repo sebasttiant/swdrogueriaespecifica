@@ -266,3 +266,23 @@ describe("PendingCompactList", () => {
     expect(html).not.toContain("listo para entregar");
   });
 });
+
+// Regresión de producción (2026-07-30): la tabla de escritorio no chequeaba la
+// autoridad de compras, así que el vendedor veía "Ya lo pedí" y "Agotado" —
+// decisiones de gerencia— en la vista que usa desde el computador.
+describe("PendingCompactList · autoridad de compras", () => {
+  it("no ofrece acciones de compras a quien no las tiene, en ninguna vista", () => {
+    const html = render([pending()], false);
+
+    expect(html).not.toContain("Ya lo pedí");
+    expect(html).not.toContain("Agotado");
+    expect(html).not.toContain("En búsqueda");
+    expect(html).not.toContain("Cotizando");
+  });
+
+  it("las ofrece a gerencia en móvil y escritorio", () => {
+    const html = render([pending()], true);
+
+    expect(countOccurrences(html, "Ya lo pedí")).toBe(2);
+  });
+});

@@ -349,3 +349,43 @@ describe("pendingManagementStatusSchema", () => {
     expect(pendingManagementStatusSchema.safeParse({ id: "pend-1" }).success).toBe(false);
   });
 });
+
+// --------------------------------------------------------------------------
+// Regresión de producción (2026-07-30): la pantalla postea el estado de COMPRAS
+// que observó, y ese "todavía sin gestionar" es `POR_PEDIR`. El schema solo
+// aceptaba los valores del enum viejo, así que gerencia recibía "No se pudo
+// identificar el pendiente o el estado" en TODOS los pendientes y no podía
+// marcar ninguno.
+// --------------------------------------------------------------------------
+describe("pendingManagementStatusSchema · estado observado", () => {
+  it("acepta POR_PEDIR como estado observado", () => {
+    const parsed = pendingManagementStatusSchema.safeParse({
+      id: "pend-1",
+      status: "SOLICITADO",
+      expectedStatus: "POR_PEDIR",
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it("sigue aceptando los estados de gestión y el PENDIENTE histórico", () => {
+    for (const expectedStatus of ["PENDIENTE", "SOLICITADO", "BUSQUEDA", "COTIZANDO", "AGOTADO"]) {
+      const parsed = pendingManagementStatusSchema.safeParse({
+        id: "pend-1",
+        status: "AGOTADO",
+        expectedStatus,
+      });
+      expect(parsed.success).toBe(true);
+    }
+  });
+
+  it("rechaza un estado observado que no existe", () => {
+    const parsed = pendingManagementStatusSchema.safeParse({
+      id: "pend-1",
+      status: "SOLICITADO",
+      expectedStatus: "ENTREGADO",
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+});
