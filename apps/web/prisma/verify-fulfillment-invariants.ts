@@ -209,6 +209,75 @@ async function main() {
     `el faltante sigue siendo 3 bajo concurrencia (obtenido: ${concurrentMissing._sum.quantity ?? 0})`,
   );
 
+  console.log("\nEscenario: facturar antes de que la mercancía esté cargada");
+  await prisma.pendingInventoryReservation.deleteMany();
+  await prisma.missingItem.deleteMany();
+  await prisma.pendingDelivery.deleteMany();
+  await prisma.pending.deleteMany();
+  await prisma.productBatch.deleteMany();
+
+  const { invoicePending, deliverPending, resolvePartialPending } = await import(
+    "@/server/services/pending.service"
+  );
+
+  const sinStock = await registerPending({ ...base, quantity: 5, customerName: "Cliente F" });
+  const registrado = await prisma.pending.findUniqueOrThrow({ where: { id: sinStock.pending.id } });
+  assert(registrado.inventoryReadyQuantity === 0, "el pendiente nace sin nada disponible");
+
+  // Este es el caso que fallaba en producción: la restricción exigía
+  // invoicedQuantity <= inventoryReadyQuantity, así que facturar sin stock
+  // cargado reventaba con "No se pudo registrar la factura".
+  assert(
+    (await invoicePending({ id: sinStock.pending.id, actorId: seller.id, quantity: 5 })) === null,
+    "el vendedor factura 5 aunque el sistema todavía no vea llegar nada",
+  );
+
+  assert(
+    (await invoicePending({ id: sinStock.pending.id, actorId: seller.id, quantity: 1 })) ===
+      "NOT_AVAILABLE",
+    "pero no puede facturar más de lo que el cliente pidió",
+  );
+
+  console.log("\nEscenario: llega solo una parte y el cliente decide");
+  assert(
+    (await deliverPending({
+      id: sinStock.pending.id,
+      quantity: 3,
+      deliveredById: seller.id,
+      canManageAll: false,
+    })).rejection === null,
+    "se entregan las 3 unidades que llegaron",
+  );
+  const parcial = await prisma.pending.findUniqueOrThrow({ where: { id: sinStock.pending.id } });
+  assert(parcial.status === "PARCIAL", "el pendiente queda en entrega parcial");
+
+  assert(
+    (await resolvePartialPending({
+      id: sinStock.pending.id,
+      decision: "espera",
+      actorId: seller.id,
+    })) === null,
+    "si el cliente espera, el pendiente sigue abierto",
+  );
+  const esperando = await prisma.pending.findUniqueOrThrow({ where: { id: sinStock.pending.id } });
+  assert(esperando.status === "PARCIAL", "sigue abierto tras registrar que espera");
+  assert(
+    (esperando.note ?? "").includes("Cliente espera los 2"),
+    `queda la nota del vendedor (obtenido: ${esperando.note ?? "sin nota"})`,
+  );
+
+  assert(
+    (await resolvePartialPending({
+      id: sinStock.pending.id,
+      decision: "cerrar",
+      actorId: seller.id,
+    })) === null,
+    "si no los espera, se cierra con lo entregado",
+  );
+  const cerrado = await prisma.pending.findUniqueOrThrow({ where: { id: sinStock.pending.id } });
+  assert(cerrado.status === "ENTREGADO", "queda entregado, no cancelado: hubo entrega");
+  assert(cerrado.deliveredQuantity === 3, "se cierra con las 3 que realmente recibió");
+
   console.log("\nTODO VERIFICADO CONTRA POSTGRESQL REAL\n");
 }
 

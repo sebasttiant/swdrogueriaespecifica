@@ -11,6 +11,7 @@ import {
 } from "@/server/services/audit.service";
 import {
   cancelPendingCommitment,
+  resolvePartialPending,
   deliverPending,
   contactPending,
   invoicePending,
@@ -561,5 +562,70 @@ export async function invoicePendingAction(
     { invoicedQuantity: quantity, customerStatus: "FACTURADO" },
   );
   revalidatePendingViews("Factura confirmada");
+  return { error: null, ok: true };
+}
+
+const PARTIAL_DECISION_MESSAGES = {
+  NOT_OWNER: "No podés operar un pendiente creado por otro vendedor.",
+  NOT_PARTIAL: "Este pendiente no tiene una entrega parcial para resolver.",
+} as const;
+
+const PARTIAL_DECISIONS = ["espera", "va_con_pedido", "cerrar"] as const;
+
+type PartialDecisionValue = (typeof PARTIAL_DECISIONS)[number];
+
+function parseDecision(value: FormDataEntryValue | null): PartialDecisionValue | null {
+  return typeof value === "string" && (PARTIAL_DECISIONS as readonly string[]).includes(value)
+    ? (value as PartialDecisionValue)
+    : null;
+}
+
+/**
+ * Registra qué hace el cliente con lo que faltó: lo espera, se lo juntan con
+ * otro pedido, o ya no lo quiere y el pendiente se cierra con lo entregado.
+ * Sin esto un pendiente parcial quedaba abierto para siempre en la cola.
+ */
+export async function resolvePartialPendingAction(
+  _prev: PendingFormState,
+  formData: FormData,
+): Promise<PendingFormState> {
+  const session = await requireCapability("canDeliverPendings");
+  const id = formData.get("id");
+  const decision = parseDecision(formData.get("decision"));
+  if (typeof id !== "string" || id.length === 0 || decision === null) {
+    return { error: "No se pudo identificar la decisión del cliente.", ok: false };
+  }
+
+  let rejection: Awaited<ReturnType<typeof resolvePartialPending>>;
+  try {
+    rejection = await resolvePartialPending({
+      id,
+      decision,
+      actorId: session.user.id,
+      canManageAll: can(session.user.role, "canManageAllPendings"),
+    });
+  } catch (error) {
+    console.error("[pendientes] No se pudo resolver la entrega parcial:", error);
+    return { error: "No se pudo registrar la decisión. Intentá de nuevo.", ok: false };
+  }
+
+  if (rejection) {
+    await recordPendingLifecycleAudit(
+      AUDIT_ACTIONS.PENDING_DELIVERED,
+      id,
+      session.user.id,
+      { reason: rejection, decision },
+      "FAILURE",
+    );
+    return { error: PARTIAL_DECISION_MESSAGES[rejection], ok: false };
+  }
+
+  await recordPendingLifecycleAudit(
+    AUDIT_ACTIONS.PENDING_DELIVERED,
+    id,
+    session.user.id,
+    { partialDecision: decision },
+  );
+  revalidatePendingViews("Decisión sobre la entrega parcial");
   return { error: null, ok: true };
 }
