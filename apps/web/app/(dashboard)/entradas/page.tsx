@@ -15,11 +15,17 @@ export const metadata: Metadata = { title: "Entradas" };
 export default async function EntradasPage({
   searchParams,
 }: {
-  searchParams: Promise<{ cursor?: string; productId?: string }>;
+  searchParams: Promise<{ cursor?: string; productId?: string; quantity?: string }>;
 }) {
   await requireCapability("canViewEntradas");
 
-  const { cursor, productId } = await searchParams;
+  const { cursor, productId, quantity } = await searchParams;
+
+  // La cola de bodega propone la cantidad. Solo se acepta un entero positivo:
+  // cualquier otra cosa en la URL se ignora y el formulario vuelve a su default.
+  const parsedQuantity = Number(quantity);
+  const suggestedQuantity =
+    Number.isInteger(parsedQuantity) && parsedQuantity > 0 ? parsedQuantity : undefined;
 
   // Opciones para el selector del formulario: primera página de productos activos.
   const [products, entries, arrivedItems] = await Promise.all([
@@ -45,9 +51,13 @@ export default async function EntradasPage({
 
       <ArrivedMissingQueue items={arrivedItems} />
 
-      <Card className="space-y-4">
+      <Card id="nueva-entrada" className="scroll-mt-24 space-y-4">
         <CardTitle>Nueva entrada</CardTitle>
-        <EntryForm products={productOptions} selectedProductId={productId} />
+        <EntryForm
+          products={productOptions}
+          selectedProductId={productId}
+          selectedQuantity={suggestedQuantity}
+        />
       </Card>
 
       <EntryList items={entries.items} nextCursor={entries.nextCursor} />

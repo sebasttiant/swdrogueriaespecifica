@@ -387,13 +387,24 @@ export type ArrivedMissingItem = {
   product: { name: string; code: string };
   arrivedAt: Date | null;
   requestedByName: string | null;
+  // Lo que todavía falta recibir de este faltante. Bodega no tiene por qué
+  // recordarlo ni buscarlo: viaja hasta el formulario y llega escrito.
+  pendingQuantity: number;
 };
 
 export async function listArrivedMissingItems(): Promise<ArrivedMissingItem[]> {
   const items = await prisma.missingItem.findMany({
     where: { status: "EN_BODEGA", confirmedAt: null },
     orderBy: [{ arrivedAt: "asc" }, { id: "asc" }],
-    select: { id: true, productId: true, arrivedAt: true, product: { select: { name: true, code: true } } },
+    select: {
+      id: true,
+      productId: true,
+      arrivedAt: true,
+      quantity: true,
+      receivedQuantity: true,
+      orderedQuantity: true,
+      product: { select: { name: true, code: true } },
+    },
   });
   const reports = await prisma.missingReport.findMany({
     where: { linkedMissingItemId: { in: items.map((item) => item.id) } },
@@ -406,7 +417,14 @@ export async function listArrivedMissingItems(): Promise<ArrivedMissingItem[]> {
       names.set(report.linkedMissingItemId, report.reporter.name);
     }
   }
-  return items.map((item) => ({ ...item, requestedByName: names.get(item.id) ?? null }));
+  return items.map(({ quantity, receivedQuantity, orderedQuantity, ...item }) => ({
+    ...item,
+    requestedByName: names.get(item.id) ?? null,
+    // Lo pedido manda sobre la necesidad original: si gerencia pidió 20 de un
+    // déficit de 12, lo que va a entrar por la puerta son 20. Menos lo que ya
+    // se recibió en entregas anteriores del proveedor.
+    pendingQuantity: Math.max((orderedQuantity ?? quantity) - receivedQuantity, 1),
+  }));
 }
 
 // --------------------------------------------------------------------------
