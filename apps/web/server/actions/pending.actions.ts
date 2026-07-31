@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 
 import { requireCapability } from "@/lib/auth/require-role";
+import { can } from "@/lib/auth/permissions";
 import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
 import {
   auditContextFromHeaders,
@@ -11,9 +12,12 @@ import {
 import {
   cancelPendingCommitment,
   deliverPending,
+  contactPending,
+  invoicePending,
   registerPending,
   setPendingManagementStatus,
 } from "@/server/services/pending.service";
+import type { Prisma } from "@/lib/generated/prisma/client";
 import type { DeliveryRejection } from "@/features/pendientes/delivery-rules";
 import {
   pendingCancelSchema,
@@ -180,11 +184,14 @@ const DELIVERY_REJECTION_MESSAGES: Record<DeliveryRejection, string> = {
   ALREADY_CANCELLED: "Este pendiente está cancelado.",
   NON_POSITIVE_QUANTITY: "Ingresá una cantidad válida.",
   EXCEEDS_REMAINING: "La cantidad supera lo que resta por entregar.",
+  NOT_OWNER: "No podés operar un pendiente creado por otro vendedor.",
+  NOT_INVOICED: "Primero debés facturar este pendiente.",
 };
 
-const CANCEL_REJECTION_MESSAGES: Record<"ALREADY_DELIVERED" | "ALREADY_CANCELLED", string> = {
+const CANCEL_REJECTION_MESSAGES: Record<"ALREADY_DELIVERED" | "ALREADY_CANCELLED" | "NOT_OWNER", string> = {
   ALREADY_DELIVERED: "No se puede cancelar un pendiente ya entregado.",
   ALREADY_CANCELLED: "Este pendiente ya está cancelado.",
+  NOT_OWNER: "No podés operar un pendiente creado por otro vendedor.",
 };
 
 export async function deliverPendingAction(
@@ -207,6 +214,7 @@ export async function deliverPendingAction(
       id: parsed.data.id,
       quantity: parsed.data.quantity,
       deliveredById: session.user.id,
+      canManageAll: can(session.user.role, "canManageAllPendings"),
     });
 
 		// Un rechazo de negocio no es ruido de formulario: alguien con la capacidad
@@ -374,6 +382,7 @@ export async function cancelPendingAction(
       id: parsed.data.id,
       cancelledById: session.user.id,
       reason: parsed.data.reason,
+      canManageAll: can(session.user.role, "canManageAllPendings"),
     });
 
 		// Mismo criterio que la entrega. El `reason` que tipea el operador es texto
@@ -416,5 +425,141 @@ export async function cancelPendingAction(
 
   revalidatePath("/pendientes");
   revalidatePath("/dashboard");
+  return { error: null, ok: true };
+}
+
+const CUSTOMER_LIFECYCLE_MESSAGES = {
+  NOT_OWNER: "No podés operar un pendiente creado por otro vendedor.",
+  NOT_AVAILABLE: "No hay disponibilidad suficiente para esta acción.",
+  NOT_CONTACTABLE: "Este pendiente ya no admite registrar contacto.",
+  NOT_CONTACTED: "Primero debés registrar el contacto con el cliente.",
+  NOT_INVOICED: "Primero debés facturar este pendiente.",
+  ALREADY_TERMINAL: "El pendiente ya está cerrado.",
+} as const;
+
+// Auditoría y revalidación ocurren DESPUÉS del commit de negocio. Si alguna de
+// las dos falla, el hecho ya pasó: devolver un error haría que el vendedor
+// reintente una operación que sí quedó registrada, y termine facturando dos
+// veces. Se registra el fallo en el log del servidor y la acción reporta éxito,
+// que es la verdad.
+async function recordPendingLifecycleAudit(
+  action: string,
+  entityId: string,
+  actorId: string,
+  after: Prisma.InputJsonValue,
+  result: "SUCCESS" | "FAILURE" = "SUCCESS",
+): Promise<void> {
+  try {
+    await recordAudit({
+      action,
+      module: AUDIT_MODULES.PENDIENTES,
+      entity: "Pending",
+      entityId,
+      result,
+      after,
+      context: await auditContextFromHeaders(actorId),
+    });
+  } catch (error) {
+    console.error("[pendientes] Operación confirmada sin auditoría:", error);
+  }
+}
+
+function revalidatePendingViews(context: string): void {
+  for (const path of ["/pendientes", "/dashboard"]) {
+    try {
+      revalidatePath(path);
+    } catch (error) {
+      console.error(`[pendientes] ${context} sin revalidación:`, error);
+    }
+  }
+}
+
+export async function contactPendingAction(
+  _prev: PendingFormState,
+  formData: FormData,
+): Promise<PendingFormState> {
+  const session = await requireCapability("canContactOwnPendings");
+  const id = formData.get("id");
+  if (typeof id !== "string" || id.length === 0) {
+    return { error: "No se pudo identificar el pendiente.", ok: false };
+  }
+
+  let rejection: Awaited<ReturnType<typeof contactPending>>;
+  try {
+    rejection = await contactPending({
+      id,
+      actorId: session.user.id,
+      canManageAll: can(session.user.role, "canManageAllPendings"),
+    });
+  } catch (error) {
+    console.error("[pendientes] No se pudo registrar el contacto:", error);
+    return { error: "No se pudo registrar el contacto. Intentá de nuevo.", ok: false };
+  }
+
+  if (rejection) {
+    // Un rechazo con la capacidad en la mano es intento de operar algo ajeno o
+    // ya cerrado: queda como FAILURE para que la traza forense exista.
+    await recordPendingLifecycleAudit(
+      AUDIT_ACTIONS.PENDING_CONTACTED,
+      id,
+      session.user.id,
+      { reason: rejection },
+      "FAILURE",
+    );
+    return { error: CUSTOMER_LIFECYCLE_MESSAGES[rejection], ok: false };
+  }
+
+  await recordPendingLifecycleAudit(
+    AUDIT_ACTIONS.PENDING_CONTACTED,
+    id,
+    session.user.id,
+    { customerStatus: "CONTACTADO" },
+  );
+  revalidatePendingViews("Contacto confirmado");
+  return { error: null, ok: true };
+}
+
+export async function invoicePendingAction(
+  _prev: PendingFormState,
+  formData: FormData,
+): Promise<PendingFormState> {
+  const session = await requireCapability("canInvoiceOwnPendings");
+  const id = formData.get("id");
+  const quantity = Number(formData.get("quantity"));
+  if (typeof id !== "string" || !Number.isInteger(quantity) || quantity <= 0) {
+    return { error: "Revisá la cantidad a facturar.", ok: false };
+  }
+
+  let rejection: Awaited<ReturnType<typeof invoicePending>>;
+  try {
+    rejection = await invoicePending({
+      id,
+      quantity,
+      actorId: session.user.id,
+      canManageAll: can(session.user.role, "canManageAllPendings"),
+    });
+  } catch (error) {
+    console.error("[pendientes] No se pudo registrar la factura:", error);
+    return { error: "No se pudo registrar la factura. Intentá de nuevo.", ok: false };
+  }
+
+  if (rejection) {
+    await recordPendingLifecycleAudit(
+      AUDIT_ACTIONS.PENDING_INVOICED,
+      id,
+      session.user.id,
+      { reason: rejection, attemptedQuantity: quantity },
+      "FAILURE",
+    );
+    return { error: CUSTOMER_LIFECYCLE_MESSAGES[rejection], ok: false };
+  }
+
+  await recordPendingLifecycleAudit(
+    AUDIT_ACTIONS.PENDING_INVOICED,
+    id,
+    session.user.id,
+    { invoicedQuantity: quantity, customerStatus: "FACTURADO" },
+  );
+  revalidatePendingViews("Factura confirmada");
   return { error: null, ok: true };
 }

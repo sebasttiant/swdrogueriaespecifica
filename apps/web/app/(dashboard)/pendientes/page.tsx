@@ -25,9 +25,12 @@ export default async function PendientesPage({
   searchParams: Promise<{ cursor?: string; scope?: string; view?: string }>;
 }) {
   const session = await requireCapability("canViewPendientes");
-  const canViewCustomerIdentity = can(session.user.role, "canViewCustomerIdentity");
+  const canManageAll = can(session.user.role, "canManageAllPendings");
+  // Vendedor: solo sus filas y por eso solo PII de sus propios clientes.
+  const canViewCustomerIdentity = canManageAll || session.user.role === "OPERADOR";
   const canDeliver = can(session.user.role, "canDeliverPendings");
   const canCancel = can(session.user.role, "canCancelPendings");
+  const canContactOrInvoice = can(session.user.role, "canContactOwnPendings") || can(session.user.role, "canInvoiceOwnPendings");
   // Estado de gestión: autoridad de compras (gerencia). Reusa la misma
   // capability que pedir un faltante, no la de cancelar.
   const canManageStatus = can(session.user.role, "canOrderMissingItems");
@@ -47,7 +50,7 @@ export default async function PendientesPage({
   // productos activos (ver README — selector sin búsqueda todavía).
   const [products, pendings, zones] = await Promise.all([
     getProducts({ take: MAX_PAGE_SIZE }),
-    getPendings({ cursor, scope, canViewCustomerIdentity }),
+    getPendings({ cursor, scope, canViewCustomerIdentity, ownerId: canManageAll ? undefined : session.user.id }),
     getUsedZones(),
   ]);
 
@@ -140,6 +143,8 @@ export default async function PendientesPage({
         <PendingCompactList
           items={pendings.items}
           canOrder={canManageStatus}
+          canDeliver={canDeliver}
+          canContactOrInvoice={canContactOrInvoice}
           nextCursor={pendings.nextCursor}
           pageHref={(nextCursor) =>
             `/pendientes?cursor=${encodeURIComponent(nextCursor)}&view=lista${
@@ -154,6 +159,7 @@ export default async function PendientesPage({
           canDeliver={canDeliver}
           canCancel={canCancel}
           canManageStatus={canManageStatus}
+          canContactOrInvoice={canContactOrInvoice}
           scope={scope}
         />
       )}

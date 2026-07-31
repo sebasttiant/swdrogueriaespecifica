@@ -85,6 +85,7 @@ const ROLE_DESCRIPTIONS: Record<UserRole, string> = {
   ADMIN: "Administra usuarios y operación, sin elevarse por encima de su jerarquía.",
   SUPERVISOR: "Supervisa operación y confirma faltantes; no administra usuarios.",
   OPERADOR: "Ejecuta operación diaria sin acceso administrativo.",
+  BODEGA: "Registra recepción e inventario sin acceso a clientes ni acciones comerciales.",
 };
 
 function emptyRoleCounts(): Record<UserRole, number> {
@@ -93,6 +94,7 @@ function emptyRoleCounts(): Record<UserRole, number> {
     ADMIN: 0,
     SUPERVISOR: 0,
     OPERADOR: 0,
+    BODEGA: 0,
   };
 }
 

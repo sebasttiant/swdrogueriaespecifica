@@ -34,7 +34,11 @@ import {
 } from "@/server/repositories/pending.repository";
 import { createProduct } from "@/server/repositories/product.repository";
 import { createMissingItem } from "@/server/repositories/missing-item.repository";
-import { stockByProduct } from "@/server/repositories/product-batch.repository";
+import {
+  consumePendingReservations,
+  releasePendingReservations,
+  reserveSellableStockForPending,
+} from "@/server/repositories/product-batch.repository";
 import { prisma } from "@/lib/db/prisma";
 import type { Paginated } from "@/lib/pagination";
 import {
@@ -44,7 +48,6 @@ import {
   type DeliveryRejection,
 } from "@/features/pendientes/delivery-rules";
 import {
-  MANAGEMENT_ELIGIBLE_STATUSES,
   type ManagementStatus,
 } from "@/features/pendientes/management-status";
 
@@ -129,6 +132,7 @@ export async function getPendings(params: {
   // Requerido (sin default): que falte el flag debe ser un error de tipos,
   // nunca una fuga silenciosa de PII. `false` fuerza la minimización abajo.
   canViewCustomerIdentity: boolean;
+  ownerId?: string;
 }): Promise<Paginated<PendingListItem>> {
   const { canViewCustomerIdentity, ...listParams } = params;
   const { items, nextCursor } = await listPendings(listParams);
@@ -160,14 +164,18 @@ const DASHBOARD_URGENT_PENDING_LIMIT = 5;
 // costumbre — minimizamos en el boundary, igual que en `getPendings`.
 export async function getPendingDashboard(params: {
   canViewCustomerIdentity: boolean;
+  scope?: "global" | "owner";
+  ownerId?: string;
   now?: Date;
 }): Promise<PendingDashboard> {
-  const { canViewCustomerIdentity, now = new Date() } = params;
+  const { canViewCustomerIdentity, scope = "global", ownerId, now = new Date() } = params;
+  if (scope === "owner" && !ownerId) throw new Error("owner scope requires ownerId");
+  const scopedOwnerId = scope === "owner" ? ownerId : undefined;
   const [openCount, overdueCount, upcomingCount, urgent] = await Promise.all([
-    countOpenPendings(),
-    countOverduePendings(now),
-    countUpcomingPendings(now),
-    listUrgentPendings(DASHBOARD_URGENT_PENDING_LIMIT),
+    countOpenPendings(scopedOwnerId),
+    countOverduePendings(now, scopedOwnerId),
+    countUpcomingPendings(now, scopedOwnerId),
+    listUrgentPendings(DASHBOARD_URGENT_PENDING_LIMIT, scopedOwnerId),
   ]);
   return {
     openCount,
@@ -214,27 +222,28 @@ export async function registerPending(
       );
       productId = createdProduct.id;
     }
+    if (!productId) throw new Error("registerPending: producto no resuelto");
 
+    // The Pending must exist before reservations can reference it. Create it
+    // first with zero availability, then reserve lots under the same transaction.
     const pending = await createPending(
       {
-        productId,
-        quantity: data.quantity,
-        promisedAt: data.promisedAt,
-        customerName: data.customerName,
-        customerPhone: data.customerPhone,
-        customerAddress: data.customerAddress,
-        note: data.note,
-        zone: data.zone,
-        totalAmount: data.totalAmount,
-        paidAmount: data.paidAmount,
+        productId, quantity: data.quantity, promisedAt: data.promisedAt,
+        customerName: data.customerName, customerPhone: data.customerPhone,
+        customerAddress: data.customerAddress, note: data.note, zone: data.zone,
+        totalAmount: data.totalAmount, paidAmount: data.paidAmount,
         createdById: data.createdById ?? null,
-      },
-      tx,
+      }, tx,
     );
+    const sellableStock = await reserveSellableStockForPending(tx, productId, data.quantity, new Date(), pending.id);
+    const inventoryReadyQuantity = sellableStock;
+    await tx.pending.update({ where: { id: pending.id }, data: {
+      inventoryReadyQuantity, reservedInventoryQuantity: inventoryReadyQuantity,
+      availabilityStatus: inventoryReadyQuantity === 0 ? "ESPERANDO" : inventoryReadyQuantity === data.quantity ? "DISPONIBLE_COMPLETO" : "DISPONIBLE_PARCIAL",
+    }});
 
     // Lectura dentro de la misma transacción para que el déficit sea coherente.
-    const sellableStock = await stockByProduct(productId, new Date(), tx);
-    const missingQuantity = computeMissingQuantity(data.quantity, sellableStock);
+    const missingQuantity = computeMissingQuantity(data.quantity, inventoryReadyQuantity);
 
     let missingItem: MissingItem | null = null;
     if (missingQuantity > 0) {
@@ -266,6 +275,7 @@ export type DeliverPendingInput = {
   id: string;
   quantity: number;
   deliveredById: string;
+  canManageAll?: boolean;
 };
 
 export type DeliverPendingResult = {
@@ -313,11 +323,16 @@ export async function deliverPending(
       throw new Error("Pending not found");
     }
 
+    if (!input.canManageAll && current.createdById !== input.deliveredById) {
+      return { pending: null, rejection: "NOT_OWNER" };
+    }
     const rejection = validateDelivery({
       status: current.status,
       quantity: current.quantity,
       deliveredQuantity: current.deliveredQuantity,
       deliverQuantity: input.quantity,
+      invoicedQuantity: current.invoicedQuantity,
+      customerStatus: current.customerStatus,
     });
     if (rejection) {
       return { pending: null, rejection };
@@ -328,6 +343,7 @@ export async function deliverPending(
       quantity: input.quantity,
       deliveredById: input.deliveredById,
     });
+    await consumePendingReservations(tx, current.id, input.quantity);
 
     const deliveredQuantity = current.deliveredQuantity + input.quantity;
     const status = nextPendingStatus(current.quantity, deliveredQuantity);
@@ -349,7 +365,7 @@ export async function deliverPending(
     if (written !== 1) {
       throw new PendingConcurrentModificationError(current.id);
     }
-
+    await tx.pending.update({ where: { id: current.id }, data: { customerStatus: status === "ENTREGADO" ? "ENTREGADO" : "FACTURADO" } });
     return {
       pending: { id: current.id, status, deliveredQuantity, completedAt },
       rejection: null,
@@ -361,6 +377,7 @@ export type CancelPendingInput = {
   id: string;
   cancelledById: string;
   reason?: string;
+  canManageAll?: boolean;
 };
 
 export type CancelPendingResult = {
@@ -369,7 +386,7 @@ export type CancelPendingResult = {
     status: PendingStatus;
     cancelledAt: Date | null;
   } | null;
-  rejection: "ALREADY_DELIVERED" | "ALREADY_CANCELLED" | null;
+  rejection: "ALREADY_DELIVERED" | "ALREADY_CANCELLED" | "NOT_OWNER" | null;
 };
 
 /**
@@ -393,6 +410,9 @@ export async function cancelPendingCommitment(
     if (!current) {
       throw new Error("Pending not found");
     }
+    if (!input.canManageAll && current.createdById !== input.cancelledById) {
+      return { pending: null, rejection: "NOT_OWNER" };
+    }
 
     const rejection = validateCancellation(current.status);
     if (rejection) {
@@ -409,11 +429,52 @@ export async function cancelPendingCommitment(
     if (written !== 1) {
       throw new PendingConcurrentModificationError(current.id);
     }
+    await releasePendingReservations(tx, current.id);
+    await tx.missingItem.updateMany({
+      where: { originId: current.id, status: { in: ["FALTANTE", "PEDIDO", "EN_BODEGA"] } },
+      data: { status: "CANCELADO" },
+    });
+    await tx.pending.update({ where: { id: current.id }, data: { customerStatus: "CANCELADO" } });
 
     return {
       pending: { id: current.id, status: "CANCELADO", cancelledAt: now },
       rejection: null,
     };
+  });
+}
+
+export type CustomerLifecycleInput = { id: string; actorId: string; canManageAll?: boolean; quantity?: number };
+export type CustomerLifecycleRejection = "NOT_OWNER" | "NOT_AVAILABLE" | "NOT_CONTACTABLE" | "NOT_CONTACTED" | "NOT_INVOICED" | "ALREADY_TERMINAL";
+
+async function lockOwnedPending(tx: Parameters<typeof lockPendingForUpdate>[0], input: CustomerLifecycleInput) {
+  const pending = await lockPendingForUpdate(tx, input.id);
+  if (!pending) throw new Error("Pending not found");
+  if (!input.canManageAll && pending.createdById !== input.actorId) return null;
+  return pending;
+}
+
+export async function contactPending(input: CustomerLifecycleInput, now = new Date()): Promise<CustomerLifecycleRejection | null> {
+  return prisma.$transaction(async (tx) => {
+    const pending = await lockOwnedPending(tx, input);
+    if (!pending) return "NOT_OWNER";
+    if (pending.customerStatus === "ENTREGADO" || pending.customerStatus === "CANCELADO") return "ALREADY_TERMINAL";
+    if (pending.customerStatus !== "POR_CONTACTAR") return "NOT_CONTACTABLE";
+    if (pending.inventoryReadyQuantity <= 0) return "NOT_AVAILABLE";
+    await tx.pending.update({ where: { id: pending.id }, data: { customerStatus: "CONTACTADO", contactedAt: now, contactedById: input.actorId } });
+    return null;
+  });
+}
+
+export async function invoicePending(input: CustomerLifecycleInput, now = new Date()): Promise<CustomerLifecycleRejection | null> {
+  return prisma.$transaction(async (tx) => {
+    const pending = await lockOwnedPending(tx, input);
+    if (!pending) return "NOT_OWNER";
+    if (pending.customerStatus !== "CONTACTADO" && pending.customerStatus !== "FACTURADO") return "NOT_CONTACTED";
+    const quantity = input.quantity ?? pending.inventoryReadyQuantity - pending.invoicedQuantity;
+    const invoicedQuantity = pending.invoicedQuantity + quantity;
+    if (!Number.isInteger(quantity) || quantity <= 0 || invoicedQuantity > pending.inventoryReadyQuantity) return "NOT_AVAILABLE";
+    await tx.pending.update({ where: { id: pending.id }, data: { customerStatus: "FACTURADO", invoicedQuantity, invoicedAt: now, invoicedById: input.actorId } });
+    return null;
   });
 }
 
@@ -425,11 +486,11 @@ export async function cancelPendingCommitment(
 export type SetPendingManagementStatusInput = {
   id: string;
   status: ManagementStatus;
-  expectedStatus?: PendingStatus;
+  expectedStatus?: ManagementStatus | "POR_PEDIR" | "PENDIENTE";
 };
 
 export type SetPendingManagementStatusResult = {
-  pending: { id: string; status: PendingStatus } | null;
+  pending: { id: string; status: ManagementStatus } | null;
   // El pendiente no existe o ya no admite gestión (entró a entrega o es
   // terminal). No es un error: la Server Action lo traduce a un mensaje.
   rejection: "NOT_ELIGIBLE" | null;
@@ -447,9 +508,8 @@ export async function setPendingManagementStatus(
 ): Promise<SetPendingManagementStatusResult> {
   const written = await updatePendingManagementStatus({
     id: input.id,
-    status: input.status,
-    eligibleStatuses: MANAGEMENT_ELIGIBLE_STATUSES,
-    expectedStatus: input.expectedStatus,
+    purchaseStatus: input.status,
+    expectedPurchaseStatus: input.expectedStatus === "PENDIENTE" ? "POR_PEDIR" : input.expectedStatus,
   });
 
   if (written !== 1) {

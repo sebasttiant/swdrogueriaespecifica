@@ -247,12 +247,11 @@ describe("listPendings · scope", () => {
     });
   });
 
-  // El historial es una vista aparte, no la operativa: ahí sí entran los cerrados.
-  it("no filtra por estado con scope history", async () => {
+  it("filtra el historial a estados cerrados", async () => {
     await listPendings({ scope: "history" });
 
     const args = prismaMock.pending.findMany.mock.calls[0]![0];
-    expect(args.where).toBeUndefined();
+    expect(args.where).toEqual({ status: { in: ["ENTREGADO", "CANCELADO"] } });
   });
 });
 
@@ -274,7 +273,7 @@ describe("listPendings · seguridad del cursor", () => {
 
     expect(prismaMock.pending.findUnique).toHaveBeenCalledWith({
       where: { id: "fantasma-9999" },
-      select: { id: true },
+      select: { id: true, createdById: true, status: true },
     });
     const args = prismaMock.pending.findMany.mock.calls[0]![0];
     expect(args.cursor).toBeUndefined();
@@ -282,13 +281,27 @@ describe("listPendings · seguridad del cursor", () => {
   });
 
   it("pagina normalmente con un cursor válido y existente", async () => {
-    prismaMock.pending.findUnique.mockResolvedValue({ id: "real-id" });
+    prismaMock.pending.findUnique.mockResolvedValue({ id: "real-id", createdById: "owner-1", status: "PENDIENTE" });
 
     await listPendings({ cursor: encodeCursor("real-id") });
 
     const args = prismaMock.pending.findMany.mock.calls[0]![0];
     expect(args.cursor).toEqual({ id: "real-id" });
     expect(args.skip).toBe(1);
+  });
+
+  it("ignores a cursor belonging to another owner", async () => {
+    prismaMock.pending.findUnique.mockResolvedValue({ id: "other", createdById: "seller-2", status: "PENDIENTE" });
+    await listPendings({ ownerId: "seller-1", cursor: encodeCursor("other") });
+    const args = prismaMock.pending.findMany.mock.calls[0]![0];
+    expect(args.cursor).toBeUndefined();
+    expect(args.where).toEqual(expect.objectContaining({ createdById: "seller-1" }));
+  });
+
+  it("ignores an active cursor when requesting history", async () => {
+    prismaMock.pending.findUnique.mockResolvedValue({ id: "active", createdById: "seller-1", status: "PENDIENTE" });
+    await listPendings({ scope: "history", ownerId: "seller-1", cursor: encodeCursor("active") });
+    expect(prismaMock.pending.findMany.mock.calls[0]![0].cursor).toBeUndefined();
   });
 });
 
@@ -338,14 +351,13 @@ describe("updatePendingManagementStatus", () => {
 
     const written = await updatePendingManagementStatus({
       id: "pend-1",
-      status: "SOLICITADO",
-      eligibleStatuses: ["PENDIENTE", "COTIZANDO"],
+      purchaseStatus: "SOLICITADO",
     });
 
     expect(written).toBe(1);
     expect(prismaMock.pending.updateMany).toHaveBeenCalledWith({
-      where: { id: "pend-1", status: { in: ["PENDIENTE", "COTIZANDO"] } },
-      data: { status: "SOLICITADO" },
+      where: { id: "pend-1", status: { notIn: ["ENTREGADO", "CANCELADO"] }, purchaseStatus: undefined },
+      data: { purchaseStatus: "SOLICITADO" },
     });
   });
 
@@ -354,14 +366,13 @@ describe("updatePendingManagementStatus", () => {
 
     await updatePendingManagementStatus({
       id: "pend-1",
-      status: "SOLICITADO",
-      eligibleStatuses: ["PENDIENTE", "SOLICITADO"],
-      expectedStatus: "PENDIENTE",
+      purchaseStatus: "SOLICITADO",
+      expectedPurchaseStatus: "POR_PEDIR",
     });
 
     expect(prismaMock.pending.updateMany).toHaveBeenCalledWith({
-      where: { id: "pend-1", status: "PENDIENTE" },
-      data: { status: "SOLICITADO" },
+      where: { id: "pend-1", status: { notIn: ["ENTREGADO", "CANCELADO"] }, purchaseStatus: "POR_PEDIR" },
+      data: { purchaseStatus: "SOLICITADO" },
     });
   });
 

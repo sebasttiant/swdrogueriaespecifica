@@ -27,6 +27,8 @@ export type CreateInventoryEntryData = {
   quantity: number;
   note?: string;
   createdById?: string | null;
+  idempotencyKey?: string;
+  requestFingerprint?: string;
 };
 
 const LIST_SELECT = {
@@ -49,7 +51,19 @@ export async function createInventoryEntry(
       quantity: data.quantity,
       note: data.note ?? null,
       createdById: data.createdById ?? null,
+      idempotencyKey: data.idempotencyKey ?? crypto.randomUUID(),
+      requestFingerprint: data.requestFingerprint ?? "legacy",
     },
+  });
+}
+
+export function findInventoryEntryByIdempotencyKey(
+  client: Prisma.TransactionClient,
+  idempotencyKey: string,
+) {
+  return client.inventoryEntry.findUnique({
+    where: { idempotencyKey },
+    select: { id: true, requestFingerprint: true },
   });
 }
 

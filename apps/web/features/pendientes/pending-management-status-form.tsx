@@ -20,7 +20,7 @@ const INITIAL_STATE: PendingFormState = { error: null, ok: false };
 
 type PendingManagementStatusFormProps = {
   pendingId: string;
-  currentStatus: PendingStatus;
+  currentStatus: ManagementStatus | "POR_PEDIR" | PendingStatus;
   // En el listado la columna de al lado ya muestra el estado: repetirlo acá
   // sería decir dos veces lo mismo en la misma fila.
   hideCurrentLabel?: boolean;

@@ -18,9 +18,14 @@ import {
   listArrivedMissingItems,
 } from "@/server/repositories/missing-item.repository";
 import { markReportsReceivedByMissingItemIds } from "@/server/repositories/missing-report.repository";
-import { upsertBatchQuantity } from "@/server/repositories/product-batch.repository";
+import {
+  reserveReceivedBatchQuantity,
+  reserveBatchForPending,
+  upsertBatchQuantity,
+} from "@/server/repositories/product-batch.repository";
 import {
   createInventoryEntry,
+  findInventoryEntryByIdempotencyKey,
   listInventoryEntries,
   type InventoryEntryListItem,
 } from "@/server/repositories/inventory-entry.repository";
@@ -32,12 +37,33 @@ export type RegisterInventoryEntryInput = {
   expiresAt: Date;
   note?: string;
   createdById?: string | null;
+  idempotencyKey?: string;
 };
 
 export type RegisterInventoryEntryResult = {
   entry: { id: string };
+  allocatedMissingCount: number;
+  /** @deprecated compatibility alias; counts allocation recipients. */
   closedMissingCount: number;
+  idempotent: boolean;
 };
+
+export class IdempotencyPayloadConflictError extends Error {
+  constructor() { super("idempotency key was already used for a different entry payload"); }
+}
+
+function requestFingerprint(data: RegisterInventoryEntryInput): string {
+  return JSON.stringify({
+    productId: data.productId, quantity: data.quantity, batchCode: data.batchCode,
+    expiresAt: data.expiresAt.toISOString(),
+    note: data.note?.trim() || null,
+    createdById: data.createdById ?? null,
+  });
+}
+
+function isUniqueConstraint(error: unknown): error is { code: string } {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "P2002";
+}
 
 /**
  * Registra una entrada de inventario de forma atómica:
@@ -50,8 +76,19 @@ export type RegisterInventoryEntryResult = {
 export async function registerInventoryEntry(
   data: RegisterInventoryEntryInput,
 ): Promise<RegisterInventoryEntryResult> {
-  return prisma.$transaction(async (tx) => {
-    await upsertBatchQuantity(tx, {
+  try {
+    return await prisma.$transaction(async (tx) => {
+    const fingerprint = requestFingerprint(data);
+    if (data.idempotencyKey) {
+      const existing = await findInventoryEntryByIdempotencyKey(tx, data.idempotencyKey);
+      if (existing) {
+        if (existing.requestFingerprint !== undefined && existing.requestFingerprint !== fingerprint) throw new IdempotencyPayloadConflictError();
+        return { entry: existing, allocatedMissingCount: 0, closedMissingCount: 0, idempotent: true };
+      }
+    }
+    const idempotencyKey = data.idempotencyKey ?? crypto.randomUUID();
+
+    const batch = await upsertBatchQuantity(tx, {
       productId: data.productId,
       batchCode: data.batchCode,
       expiresAt: data.expiresAt,
@@ -63,16 +100,75 @@ export async function registerInventoryEntry(
       quantity: data.quantity,
       note: data.note,
       createdById: data.createdById,
+      idempotencyKey,
+      requestFingerprint: fingerprint,
     });
 
-    const closedIds = await closeMissingItemsByEntry(tx, {
-      productId: data.productId,
-      availableQuantity: data.quantity,
+    // Compatibilidad segura con recepciones heredadas que no traen operation id.
+    if (!data.idempotencyKey) {
+      const closedIds = await closeMissingItemsByEntry(tx, { productId: data.productId, availableQuantity: data.quantity });
+      await markReportsReceivedByMissingItemIds(tx, closedIds);
+      return { entry, allocatedMissingCount: closedIds.length, closedMissingCount: closedIds.length, idempotent: false };
+    }
+    // FIFO cuantitativo: se bloquean los faltantes del producto y cada unidad de
+    // esta entrada queda ligada a exactamente un faltante. Los parciales quedan
+    // registrados, nunca se salta una necesidad sin consumir cantidad.
+    const rows = await tx.$queryRaw<Array<{
+      id: string; quantity: number; orderedQuantity: number | null; receivedQuantity: number; originId: string | null;
+    }>>`SELECT id, quantity, "orderedQuantity", "receivedQuantity", "originId" FROM missing_items WHERE "productId" = ${data.productId} AND status IN ('FALTANTE', 'PEDIDO', 'EN_BODEGA') AND "receivedQuantity" < CASE WHEN "originId" IS NULL THEN COALESCE("orderedQuantity", quantity) ELSE quantity END ORDER BY "createdAt" ASC, id ASC FOR UPDATE`;
+    let remaining = data.quantity;
+    let reservedQuantity = 0;
+    let allocatedMissingCount = 0;
+    const closedMissingIds: string[] = [];
+    for (const item of rows) {
+      if (remaining === 0) break;
+      const needed = item.originId === null ? (item.orderedQuantity ?? item.quantity) : item.quantity;
+      const allocated = Math.min(remaining, needed - item.receivedQuantity);
+      if (allocated <= 0) continue;
+      const receivedQuantity = item.receivedQuantity + allocated;
+      await tx.inventoryAllocation.create({ data: {
+        inventoryEntryId: entry.id, missingItemId: item.id, pendingId: item.originId,
+        quantity: allocated,
+      }});
+      await tx.missingItem.update({ where: { id: item.id }, data: {
+        receivedQuantity,
+        status: receivedQuantity === needed ? "RECIBIDO" : "EN_BODEGA",
+      }});
+      if (item.originId) {
+        const pending = await tx.pending.findUniqueOrThrow({ where: { id: item.originId }, select: { quantity: true, inventoryReadyQuantity: true, reservedInventoryQuantity: true } });
+        const inventoryReadyQuantity = Math.min(pending.quantity, pending.inventoryReadyQuantity + allocated);
+        await tx.pending.update({ where: { id: item.originId }, data: {
+          inventoryReadyQuantity,
+          reservedInventoryQuantity: pending.reservedInventoryQuantity + allocated,
+          availabilityStatus: inventoryReadyQuantity === pending.quantity ? "DISPONIBLE_COMPLETO" : "DISPONIBLE_PARCIAL",
+        }});
+        await reserveBatchForPending(tx, item.originId, batch.id, allocated);
+      }
+      remaining -= allocated;
+      // A manual MissingItem has no customer Pending. Receiving it closes the
+      // purchasing/report workflow but leaves the physical units sellable.
+      if (item.originId) reservedQuantity += allocated;
+      allocatedMissingCount += 1;
+      if (receivedQuantity === needed) closedMissingIds.push(item.id);
+    }
+    if (reservedQuantity > 0) {
+      await reserveReceivedBatchQuantity(tx, batch.id, reservedQuantity);
+    }
+    await markReportsReceivedByMissingItemIds(tx, closedMissingIds);
+    return { entry, allocatedMissingCount, closedMissingCount: allocatedMissingCount, idempotent: false };
     });
-    await markReportsReceivedByMissingItemIds(tx, closedIds);
-
-    return { entry, closedMissingCount: closedIds.length };
-  });
+  } catch (error) {
+    // A simultaneous retry can pass the preflight read in both transactions.
+    // The unique index chooses one winner; return that committed ledger entry.
+    if (data.idempotencyKey && isUniqueConstraint(error)) {
+      const entry = await findInventoryEntryByIdempotencyKey(prisma, data.idempotencyKey);
+      if (entry) {
+        if (entry.requestFingerprint !== undefined && entry.requestFingerprint !== requestFingerprint(data)) throw new IdempotencyPayloadConflictError();
+        return { entry, allocatedMissingCount: 0, closedMissingCount: 0, idempotent: true };
+      }
+    }
+    throw error;
+  }
 }
 
 // Boundary de lectura para la UI — la página delega acá, nunca al repo directo.

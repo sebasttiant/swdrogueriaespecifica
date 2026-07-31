@@ -32,6 +32,12 @@ export const AUDIT_ACTIONS = {
   PENDING_STATUS_CHANGE: "pending.status.change",
   PENDING_DELIVERED: "pending.delivered",
   PENDING_CANCELLED: "pending.cancelled",
+  // Tramo comercial: contactar al cliente y facturarle. Son transiciones
+  // propias, no variantes de `PENDING_STATUS_CHANGE` (que es del eje de
+  // compras): facturar es lo que habilita la entrega, así que necesita su
+  // propia respuesta a quién, cuándo y por cuánto.
+  PENDING_CONTACTED: "pending.contacted",
+  PENDING_INVOICED: "pending.invoiced",
   // Faltantes
   MISSING_AUTO_CREATE: "missing.auto.create",
   MISSING_CREATE: "missing.create",

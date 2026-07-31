@@ -68,10 +68,11 @@ function capitalize(value: string): string {
 export default async function DashboardPage() {
   const session = await requireCapability("canViewDashboard");
   const canViewCustomerIdentity = can(session.user.role, "canViewCustomerIdentity");
+  const canManageAll = can(session.user.role, "canManageAllPendings");
 
   const now = new Date();
   const [dashboard, openMissingCount, expiringCounts] = await Promise.all([
-    getPendingDashboard({ canViewCustomerIdentity, now }),
+    getPendingDashboard({ canViewCustomerIdentity, now, scope: canManageAll ? "global" : "owner", ownerId: canManageAll ? undefined : session.user.id }),
     getOpenMissingCount(),
     getExpiringBatchCounts(now),
   ]);

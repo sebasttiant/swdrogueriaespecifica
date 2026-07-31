@@ -1,4 +1,3 @@
-import type { PendingStatus } from "@/lib/generated/prisma/client";
 
 // --------------------------------------------------------------------------
 // Reglas puras de los ESTADOS DE GESTIÓN de un pendiente (Mejora 2).
@@ -45,14 +44,9 @@ export function isManagementStatus(value: unknown): value is ManagementStatus {
 // un pendiente todavía abierto que NO entró al flujo de entrega. Un PARCIAL ya
 // tiene una entrega en curso; un ENTREGADO/CANCELADO es terminal. En esos casos
 // un cambio de gestión no tiene sentido y se rechaza.
-export const MANAGEMENT_ELIGIBLE_STATUSES: PendingStatus[] = [
-  "PENDIENTE",
-  "SOLICITADO",
-  "BUSQUEDA",
-  "COTIZANDO",
-  "AGOTADO",
-];
-
-export function canSetManagementStatus(status: PendingStatus): boolean {
-  return MANAGEMENT_ELIGIBLE_STATUSES.includes(status);
+export function canSetManagementStatus(status: unknown): boolean {
+  return status === "POR_PEDIR" || status === "PENDIENTE" || isManagementStatus(status);
 }
+
+/** @deprecated Pending.status no longer owns purchase state. */
+export const MANAGEMENT_ELIGIBLE_STATUSES = ["PENDIENTE", ...MANAGEMENT_STATUSES] as const;

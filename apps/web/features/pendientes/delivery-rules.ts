@@ -12,7 +12,9 @@ export type DeliveryRejection =
   | "ALREADY_DELIVERED"
   | "ALREADY_CANCELLED"
   | "NON_POSITIVE_QUANTITY"
-  | "EXCEEDS_REMAINING";
+  | "EXCEEDS_REMAINING"
+  | "NOT_OWNER"
+  | "NOT_INVOICED";
 
 /** Cantidad restante por entregar. Nunca negativa. */
 export function remainingQuantity(quantity: number, deliveredQuantity: number): number {
@@ -39,6 +41,8 @@ export type ValidateDeliveryInput = {
   quantity: number;
   deliveredQuantity: number;
   deliverQuantity: number;
+  invoicedQuantity?: number;
+  customerStatus?: string;
 };
 
 /**
@@ -52,6 +56,7 @@ export function validateDelivery(
 ): DeliveryRejection | null {
   if (input.status === "ENTREGADO") return "ALREADY_DELIVERED";
   if (input.status === "CANCELADO") return "ALREADY_CANCELLED";
+  if (input.customerStatus !== undefined && input.customerStatus !== "FACTURADO") return "NOT_INVOICED";
 
   if (
     !Number.isInteger(input.deliverQuantity) ||
@@ -60,7 +65,7 @@ export function validateDelivery(
     return "NON_POSITIVE_QUANTITY";
   }
 
-  const remaining = remainingQuantity(input.quantity, input.deliveredQuantity);
+  const remaining = Math.min(remainingQuantity(input.quantity, input.deliveredQuantity), (input.invoicedQuantity ?? input.quantity) - input.deliveredQuantity);
   if (input.deliverQuantity > remaining) return "EXCEEDS_REMAINING";
 
   return null;

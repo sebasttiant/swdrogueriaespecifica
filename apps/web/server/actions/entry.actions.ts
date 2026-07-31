@@ -39,13 +39,14 @@ export async function createInventoryEntryAction(
     // undefined para que el schema aplique sus reglas (fecha obligatoria).
     expiresAt: formData.get("expiresAt") ?? undefined,
     note: formData.get("note") ?? undefined,
+    idempotencyKey: formData.get("idempotencyKey"),
   });
 
   if (!parsed.success) {
     return { error: "Revisá los datos de la entrada.", ok: false };
   }
 
-  let closedMissingCount = 0;
+  let allocatedMissingCount = 0;
 
   try {
     const result = await registerInventoryEntry({
@@ -53,7 +54,7 @@ export async function createInventoryEntryAction(
       createdById: session.user.id,
     });
 
-    closedMissingCount = result.closedMissingCount;
+    allocatedMissingCount = result.allocatedMissingCount;
 
     const context = await auditContextFromHeaders(session.user.id);
 
@@ -72,14 +73,14 @@ export async function createInventoryEntryAction(
     });
 
     // Auditoría adicional best-effort: faltantes cerrados por esta entrada.
-    if (closedMissingCount > 0) {
+    if (allocatedMissingCount > 0) {
       await recordAudit({
         action: AUDIT_ACTIONS.MISSING_CLOSED_BY_ENTRY,
         module: AUDIT_MODULES.ENTRADAS,
         entity: "MissingItem",
         after: {
           productId: parsed.data.productId,
-          closedCount: closedMissingCount,
+          allocatedCount: allocatedMissingCount,
         },
         context,
       });
@@ -96,5 +97,5 @@ export async function createInventoryEntryAction(
   revalidatePath("/productos");
   revalidatePath("/dashboard");
   revalidatePath("/faltantes");
-  return { error: null, ok: true, closedMissingCount };
+  return { error: null, ok: true, closedMissingCount: allocatedMissingCount };
 }

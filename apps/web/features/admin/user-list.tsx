@@ -27,6 +27,7 @@ const ROLE_TONE: Record<UserRole, "primary" | "warning" | "neutral"> = {
   ADMIN: "warning",
   SUPERVISOR: "warning",
   OPERADOR: "neutral",
+  BODEGA: "neutral",
 };
 
 function roleBadge(role: UserRole) {

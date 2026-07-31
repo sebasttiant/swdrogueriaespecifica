@@ -11,12 +11,19 @@ import {
   encodeCursor,
   type Paginated,
 } from "@/lib/pagination";
-import type { PendingStatus, Prisma } from "@/lib/generated/prisma/client";
+import type { PendingPurchaseStatus, PendingStatus, Prisma } from "@/lib/generated/prisma/client";
 
 export type PendingListItem = {
   id: string;
   quantity: number;
   status: PendingStatus;
+  purchaseStatus?: PendingPurchaseStatus;
+  availabilityStatus?: "ESPERANDO" | "LLEGO_BODEGA" | "DISPONIBLE_PARCIAL" | "DISPONIBLE_COMPLETO";
+  customerStatus?: "POR_CONTACTAR" | "CONTACTADO" | "FACTURADO" | "ENTREGADO" | "CANCELADO";
+  inventoryReadyQuantity?: number;
+  invoicedQuantity?: number;
+  contactedAt?: Date | null;
+  invoicedAt?: Date | null;
   promisedAt: Date;
   customerName: string | null;
   // Teléfono canónico (solo dígitos). Null en los pendientes anteriores a que
@@ -52,12 +59,21 @@ export type CreatePendingData = {
   totalAmount?: number;
   paidAmount?: number;
   createdById?: string | null;
+  inventoryReadyQuantity?: number;
+  reservedInventoryQuantity?: number;
 };
 
 const LIST_SELECT = {
   id: true,
   quantity: true,
   status: true,
+  purchaseStatus: true,
+  availabilityStatus: true,
+  customerStatus: true,
+  inventoryReadyQuantity: true,
+  invoicedQuantity: true,
+  contactedAt: true,
+  invoicedAt: true,
   promisedAt: true,
   customerName: true,
   customerPhone: true,
@@ -83,6 +99,7 @@ export async function listPendings(params: {
   cursor?: string | null;
   take?: number;
   scope?: PendingScope;
+  ownerId?: string;
 }): Promise<Paginated<PendingListItem>> {
   const take = clampTake(params.take);
   let cursorId = params.cursor ? decodeCursor(params.cursor) : null;
@@ -92,21 +109,25 @@ export async function listPendings(params: {
   // no existe (registro borrado o cursor inventado). Validamos su existencia con
   // un lookup barato por PK: si no existe, lo ignoramos y servimos la primera
   // página. Así un cursor inutilizable nunca rompe la consulta de paginación.
+  const where = {
+    status: { in: params.scope === "history" ? HISTORY_STATUSES : OPEN_STATUSES },
+    ...(params.ownerId ? { createdById: params.ownerId } : {}),
+  };
   if (cursorId) {
     const exists = await prisma.pending.findUnique({
       where: { id: cursorId },
-      select: { id: true },
+      select: { id: true, createdById: true, status: true },
     });
-    if (!exists) cursorId = null;
+    const cursorMatchesOwner = !params.ownerId || exists?.createdById === params.ownerId;
+    const cursorMatchesScope = Boolean(exists && (params.scope === "history" ? HISTORY_STATUSES : OPEN_STATUSES).includes(exists.status));
+    if (!exists || !cursorMatchesOwner || !cursorMatchesScope) cursorId = null;
   }
 
   // take + 1 para detectar página siguiente sin un count extra.
   const rows = await prisma.pending.findMany({
     take: take + 1,
     ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
-    ...(params.scope === "history"
-      ? {}
-      : { where: { status: { in: OPEN_STATUSES } } }),
+    where,
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     select: LIST_SELECT,
   });
@@ -134,6 +155,7 @@ const OPEN_STATUSES: PendingStatus[] = [
   "COTIZANDO",
   "AGOTADO",
 ];
+const HISTORY_STATUSES: PendingStatus[] = ["ENTREGADO", "CANCELADO"];
 
 // Estados que disparan las ALERTAS de vencimiento/urgencia (banner rojo,
 // próximas 24h, lista de urgentes). Es OPEN_STATUSES MENOS `AGOTADO`: un
@@ -148,8 +170,8 @@ const ALERT_STATUSES: PendingStatus[] = [
   "COTIZANDO",
 ];
 
-export function countOpenPendings(): Promise<number> {
-  return prisma.pending.count({ where: { status: { in: OPEN_STATUSES } } });
+export function countOpenPendings(ownerId?: string): Promise<number> {
+  return prisma.pending.count({ where: { status: { in: OPEN_STATUSES }, ...(ownerId ? { createdById: ownerId } : {}) } });
 }
 
 // Total histórico de pendientes (para reportería: cerrados = total - abiertos).
@@ -181,9 +203,9 @@ export async function listPendingCreatedAtSince(since: Date): Promise<Date[]> {
 
 // Vencidos = abiertos-alertables cuya promesa ya pasó. Usa ALERT_STATUSES para
 // excluir AGOTADO (ver la nota en la definición de la constante).
-export function countOverduePendings(now: Date = new Date()): Promise<number> {
+export function countOverduePendings(now: Date = new Date(), ownerId?: string): Promise<number> {
   return prisma.pending.count({
-    where: { status: { in: ALERT_STATUSES }, promisedAt: { lt: now } },
+    where: { status: { in: ALERT_STATUSES }, promisedAt: { lt: now }, ...(ownerId ? { createdById: ownerId } : {}) },
   });
 }
 
@@ -192,20 +214,21 @@ export function countOverduePendings(now: Date = new Date()): Promise<number> {
 // Disjoint with countOverduePendings by construction (overdue uses lt: now).
 const MS_24H = 24 * 60 * 60 * 1000;
 
-export function countUpcomingPendings(now: Date = new Date()): Promise<number> {
+export function countUpcomingPendings(now: Date = new Date(), ownerId?: string): Promise<number> {
   return prisma.pending.count({
     where: {
       status: { in: ALERT_STATUSES },
       promisedAt: { gte: now, lte: new Date(now.getTime() + MS_24H) },
+      ...(ownerId ? { createdById: ownerId } : {}),
     },
   });
 }
 
 // Pendientes más urgentes: los que vencen antes, primero. Alertables (sin
 // AGOTADO), como el resto de las señales de urgencia.
-export function listUrgentPendings(take: number): Promise<PendingListItem[]> {
+export function listUrgentPendings(take: number, ownerId?: string): Promise<PendingListItem[]> {
   return prisma.pending.findMany({
-    where: { status: { in: ALERT_STATUSES } },
+    where: { status: { in: ALERT_STATUSES }, ...(ownerId ? { createdById: ownerId } : {}) },
     take,
     orderBy: [{ promisedAt: "asc" }, { id: "asc" }],
     select: LIST_SELECT,
@@ -259,6 +282,13 @@ export async function createPending(
       // Cero, no null: "no abonó" es un hecho conocido, no un dato ausente.
       paidAmount: data.paidAmount ?? 0,
       createdById: data.createdById ?? null,
+      inventoryReadyQuantity: data.inventoryReadyQuantity ?? 0,
+      reservedInventoryQuantity: data.reservedInventoryQuantity ?? 0,
+      availabilityStatus: (data.inventoryReadyQuantity ?? 0) === 0
+        ? "ESPERANDO"
+        : (data.inventoryReadyQuantity ?? 0) === data.quantity
+          ? "DISPONIBLE_COMPLETO"
+          : "DISPONIBLE_PARCIAL",
     },
   });
 }
@@ -272,6 +302,10 @@ export type PendingForDelivery = {
   quantity: number;
   deliveredQuantity: number;
   status: PendingStatus;
+  createdById: string | null;
+  inventoryReadyQuantity: number;
+  invoicedQuantity: number;
+  customerStatus: "POR_CONTACTAR" | "CONTACTADO" | "FACTURADO" | "ENTREGADO" | "CANCELADO";
 };
 
 /**
@@ -294,7 +328,7 @@ export async function lockPendingForUpdate(
   id: string,
 ): Promise<PendingForDelivery | null> {
   const rows = await client.$queryRaw<PendingForDelivery[]>`
-    SELECT id, quantity, "deliveredQuantity", status
+    SELECT id, quantity, "deliveredQuantity", status, "createdById", "inventoryReadyQuantity", "invoicedQuantity", "customerStatus"
     FROM pendings WHERE id = ${id} FOR UPDATE
   `;
   return rows[0] ?? null;
@@ -392,15 +426,25 @@ export async function cancelPending(
 
 export type UpdatePendingManagementStatusData = {
   id: string;
-  status: PendingStatus;
+  purchaseStatus?: PendingPurchaseStatus;
   // Estados desde los que el cambio es válido. El guard va en el WHERE para que
   // el update sea un compare-and-set atómico: si una entrega/cancelación
   // concurrente ya movió la fila fuera de este set, no se escribe.
-  eligibleStatuses: PendingStatus[];
+  expectedPurchaseStatus?: PendingPurchaseStatus;
+  /** @deprecated legacy caller compatibility; never written. */
+  status?: PendingStatus;
+  /** @deprecated legacy caller compatibility; authority is purchaseStatus. */
+  eligibleStatuses?: PendingStatus[];
+  expectedStatus?: PendingStatus;
   // El atajo de "Ya lo pedí" compara contra lo que vio al renderizar; evita
   // sobrescribir una decisión concurrente distinta de gerencia.
-  expectedStatus?: PendingStatus;
 };
+
+function legacyPurchaseStatus(status: PendingStatus | undefined): PendingPurchaseStatus | undefined {
+  if (status === "PENDIENTE") return "POR_PEDIR";
+  if (status === "SOLICITADO" || status === "BUSQUEDA" || status === "COTIZANDO" || status === "AGOTADO") return status;
+  return undefined;
+}
 
 /**
  * Compare-and-set del estado de gestión: escribe solo si el pendiente sigue en
@@ -414,9 +458,10 @@ export async function updatePendingManagementStatus(
   const { count } = await prisma.pending.updateMany({
     where: {
       id: data.id,
-      status: data.expectedStatus ?? { in: data.eligibleStatuses },
+      status: { notIn: ["ENTREGADO", "CANCELADO"] },
+      purchaseStatus: data.expectedPurchaseStatus ?? legacyPurchaseStatus(data.expectedStatus),
     },
-    data: { status: data.status },
+    data: { purchaseStatus: data.purchaseStatus ?? legacyPurchaseStatus(data.status) ?? "POR_PEDIR" },
   });
   return count;
 }

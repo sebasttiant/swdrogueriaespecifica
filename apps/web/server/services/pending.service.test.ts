@@ -8,8 +8,9 @@ const { prismaMock, tx } = vi.hoisted(() => {
   const tx = {
     pending: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     pendingDelivery: { create: vi.fn() },
-    missingItem: { create: vi.fn() },
-    productBatch: { aggregate: vi.fn() },
+    missingItem: { create: vi.fn(), updateMany: vi.fn() },
+    pendingInventoryReservation: { findMany: vi.fn(), upsert: vi.fn(), deleteMany: vi.fn(), delete: vi.fn(), update: vi.fn() },
+    productBatch: { aggregate: vi.fn(), update: vi.fn() },
     product: { create: vi.fn() },
     // `lockPendingForUpdate` usa `$queryRaw` (SELECT ... FOR UPDATE), no
     // `findUnique`: bajo READ COMMITTED una relectura plana dentro de la
@@ -59,9 +60,11 @@ vi.mock("@/server/repositories/pending.repository", async (importOriginal) => {
 
 import {
   cancelPendingCommitment,
+  contactPending,
   deliverPending,
   getPendingDashboard,
   getPendings,
+  invoicePending,
   registerPending,
   setPendingManagementStatus,
 } from "./pending.service";
@@ -75,7 +78,7 @@ const baseInput = {
 };
 
 function mockStock(quantity: number) {
-  tx.productBatch.aggregate.mockResolvedValue({ _sum: { quantity } });
+  tx.$queryRaw.mockResolvedValue(quantity > 0 ? [{ id: "batch-1", quantity }] : []);
 }
 
 // Typed fixture for `listPendings`/`listUrgentPendings` rows — mirrors
@@ -121,6 +124,8 @@ describe("registerPending", () => {
     expect(result.missingItem).toBeNull();
     expect(tx.missingItem.create).not.toHaveBeenCalled();
     expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
+    expect(tx.productBatch.update).toHaveBeenCalledWith({ where: { id: "batch-1" }, data: { quantity: { decrement: 5 } } });
+    expect(tx.pending.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ inventoryReadyQuantity: 5, reservedInventoryQuantity: 5 }) }));
   });
 
   it("con stock insuficiente: crea el pendiente y un faltante por el déficit", async () => {
@@ -208,6 +213,10 @@ type PendingRow = {
   quantity: number;
   deliveredQuantity: number;
   status: "PENDIENTE" | "PARCIAL" | "ENTREGADO" | "CANCELADO";
+  createdById: string | null;
+  inventoryReadyQuantity: number;
+  invoicedQuantity: number;
+  customerStatus: "POR_CONTACTAR" | "CONTACTADO" | "FACTURADO" | "ENTREGADO" | "CANCELADO";
 };
 
 function pendingForDelivery(overrides: Partial<PendingRow> = {}): PendingRow {
@@ -216,6 +225,10 @@ function pendingForDelivery(overrides: Partial<PendingRow> = {}): PendingRow {
     quantity: 10,
     deliveredQuantity: 0,
     status: "PENDIENTE",
+    createdById: "op-1",
+    inventoryReadyQuantity: 10,
+    invoicedQuantity: 10,
+    customerStatus: "FACTURADO",
     ...overrides,
   };
 }
@@ -404,7 +417,7 @@ describe("cancelPendingCommitment", () => {
     mockLockedPending(pendingForDelivery({ status: "PENDIENTE" }));
     mockCasWrote(1);
 
-    await cancelPendingCommitment({ id: "pend-1", cancelledById: "sup-1" }, now);
+    await cancelPendingCommitment({ id: "pend-1", cancelledById: "sup-1", canManageAll: true }, now);
 
     expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
     // El mismo `FOR UPDATE` sobre `pendings`: entregar y cancelar se serializan
@@ -421,7 +434,7 @@ describe("cancelPendingCommitment", () => {
     mockCasWrote(1);
 
     const result = await cancelPendingCommitment(
-      { id: "pend-1", cancelledById: "sup-1", reason: "Cliente desistió" },
+      { id: "pend-1", cancelledById: "sup-1", reason: "Cliente desistió", canManageAll: true },
       now,
     );
 
@@ -443,10 +456,33 @@ describe("cancelPendingCommitment", () => {
     });
   });
 
+  it("releases each unconsumed lot and cancels the linked open MissingItem", async () => {
+    mockLockedPending(pendingForDelivery({ status: "PARCIAL", deliveredQuantity: 4 }));
+    mockCasWrote(1);
+    tx.pendingInventoryReservation.findMany.mockResolvedValue([
+      { id: "reservation-1", batchId: "batch-a", quantity: 2 },
+      { id: "reservation-2", batchId: "batch-b", quantity: 4 },
+    ]);
+
+    await cancelPendingCommitment({ id: "pend-1", cancelledById: "sup-1", canManageAll: true }, now);
+
+    expect(tx.productBatch.update).toHaveBeenNthCalledWith(1, {
+      where: { id: "batch-a" }, data: { quantity: { increment: 2 } },
+    });
+    expect(tx.productBatch.update).toHaveBeenNthCalledWith(2, {
+      where: { id: "batch-b" }, data: { quantity: { increment: 4 } },
+    });
+    expect(tx.pendingInventoryReservation.deleteMany).toHaveBeenCalledWith({ where: { pendingId: "pend-1" } });
+    expect(tx.missingItem.updateMany).toHaveBeenCalledWith({
+      where: { originId: "pend-1", status: { in: ["FALTANTE", "PEDIDO", "EN_BODEGA"] } },
+      data: { status: "CANCELADO" },
+    });
+  });
+
   it("rejects cancelling an ENTREGADO pending", async () => {
     mockLockedPending(pendingForDelivery({ status: "ENTREGADO" }));
 
-    const result = await cancelPendingCommitment({ id: "pend-1", cancelledById: "sup-1" }, now);
+    const result = await cancelPendingCommitment({ id: "pend-1", cancelledById: "sup-1", canManageAll: true }, now);
 
     expect(result.rejection).toBe("ALREADY_DELIVERED");
     expect(result.pending).toBeNull();
@@ -456,7 +492,7 @@ describe("cancelPendingCommitment", () => {
   it("rejects cancelling an already CANCELADO pending", async () => {
     mockLockedPending(pendingForDelivery({ status: "CANCELADO" }));
 
-    const result = await cancelPendingCommitment({ id: "pend-1", cancelledById: "sup-1" }, now);
+    const result = await cancelPendingCommitment({ id: "pend-1", cancelledById: "sup-1", canManageAll: true }, now);
 
     expect(result.rejection).toBe("ALREADY_CANCELLED");
     expect(tx.pending.updateMany).not.toHaveBeenCalled();
@@ -467,7 +503,7 @@ describe("cancelPendingCommitment", () => {
     mockCasWrote(0);
 
     await expect(
-      cancelPendingCommitment({ id: "pend-1", cancelledById: "sup-1" }, now),
+      cancelPendingCommitment({ id: "pend-1", cancelledById: "sup-1", canManageAll: true }, now),
     ).rejects.toThrow(/concurrently/);
   });
 
@@ -475,7 +511,7 @@ describe("cancelPendingCommitment", () => {
     mockLockedPending(null);
 
     await expect(
-      cancelPendingCommitment({ id: "missing", cancelledById: "sup-1" }, now),
+      cancelPendingCommitment({ id: "missing", cancelledById: "sup-1", canManageAll: true }, now),
     ).rejects.toThrow();
   });
 
@@ -485,7 +521,7 @@ describe("cancelPendingCommitment", () => {
     // habría leído PARCIAL y cancelado una entrega ya cumplida.
     mockLockedPending(pendingForDelivery({ status: "ENTREGADO", deliveredQuantity: 10 }));
 
-    const result = await cancelPendingCommitment({ id: "pend-1", cancelledById: "sup-1" }, now);
+    const result = await cancelPendingCommitment({ id: "pend-1", cancelledById: "sup-1", canManageAll: true }, now);
 
     expect(result.rejection).toBe("ALREADY_DELIVERED");
     expect(result.pending).toBeNull();
@@ -648,8 +684,38 @@ describe("getPendingDashboard", () => {
 
     // Exact reference/value check: a stray `new Date()` inside the service
     // would not equal the injected `now` and must fail this assertion.
-    expect(repo.countOverduePendings).toHaveBeenCalledWith(now);
-    expect(repo.countUpcomingPendings).toHaveBeenCalledWith(now);
+    expect(repo.countOverduePendings).toHaveBeenCalledWith(now, undefined);
+    expect(repo.countUpcomingPendings).toHaveBeenCalledWith(now, undefined);
+  });
+
+  it("scopes every dashboard query to the owner for an OPERADOR", async () => {
+    repo.listUrgentPendings.mockResolvedValue([]);
+    await getPendingDashboard({ canViewCustomerIdentity: true, now, scope: "owner", ownerId: "seller-1" });
+    expect(repo.countOpenPendings).toHaveBeenCalledWith("seller-1");
+    expect(repo.countOverduePendings).toHaveBeenCalledWith(now, "seller-1");
+    expect(repo.countUpcomingPendings).toHaveBeenCalledWith(now, "seller-1");
+    expect(repo.listUrgentPendings).toHaveBeenCalledWith(5, "seller-1");
+  });
+});
+
+describe("customer lifecycle ownership and incremental invoice", () => {
+  const now = new Date("2026-07-09T12:00:00.000Z");
+
+  it("fails closed for legacy ownerless Pending unless the actor is global", async () => {
+    mockLockedPending(pendingForDelivery({ createdById: null }));
+    await expect(contactPending({ id: "pend-1", actorId: "op-1" }, now)).resolves.toBe("NOT_OWNER");
+  });
+
+  it("does not regress FACTURADO to CONTACTADO", async () => {
+    mockLockedPending(pendingForDelivery({ customerStatus: "FACTURADO" }));
+    await expect(contactPending({ id: "pend-1", actorId: "op-1" }, now)).resolves.toBe("NOT_CONTACTABLE");
+    expect(tx.pending.update).not.toHaveBeenCalled();
+  });
+
+  it("invoices newly available quantity after a partial delivery without leaving FACTURADO", async () => {
+    mockLockedPending(pendingForDelivery({ status: "PARCIAL", deliveredQuantity: 6, inventoryReadyQuantity: 10, invoicedQuantity: 6, customerStatus: "FACTURADO" }));
+    await expect(invoicePending({ id: "pend-1", actorId: "op-1", quantity: 4 }, now)).resolves.toBeNull();
+    expect(tx.pending.update).toHaveBeenCalledWith({ where: { id: "pend-1" }, data: expect.objectContaining({ customerStatus: "FACTURADO", invoicedQuantity: 10 }) });
   });
 });
 
@@ -660,15 +726,7 @@ describe("setPendingManagementStatus", () => {
     await setPendingManagementStatus({ id: "pend-1", status: "SOLICITADO" });
 
     expect(repo.updatePendingManagementStatus).toHaveBeenCalledWith({
-      id: "pend-1",
-      status: "SOLICITADO",
-      eligibleStatuses: [
-        "PENDIENTE",
-        "SOLICITADO",
-        "BUSQUEDA",
-        "COTIZANDO",
-        "AGOTADO",
-      ],
+      id: "pend-1", purchaseStatus: "SOLICITADO", expectedPurchaseStatus: undefined,
     });
   });
 
@@ -682,7 +740,7 @@ describe("setPendingManagementStatus", () => {
     });
 
     expect(repo.updatePendingManagementStatus).toHaveBeenCalledWith(
-      expect.objectContaining({ expectedStatus: "PENDIENTE" }),
+      expect.objectContaining({ expectedPurchaseStatus: "POR_PEDIR" }),
     );
   });
 

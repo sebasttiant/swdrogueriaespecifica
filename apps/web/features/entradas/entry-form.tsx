@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 
 import { Button } from "@/app/_components/ui/button";
 import { Field } from "@/app/_components/ui/field";
@@ -31,10 +31,12 @@ type EntryFormProps = {
 // Alta de entrada de inventario. Único client component del slice (necesita
 // useActionState). La lista de productos llega del server component que la monta.
 export function EntryForm({ products, selectedProductId }: EntryFormProps) {
-  const [state, formAction, isPending] = useActionState(
-    createInventoryEntryAction,
-    INITIAL_STATE,
-  );
+  const [operationId, setOperationId] = useState(() => crypto.randomUUID());
+  const [state, formAction, isPending] = useActionState(async (previousState: EntryFormState, formData: FormData) => {
+    const result = await createInventoryEntryAction(previousState, formData);
+    if (result.ok) setOperationId(crypto.randomUUID());
+    return result;
+  }, INITIAL_STATE);
 
   if (products.length === 0) {
     return (
@@ -46,6 +48,7 @@ export function EntryForm({ products, selectedProductId }: EntryFormProps) {
 
   return (
     <form action={formAction} className="space-y-4">
+      <input type="hidden" name="idempotencyKey" value={operationId} />
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Producto" htmlFor="productId" className="sm:col-span-2">
           <Select id="productId" name="productId" required defaultValue={selectedProductId}>
