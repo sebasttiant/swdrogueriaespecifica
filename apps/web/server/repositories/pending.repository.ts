@@ -66,6 +66,11 @@ export type CreatePendingData = {
   createdById?: string | null;
   inventoryReadyQuantity?: number;
   reservedInventoryQuantity?: number;
+  // Clave del intento que está creando este pendiente. Ver el modelo `Pending`:
+  // el índice único sobre esta columna es lo que impide que un reintento cree
+  // una segunda fila.
+  idempotencyKey: string;
+  requestFingerprint: string;
 };
 
 const LIST_SELECT = {
@@ -271,6 +276,20 @@ export async function listUsedZones(take = 30): Promise<string[]> {
     .filter((zone): zone is string => zone !== null);
 }
 
+/**
+ * Busca el pendiente que un intento ya creó, por su clave de idempotencia.
+ *
+ * Es la mitad de lectura de la regla anti-duplicado: antes de crear se consulta
+ * acá, y si el `create` choca contra el índice único se vuelve a consultar acá
+ * para devolver la fila que ganó la carrera.
+ */
+export function findPendingByIdempotencyKey(
+  idempotencyKey: string,
+  client: Prisma.TransactionClient = prisma,
+) {
+  return client.pending.findUnique({ where: { idempotencyKey } });
+}
+
 export async function createPending(
   data: CreatePendingData,
   client: Prisma.TransactionClient = prisma,
@@ -289,6 +308,8 @@ export async function createPending(
       // Cero, no null: "no abonó" es un hecho conocido, no un dato ausente.
       paidAmount: data.paidAmount ?? 0,
       createdById: data.createdById ?? null,
+      idempotencyKey: data.idempotencyKey,
+      requestFingerprint: data.requestFingerprint,
       inventoryReadyQuantity: data.inventoryReadyQuantity ?? 0,
       reservedInventoryQuantity: data.reservedInventoryQuantity ?? 0,
       availabilityStatus: (data.inventoryReadyQuantity ?? 0) === 0

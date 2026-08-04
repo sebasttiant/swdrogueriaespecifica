@@ -10,11 +10,11 @@
 // No descuenta stock ni cambia estados: eso es de fases siguientes.
 // --------------------------------------------------------------------------
 
-import type {
-  Pending,
-  MissingItem,
-  PendingStatus,
-  Product,
+import {
+  type Pending,
+  type MissingItem,
+  type PendingStatus,
+  type Product,
 } from "@/lib/generated/prisma/client";
 import {
   cancelPending,
@@ -23,6 +23,7 @@ import {
   countUpcomingPendings,
   createPending,
   createPendingDelivery,
+  findPendingByIdempotencyKey,
   lockPendingForUpdate,
   listPendings,
   listUrgentPendings,
@@ -73,7 +74,16 @@ export type RegisterPendingInput = {
   createdById?: string | null;
   productId?: string;
   manual?: ManualProductInput;
+  // Clave del INTENTO. Obligatoria para toda alta nueva; las filas históricas
+  // siguen nullable únicamente por compatibilidad de datos.
+  idempotencyKey: string;
 };
+
+export class PendingIdempotencyPayloadConflictError extends Error {
+  constructor() {
+    super("idempotency key was already used for a different pending payload");
+  }
+}
 
 // Prefijo de código para productos creados desde un pendiente manual. Sufijo
 // aleatorio para no colisionar con el índice único `code` sin coordinar un
@@ -101,6 +111,9 @@ export type CreatePendingResult = {
   createdProduct: Product | null;
   sellableStock: number;
   missingQuantity: number;
+  // true = este intento NO creó nada: su clave de idempotencia ya tenía un
+  // pendiente. La acción usa esto para no auditar dos veces el mismo hecho.
+  replayed: boolean;
 };
 
 // Minimización server-side: el nombre del cliente nunca llega al cliente (ni
@@ -200,9 +213,105 @@ export async function getPendingDashboard(params: {
  * ATÓMICO: alta del producto manual (si aplica), alta del pendiente, lectura de
  * stock y alta del faltante corren en UNA sola transacción interactiva. Si algo
  * falla, Prisma hace rollback y no queda un producto/pendiente huérfano.
+ *
+ * IDEMPOTENTE cuando el llamador manda `idempotencyKey`. El operador que
+ * reintenta después de un error —o el navegador que reenvía tras un timeout— no
+ * puede crear un segundo pendiente con la misma clave. La regla se apoya en el
+ * índice único de la columna, no en una comprobación previa: la comprobación
+ * sola perdería la carrera entre dos envíos simultáneos, porque ambos leerían
+ * "no existe" antes de que ninguno insertara. Por eso hay DOS lecturas, una
+ * antes (camino barato) y otra al chocar contra el índice (camino correcto).
  */
 export async function registerPending(
   data: RegisterPendingInput,
+): Promise<CreatePendingResult> {
+  const fingerprint = requestFingerprint(data);
+  // Camino barato: el intento ya tiene su pendiente. Ni transacción ni lock.
+  const existing = await findPendingByIdempotencyKey(data.idempotencyKey);
+  if (existing) return replayRegistration(existing, fingerprint);
+
+  try {
+    return await createPendingRegistration(data, fingerprint);
+  } catch (error) {
+    // Camino correcto: perdimos la carrera contra otro envío con la MISMA clave.
+    // El pendiente existe —lo creó el otro— así que esto es un éxito, no un
+    // fallo: devolver error acá haría que el operador reintente algo ya hecho.
+    if (isIdempotencyConflict(error)) {
+      const winner = await findPendingByIdempotencyKey(data.idempotencyKey);
+      if (winner) return replayRegistration(winner, fingerprint);
+    }
+    throw error;
+  }
+}
+
+/**
+ * Detecta P2002 por estructura, no por `instanceof`: Next puede cargar Prisma
+ * desde otra copia. Si otro unique produjo el error no habrá ganador por esta
+ * clave y el catch lo relanza, evitando convertirlo en replay.
+ */
+function isIdempotencyConflict(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "P2002"
+  );
+}
+
+function requestFingerprint(data: RegisterPendingInput): string {
+  return JSON.stringify({
+    productId: data.productId ?? null,
+    manual: data.manual
+      ? { name: data.manual.name.trim(), unit: data.manual.unit.trim() }
+      : null,
+    quantity: data.quantity,
+    promisedAt: data.promisedAt.toISOString(),
+    customerName: data.customerName?.trim() || null,
+    customerPhone: data.customerPhone?.trim() || null,
+    customerAddress: data.customerAddress?.trim() || null,
+    note: data.note?.trim() || null,
+    zone: data.zone?.trim() || null,
+    totalAmount: data.totalAmount ?? null,
+    paidAmount: data.paidAmount ?? 0,
+    createdById: data.createdById ?? null,
+  });
+}
+
+/**
+ * Resultado equivalente para un pendiente que YA existía.
+ *
+ * `createdProduct` va en null a propósito aunque el intento original haya creado
+ * un producto manual: ese hecho ya se auditó cuando ocurrió, y devolverlo otra
+ * vez haría que la acción lo audite dos veces. Un replay no crea nada, así que
+ * no tiene efectos nuevos que reportar.
+ */
+async function replayRegistration(
+  pending: Pending,
+  fingerprint: string,
+): Promise<CreatePendingResult> {
+  if (pending.requestFingerprint !== fingerprint) {
+    throw new PendingIdempotencyPayloadConflictError();
+  }
+  const missingItem = await prisma.missingItem.findFirst({
+    where: { originId: pending.id },
+    orderBy: { createdAt: "asc" },
+  });
+  return {
+    pending,
+    missingItem,
+    createdProduct: null,
+    sellableStock: pending.inventoryReadyQuantity,
+    missingQuantity: computeMissingQuantity(
+      pending.quantity,
+      pending.inventoryReadyQuantity,
+    ),
+    replayed: true,
+  };
+}
+
+function createPendingRegistration(
+  data: RegisterPendingInput,
+  fingerprint: string,
 ): Promise<CreatePendingResult> {
   return prisma.$transaction(async (tx) => {
     // Resolver el producto: existente (catálogo) o creado al vuelo (manual).
@@ -236,6 +345,8 @@ export async function registerPending(
         customerAddress: data.customerAddress, note: data.note, zone: data.zone,
         totalAmount: data.totalAmount, paidAmount: data.paidAmount,
         createdById: data.createdById ?? null,
+        idempotencyKey: data.idempotencyKey,
+        requestFingerprint: fingerprint,
       }, tx,
     );
     const inventoryReadyQuantity = await claimableStockForPending(
@@ -280,6 +391,7 @@ export async function registerPending(
       createdProduct,
       sellableStock: inventoryReadyQuantity,
       missingQuantity,
+      replayed: false,
     };
   });
 }
