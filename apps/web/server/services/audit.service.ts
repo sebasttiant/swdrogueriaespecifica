@@ -45,7 +45,23 @@ export type RecordAuditInput = {
   before?: Prisma.InputJsonValue;
   after?: Prisma.InputJsonValue;
   context?: AuditContext;
+  correlationId?: string | null;
 };
+
+export type AuditWriteResult =
+  | { ok: true }
+  | { ok: false; errorClass: string; errorCode: string | null };
+
+function sanitizedError(error: unknown): Omit<Extract<AuditWriteResult, { ok: false }>, "ok"> {
+  if (typeof error !== "object" || error === null) {
+    return { errorClass: "UnknownError", errorCode: null };
+  }
+  const candidate = error as { name?: unknown; code?: unknown };
+  return {
+    errorClass: typeof candidate.name === "string" ? candidate.name : "Error",
+    errorCode: typeof candidate.code === "string" ? candidate.code : null,
+  };
+}
 
 /**
  * Registra una entrada de auditoría.
@@ -53,7 +69,7 @@ export type RecordAuditInput = {
  * No relanza errores: una falla al auditar NO debe romper la operación de
  * negocio. Si el log falla, se reporta por consola para no perder la señal.
  */
-export async function recordAudit(input: RecordAuditInput): Promise<void> {
+export async function recordAudit(input: RecordAuditInput): Promise<AuditWriteResult> {
   const { context } = input;
 
   try {
@@ -72,8 +88,14 @@ export async function recordAudit(input: RecordAuditInput): Promise<void> {
         channel: context?.channel ?? null,
       },
     });
+    return { ok: true };
   } catch (error) {
-    console.error("[audit] No se pudo registrar la auditoría:", error);
+    const sanitized = sanitizedError(error);
+    console.error("[audit] write_failed", {
+      correlationId: input.correlationId ?? null,
+      ...sanitized,
+    });
+    return { ok: false, ...sanitized };
   }
 }
 
