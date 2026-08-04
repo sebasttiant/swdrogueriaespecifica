@@ -82,6 +82,13 @@ services:
       NODE_ENV: production
       PORT: "3000"
       HOSTNAME: "0.0.0.0"
+      # Commit desplegado. Va en cada evento de diagnóstico para poder responder
+      # "¿este intento corrió con el arreglo o sin él?" sin deducirlo por fecha.
+      # `deploy.sh` lo completa solo; el default deja claro cuándo no se sabe.
+      APP_COMMIT: ${APP_COMMIT:-unknown}
+      # Detalle del log de alta de pendientes: full | errors | off.
+      # `full` durante un diagnóstico; `errors` para la operación normal.
+      PENDING_DIAGNOSTICS: ${PENDING_DIAGNOSTICS:-errors}
     ports:
       # Puerto externo 3132 -> interno 3000. La app sigue escuchando en 3000
       # dentro del contenedor; solo se publica 3132 hacia afuera.

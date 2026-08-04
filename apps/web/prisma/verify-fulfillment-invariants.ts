@@ -88,8 +88,8 @@ async function main() {
   };
 
   console.log("\nEscenario: stock 5, pedido A = 4, pedido B = 4");
-  const a = await registerPending({ ...base, quantity: 4, customerName: "Cliente A" });
-  const b = await registerPending({ ...base, quantity: 4, customerName: "Cliente B" });
+  const a = await registerPending({ ...base, quantity: 4, customerName: "Cliente A", idempotencyKey: crypto.randomUUID() });
+  const b = await registerPending({ ...base, quantity: 4, customerName: "Cliente B", idempotencyKey: crypto.randomUUID() });
 
   const pendingA = await prisma.pending.findUniqueOrThrow({ where: { id: a.pending.id } });
   const pendingB = await prisma.pending.findUniqueOrThrow({ where: { id: b.pending.id } });
@@ -185,8 +185,8 @@ async function main() {
   });
 
   const [c1, c2] = await Promise.all([
-    registerPending({ ...base, quantity: 4, customerName: "Concurrente 1" }),
-    registerPending({ ...base, quantity: 4, customerName: "Concurrente 2" }),
+    registerPending({ ...base, quantity: 4, customerName: "Concurrente 1", idempotencyKey: crypto.randomUUID() }),
+    registerPending({ ...base, quantity: 4, customerName: "Concurrente 2", idempotencyKey: crypto.randomUUID() }),
   ]);
   const p1 = await prisma.pending.findUniqueOrThrow({ where: { id: c1.pending.id } });
   const p2 = await prisma.pending.findUniqueOrThrow({ where: { id: c2.pending.id } });
@@ -220,7 +220,7 @@ async function main() {
     "@/server/services/pending.service"
   );
 
-  const sinStock = await registerPending({ ...base, quantity: 5, customerName: "Cliente F" });
+  const sinStock = await registerPending({ ...base, quantity: 5, customerName: "Cliente F", idempotencyKey: crypto.randomUUID() });
   const registrado = await prisma.pending.findUniqueOrThrow({ where: { id: sinStock.pending.id } });
   assert(registrado.inventoryReadyQuantity === 0, "el pendiente nace sin nada disponible");
 
@@ -280,7 +280,7 @@ async function main() {
 
   console.log("\nEscenario: corregir un pendiente");
   const { updatePending } = await import("@/server/services/pending.service");
-  const paraEditar = await registerPending({ ...base, quantity: 4, customerName: "Cliente E" });
+  const paraEditar = await registerPending({ ...base, quantity: 4, customerName: "Cliente E", idempotencyKey: crypto.randomUUID() });
 
   const correccion = {
     id: paraEditar.pending.id,

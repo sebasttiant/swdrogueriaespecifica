@@ -49,6 +49,12 @@ if [ ! -f "$APP_DIR/.env" ]; then
   exit 1
 fi
 
+# Commit que se va a desplegar. Viaja al contenedor como `APP_COMMIT` y aparece
+# en cada evento de diagnóstico, para saber con qué versión corrió un intento.
+APP_COMMIT="$(git rev-parse --short HEAD)"
+export APP_COMMIT
+echo "==> Deploying commit $APP_COMMIT"
+
 echo "==> Building web image..."
 # Build the deploy images explicitly. `web` is the runtime image; `migrate` and
 # `seed` are one-shot images used below so the runtime container stays minimal.

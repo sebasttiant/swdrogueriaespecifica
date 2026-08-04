@@ -42,23 +42,67 @@ export async function requireSession(): Promise<Session> {
  *
  * El chequeo específico (rol o capability) lo hace el guard que llama.
  */
-async function requireLiveSession(): Promise<Session> {
+async function resolveLiveSession(): Promise<
+  { ok: true; session: Session } | { ok: false; reason: "NO_SESSION" | "INACTIVE" }
+> {
   const session = await getCurrentSession();
-  if (!session) redirect(LOGIN_ROUTE);
+  if (!session) return { ok: false, reason: "NO_SESSION" };
 
   const user = await findUserById(session.user.id);
   // Rechazamos también usuarios archivados: aunque archive fuerza active=false,
   // este chequeo explícito es una red de seguridad de defensa en profundidad.
-  if (!user || !user.active || user.archivedAt !== null) redirect(LOGIN_ROUTE);
+  if (!user || !user.active || user.archivedAt !== null) {
+    return { ok: false, reason: "INACTIVE" };
+  }
 
   return {
-    user: {
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      role: user.role,
+    ok: true,
+    session: {
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+      },
     },
   };
+}
+
+async function requireLiveSession(): Promise<Session> {
+  const result = await resolveLiveSession();
+  if (!result.ok) redirect(LOGIN_ROUTE);
+  return result.session;
+}
+
+/** Por qué una capability no se concedió. */
+export type CapabilityDenial = "NO_SESSION" | "INACTIVE" | "FORBIDDEN";
+
+export type CapabilityCheck =
+  | { ok: true; session: Session }
+  | { ok: false; reason: CapabilityDenial };
+
+/**
+ * Variante de `requireCapability` que NO redirige: devuelve el motivo.
+ *
+ * Existe para las Server Actions que reciben datos cargados a mano. Un
+ * `redirect` desde una acción aborta la respuesta, y con ella se pierde todo lo
+ * que la persona había escrito en el formulario — que es exactamente el daño
+ * que hay que evitar cuando la sesión vence a mitad de una carga. Devolviendo el
+ * motivo, la acción puede responder con un mensaje accionable y con los valores
+ * intactos para reintentar.
+ *
+ * Mismas reglas que `requireCapability`: DB-authoritative, sin confiar en el
+ * payload del token. Solo cambia qué se hace con el rechazo.
+ */
+export async function checkCapability(
+  capability: Capability,
+): Promise<CapabilityCheck> {
+  const result = await resolveLiveSession();
+  if (!result.ok) return result;
+  if (!can(result.session.user.role, capability)) {
+    return { ok: false, reason: "FORBIDDEN" };
+  }
+  return result;
 }
 
 /**

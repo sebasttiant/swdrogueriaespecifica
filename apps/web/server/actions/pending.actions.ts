@@ -3,8 +3,17 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
-import { requireCapability } from "@/lib/auth/require-role";
+import { checkCapability, requireCapability } from "@/lib/auth/require-role";
 import { can } from "@/lib/auth/permissions";
+import { hashEmail, maskPhone, describeText } from "@/lib/observability/redaction";
+import { newSupportCode } from "@/lib/observability/support-code";
+import {
+  describeError,
+  logPendingEvent,
+  PENDING_STAGES,
+  type PendingLogEvent,
+  type SubmitMethod,
+} from "@/lib/observability/pending-log";
 import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
 import {
   auditContextFromHeaders,
@@ -17,6 +26,7 @@ import {
   deliverPending,
   contactPending,
   invoicePending,
+  PendingIdempotencyPayloadConflictError,
   registerPending,
   setPendingManagementStatus,
 } from "@/server/services/pending.service";
@@ -40,13 +50,261 @@ import {
 // cada efecto de forma best-effort.
 // --------------------------------------------------------------------------
 
-export type PendingFormState = { error: string | null; ok: boolean };
+export type PendingFormState = {
+  error: string | null;
+  ok: boolean;
+  /**
+   * Código dictable del intento (`PND-K7M2QX`). Se muestra al operador cuando
+   * algo falla y es el `correlationId` con el que se busca el intento en el log.
+   */
+  supportCode?: string | null;
+  /**
+   * Eco EXACTO de lo que se envió, presente SOLO cuando `ok === false`.
+   *
+   * React limpia los campos no controlados de un `<form action>` en cuanto la
+   * acción resuelve —resuelva con éxito o con error—, así que sin este eco no
+   * queda en ninguna parte lo que la persona había escrito y hay que volver a
+   * tipear todo para reintentar. En éxito va ausente a propósito: es lo que hace
+   * que el formulario quede en blanco para el pendiente siguiente.
+   */
+  values?: PendingSubmittedValues | null;
+  /**
+   * Identidad del resultado. Cambia en CADA respuesta, y el formulario la usa
+   * como `key` para remontar sus campos. Es lo que vuelve explícito el contrato
+   * "se limpia solo en éxito" en vez de depender del reset automático de React.
+   */
+  submissionId?: string;
+  /**
+   * El operador escribió un valor total que el sistema guardó como DESCONOCIDO.
+   *
+   * Pasa cuando tipea "0": en el mostrador eso es "no sé cuánto sale", y el
+   * pendiente entra igual con el precio en NULL en vez de frenarlo con un error.
+   * Pero escribió una cosa y se guardó otra, así que hay que decírselo: sin este
+   * aviso, alguien puede jurar que cargó el precio y el listado decir que no, sin
+   * forma de saber quién tiene razón.
+   */
+  savedWithoutTotalAmount?: boolean;
+};
+
+/**
+ * Los campos del formulario tal como viajaron, en texto plano de FormData.
+ *
+ * Texto y no valores parseados a propósito: lo que hay que devolverle a la
+ * persona es LO QUE ESCRIBIÓ, no nuestra interpretación. Si tipeó "45.000" y el
+ * parser lo leyó mal, devolverle "45000" —o peor, vacío— le esconde el dato que
+ * necesita corregir.
+ */
+export type PendingSubmittedValues = {
+  productId: string;
+  manualName: string;
+  manualUnit: string;
+  manualMode: string;
+  quantity: string;
+  promisedAt: string;
+  customerName: string;
+  customerPhone: string;
+  customerAddress: string;
+  note: string;
+  zone: string;
+  totalAmount: string;
+  paidAmount: string;
+  idempotencyKey: string;
+};
+
+const SUBMITTED_FIELDS = [
+  "productId",
+  "manualName",
+  "manualUnit",
+  "manualMode",
+  "quantity",
+  "promisedAt",
+  "customerName",
+  "customerPhone",
+  "customerAddress",
+  "note",
+  "zone",
+  "totalAmount",
+  "paidAmount",
+  "idempotencyKey",
+] as const satisfies readonly (keyof PendingSubmittedValues)[];
+
+/** Lee un campo como texto. `null`/`File` se normalizan a cadena vacía. */
+function text(formData: FormData, name: string): string {
+  const value = formData.get(name);
+  return typeof value === "string" ? value : "";
+}
+
+function collectSubmittedValues(formData: FormData): PendingSubmittedValues {
+  const values = {} as PendingSubmittedValues;
+  for (const field of SUBMITTED_FIELDS) values[field] = text(formData, field);
+  return values;
+}
+
+/**
+ * Clave de idempotencia aceptable: un UUID generado por el formulario.
+ *
+ * Se valida la FORMA antes de usarla porque llega del cliente y termina en una
+ * columna con índice único. Una clave arbitraria y larga elegida por quien envía
+ * el formulario le dejaría fijar a mano contra qué fila colisiona.
+ */
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function idempotencyKeyFrom(raw: string): string | null {
+  return UUID_PATTERN.test(raw) ? raw.toLowerCase() : null;
+}
+
+function logPendingError(correlationId: string | null, error: unknown): void {
+  const { errorClass, errorCode } = describeError(error);
+  console.error("[pendientes] operation_failed", {
+    correlationId,
+    errorClass,
+    errorCode,
+  });
+}
+
+function submitMethodFrom(raw: string): SubmitMethod {
+  return raw === "enter" || raw === "click" ? raw : "unknown";
+}
+
+/**
+ * El primer problema concreto que encontró el validador, en palabras del negocio.
+ *
+ * Los mensajes del schema ya están escritos para el mostrador ("El valor total
+ * debe ser mayor a cero..."), así que se muestran tal cual. Se elige el primero
+ * y no todos porque en un formulario de trece campos una lista de errores se
+ * lee menos que una instrucción.
+ */
+function firstIssueMessage(error: { issues: readonly { message: string }[] }): string {
+  return error.issues[0]?.message ?? "Revisá los datos del pendiente.";
+}
+
+/**
+ * Violación de una restricción CHECK de la base (SQLSTATE 23514).
+ *
+ * Importa distinguirla porque es un error DETERMINISTA: el dato cargado no puede
+ * entrar, y va a fallar igual las veces que se reintente. Tratarla como un fallo
+ * transitorio —diciendo "Intentá de nuevo"— es lo que hizo que alguien reintente
+ * siete veces seguidas un registro que nunca iba a entrar.
+ */
+function isCheckConstraintViolation(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  // Se mira la FORMA del error y no `instanceof PrismaClientKnownRequestError`:
+  // en el bundle del servidor de Next la clase puede venir de una copia distinta
+  // del cliente y el `instanceof` daría false para el mismo error.
+  //
+  // 23514 es el SQLSTATE de violación de CHECK en PostgreSQL. Prisma lo envuelve
+  // como P2039 y deja el texto del driver en el mensaje o en `meta`.
+  const meta = (error as { meta?: unknown }).meta;
+  const detail = `${error.message} ${safeStringify(meta)}`;
+  return detail.includes("23514") || detail.includes("violates check constraint");
+}
+
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? "";
+  } catch {
+    // `meta` puede traer referencias cíclicas (el error del driver adentro).
+    return "";
+  }
+}
+
+const CHECK_VIOLATION_MESSAGE =
+  "Alguno de los datos cargados no es válido para el sistema. Revisá los montos y la cantidad: reintentar sin corregirlos va a fallar igual.";
+
+const SESSION_EXPIRED_MESSAGE =
+  "Tu sesión venció. Abrí el ingreso en otra pestaña, iniciá sesión de nuevo y volvé acá: los datos siguen cargados.";
+const FORBIDDEN_MESSAGE =
+  "Tu usuario no tiene permiso para registrar pendientes. Pedile a un administrador que lo habilite.";
+const IDEMPOTENCY_CONFLICT_MESSAGE =
+  "Este intento ya fue usado con datos distintos. Recargá el formulario antes de registrar otro pendiente.";
 
 export async function createPendingAction(
   _prev: PendingFormState,
   formData: FormData,
 ): Promise<PendingFormState> {
-  const session = await requireCapability("canCreatePendientes");
+  // Un identificador por INTENTO. Es lo que el operador nos dicta y lo que ata
+  // las nueve etapas de este envío entre sí en el log.
+  const correlationId = newSupportCode();
+  const startedAt = Date.now();
+  const submitted = collectSubmittedValues(formData);
+  const submitMethod = submitMethodFrom(text(formData, "submitMethod"));
+  const idempotencyKey = idempotencyKeyFrom(submitted.idempotencyKey);
+
+  const elapsed = () => Date.now() - startedAt;
+
+  /** Respuesta de fallo: SIEMPRE con el eco de los valores y el código visible. */
+  const failure = (
+    message: string,
+    log: Omit<PendingLogEvent, "correlationId" | "stage">,
+  ): PendingFormState => {
+    logPendingEvent({
+      correlationId,
+      stage: PENDING_STAGES.SUBMIT_FAILED,
+      submitMethod,
+      durationMs: elapsed(),
+      response: "error",
+      ...log,
+    });
+    return {
+      error: `${message} Código: ${correlationId}`,
+      ok: false,
+      supportCode: correlationId,
+      values: submitted,
+      submissionId: correlationId,
+    };
+  };
+
+  logPendingEvent({
+    correlationId,
+    stage: PENDING_STAGES.SUBMIT_STARTED,
+    submitMethod,
+    idempotency: idempotencyKey ? idempotencyKey.slice(0, 8) : null,
+    customerPhoneMasked: maskPhone(submitted.customerPhone),
+    note: describeText(submitted.note),
+    transaction: "not_started",
+  });
+
+  // Sesión: se resuelve SIN redirigir. Un `redirect` desde una Server Action
+  // aborta la respuesta y se lleva puesto todo lo que la persona escribió.
+  const auth = await checkCapability("canCreatePendientes");
+  if (!auth.ok) {
+    return failure(
+      auth.reason === "FORBIDDEN" ? FORBIDDEN_MESSAGE : SESSION_EXPIRED_MESSAGE,
+      {
+        authState: auth.reason === "FORBIDDEN" ? "forbidden" : "expired",
+        outcome: "rejected",
+        errorCode: auth.reason,
+        transaction: "not_started",
+      },
+    );
+  }
+  const session = auth.session;
+  const actor = {
+    userId: session.user.id,
+    userHash: hashEmail(session.user.email),
+    role: session.user.role,
+  };
+
+  if (idempotencyKey === null) {
+    return failure("El intento de registro venció. Recargá el formulario y volvé a enviarlo.", {
+      ...actor,
+      authState: "valid",
+      outcome: "rejected",
+      errorCode: "INVALID_IDEMPOTENCY_KEY",
+      transaction: "not_started",
+    });
+  }
+
+  logPendingEvent({
+    correlationId,
+    stage: PENDING_STAGES.AUTH_VALIDATED,
+    ...actor,
+    authState: "valid",
+    submitMethod,
+    durationMs: elapsed(),
+    transaction: "not_started",
+  });
 
   const parsed = pendingCreateSchema.safeParse({
     // En modo manual el campo `productId` no existe en el formulario, así que
@@ -72,25 +330,125 @@ export async function createPendingAction(
   });
 
   if (!parsed.success) {
-    return { error: "Revisá los datos del pendiente.", ok: false };
+    // Error de validación: los campos vuelven intactos. Corregir un teléfono no
+    // puede costar volver a tipear el pedido entero.
+    //
+    // Y se dice QUÉ corregir. Un "Revisá los datos" genérico obliga a adivinar
+    // cuál de trece campos está mal; con el mensaje concreto del validador, el
+    // operador arregla ese campo y sigue.
+    return failure(firstIssueMessage(parsed.error), {
+      ...actor,
+      authState: "valid",
+      outcome: "rejected",
+      errorCode: "VALIDATION",
+      transaction: "not_started",
+    });
   }
+
+  // Escribió algo en el valor total y el schema lo resolvió como desconocido:
+  // solo puede haber sido un cero. Se guarda igual, pero se avisa (ver
+  // `savedWithoutTotalAmount`). Un texto ilegible no llega acá — lo rechaza el
+  // validador antes, con su propio mensaje.
+  const savedWithoutTotalAmount =
+    parsed.data.totalAmount === undefined && submitted.totalAmount.trim().length > 0;
+
+  logPendingEvent({
+    correlationId,
+    stage: PENDING_STAGES.VALIDATION_COMPLETED,
+    ...actor,
+    submitMethod,
+    durationMs: elapsed(),
+    transaction: "not_started",
+  });
+
+  logPendingEvent({
+    correlationId,
+    stage: PENDING_STAGES.TRANSACTION_STARTED,
+    ...actor,
+    submitMethod,
+    durationMs: elapsed(),
+    transaction: "started",
+  });
 
   let result: Awaited<ReturnType<typeof registerPending>>;
   try {
     result = await registerPending({
       ...parsed.data,
       createdById: session.user.id,
+      idempotencyKey,
     });
   } catch (error) {
     // Solo `registerPending` decide si hubo commit: su transacción revierte ante
     // error. Por eso este es el ÚNICO punto que puede informar fallo de alta y
     // habilitar un reintento seguro.
-    console.error("[pendientes] No se pudo registrar el pendiente:", error);
-    return {
-      error: "No se pudo registrar el pendiente. Intentá de nuevo.",
-      ok: false,
-    };
+    const { errorClass, errorCode } = describeError(error);
+    logPendingError(correlationId, error);
+    // Un rechazo de integridad de la base NO invita a reintentar: hay que
+    // corregir el dato. Cualquier otro fallo sí puede ser del momento.
+    const deterministic = isCheckConstraintViolation(error);
+    return failure(
+      error instanceof PendingIdempotencyPayloadConflictError
+        ? IDEMPOTENCY_CONFLICT_MESSAGE
+        : deterministic
+        ? CHECK_VIOLATION_MESSAGE
+        : "No se pudo registrar el pendiente. Volvé a intentar en unos segundos.",
+      {
+        ...actor,
+        authState: "valid",
+        outcome: deterministic ? "rejected" : "exception",
+        errorClass,
+        errorCode: deterministic ? "CHECK_CONSTRAINT" : errorCode,
+        transaction: "rolled_back",
+      },
+    );
   }
+
+  // Punto de no retorno: a partir de acá el pendiente EXISTE en la base. Es la
+  // etapa que separa "no se creó" de "se creó y falló algo después", y es la
+  // única razón por la que este log vale la pena.
+  logPendingEvent({
+    correlationId,
+    stage: PENDING_STAGES.TRANSACTION_COMMITTED,
+    ...actor,
+    submitMethod,
+    durationMs: elapsed(),
+    transaction: "committed",
+    pendingId: result.pending.id,
+    // `replay` = este intento no creó nada, su clave ya tenía pendiente. Es la
+    // prueba de que la idempotencia frenó un duplicado.
+    outcome: "success",
+    postCommit: result.replayed ? "replay" : "created",
+  });
+
+  // Un replay no tiene efectos nuevos que auditar: el alta ya se auditó cuando
+  // ocurrió de verdad. Volver a auditarla inventaría un segundo registro de un
+  // hecho que pasó una sola vez.
+  if (result.replayed) {
+    logPendingEvent({
+      correlationId,
+      stage: PENDING_STAGES.RESPONSE_SENT,
+      ...actor,
+      submitMethod,
+      durationMs: elapsed(),
+      transaction: "committed",
+      pendingId: result.pending.id,
+      outcome: "success",
+      response: "ok",
+    });
+    return { error: null, ok: true, submissionId: correlationId, savedWithoutTotalAmount };
+  }
+
+  logPendingEvent({
+    correlationId,
+    stage: PENDING_STAGES.POST_COMMIT_STARTED,
+    ...actor,
+    submitMethod,
+    durationMs: elapsed(),
+    transaction: "committed",
+    pendingId: result.pending.id,
+  });
+
+  let postCommit = "ok";
 
   // Desde acá el pendiente ya existe. Auditoría e invalidación son efectos
   // post-commit: fallar no puede convertir el éxito en error ni sugerir reintento.
@@ -100,7 +458,7 @@ export async function createPendingAction(
     // Producto manual creado al vuelo: lo auditamos como efecto propio para que
     // quede trazado quién metió un producto fuera del catálogo (needsReview).
     if (result.createdProduct) {
-      await recordAudit({
+      const productAudit = await recordAudit({
         action: AUDIT_ACTIONS.PRODUCT_CREATE,
         module: AUDIT_MODULES.PRODUCTOS,
         entity: "Product",
@@ -113,10 +471,12 @@ export async function createPendingAction(
           source: "pendiente-manual",
         },
         context,
+        correlationId,
       });
+      if (!productAudit.ok) postCommit = "audit_failed";
     }
 
-    await recordAudit({
+    const pendingAudit = await recordAudit({
       action: AUDIT_ACTIONS.PENDING_CREATE,
       module: AUDIT_MODULES.PENDIENTES,
       entity: "Pending",
@@ -141,12 +501,14 @@ export async function createPendingAction(
         paidAmount: parsed.data.paidAmount,
       },
       context,
+      correlationId,
     });
+    if (!pendingAudit.ok) postCommit = "audit_failed";
 
     // Si el stock no alcanzó, se generó un faltante automático: lo auditamos
     // como un efecto aparte para que la trazabilidad sea explícita.
     if (result.missingItem) {
-      await recordAudit({
+      const missingAudit = await recordAudit({
         action: AUDIT_ACTIONS.MISSING_AUTO_CREATE,
         module: AUDIT_MODULES.FALTANTES,
         entity: "MissingItem",
@@ -157,10 +519,13 @@ export async function createPendingAction(
           originId: result.pending.id,
         },
         context,
+        correlationId,
       });
+      if (!missingAudit.ok) postCommit = "audit_failed";
     }
   } catch (error) {
-    console.error("[pendientes] El pendiente se creó, pero no se pudo auditar:", error);
+    postCommit = "audit_failed";
+    logPendingError(correlationId, error);
   }
 
   // La escritura ya terminó. Un fallo de invalidación no puede dejar la Server
@@ -170,10 +535,38 @@ export async function createPendingAction(
     try {
       revalidatePath(path);
     } catch (error) {
-      console.error("[pendientes] El pendiente se creó, pero no se pudo revalidar:", error);
+      postCommit = postCommit === "ok" ? "revalidate_failed" : "audit_and_revalidate_failed";
+      logPendingError(correlationId, error);
     }
   }
-  return { error: null, ok: true };
+
+  logPendingEvent({
+    correlationId,
+    stage: PENDING_STAGES.POST_COMMIT_COMPLETED,
+    ...actor,
+    submitMethod,
+    durationMs: elapsed(),
+    transaction: "committed",
+    pendingId: result.pending.id,
+    postCommit,
+  });
+
+  logPendingEvent({
+    correlationId,
+    stage: PENDING_STAGES.RESPONSE_SENT,
+    ...actor,
+    submitMethod,
+    durationMs: elapsed(),
+    transaction: "committed",
+    pendingId: result.pending.id,
+    postCommit,
+    outcome: "success",
+    response: "ok",
+  });
+
+  // Éxito: SIN `values`. Esa ausencia es la señal que limpia el formulario, y
+  // `submissionId` garantiza que se limpie exactamente una vez.
+  return { error: null, ok: true, submissionId: correlationId, savedWithoutTotalAmount };
 }
 
 // --------------------------------------------------------------------------
@@ -254,7 +647,7 @@ export async function deliverPendingAction(
       context: await auditContextFromHeaders(session.user.id),
     });
   } catch (error) {
-    console.error("[pendientes] No se pudo registrar la entrega:", error);
+    logPendingError(null, error);
     return {
       error: "No se pudo registrar la entrega. Intentá de nuevo.",
       ok: false,
@@ -302,7 +695,7 @@ export async function updatePendingManagementStatusAction(
       expectedStatus: parsed.data.expectedStatus,
     });
   } catch (error) {
-    console.error("[pendientes] No se pudo actualizar el estado de gestión:", error);
+    logPendingError(null, error);
     return {
       error: "No se pudo actualizar el estado. Intentá de nuevo.",
       ok: false,
@@ -323,13 +716,13 @@ export async function updatePendingManagementStatusAction(
         context: await auditContextFromHeaders(session.user.id),
       });
     } catch (error) {
-      console.error("[pendientes] No se pudo auditar el rechazo de gestión:", error);
+      logPendingError(null, error);
     }
     for (const path of ["/pendientes", "/dashboard"]) {
       try {
         revalidatePath(path);
       } catch (error) {
-        console.error("[pendientes] No se pudo revalidar tras rechazo de gestión:", error);
+        logPendingError(null, error);
       }
     }
     return {
@@ -350,7 +743,7 @@ export async function updatePendingManagementStatusAction(
       context: await auditContextFromHeaders(session.user.id),
     });
   } catch (error) {
-    console.error("[pendientes] El estado se actualizó, pero no se pudo auditar:", error);
+    logPendingError(null, error);
   }
 
   // AGOTADO saca al pendiente de los estados alertables: revalidar también el
@@ -360,7 +753,7 @@ export async function updatePendingManagementStatusAction(
     try {
       revalidatePath(path);
     } catch (error) {
-      console.error("[pendientes] El estado se actualizó, pero no se pudo revalidar:", error);
+      logPendingError(null, error);
     }
   }
   return { error: null, ok: true };
@@ -420,7 +813,7 @@ export async function cancelPendingAction(
       context: await auditContextFromHeaders(session.user.id),
     });
   } catch (error) {
-    console.error("[pendientes] No se pudo cancelar el pendiente:", error);
+    logPendingError(null, error);
     return {
       error: "No se pudo cancelar el pendiente. Intentá de nuevo.",
       ok: false,
@@ -464,7 +857,7 @@ async function recordPendingLifecycleAudit(
       context: await auditContextFromHeaders(actorId),
     });
   } catch (error) {
-    console.error("[pendientes] Operación confirmada sin auditoría:", error);
+    logPendingError(null, error);
   }
 }
 
@@ -473,7 +866,7 @@ function revalidatePendingViews(context: string): void {
     try {
       revalidatePath(path);
     } catch (error) {
-      console.error(`[pendientes] ${context} sin revalidación:`, error);
+      logPendingError(null, error);
     }
   }
 }
@@ -496,7 +889,7 @@ export async function contactPendingAction(
       canManageAll: can(session.user.role, "canManageAllPendings"),
     });
   } catch (error) {
-    console.error("[pendientes] No se pudo registrar el contacto:", error);
+    logPendingError(null, error);
     return { error: "No se pudo registrar el contacto. Intentá de nuevo.", ok: false };
   }
 
@@ -543,7 +936,7 @@ export async function invoicePendingAction(
       canManageAll: can(session.user.role, "canManageAllPendings"),
     });
   } catch (error) {
-    console.error("[pendientes] No se pudo registrar la factura:", error);
+    logPendingError(null, error);
     return { error: "No se pudo registrar la factura. Intentá de nuevo.", ok: false };
   }
 
@@ -608,7 +1001,7 @@ export async function resolvePartialPendingAction(
       canManageAll: can(session.user.role, "canManageAllPendings"),
     });
   } catch (error) {
-    console.error("[pendientes] No se pudo resolver la entrega parcial:", error);
+    logPendingError(null, error);
     return { error: "No se pudo registrar la decisión. Intentá de nuevo.", ok: false };
   }
 
@@ -683,7 +1076,7 @@ export async function updatePendingAction(
       canManageAll: can(session.user.role, "canManageAllPendings"),
     });
   } catch (error) {
-    console.error("[pendientes] No se pudo corregir el pendiente:", error);
+    logPendingError(null, error);
     return { error: "No se pudo guardar la corrección. Intentá de nuevo.", ok: false };
   }
 

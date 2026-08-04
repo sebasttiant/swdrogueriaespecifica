@@ -341,6 +341,24 @@ model Pending {
   paidAmount   Int           @default(0)
   createdBy    User?         @relation("PendingCreatedBy", fields: [createdById], references: [id])
   createdById  String?
+  // --------------------------------------------------------------------
+  // Clave de idempotencia del INTENTO que creó este pendiente.
+  //
+  // El formulario genera una clave por intento y la reenvía sin cambiarla
+  // mientras el registro siga fallando. Así un reintento —del operador o del
+  // navegador tras un timeout— vuelve a caer sobre la MISMA fila en vez de
+  // crear una segunda. El índice único es lo que hace cumplir la regla: dos
+  // envíos simultáneos con la misma clave no pueden insertar dos veces, porque
+  // el segundo choca contra la restricción y se resuelve leyendo el existente.
+  //
+  // NULLABLE a propósito: en PostgreSQL un índice único admite varios NULL, así
+  // que los pendientes anteriores a esta columna conviven sin inventarles una
+  // clave. La regla aplica hacia adelante; la historia queda como fue.
+  // --------------------------------------------------------------------
+  idempotencyKey String?      @unique
+  // Canonical representation of the actor and semantic create payload. It is
+  // nullable only for rows that predate idempotent Pending creation.
+  requestFingerprint String?
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
 

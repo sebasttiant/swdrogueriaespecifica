@@ -30,6 +30,7 @@ const { prismaMock, tx } = vi.hoisted(() => {
     // `deliverPending` como `cancelPendingCommitment` toman el lock y escriben
     // con el `tx`. Los tests verifican que estas llamadas queden en cero.
     pending: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
+    missingItem: { findFirst: vi.fn() },
     $queryRaw: vi.fn(),
   };
   return { prismaMock, tx };
@@ -78,11 +79,17 @@ import {
 } from "./pending.service";
 import type { PendingListItem } from "@/server/repositories/pending.repository";
 
+// `promisedAt` va como instante UTC EXPLÍCITO (con la Z). Sin ella, JavaScript
+// interpreta el literal como hora LOCAL, y el `toISOString()` con el que se arma
+// la huella del pedido daría un valor distinto según la zona de la máquina: los
+// tests de idempotencia pasarían en CI (UTC) y fallarían en cualquier equipo de
+// la droguería (America/Bogota, UTC-5).
 const baseInput = {
   productId: "prod_1",
   quantity: 5,
-  promisedAt: new Date("2026-06-09T14:30:00"),
+  promisedAt: new Date("2026-06-09T14:30:00Z"),
   createdById: "user_1",
+  idempotencyKey: "00000000-0000-4000-8000-000000000001",
 };
 
 // Stock FÍSICO en estantería, y cuánto de ese stock ya está comprometido con
@@ -247,6 +254,63 @@ describe("registerPending", () => {
     expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
     expect(tx.pending.create).toHaveBeenCalledTimes(1);
     expect(tx.missingItem.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("reproduce una misma clave con el mismo actor y payload sin crear otro pendiente", async () => {
+    const existing = {
+      id: "pend_existing",
+      quantity: 5,
+      inventoryReadyQuantity: 0,
+      requestFingerprint: JSON.stringify({
+        productId: "prod_1", manual: null, quantity: 5,
+        promisedAt: "2026-06-09T14:30:00.000Z", customerName: null,
+        customerPhone: null, customerAddress: null, note: null, zone: null,
+        totalAmount: null, paidAmount: 0, createdById: "user_1",
+      }),
+    };
+    prismaMock.pending.findUnique.mockResolvedValue(existing);
+    prismaMock.missingItem.findFirst.mockResolvedValue(null);
+
+    const result = await registerPending(baseInput);
+
+    expect(result.replayed).toBe(true);
+    expect(tx.pending.create).not.toHaveBeenCalled();
+  });
+
+  it("rechaza una misma clave con payload o actor distinto", async () => {
+    prismaMock.pending.findUnique.mockResolvedValue({
+      id: "pend_existing",
+      requestFingerprint: "other-payload",
+    });
+
+    await expect(registerPending(baseInput)).rejects.toMatchObject({
+      name: "Error",
+      message: "idempotency key was already used for a different pending payload",
+    });
+    expect(prismaMock.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("recupera el ganador de una carrera P2002 sólo cuando la clave coincide", async () => {
+    const winner = {
+      id: "pend_winner",
+      quantity: 5,
+      inventoryReadyQuantity: 0,
+      requestFingerprint: JSON.stringify({
+        productId: "prod_1", manual: null, quantity: 5,
+        promisedAt: "2026-06-09T14:30:00.000Z", customerName: null,
+        customerPhone: null, customerAddress: null, note: null, zone: null,
+        totalAmount: null, paidAmount: 0, createdById: "user_1",
+      }),
+    };
+    prismaMock.pending.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(winner);
+    prismaMock.missingItem.findFirst.mockResolvedValue(null);
+    tx.pending.create.mockRejectedValue({ code: "P2002" });
+
+    const result = await registerPending(baseInput);
+
+    expect(result).toMatchObject({ pending: { id: "pend_winner" }, replayed: true });
   });
 });
 
