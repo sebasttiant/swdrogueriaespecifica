@@ -1,11 +1,12 @@
 "use client";
 
-import { useActionState, useId, useState } from "react";
+import { useActionState, useEffect, useId, useRef, useState } from "react";
 
 import { Button } from "@/app/_components/ui/button";
 import { Field } from "@/app/_components/ui/field";
 import { Input } from "@/app/_components/ui/input";
 import { Select } from "@/app/_components/ui/select";
+import { newAttemptKey } from "@/features/pendientes/attempt-key";
 import {
   buildPromisedAtOptions,
   defaultPromisedAtValue,
@@ -20,9 +21,15 @@ import { formatCop, parseCopInput } from "@/lib/format/currency";
 import {
   createPendingAction,
   type PendingFormState,
+  type PendingSubmittedValues,
 } from "@/server/actions/pending.actions";
 
 const INITIAL_STATE: PendingFormState = { error: null, ok: false };
+
+// Cuánto puede tardar un registro antes de que valga la pena decirle algo a la
+// persona. Por debajo de esto, avisar sería ruido; por encima, el silencio hace
+// que reintente —y un reintento a ciegas es como nacen los duplicados.
+const SLOW_SUBMIT_MS = 15_000;
 
 export type ProductOption = {
   id: string;
@@ -40,8 +47,29 @@ type PendingFormProps = {
   defaultCustom?: boolean;
 };
 
-// Alta de pendiente. Único client component del slice (necesita useActionState y
-// el toggle catálogo/manual). La lista de productos llega del server component.
+/**
+ * Alta de pendiente.
+ *
+ * CONTRATO ÉXITO/ERROR — la razón por la que este componente está partido en dos:
+ *
+ * React limpia los campos no controlados de un `<form action={fn}>` en cuanto la
+ * acción resuelve, sin mirar QUÉ devolvió. Un error devuelto es una resolución,
+ * así que el formulario se vaciaba también al fallar y había que tipear todo de
+ * nuevo para reintentar. Ese fue el incidente.
+ *
+ * Acá el vaciado no se delega a ese reset: se decide explícitamente.
+ *
+ *   - `PendingForm` (este) sostiene el estado de la acción, que sobrevive.
+ *   - `PendingFormFields` se REMONTA en cada respuesta, con `key={submissionId}`.
+ *
+ * Al remontar, cada campo toma su `defaultValue` de `state.values`:
+ *
+ *   - fallo  -> `values` trae el eco de lo enviado -> los campos vuelven llenos.
+ *   - éxito  -> `values` viene ausente             -> los campos quedan vacíos.
+ *
+ * Como `submissionId` es distinto en cada respuesta, la limpieza ocurre una sola
+ * vez por éxito y los valores de un intento anterior no pueden reaparecer.
+ */
 export function PendingForm({
   products,
   zones = [],
@@ -53,25 +81,77 @@ export function PendingForm({
     INITIAL_STATE,
   );
 
+  return (
+    <PendingFormFields
+      key={state.submissionId ?? "initial"}
+      products={products}
+      zones={zones}
+      now={now}
+      defaultCustom={defaultCustom}
+      formAction={formAction}
+      isPending={isPending}
+      state={state}
+    />
+  );
+}
+
+type PendingFormFieldsProps = PendingFormProps & {
+  zones: string[];
+  now: Date;
+  defaultCustom: boolean;
+  formAction: (formData: FormData) => void;
+  isPending: boolean;
+  state: PendingFormState;
+};
+
+function PendingFormFields({
+  products,
+  zones,
+  now,
+  defaultCustom,
+  formAction,
+  isPending,
+  state,
+}: PendingFormFieldsProps) {
+  // El eco del intento anterior cuando falló; ausente tras un éxito o al entrar.
+  const previous: Partial<PendingSubmittedValues> = state.values ?? {};
+
   const canSelectExisting = products.length > 0;
   // Modo manual: producto que no está en el catálogo. Si no hay catálogo cargado,
   // el manual es la única vía, así que arranca activo y sin opción de togglear.
-  const [manual, setManual] = useState(!canSelectExisting);
+  // Tras un fallo se respeta el modo en el que se estaba cargando.
+  const [manual, setManual] = useState(
+    previous.manualMode ? previous.manualMode === "on" : !canSelectExisting,
+  );
   const manualToggleId = useId();
+
+  // Clave de idempotencia del intento. Se conserva mientras el registro falle
+  // —así el reintento no crea un segundo pendiente— y nace nueva tras un éxito,
+  // porque el remonte descarta este estado junto con los campos.
+  const [attemptKey] = useState(() => previous.idempotencyKey || newAttemptKey());
+
+  // Cómo se envió: Enter o clic. Solo para el diagnóstico del servidor; no
+  // cambia ninguna decisión de negocio.
+  const submitMethodRef = useRef<HTMLInputElement>(null);
+  const markSubmitMethod = (method: "enter" | "click") => {
+    if (submitMethodRef.current) submitMethodRef.current.value = method;
+  };
 
   // Entrega prometida: atajos rápidos (el caso común) + un modo personalizado
   // que muestra el `datetime-local` de siempre (el caso raro). El valor viaja
   // como `promisedAt` sin cambiar el contrato del backend.
   const promisedAtOptions = buildPromisedAtOptions(now);
-  const [promisedAt, setPromisedAt] = useState(() => defaultPromisedAtValue(now));
+  const [promisedAt, setPromisedAt] = useState(
+    () => previous.promisedAt || defaultPromisedAtValue(now),
+  );
   const [customPromisedAt, setCustomPromisedAt] = useState(defaultCustom);
   const promisedAtCustomId = useId();
 
   // Montos como TEXTO, no como number: el operador escribe "45.000" con el punto
   // de miles y un <input type="number"> lo rechazaría. El texto se interpreta
   // con `parseCopInput`, el mismo lector que usa el servidor.
-  const [totalAmount, setTotalAmount] = useState("");
-  const [paidAmount, setPaidAmount] = useState("");
+  const [totalAmount, setTotalAmount] = useState(previous.totalAmount ?? "");
+  const [paidAmount, setPaidAmount] = useState(previous.paidAmount ?? "");
   const zonesListId = useId();
 
   const parsedTotal = parseCopInput(totalAmount);
@@ -83,8 +163,41 @@ export function PendingForm({
   // se escribe en vez de esperar al rechazo del servidor.
   const overpaid = parsedTotal !== null && parsedPaid !== null && parsedPaid > parsedTotal;
 
+  // "Guardando…" que no termina: si el servidor no contesta, el botón girando no
+  // le dice nada a nadie y la persona reintenta. Este aviso le da la única
+  // instrucción segura —esperar, no reintentar— porque el registro puede haber
+  // quedado hecho igual.
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    if (!isPending) return;
+    const timer = setTimeout(() => setSlow(true), SLOW_SUBMIT_MS);
+    return () => clearTimeout(timer);
+    // No hace falta apagar el aviso al terminar: cuando llega una respuesta
+    // cambia `submissionId`, este componente se remonta entero y `slow` nace de
+    // nuevo en false. Apagarlo a mano acá sería un render en cascada redundante.
+  }, [isPending]);
+
   return (
-    <form action={formAction} className="space-y-4">
+    <form
+      action={formAction}
+      className="space-y-4"
+      // Submit implícito del navegador: Enter dentro de un campo. Se marca acá
+      // porque en ese camino no hay clic en el botón que lo registre.
+      onKeyDown={(event) => {
+        if (event.key === "Enter" && event.target instanceof HTMLInputElement) {
+          markSubmitMethod("enter");
+        }
+      }}
+    >
+      <input type="hidden" name="idempotencyKey" value={attemptKey} />
+      <input
+        ref={submitMethodRef}
+        type="hidden"
+        name="submitMethod"
+        defaultValue="unknown"
+      />
+      <input type="hidden" name="manualMode" value={manual ? "on" : "off"} />
+
       {canSelectExisting ? (
         <label
           htmlFor={manualToggleId}
@@ -121,6 +234,7 @@ export function PendingForm({
                 required
                 maxLength={120}
                 placeholder="Nombre del producto"
+                defaultValue={previous.manualName ?? ""}
               />
             </Field>
             <Field
@@ -133,12 +247,18 @@ export function PendingForm({
                 name="manualUnit"
                 maxLength={40}
                 placeholder="unidad"
+                defaultValue={previous.manualUnit ?? ""}
               />
             </Field>
           </>
         ) : (
           <Field label="Producto" htmlFor="productId" className="sm:col-span-2">
-            <Select id="productId" name="productId" required>
+            <Select
+              id="productId"
+              name="productId"
+              required
+              defaultValue={previous.productId ?? ""}
+            >
               <option value="">Elegí un producto…</option>
               {products.map((product) => (
                 <option key={product.id} value={product.id}>
@@ -157,7 +277,7 @@ export function PendingForm({
             min={1}
             step={1}
             required
-            defaultValue={1}
+            defaultValue={previous.quantity || 1}
           />
         </Field>
         <div className="space-y-1.5 sm:col-span-2">
@@ -221,6 +341,7 @@ export function PendingForm({
             list={zones.length > 0 ? zonesListId : undefined}
             maxLength={MAX_ZONE_LENGTH}
             placeholder="El Poblado, Laureles, Belén…"
+            defaultValue={previous.zone ?? ""}
           />
           {zones.length > 0 ? (
             <datalist id={zonesListId}>
@@ -241,6 +362,7 @@ export function PendingForm({
             required
             maxLength={120}
             placeholder="Nombre del cliente"
+            defaultValue={previous.customerName ?? ""}
           />
         </Field>
         <Field label="Teléfono" htmlFor="customerPhone">
@@ -253,6 +375,7 @@ export function PendingForm({
             required
             maxLength={MAX_PHONE_INPUT_LENGTH}
             placeholder="300 123 4567"
+            defaultValue={previous.customerPhone ?? ""}
           />
         </Field>
         {/* Dirección de entrega: opcional. La zona ya da el ruteo grueso; esto
@@ -265,6 +388,7 @@ export function PendingForm({
             autoComplete="street-address"
             maxLength={200}
             placeholder="Calle 10 #43-20, apto 301"
+            defaultValue={previous.customerAddress ?? ""}
           />
         </Field>
         {/* Pago: dos montos y NADA más. El "pagado totalmente" no es un campo,
@@ -272,7 +396,17 @@ export function PendingForm({
         <div className="space-y-3 sm:col-span-2">
           <span className="text-sm font-medium text-text">Pago (opcional)</span>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Valor total" htmlFor="totalAmount">
+            {/* La pista NO es decorativa: es la corrección de fondo del
+                incidente. El campo solo mostraba "$ 45.000" y nadie podía
+                adivinar que vacío era una opción válida, así que quien no sabía
+                el precio escribía "0" — y ese cero rompía el registro. Decirlo
+                acá evita la confusión en el origen; el aviso posterior es la red,
+                no la solución. */}
+            <Field
+              label="Valor total"
+              htmlFor="totalAmount"
+              hint="Si todavía no lo sabés, dejalo vacío."
+            >
               <Input
                 id="totalAmount"
                 name="totalAmount"
@@ -327,24 +461,97 @@ export function PendingForm({
         </div>
 
         <Field label="Nota (opcional)" htmlFor="note" className="sm:col-span-2">
-          <Input id="note" name="note" placeholder="Detalle de la solicitud" />
+          <Input
+            id="note"
+            name="note"
+            placeholder="Detalle de la solicitud"
+            defaultValue={previous.note ?? ""}
+          />
         </Field>
       </div>
 
       {state.error ? (
-        <p role="alert" className="text-sm font-medium text-danger">
-          {state.error}
-        </p>
+        <div role="alert" className="space-y-2 rounded-md border border-danger/40 p-3">
+          <p className="text-sm font-medium text-danger">{state.error}</p>
+          <p className="text-sm text-muted-foreground">
+            Los datos siguen cargados. Podés volver a intentar sin escribirlos de
+            nuevo.
+          </p>
+          {state.supportCode ? <SupportCode code={state.supportCode} /> : null}
+        </div>
       ) : null}
       {state.ok ? (
-        <p role="status" className="text-sm font-medium text-success">
-          Pendiente registrado.
+        <div role="status" className="space-y-1">
+          <p className="text-sm font-medium text-success">Pendiente registrado.</p>
+          {/* El operador escribió un valor total y el sistema lo guardó como
+              desconocido. Escribió una cosa y se guardó otra: callarlo llevaría a
+              que alguien jure que cargó el precio y el listado diga que no, sin
+              forma de saber quién tiene razón. */}
+          {state.savedWithoutTotalAmount ? (
+            <p className="text-sm text-muted-foreground">
+              Quedó <strong>sin valor total</strong>: cuando sepas el precio,
+              corregilo desde el listado.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+      {slow ? (
+        <p role="status" className="text-sm font-medium text-warning">
+          Está tardando más de lo normal. Esperá sin cerrar esta pantalla: si el
+          pendiente ya quedó guardado, volver a enviarlo NO lo duplica, pero
+          conviene esperar la respuesta antes de reintentar.
         </p>
       ) : null}
 
-      <Button type="submit" disabled={isPending}>
+      <Button
+        type="submit"
+        disabled={isPending}
+        // Enter dentro de un campo NO es un camino aparte: el navegador lo
+        // resuelve haciendo clic en este botón, así que este handler corre
+        // también en ese caso y pisaría la marca del `onKeyDown`.
+        //
+        // `detail` los separa: un clic real del puntero trae el contador de
+        // clics (>= 1); uno sintetizado desde el teclado trae 0.
+        onClick={(event) => {
+          if (event.detail > 0) markSubmitMethod("click");
+        }}
+      >
         {isPending ? "Guardando…" : "Registrar pendiente"}
       </Button>
     </form>
+  );
+}
+
+/**
+ * Código de soporte con copiado en un toque.
+ *
+ * El operador está en el mostrador con un cliente enfrente: leer y dictar seis
+ * caracteres sin equivocarse es justo lo que no va a pasar. El botón copia; el
+ * texto queda igual visible para quien prefiera dictarlo.
+ */
+function SupportCode({ code }: { code: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // `navigator.clipboard` puede no existir (contexto no seguro, como entrar
+      // directo al puerto del VPS) o el permiso puede estar denegado. Que falle
+      // no rompe nada: el código sigue en pantalla para leerlo o dictarlo, que
+      // es para lo que existe.
+      setCopied(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      <code className="rounded bg-surface px-2 py-1 font-mono text-sm">{code}</code>
+      <Button type="button" variant="ghost" onClick={copy} className="min-h-11">
+        {copied ? "Copiado" : "Copiar código"}
+      </Button>
+    </div>
   );
 }

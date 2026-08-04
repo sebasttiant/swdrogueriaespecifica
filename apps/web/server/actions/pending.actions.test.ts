@@ -10,11 +10,20 @@ const mocks = vi.hoisted(() => ({
   registerPending: vi.fn(),
   setPendingManagementStatus: vi.fn(),
   requireCapability: vi.fn(),
+  checkCapability: vi.fn(),
   revalidatePath: vi.fn(),
+  PendingIdempotencyPayloadConflictError: class PendingIdempotencyPayloadConflictError extends Error {
+    constructor() {
+      super("idempotency key was already used for a different pending payload");
+    }
+  },
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
-vi.mock("@/lib/auth/require-role", () => ({ requireCapability: mocks.requireCapability }));
+vi.mock("@/lib/auth/require-role", () => ({
+  requireCapability: mocks.requireCapability,
+  checkCapability: mocks.checkCapability,
+}));
 vi.mock("@/server/services/audit.service", () => ({
   auditContextFromHeaders: mocks.auditContextFromHeaders,
   recordAudit: mocks.recordAudit,
@@ -24,6 +33,7 @@ vi.mock("@/server/services/pending.service", () => ({
   contactPending: mocks.contactPending,
   deliverPending: mocks.deliverPending,
   invoicePending: mocks.invoicePending,
+  PendingIdempotencyPayloadConflictError: mocks.PendingIdempotencyPayloadConflictError,
   registerPending: mocks.registerPending,
   setPendingManagementStatus: mocks.setPendingManagementStatus,
 }));
@@ -39,6 +49,10 @@ import {
 } from "./pending.actions";
 
 const PREV = { error: null, ok: false };
+// UUID de prueba deliberadamente reconocible: un valor de aspecto aleatorio
+// hace dudar al lector si es un dato real, y además el escaneo de secretos lo
+// marca como posible credencial filtrada.
+const ATTEMPT_UUID = "00000000-0000-4000-8000-000000000001";
 
 function deliverFormData(overrides: Record<string, string> = {}) {
   const data = new FormData();
@@ -58,6 +72,7 @@ function cancelFormData(overrides: Record<string, string> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.revalidatePath.mockReset();
+  mocks.recordAudit.mockResolvedValue({ ok: true });
   mocks.auditContextFromHeaders.mockResolvedValue({ userId: "user-1", channel: "web" });
 });
 
@@ -73,6 +88,7 @@ function createCatalogFormData(overrides: Record<string, string> = {}) {
   data.set("promisedAt", "2099-01-02T12:00");
   data.set("customerName", "Ana Pérez");
   data.set("customerPhone", "3001234567");
+  data.set("idempotencyKey", ATTEMPT_UUID);
   for (const [key, value] of Object.entries(overrides)) data.set(key, value);
   return data;
 }
@@ -85,24 +101,41 @@ function createManualFormData(overrides: Record<string, string> = {}) {
   data.set("promisedAt", "2099-01-02T12:00");
   data.set("customerName", "Ana Pérez");
   data.set("customerPhone", "3001234567");
+  data.set("idempotencyKey", ATTEMPT_UUID);
   for (const [key, value] of Object.entries(overrides)) data.set(key, value);
   return data;
+}
+
+// El éxito ya no es solo `{error:null, ok:true}`: lleva un `submissionId` que
+// cambia en cada respuesta y que el formulario usa como clave de remonte. Se
+// comprueba su presencia, no su valor —es aleatorio por diseño.
+function expectSuccess(result: { error: string | null; ok: boolean; submissionId?: string; values?: unknown }) {
+  expect(result.ok).toBe(true);
+  expect(result.error).toBeNull();
+  expect(typeof result.submissionId).toBe("string");
+  // En éxito NO viaja el eco: su ausencia es lo que vacía el formulario.
+  expect(result.values ?? null).toBeNull();
 }
 
 describe("createPendingAction", () => {
   beforeEach(() => {
     mocks.requireCapability.mockResolvedValue({ user: { id: "op-1", role: "OPERADOR" } });
+    mocks.checkCapability.mockResolvedValue({
+      ok: true,
+      session: { user: { id: "op-1", role: "OPERADOR", email: "op1@drogueria.test" } },
+    });
     mocks.registerPending.mockResolvedValue({
       pending: { id: "pend-1", productId: "prod-1" },
       missingItem: null,
       createdProduct: null,
+      replayed: false,
     });
   });
 
   it("registra un pendiente del catálogo", async () => {
     const result = await createPendingAction(PREV, createCatalogFormData());
 
-    expect(result).toEqual({ error: null, ok: true });
+    expectSuccess(result);
     expect(mocks.registerPending).toHaveBeenCalledWith(
       expect.objectContaining({ productId: "prod-1", quantity: 2, createdById: "op-1" }),
     );
@@ -113,11 +146,12 @@ describe("createPendingAction", () => {
       pending: { id: "pend-2", productId: "prod-nuevo" },
       missingItem: null,
       createdProduct: { id: "prod-nuevo", code: "MAN-ABC", name: "Ibuprofeno jarabe", unit: "frasco" },
+      replayed: false,
     });
 
     const result = await createPendingAction(PREV, createManualFormData());
 
-    expect(result).toEqual({ error: null, ok: true });
+    expectSuccess(result);
     expect(mocks.registerPending).toHaveBeenCalledWith(
       expect.objectContaining({
         productId: undefined,
@@ -160,10 +194,7 @@ describe("createPendingAction", () => {
       throw new Error("cache unavailable");
     });
 
-    await expect(createPendingAction(PREV, createCatalogFormData())).resolves.toEqual({
-      error: null,
-      ok: true,
-    });
+    expectSuccess(await createPendingAction(PREV, createCatalogFormData()));
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/pendientes");
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/faltantes");
   });
@@ -171,20 +202,19 @@ describe("createPendingAction", () => {
   it("returns a terminal visible error when persistence rejects", async () => {
     mocks.registerPending.mockRejectedValue(new Error("database unavailable"));
 
-    await expect(createPendingAction(PREV, createCatalogFormData())).resolves.toEqual({
-      error: "No se pudo registrar el pendiente. Intentá de nuevo.",
-      ok: false,
-    });
+    const result = await createPendingAction(PREV, createCatalogFormData());
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(
+      /^No se pudo registrar el pendiente\. Volvé a intentar en unos segundos\. Código: PND-[2-9A-HJ-NP-TV-Z]{6}$/,
+    );
     expect(mocks.revalidatePath).not.toHaveBeenCalled();
   });
 
   it("returns success when audit context fails after persistence", async () => {
     mocks.auditContextFromHeaders.mockRejectedValue(new Error("headers unavailable"));
 
-    await expect(createPendingAction(PREV, createCatalogFormData())).resolves.toEqual({
-      error: null,
-      ok: true,
-    });
+    expectSuccess(await createPendingAction(PREV, createCatalogFormData()));
     expect(mocks.registerPending).toHaveBeenCalledTimes(1);
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/pendientes");
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/faltantes");
@@ -199,6 +229,287 @@ describe("createPendingAction", () => {
 
     expect(result.ok).toBe(false);
     expect(mocks.registerPending).not.toHaveBeenCalled();
+  });
+
+  // ------------------------------------------------------------------------
+  // CAUSA RAÍZ del incidente de agosto de 2026 (log del VPS, 20:50–20:55):
+  //
+  //   Code: 23514 — new row for relation "pendings" violates check constraint
+  //   "pendings_total_amount_positive"
+  //
+  // La base exige `"totalAmount" IS NULL OR > 0`; el validador aceptaba cero.
+  // Un "0" en el valor total pasaba Zod, moría en el INSERT y devolvía un error
+  // genérico que invitaba a reintentar algo que nunca iba a entrar.
+  // ------------------------------------------------------------------------
+
+  // En el mostrador, "0" es como se escribe "no sé cuánto sale". El pendiente
+  // TIENE que entrar: frenar a alguien con un cliente enfrente por una convención
+  // de captura es exactamente el problema que este PR viene a resolver.
+  it("registra el pendiente cuando el valor total va en cero, guardándolo como desconocido", async () => {
+    const result = await createPendingAction(PREV, createCatalogFormData({ totalAmount: "0" }));
+
+    expectSuccess(result);
+    // Traducido a NULL: nunca llega el cero que la base rechaza.
+    expect(mocks.registerPending).toHaveBeenCalledWith(
+      expect.objectContaining({ totalAmount: undefined }),
+    );
+    // Escribió una cosa y se guardó otra: hay que avisarle.
+    expect(result.savedWithoutTotalAmount).toBe(true);
+  });
+
+  // Dejar el campo vacío es una decisión consciente, no una reinterpretación:
+  // avisar ahí sería ruido sobre algo que la persona ya sabe.
+  it("no avisa nada cuando el valor total se dejó vacío a propósito", async () => {
+    const result = await createPendingAction(PREV, createCatalogFormData({ totalAmount: "" }));
+
+    expectSuccess(result);
+    expect(result.savedWithoutTotalAmount).toBe(false);
+  });
+
+  it("no avisa nada cuando el valor total sí se cargó", async () => {
+    const result = await createPendingAction(PREV, createCatalogFormData({ totalAmount: "45.000" }));
+
+    expectSuccess(result);
+    expect(result.savedWithoutTotalAmount).toBe(false);
+  });
+
+  // Todas estas formas se compactan a "0" y llegaban igual a la base.
+  it.each(["0", "$ 0", "$0", "0.00", "000"])(
+    "trata el valor total escrito como %s igual que un campo vacío",
+    async (totalAmount) => {
+      expectSuccess(await createPendingAction(PREV, createCatalogFormData({ totalAmount })));
+      expect(mocks.registerPending).toHaveBeenCalledWith(
+        expect.objectContaining({ totalAmount: undefined }),
+      );
+    },
+  );
+
+  it("sigue aceptando un valor total ausente: no saber el precio es válido", async () => {
+    expectSuccess(await createPendingAction(PREV, createCatalogFormData({ totalAmount: "" })));
+    expect(mocks.registerPending).toHaveBeenCalledWith(
+      expect.objectContaining({ totalAmount: undefined }),
+    );
+  });
+
+  // Un negativo no es "no sé", es imposible. Ahí sí se frena.
+  it("rechaza un valor total negativo sin tocar la base", async () => {
+    const result = await createPendingAction(PREV, createCatalogFormData({ totalAmount: "-500" }));
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("no puede ser negativo");
+    expect(mocks.registerPending).not.toHaveBeenCalled();
+  });
+
+  // Con el total desconocido, un abono cualquiera es legítimo: no hay techo con
+  // el cual compararlo. Antes esto chocaba contra "el abono supera el total".
+  it("permite registrar un abono aunque el valor total sea desconocido", async () => {
+    expectSuccess(
+      await createPendingAction(PREV, createCatalogFormData({ totalAmount: "0", paidAmount: "20.000" })),
+    );
+    expect(mocks.registerPending).toHaveBeenCalledWith(
+      expect.objectContaining({ totalAmount: undefined, paidAmount: 20_000 }),
+    );
+  });
+
+  // El abono SÍ puede ser cero: es la verdad de quien no dejó plata. La base lo
+  // permite (`pendings_paid_amount_nonneg` es >= 0) y el formulario también.
+  it("acepta un abono en cero, que es un dato legítimo", async () => {
+    expectSuccess(
+      await createPendingAction(PREV, createCatalogFormData({ totalAmount: "45.000", paidAmount: "0" })),
+    );
+    expect(mocks.registerPending).toHaveBeenCalledWith(
+      expect.objectContaining({ totalAmount: 45_000, paidAmount: 0 }),
+    );
+  });
+
+  // Red de seguridad: si alguna otra restricción CHECK se viola en el futuro, el
+  // mensaje no puede volver a decir "intentá de nuevo" sobre un fallo que se
+  // repite siempre igual.
+  it("no invita a reintentar cuando la base rechaza por integridad", async () => {
+    const violation = Object.assign(
+      new Error('violates check constraint "pendings_quantities_check"'),
+      { code: "P2039", meta: { modelName: "Pending" } },
+    );
+    mocks.registerPending.mockRejectedValue(violation);
+
+    const result = await createPendingAction(PREV, createCatalogFormData());
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/reintentar sin corregirlos va a fallar igual/);
+    expect(result.error).not.toMatch(/intentá de nuevo|volvé a intentar/i);
+    expect(result.values).toEqual(expect.objectContaining({ customerName: "Ana Pérez" }));
+  });
+
+  it("sí invita a reintentar cuando el fallo es transitorio", async () => {
+    mocks.registerPending.mockRejectedValue(new Error("connection terminated unexpectedly"));
+
+    const result = await createPendingAction(PREV, createCatalogFormData());
+
+    expect(result.error).toMatch(/Volvé a intentar en unos segundos/);
+  });
+
+  // ------------------------------------------------------------------------
+  // Regresión del incidente: lo que se le devuelve al formulario tras un fallo.
+  // Sin el eco, React limpia los campos y hay que tipear todo otra vez.
+  // ------------------------------------------------------------------------
+
+  const FALLOS = [
+    [
+      "excepción de persistencia",
+      () => mocks.registerPending.mockRejectedValue(new Error("database unavailable")),
+    ],
+    [
+      "sesión vencida",
+      () => mocks.checkCapability.mockResolvedValue({ ok: false, reason: "NO_SESSION" }),
+    ],
+    [
+      "usuario sin permiso",
+      () => mocks.checkCapability.mockResolvedValue({ ok: false, reason: "FORBIDDEN" }),
+    ],
+  ] as const;
+
+  it.each(FALLOS)("devuelve el eco de lo cargado ante %s", async (_label, arrange) => {
+    arrange();
+
+    const result = await createPendingAction(
+      PREV,
+      createCatalogFormData({ note: "Va con pedido", zone: "El Poblado" }),
+    );
+
+    expect(result.ok).toBe(false);
+    // Los valores vuelven EXACTOS: es lo que permite reintentar sin reescribir.
+    expect(result.values).toEqual(
+      expect.objectContaining({
+        productId: "prod-1",
+        quantity: "2",
+        customerName: "Ana Pérez",
+        customerPhone: "3001234567",
+        note: "Va con pedido",
+        zone: "El Poblado",
+      }),
+    );
+    // Y un código dictable para encontrar ESE intento en el log del servidor.
+    expect(result.supportCode).toMatch(/^PND-[2-9A-HJ-NP-TV-Z]{6}$/);
+    expect(result.error).toContain(result.supportCode!);
+  });
+
+  it("una sesión vencida no redirige: eso perdería lo cargado", async () => {
+    mocks.checkCapability.mockResolvedValue({ ok: false, reason: "NO_SESSION" });
+
+    const result = await createPendingAction(PREV, createCatalogFormData());
+
+    expect(result.error).toMatch(/sesión venció/i);
+    expect(mocks.registerPending).not.toHaveBeenCalled();
+  });
+
+  // ------------------------------------------------------------------------
+  // Idempotencia: reintentar no puede crear un segundo pendiente.
+  // ------------------------------------------------------------------------
+
+  it("propaga la clave de idempotencia del intento al service", async () => {
+    // Distinta del fixture por defecto, para probar que se propaga LA QUE LLEGA
+    // y no una cualquiera. Sintética a propósito: ver `ATTEMPT_UUID`.
+    const otroIntento = "00000000-0000-4000-8000-000000000002";
+
+    await createPendingAction(PREV, createCatalogFormData({ idempotencyKey: otroIntento }));
+
+    expect(mocks.registerPending).toHaveBeenCalledWith(
+      expect.objectContaining({ idempotencyKey: otroIntento }),
+    );
+  });
+
+  it.each(["", "../../admin"])("rechaza una clave de idempotencia ausente o inválida antes de escribir: %s", async (idempotencyKey) => {
+    const result = await createPendingAction(
+      PREV,
+      createCatalogFormData({ idempotencyKey }),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.values).toEqual(expect.objectContaining({ idempotencyKey }));
+    expect(result.error).toMatch(/intento de registro venció/i);
+    expect(mocks.registerPending).not.toHaveBeenCalled();
+  });
+
+  // Un replay es un ÉXITO: el pendiente existe. Y no se vuelve a auditar, porque
+  // el alta ocurrió una sola vez y auditarla dos veces inventaría un hecho.
+  it("un reintento que reencuentra su pendiente responde éxito y no audita de nuevo", async () => {
+    mocks.registerPending.mockResolvedValue({
+      pending: { id: "pend-1", productId: "prod-1" },
+      missingItem: null,
+      createdProduct: null,
+      replayed: true,
+    });
+
+    expectSuccess(await createPendingAction(PREV, createCatalogFormData()));
+    expect(mocks.recordAudit).not.toHaveBeenCalled();
+  });
+
+  it("marca audit_failed sin convertir una creación confirmada en error", async () => {
+    mocks.recordAudit.mockResolvedValue({ ok: false, errorClass: "PrismaError", errorCode: "P2021" });
+
+    expectSuccess(await createPendingAction(PREV, createCatalogFormData()));
+  });
+
+  it("rechaza explícitamente la reutilización de clave con payload distinto", async () => {
+    mocks.registerPending.mockRejectedValue(
+      new mocks.PendingIdempotencyPayloadConflictError(),
+    );
+
+    const result = await createPendingAction(PREV, createCatalogFormData());
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/datos distintos/i);
+    expect(result.values).toEqual(expect.objectContaining({ customerName: "Ana Pérez" }));
+  });
+});
+
+// --------------------------------------------------------------------------
+// La corrección tiene que valer para TODOS los usuarios autorizados. Un arreglo
+// que dependa de un correo concreto no es un arreglo, es un parche que deja al
+// resto roto — y que nadie recuerda por qué existe seis meses después.
+// --------------------------------------------------------------------------
+describe("createPendingAction · sin excepciones por usuario", () => {
+  const USUARIOS = [
+    ["gerente reportante", "u-daniel", "daniel@drogueriaespecifica.com", "ADMIN"],
+    ["otro usuario del mismo rol", "u-otro", "otra.persona@drogueriaespecifica.com", "ADMIN"],
+    ["usuario de otro rol autorizado", "u-op", "vendedor@drogueriaespecifica.com", "OPERADOR"],
+  ] as const;
+
+  it.each(USUARIOS)(
+    "%s recorre exactamente el mismo camino de negocio",
+    async (_label, id, email, role) => {
+      vi.clearAllMocks();
+      mocks.auditContextFromHeaders.mockResolvedValue({ userId: id, channel: "web" });
+      mocks.checkCapability.mockResolvedValue({ ok: true, session: { user: { id, email, role } } });
+      mocks.registerPending.mockResolvedValue({
+        pending: { id: "pend-x", productId: "prod-1" },
+        missingItem: null,
+        createdProduct: null,
+        replayed: false,
+      });
+
+      const result = await createPendingAction(PREV, createCatalogFormData());
+
+      expect(result.ok).toBe(true);
+      expect(mocks.registerPending).toHaveBeenCalledWith(
+        expect.objectContaining({ productId: "prod-1", quantity: 2, createdById: id }),
+      );
+      expect(mocks.recordAudit).toHaveBeenCalledTimes(1);
+      expect(mocks.revalidatePath).toHaveBeenCalledWith("/pendientes");
+    },
+  );
+
+  it.each(USUARIOS)("%s recibe el mismo trato ante un fallo", async (_label, id, email, role) => {
+    vi.clearAllMocks();
+    mocks.checkCapability.mockResolvedValue({ ok: true, session: { user: { id, email, role } } });
+    mocks.registerPending.mockRejectedValue(new Error("database unavailable"));
+
+    const result = await createPendingAction(PREV, createCatalogFormData());
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/^No se pudo registrar el pendiente\./);
+    expect(result.error).toMatch(/Código: PND-[2-9A-HJ-NP-TV-Z]{6}$/);
+    expect(result.values).toEqual(expect.objectContaining({ customerName: "Ana Pérez" }));
   });
 });
 
