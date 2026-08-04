@@ -33,21 +33,58 @@ export const MAX_PENDING_AMOUNT = 100_000_000;
 // Monto en PESOS colombianos tal como lo escribe el operador en el mostrador.
 // La limpieza del texto vive en `compactCopInput`, compartida con la pantalla:
 // ver ahí por qué la coma decimal se rechaza en vez de adivinarse.
-const optionalAmount = z.preprocess(
-  (value) => {
-    if (typeof value !== "string") return value ?? undefined;
-    const compact = compactCopInput(value);
-    return compact.length > 0 ? compact : undefined;
-  },
-  z.coerce
-    .number({ error: "Ingresá un monto válido en pesos." })
-    // `finite` descarta el NaN que deja cualquier carácter que no supimos leer.
-    .finite({ error: "Ingresá un monto válido en pesos." })
-    .int({ error: "El monto va en pesos enteros, sin centavos." })
-    .nonnegative({ error: "El monto no puede ser negativo." })
-    .max(MAX_PENDING_AMOUNT, { error: "El monto supera el máximo permitido." })
-    .optional(),
-);
+//
+// El piso se pasa por parámetro porque los dos montos del pendiente NO tienen la
+// misma regla, y tratarlos igual fue un incidente real: ver `totalAmount` abajo.
+const optionalAmount = (options: { min: number; belowMin: string }) =>
+  z.preprocess(
+    (value) => {
+      if (typeof value !== "string") return value ?? undefined;
+      const compact = compactCopInput(value);
+      return compact.length > 0 ? compact : undefined;
+    },
+    z.coerce
+      .number({ error: "Ingresá un monto válido en pesos." })
+      // `finite` descarta el NaN que deja cualquier carácter que no supimos leer.
+      .finite({ error: "Ingresá un monto válido en pesos." })
+      .int({ error: "El monto va en pesos enteros, sin centavos." })
+      .min(options.min, { error: options.belowMin })
+      .max(MAX_PENDING_AMOUNT, { error: "El monto supera el máximo permitido." })
+      .optional(),
+  );
+
+// --------------------------------------------------------------------------
+// Valor total: cero significa "todavía no sé el precio".
+//
+// La base guarda `"totalAmount" IS NULL OR > 0` (CHECK
+// `pendings_total_amount_positive`): o no se sabe, o es un monto real. Cero no
+// es un valor admitido.
+//
+// Acá había un desacuerdo que rompía el registro en producción: el validador
+// aceptaba cero (`nonnegative`) y la base lo rechazaba. Un operador que escribía
+// "0" en el valor total —lo natural cuando todavía no se sabe el precio de algo
+// que hay que conseguir— pasaba la validación, llegaba al INSERT y recibía un
+// error genérico de "no se pudo registrar". Reintentar no servía: el dato era el
+// problema, no el momento. Ese fue el incidente de agosto de 2026.
+//
+// La salida NO es rechazar el cero, es traducirlo. En el mostrador hay un cliente
+// esperando, y "cero pesos" no es un precio que alguien quiera cobrar: es la
+// forma en que la gente escribe "no sé cuánto sale". Se guarda como NULL, que es
+// exactamente lo que significa, y el pendiente entra sin fricción.
+//
+// Un negativo SÍ se rechaza: eso no es "no sé", es un dato imposible.
+// --------------------------------------------------------------------------
+const optionalTotalAmount = optionalAmount({
+  min: 0,
+  belowMin: "El valor total no puede ser negativo.",
+}).transform((value) => (value === 0 ? undefined : value));
+
+// El abono SÍ puede ser cero: es la verdad de un cliente que no dejó plata.
+// La base lo permite explícitamente (`pendings_paid_amount_nonneg` es >= 0).
+const optionalPaidAmount = optionalAmount({
+  min: 0,
+  belowMin: "El abono no puede ser negativo.",
+});
 
 // Validación del alta de un pendiente (solicitud de cliente). La cantidad llega
 // como string desde el FormData, por eso se coerciona. El producto puede venir
@@ -114,8 +151,8 @@ export const pendingCreateSchema = z
     note: optionalText(280),
     // Seguimiento del cliente: zona de entrega y estado de pago.
     zone: optionalText(MAX_ZONE_LENGTH),
-    totalAmount: optionalAmount,
-    paidAmount: optionalAmount,
+    totalAmount: optionalTotalAmount,
+    paidAmount: optionalPaidAmount,
   })
   .superRefine((data, ctx) => {
     const hasCatalog = Boolean(data.productId);
@@ -277,8 +314,8 @@ export const pendingUpdateSchema = z
     customerAddress: optionalText(200),
     note: optionalText(280),
     zone: optionalText(MAX_ZONE_LENGTH),
-    totalAmount: optionalAmount,
-    paidAmount: optionalAmount,
+    totalAmount: optionalTotalAmount,
+    paidAmount: optionalPaidAmount,
   })
   .superRefine((data, ctx) => {
     if (
