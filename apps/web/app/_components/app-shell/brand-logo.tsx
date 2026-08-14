@@ -22,11 +22,6 @@ export function BrandLogo({ className, priority = false }: BrandLogoProps) {
       height={128}
       priority={priority}
       unoptimized
-      // Sin tratamiento especial en oscuro. Se probó ponerle una placa clara
-      // detrás, suponiendo que el navy del logo se fundiría con el fondo; al
-      // verlo renderizado sobre la barra lateral (#12263c) quedó claro que el
-      // logo se lee bien tal cual, y que la placa era más invasiva que el
-      // problema que pretendía resolver.
       className={className}
     />
   );

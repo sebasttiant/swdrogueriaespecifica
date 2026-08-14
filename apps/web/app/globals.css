@@ -228,6 +228,7 @@ input[type="datetime-local"]::-webkit-datetime-edit {
     --color-surface: #ffffff;
     --color-muted: #e6eef7;
     --color-muted-foreground: #54708c;
+    --color-warning-foreground: #3a2a00;
     --color-border: #d4e0ee;
     --color-text: #0c2a47;
   }
