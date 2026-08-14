@@ -9,37 +9,58 @@ const adapter = new PrismaPg({
 });
 const prisma = new PrismaClient({ adapter });
 
-// Primer SUPERADMIN del sistema (bootstrap). Email y password son configurables
-// por env (SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD); el fallback es para el
-// entorno local. En producción SIEMPRE setear SEED_ADMIN_PASSWORD y rotar esta
-// credencial. Esto NO hace exclusivo a este email: pueden crearse otros
-// SUPERADMIN desde la gestión de usuarios.
-const ADMIN_EMAIL =
-  process.env.SEED_ADMIN_EMAIL ?? "admin@ilasesorias.com";
-const ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD ?? "Infoseg.00*2026*";
+// Primer SUPERADMIN del sistema (bootstrap). El email tiene un valor por
+// defecto; la contraseña NO, y es a propósito.
+//
+// Este repositorio es público: cualquier clave escrita acá queda publicada, y
+// una instalación que no defina la suya arrancaría con un superadministrador de
+// credencial conocida por cualquiera. Por eso `SEED_ADMIN_PASSWORD` es
+// obligatoria.
+//
+// Se exige SOLO cuando hay que CREAR el administrador. Si ya existe, el seed no
+// la usa —no toca su contraseña—, así que un despliegue en marcha no necesita
+// definir una variable que no le hace falta.
+const ADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL ?? "admin@ilasesorias.com";
+const ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD ?? "";
+const MIN_PASSWORD_LENGTH = 12;
 
 async function main(): Promise<void> {
-  const passwordHash = await hashPassword(ADMIN_PASSWORD);
-
-  // `passwordHash` va SOLO en `create`. El seed corre en cada despliegue
-  // (docker-compose: `web` depende de que `seed` termine bien), así que
-  // incluirlo en `update` revertía la contraseña del admin al valor de
-  // SEED_ADMIN_PASSWORD cada vez que se levantaba el stack, borrando la
-  // rotación hecha desde la aplicación.
-  //
-  // `role` y `active` sí se reafirman a propósito: son la salida de emergencia
-  // si el único SUPERADMIN queda desactivado o degradado por error. Eso no
-  // expone la cuenta, porque sin la contraseña vigente no se puede entrar.
-  const admin = await prisma.user.upsert({
+  const existing = await prisma.user.findUnique({
     where: { email: ADMIN_EMAIL },
-    update: { role: "SUPERADMIN", active: true },
-    create: {
-      email: ADMIN_EMAIL,
-      name: "Super Admin",
-      role: "SUPERADMIN",
-      passwordHash,
-    },
+    select: { id: true },
   });
+
+  if (existing) {
+    // La contraseña NO se toca. El seed corre en cada despliegue
+    // (docker-compose: `web` depende de que `seed` termine bien), así que
+    // reescribirla acá borraría la rotación hecha desde la aplicación.
+    //
+    // `role` y `active` sí se reafirman a propósito: son la salida de
+    // emergencia si el único SUPERADMIN queda desactivado o degradado por
+    // error. Eso no expone la cuenta, porque sin la contraseña vigente no se
+    // puede entrar.
+    await prisma.user.update({
+      where: { email: ADMIN_EMAIL },
+      data: { role: "SUPERADMIN", active: true },
+    });
+  } else {
+    if (ADMIN_PASSWORD.length < MIN_PASSWORD_LENGTH) {
+      throw new Error(
+        `SEED_ADMIN_PASSWORD es obligatoria para crear el administrador inicial (${ADMIN_EMAIL}) ` +
+          `y debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres. ` +
+          `Definila en el .env antes de desplegar; podés generar una con: openssl rand -base64 24`,
+      );
+    }
+
+    await prisma.user.create({
+      data: {
+        email: ADMIN_EMAIL,
+        name: "Super Admin",
+        role: "SUPERADMIN",
+        passwordHash: await hashPassword(ADMIN_PASSWORD),
+      },
+    });
+  }
 
   const productos = [
     { code: "SKU-001", name: "Acetaminofén 500mg", unit: "caja", minStock: 20, reorderQty: 50 },
@@ -55,7 +76,9 @@ async function main(): Promise<void> {
     });
   }
 
-  console.log(`Seed OK. Admin: ${admin.email} | Productos: ${productos.length}`);
+  console.log(
+    `Seed OK. Admin: ${ADMIN_EMAIL} (${existing ? "ya existía" : "creado"}) | Productos: ${productos.length}`,
+  );
 }
 
 main()
