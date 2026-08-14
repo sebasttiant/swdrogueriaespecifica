@@ -28,10 +28,15 @@ export const viewport: Viewport = {
 // eligió texto grande vería la página saltar de tamaño: el HTML del servidor
 // no sabe qué eligió este navegador.
 //
-// Para el tema: preferencia guardada > preferencia del sistema.
+// El tema por defecto es CLARO, no el del sistema operativo. Es una app de
+// mostrador: tiene que verse siempre igual al abrirla, sin depender de cómo
+// tenga configurado el celular o la computadora cada persona. El modo oscuro
+// es una elección explícita desde el botón de la topbar, y esa elección sí se
+// recuerda en este navegador.
+//
 // Para el tamaño: solo se aplica si el valor guardado es uno de los válidos.
 // Va en texto plano (no como módulo) justamente para ejecutarse antes de pintar.
-const PREFS_INIT_SCRIPT = `(function(){try{var r=document.documentElement;var s=localStorage.getItem("theme");var t=(s==="dark"||s==="light")?s:(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");r.dataset.theme=t;r.style.colorScheme=t;var z=localStorage.getItem("textSize");if(z==="grande"||z==="extra"){r.dataset.textSize=z}}catch(e){}})()`;
+const PREFS_INIT_SCRIPT = `(function(){try{var r=document.documentElement;var s=localStorage.getItem("theme");var t=(s==="dark"||s==="light")?s:"light";r.dataset.theme=t;r.style.colorScheme=t;var z=localStorage.getItem("textSize");if(z==="grande"||z==="extra"){r.dataset.textSize=z}}catch(e){}})()`;
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
