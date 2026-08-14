@@ -21,9 +21,18 @@ const ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD ?? "Infoseg.00*2026*";
 async function main(): Promise<void> {
   const passwordHash = await hashPassword(ADMIN_PASSWORD);
 
+  // `passwordHash` va SOLO en `create`. El seed corre en cada despliegue
+  // (docker-compose: `web` depende de que `seed` termine bien), así que
+  // incluirlo en `update` revertía la contraseña del admin al valor de
+  // SEED_ADMIN_PASSWORD cada vez que se levantaba el stack, borrando la
+  // rotación hecha desde la aplicación.
+  //
+  // `role` y `active` sí se reafirman a propósito: son la salida de emergencia
+  // si el único SUPERADMIN queda desactivado o degradado por error. Eso no
+  // expone la cuenta, porque sin la contraseña vigente no se puede entrar.
   const admin = await prisma.user.upsert({
     where: { email: ADMIN_EMAIL },
-    update: { passwordHash, role: "SUPERADMIN", active: true },
+    update: { role: "SUPERADMIN", active: true },
     create: {
       email: ADMIN_EMAIL,
       name: "Super Admin",
