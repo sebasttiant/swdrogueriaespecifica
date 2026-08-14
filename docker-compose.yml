@@ -60,9 +60,11 @@ services:
       target: seed
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL es obligatorio}
-      # Default aligned with seed.ts so local Docker is deterministic; override
-      # via .env (SEED_ADMIN_PASSWORD) and rotate before production.
-      SEED_ADMIN_PASSWORD: "${SEED_ADMIN_PASSWORD:-Infoseg.00*2026*}"
+      # Sin valor por defecto a propósito: este repositorio es público y una
+      # clave escrita acá quedaría publicada. Se pasa vacía si no está definida
+      # y es `seed.ts` quien decide: la exige solo cuando tiene que CREAR el
+      # administrador, no en cada despliegue.
+      SEED_ADMIN_PASSWORD: "${SEED_ADMIN_PASSWORD:-}"
     depends_on:
       migrate:
         condition: service_completed_successfully
