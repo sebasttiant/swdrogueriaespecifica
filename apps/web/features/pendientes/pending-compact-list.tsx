@@ -158,8 +158,11 @@ function fulfillmentNotice(
     return { label: "Llegó a la droguería · sin cargar", tone: "success" };
   }
 
+  // Sin repetir "Facturado": la insignia de estado, justo al lado, ya lo dice.
+  // Repetirlo alargaba la frase y la partía en tres líneas dentro de una
+  // columna angosta, sin agregar ninguna información.
   if (outstanding(item).toDeliver > 0) {
-    return { label: "Facturado · listo para entregar", tone: "primary" };
+    return { label: "Listo para entregar", tone: "primary" };
   }
   return null;
 }

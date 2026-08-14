@@ -24,7 +24,16 @@ export function Badge({ tone = "neutral", className, ...props }: BadgeProps) {
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-full px-2.5 py-0.5 text-sm font-medium",
+        // `rounded-lg` y NO `rounded-full`: varias insignias llevan frases, no
+        // etiquetas de una palabra ("Cargado: 2 de 5 · podés facturar"). En una
+        // columna angosta ese texto se parte en dos o tres líneas, y con radio
+        // infinito el borde pasa a ser la mitad de la altura: queda un óvalo
+        // deforme que no abraza el texto. Un radio fijo se ve bien con una
+        // línea y con varias.
+        //
+        // `py-1` en lugar de `py-0.5` por lo mismo: media unidad alcanza para
+        // una línea, pero deja el contenido apretado cuando son dos o tres.
+        "inline-flex items-center rounded-lg px-2.5 py-1 text-sm font-medium",
         TONES[tone],
         className,
       )}

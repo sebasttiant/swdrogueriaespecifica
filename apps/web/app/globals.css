@@ -90,8 +90,16 @@
      de `muted` no se llega a ver. */
   --color-chart-grid: #24405c;
 
-  /* danger/warning/success NO cambian: ya contrastan contra el fondo oscuro y
-     su texto sigue siendo legible sobre el color sólido. */
+  /* danger y success NO cambian: ya contrastan contra el fondo oscuro y su
+     texto sigue siendo legible.
+
+     `warning-foreground` SÍ cambia. El #3a2a00 es un marrón muy oscuro pensado
+     para leerse sobre ámbar claro; en oscuro, el fondo de esas insignias es
+     `bg-warning/15` sobre navy, o sea un oliva oscuro, y el texto desaparecía.
+     Se ve en los chips "Críticos" y "Próximas" de la barra de alertas. Todos
+     los usos de este token son sobre fondos tenues (/10 y /15), nunca sobre
+     ámbar sólido, así que aclararlo es seguro. */
+  --color-warning-foreground: #fbd38d;
 }
 
 /* Controles nativos (scrollbar, selector de fecha, autocompletado) siguen al
