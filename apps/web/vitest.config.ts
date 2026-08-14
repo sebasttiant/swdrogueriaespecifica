@@ -13,6 +13,8 @@ export default defineConfig({
     environment: "node",
     allowOnly: false,
     include: ["**/*.test.ts"],
-    exclude: ["node_modules", ".next", "lib/generated"],
+    // Los `*.pg.test.ts` corren contra un PostgreSQL real y viven en su propia
+    // configuración (`vitest.postgres.config.ts`): esta suite no toca la base.
+    exclude: ["node_modules", ".next", "lib/generated", "**/*.pg.test.ts"],
   },
 });

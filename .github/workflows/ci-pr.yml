@@ -41,6 +41,51 @@ jobs:
       - name: Build
         run: pnpm build
 
+  # Gate de PostgreSQL real: corre contra una base descartable que el harness
+  # crea, migra y borra (ver apps/web/tests/postgres/setup.ts). Es el piso de
+  # las pruebas de concurrencia de pendientes operativos.
+  operational-pendings-postgres:
+    name: Gate PostgreSQL · pendientes operativos
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:18.4-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.18.0"
+
+      - name: Activar pnpm 11.10.0 (Corepack)
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.10.0 --activate
+          pnpm -v
+
+      - name: Instalar dependencias
+        run: pnpm install --frozen-lockfile
+
+      - name: Gate PostgreSQL
+        # Base de mantenimiento del servicio; el harness crea la suya aparte.
+        # DATABASE_URL NO se define acá a propósito: el harness nunca la usa.
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+        run: pnpm test:pg:operational
+
   docker:
     name: Docker build
     runs-on: ubuntu-latest

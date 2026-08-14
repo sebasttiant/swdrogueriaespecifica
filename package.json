@@ -17,6 +17,7 @@
     "lint": "pnpm --filter @drogueria/web lint",
     "typecheck": "pnpm --filter @drogueria/web typecheck",
     "test": "pnpm --filter @drogueria/web test",
+    "test:pg:operational": "pnpm --filter @drogueria/web test:pg:operational",
     "db:generate": "pnpm --filter @drogueria/web db:generate",
     "db:migrate": "pnpm --filter @drogueria/web db:migrate",
     "db:deploy": "pnpm --filter @drogueria/web db:deploy",
