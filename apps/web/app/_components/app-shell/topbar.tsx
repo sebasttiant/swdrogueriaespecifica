@@ -2,6 +2,8 @@ import { getCurrentSession } from "@/lib/auth/index.node";
 
 import { BrandLogo } from "./brand-logo";
 import { NavDrawer } from "./nav-drawer";
+import { TextSizeToggle } from "./text-size-toggle";
+import { ThemeToggle } from "./theme-toggle";
 import { TopbarSearch } from "./topbar-search";
 import { UserMenu } from "./user-menu";
 
@@ -24,9 +26,23 @@ export async function Topbar() {
       </div>
       {/* Center: desktop search (lg+). Mobile search icon rendered inside TopbarSearch (<lg). */}
       <TopbarSearch />
-      {session ? (
-        <UserMenu name={session.user.name} email={session.user.email} />
-      ) : null}
+      {/* Right side: preferencias + menú de cuenta. Agrupados para que el header
+          siga teniendo tres bloques y el justify-between no se altere.
+
+          Las preferencias se ven como íconos SOLO desde lg. En celular la barra
+          ya lleva hamburguesa, logo y búsqueda: sumar dos botones más la hacía
+          desbordar (el logo solo mide ~162px), y el problema empeoraba al subir
+          el tamaño de texto, porque también escala en rem. Por debajo de lg
+          viven dentro del menú de cuenta, que es donde se buscan los ajustes. */}
+      <div className="flex items-center gap-1">
+        <div className="hidden items-center gap-1 lg:flex">
+          <TextSizeToggle />
+          <ThemeToggle />
+        </div>
+        {session ? (
+          <UserMenu name={session.user.name} email={session.user.email} />
+        ) : null}
+      </div>
     </header>
   );
 }

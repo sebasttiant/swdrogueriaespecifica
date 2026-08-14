@@ -4,7 +4,7 @@ import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 
 import type { StatusSlice } from "@/server/services/reports.service";
 
-import { STATUS_COLORS } from "./palette";
+import { CHART_CHROME, STATUS_COLORS } from "./palette";
 
 type StatusDonutProps = {
   data: StatusSlice[];
@@ -13,7 +13,9 @@ type StatusDonutProps = {
 };
 
 function colorFor(status: string): string {
-  return STATUS_COLORS[status] ?? "#54708c";
+  // El respaldo es un color de interfaz, no de estado: sigue al tema para que
+  // un estado desconocido no quede invisible en oscuro.
+  return STATUS_COLORS[status] ?? CHART_CHROME.tick;
 }
 
 // Dona de distribución por estado con porcentajes. Tooltip al pasar el mouse y

@@ -5,6 +5,9 @@ import { LogOut, UserCircle2 } from "lucide-react";
 
 import { logoutAction } from "@/server/actions/auth.actions";
 
+import { TextSizeToggle } from "./text-size-toggle";
+import { ThemeToggle } from "./theme-toggle";
+
 type UserMenuProps = {
   name: string;
   email: string;
@@ -58,6 +61,12 @@ export function UserMenu({ name, email }: UserMenuProps) {
           <div className="border-b border-border px-4 py-3">
             <p className="truncate font-semibold text-text">{name}</p>
             <p className="truncate text-sm text-muted-foreground">{email}</p>
+          </div>
+          {/* Preferencias. Solo por debajo de lg: en escritorio ya están como
+              íconos en la topbar y repetirlas confundiría. */}
+          <div className="border-b border-border lg:hidden">
+            <TextSizeToggle variant="menu" />
+            <ThemeToggle variant="menu" />
           </div>
           <form action={logoutAction}>
             <button
