@@ -278,7 +278,7 @@ describe("PendingCompactList", () => {
     ]);
 
     expect(html).not.toContain("podés facturar");
-    expect(html).not.toContain("listo para entregar");
+    expect(html).not.toContain("Listo para entregar");
   });
 });
 
@@ -357,7 +357,8 @@ describe("PendingCompactList · señales de la reunión", () => {
     ]);
 
     expect(html).not.toContain("podés facturar");
-    expect(html).toContain("listo para entregar");
+    expect(countOccurrences(html, "Listo para entregar")).toBe(2);
+    expect(html).not.toMatch(/Facturado · listo para entregar/i);
   });
 });
 

@@ -1,7 +1,6 @@
 import Image from "next/image";
 
 import { APP_NAME } from "@/lib/constants/app";
-import { cn } from "@/lib/utils/cn";
 
 type BrandLogoProps = {
   className?: string;
@@ -23,24 +22,7 @@ export function BrandLogo({ className, priority = false }: BrandLogoProps) {
       height={128}
       priority={priority}
       unoptimized
-      // En oscuro el logo recupera el fondo claro para el que fue diseñado.
-      //
-      // Es una placa de dos bloques opacos (verde y navy) sobre transparente:
-      // contra un fondo oscuro el verde encandila y el navy se funde con la
-      // pantalla, así que la marca pierde su forma y queda coja. La placa clara
-      // la devuelve entera, sin retocar un solo color del logo.
-      //
-      // Va sobre la propia imagen, NO en un contenedor: uno de los usos lleva
-      // `lg:hidden` y un wrapper dejaría una caja vacía en escritorio.
-      //
-      // El margen de la placa se hace con `ring` (una sombra) y no con padding:
-      // el padding se descontaría del alto por `box-border` y el logo se vería
-      // más chico en oscuro que en claro. La sombra no ocupa espacio, así que
-      // el tamaño y el layout quedan idénticos en los dos temas.
-      className={cn(
-        "dark:rounded-md dark:bg-white dark:ring-4 dark:ring-white",
-        className,
-      )}
+      className={className}
     />
   );
 }
