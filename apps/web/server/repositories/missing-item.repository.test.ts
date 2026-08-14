@@ -21,6 +21,7 @@ import {
   countConfirmedMissingItems,
   countOrderedMissingItems,
   countOverdueMissingItems,
+  countUnclosedActionableMissingItemsBefore,
   createMissingItem,
   listMissingItems,
   lockMissingItemForUpdate,
@@ -458,6 +459,40 @@ describe("countConfirmedMissingItems", () => {
     expect(prismaMock.missingItem.count).toHaveBeenCalledWith({
       where: { confirmedAt: { not: null } },
     });
+  });
+});
+
+// La alerta de gerencia debe mostrar solo lo que requiere trabajo de gestión.
+// Regla reunión 2026-08-14: al marcar "ya lo pedí" el faltante sale de la
+// alerta. Por eso el conteo usa ACTIONABLE_STATUSES (solo FALTANTE) y NO
+// OPEN_STATUSES (que incluye PEDIDO).
+describe("countUnclosedActionableMissingItemsBefore", () => {
+  const threshold = new Date("2026-08-14T10:00:00.000Z");
+
+  it("cuenta solo faltantes accionables anteriores al umbral", async () => {
+    prismaMock.missingItem.count.mockResolvedValue(5);
+
+    const result = await countUnclosedActionableMissingItemsBefore(threshold);
+
+    expect(result).toBe(5);
+    expect(prismaMock.missingItem.count).toHaveBeenCalledWith({
+      where: {
+        confirmedAt: null,
+        status: { in: ["FALTANTE"] },
+        createdAt: { lt: threshold },
+      },
+    });
+  });
+
+  it("excluye los ya pedidos (PEDIDO) para no inflar la alerta", async () => {
+    await countUnclosedActionableMissingItemsBefore(threshold);
+
+    const where = prismaMock.missingItem.count.mock.calls[0]![0].where;
+    expect(where.status.in).toEqual(["FALTANTE"]);
+    expect(where.status.in).not.toContain("PEDIDO");
+    expect(where.status.in).not.toContain("EN_BODEGA");
+    expect(where.status.in).not.toContain("RECIBIDO");
+    expect(where.status.in).not.toContain("CANCELADO");
   });
 });
 
