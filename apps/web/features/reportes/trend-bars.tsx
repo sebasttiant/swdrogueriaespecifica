@@ -13,7 +13,7 @@ import {
 
 import type { TrendPoint } from "@/server/services/reports.service";
 
-import { SERIES_COLORS } from "./palette";
+import { CHART_CHROME, SERIES_COLORS } from "./palette";
 
 type TrendBarsProps = {
   data: TrendPoint[];
@@ -36,24 +36,24 @@ export function TrendBars({ data }: TrendBarsProps) {
     <div className="h-72 w-full">
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
-          <CartesianGrid vertical={false} stroke="#e6eef7" />
+          <CartesianGrid vertical={false} stroke={CHART_CHROME.grid} />
           <XAxis
             dataKey="label"
-            tick={{ fontSize: 11, fill: "#54708c" }}
+            tick={{ fontSize: 11, fill: CHART_CHROME.tick }}
             tickLine={false}
-            axisLine={{ stroke: "#d4e0ee" }}
+            axisLine={{ stroke: CHART_CHROME.axisLine }}
             interval="preserveStartEnd"
             minTickGap={16}
           />
           <YAxis
             allowDecimals={false}
-            tick={{ fontSize: 11, fill: "#54708c" }}
+            tick={{ fontSize: 11, fill: CHART_CHROME.tick }}
             tickLine={false}
             axisLine={false}
             width={32}
           />
           <Tooltip
-            cursor={{ fill: "#0b66c3", fillOpacity: 0.06 }}
+            cursor={{ fill: CHART_CHROME.cursor, fillOpacity: 0.06 }}
             content={({ active, payload, label }) => {
               if (!active || !payload?.length) return null;
               const point = payload[0]?.payload as TrendPoint;

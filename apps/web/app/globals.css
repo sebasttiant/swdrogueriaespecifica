@@ -32,6 +32,12 @@
   --color-border: #d4e0ee; /* gris suave */
   --color-text: #0c2a47; /* azul oscuro */
 
+  /* Grilla de los gráficos. Token propio y no `--color-muted` a secas porque
+     en oscuro necesita más presencia que una superficie: con el muted oscuro
+     la grilla queda casi invisible sobre la tarjeta. En claro conserva el
+     valor histórico exacto. */
+  --color-chart-grid: #e6eef7;
+
   /* Radios cómodos (UI amigable, dedos de adulto) */
   --radius-card: 1rem;
   --radius-btn: 0.75rem;
@@ -44,6 +50,58 @@
      backdrop/búsqueda (fade). prefers-reduced-motion las neutraliza abajo. */
   --animate-drawer-in: drawer-in 0.2s ease-out;
   --animate-fade-in: fade-in 0.15s ease-out;
+}
+
+/* ==========================================================================
+   Modo oscuro — se conmuta a mano con [data-theme], no con prefers-color-scheme.
+   Manda la elección del usuario (botón en la topbar, preferencia guardada); el
+   sistema operativo solo aporta el valor inicial (script en app/layout.tsx).
+
+   Tailwind 4 ya no tiene `darkMode: "class"` en un archivo de config: la
+   variante se declara acá y es lo que habilita utilidades como `dark:hidden`.
+   ========================================================================== */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* Acá solo se redefinen tokens. Como la interfaz usa clases semánticas
+   (bg-surface, text-text, border-border) y casi no usa colores crudos, toda la
+   app cambia con estas variables sin tocar componente por componente. */
+[data-theme="dark"] {
+  /* El azul de marca se aclara a propósito: `text-primary` es el color de los
+     enlaces y, sobre fondo oscuro, el #0b66c3 original queda por debajo del
+     contraste mínimo legible. El foreground se oscurece para que el texto
+     sobre botones primarios siga leyéndose. */
+  --color-primary: #4da3e8;
+  --color-primary-foreground: #06182a;
+  --color-primary-dark: #cfe3f5;
+
+  --color-secondary: #5cc489;
+  --color-secondary-foreground: #06182a;
+
+  /* Superficies: navy profundo derivado de la marca, no gris neutro. */
+  --color-background: #0b1a2b;
+  --color-surface: #12263c;
+  --color-muted: #1c3450;
+  --color-muted-foreground: #9db4cc;
+
+  --color-border: #24405c;
+  --color-text: #e8f0f8;
+
+  /* Más marcada que la superficie: sobre la tarjeta oscura una grilla al nivel
+     de `muted` no se llega a ver. */
+  --color-chart-grid: #24405c;
+
+  /* danger/warning/success NO cambian: ya contrastan contra el fondo oscuro y
+     su texto sigue siendo legible sobre el color sólido. */
+}
+
+/* Controles nativos (scrollbar, selector de fecha, autocompletado) siguen al
+   tema. Sin esto, en oscuro aparecen paneles blancos que encandilan. */
+:root {
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
 }
 
 @keyframes drawer-in {
@@ -67,6 +125,20 @@
 /* Base accesible: texto grande y legible para una persona adulta (~60 años). */
 html {
   font-size: 17px;
+}
+
+/* Tamaño de texto elegido por el usuario (botón en la topbar).
+   Como Tailwind mide todo en rem, mover este único valor reescala tipografía y
+   espaciado a la vez: la interfaz se agranda pero SIGUE siendo responsive, sin
+   scroll horizontal. Es la diferencia con el zoom del navegador, que amplía la
+   pantalla como una foto y obliga a arrastrar para leer.
+   El techo son 21px: más arriba las tablas de reportes empiezan a apretarse. */
+html[data-text-size="grande"] {
+  font-size: 19px;
+}
+
+html[data-text-size="extra"] {
+  font-size: 21px;
 }
 
 body {
@@ -133,6 +205,23 @@ input[type="datetime-local"]::-webkit-datetime-edit {
 @media print {
   html, body {
     background: #ffffff !important;
+  }
+  /* El papel siempre es claro. Si el usuario está en modo oscuro, los tokens
+     vuelven a sus valores claros SOLO para imprimir; de lo contrario saldría
+     texto claro sobre fondo blanco, es decir, una hoja casi en blanco. */
+  [data-theme="dark"] {
+    color-scheme: light;
+    --color-primary: #0b66c3;
+    --color-primary-foreground: #ffffff;
+    --color-primary-dark: #0c2a47;
+    --color-secondary: #4fb477;
+    --color-secondary-foreground: #0c2a47;
+    --color-background: #f3f8fc;
+    --color-surface: #ffffff;
+    --color-muted: #e6eef7;
+    --color-muted-foreground: #54708c;
+    --color-border: #d4e0ee;
+    --color-text: #0c2a47;
   }
   :root {
     -webkit-print-color-adjust: exact;
