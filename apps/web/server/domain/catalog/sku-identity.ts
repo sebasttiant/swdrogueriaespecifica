@@ -1,15 +1,17 @@
 // --------------------------------------------------------------------------
 // Identidad de producto — reglas PURAS, sin base de datos.
 //
-// El código Orion es la identidad canónica e inmutable de un producto. Cuando
-// un producto entra al catálogo sin ese código todavía, el servidor le acuña
-// un SKU interno provisional (`PRV-{ULID}`) y lo deja marcado para revisión.
+// Un producto se identifica de forma EXACTA por una de tres claves: su id,
+// su SKU interno o su código Orion. El nombre NUNCA identifica: dos productos
+// distintos se llaman parecido, y adivinar por nombre termina mezclando el
+// inventario de uno con el del otro.
 //
-// Este archivo cubre quién puede acuñar identidad y cómo se genera. Las reglas
-// de resolución exacta y de vínculo con el código Orion llegan aparte.
+// El código Orion es la identidad canónica e inmutable. El SKU interno lo
+// genera el servidor (`PRV-{ULID}`) cuando un producto entra al catálogo sin
+// código Orion todavía; queda marcado para revisión.
 //
-// Nada de esto toca Prisma: las reglas se prueban sin base, igual que
-// `lib/auth/permissions.ts`.
+// Todo lo que decide identidad vive acá y no toca Prisma, para poder probar
+// las reglas sin base — el mismo patrón de `lib/auth/permissions.ts`.
 // --------------------------------------------------------------------------
 
 import type { SessionRole } from "@/lib/auth/session";
@@ -19,8 +21,18 @@ import type { SessionRole } from "@/lib/auth/session";
 // --------------------------------------------------------------------------
 
 export type SkuIdentityCode =
+  /** Vinieron dos identidades exactas a la vez y no se puede elegir por él. */
+  | "AMBIGUOUS_MODE"
   /** El rol no puede acuñar identidad de producto. */
   | "FORBIDDEN_ACTOR"
+  /** No vino ninguna identidad exacta (un nombre no cuenta). */
+  | "MISSING_EXACT_IDENTITY"
+  /** La identidad exacta no corresponde a ningún producto. */
+  | "UNKNOWN_SKU"
+  /** El id y el SKU recibidos apuntan a productos distintos. */
+  | "ID_SKU_MISMATCH"
+  /** El código Orion ya está tomado, o el producto ya tiene otro. */
+  | "ORION_CONFLICT"
   /** Se agotó el presupuesto de reintentos por colisión. */
   | "GENERATION_EXHAUSTED";
 
@@ -36,7 +48,7 @@ export class SkuIdentityError extends Error {
 //
 // BODEGA entra porque recibe mercadería que todavía no está en el catálogo y
 // necesita darla de alta para poder registrarla. Supervisión y vendedores NO:
-// ven el catálogo, pero acuñar identidad canónica es otra cosa.
+// ven el catálogo, pero crear identidad canónica es otra cosa.
 // --------------------------------------------------------------------------
 
 export const SKU_ONBOARDING_ROLES: readonly SessionRole[] = [
@@ -116,4 +128,124 @@ export function assertAttemptWithinBudget(attempt: number): void {
   if (attempt > SKU_COLLISION_MAX_ATTEMPTS) {
     throw new SkuIdentityError("GENERATION_EXHAUSTED");
   }
+}
+
+// --------------------------------------------------------------------------
+// Identidad exacta.
+// --------------------------------------------------------------------------
+
+/** Recorta los extremos y valida; NO cambia mayúsculas: la identidad es exacta. */
+export function normalizeOrionCode(raw: string): string {
+  const code = raw.trim();
+
+  if (code === "" || /\s/.test(code)) {
+    throw new SkuIdentityError("MISSING_EXACT_IDENTITY");
+  }
+
+  return code;
+}
+
+export type IdentityInput = {
+  productId?: string | null;
+  internalSku?: string | null;
+  orionCode?: string | null;
+  /** Se acepta para mostrarlo, jamás para identificar. */
+  name?: string | null;
+};
+
+export type IdentityMode = {
+  mode: "PRODUCT_ID" | "INTERNAL_SKU" | "ORION_CODE";
+  value: string;
+};
+
+export function resolveIdentityMode(input: IdentityInput): IdentityMode {
+  const modes: IdentityMode[] = [];
+
+  if (input.productId) modes.push({ mode: "PRODUCT_ID", value: input.productId });
+  if (input.internalSku) modes.push({ mode: "INTERNAL_SKU", value: input.internalSku });
+  if (input.orionCode) {
+    modes.push({ mode: "ORION_CODE", value: normalizeOrionCode(input.orionCode) });
+  }
+
+  if (modes.length > 1) throw new SkuIdentityError("AMBIGUOUS_MODE");
+
+  // `name` no se mira: un nombre no es identidad, ni siquiera cuando es el
+  // único dato que llegó.
+  const [only] = modes;
+  if (!only) throw new SkuIdentityError("MISSING_EXACT_IDENTITY");
+
+  return only;
+}
+
+/** La parte del producto que importa para decidir identidad. */
+export type SkuIdentityRecord = {
+  id: string;
+  internalSku: string | null;
+  orionCode: string | null;
+};
+
+export function assertIdentityMatches(
+  input: IdentityInput,
+  product: SkuIdentityRecord | null,
+): void {
+  if (!product) throw new SkuIdentityError("UNKNOWN_SKU");
+
+  if (input.productId && input.productId !== product.id) {
+    throw new SkuIdentityError("ID_SKU_MISMATCH");
+  }
+
+  if (input.internalSku && input.internalSku !== product.internalSku) {
+    throw new SkuIdentityError("ID_SKU_MISMATCH");
+  }
+}
+
+// --------------------------------------------------------------------------
+// Vínculo con el código Orion.
+//
+// Devuelve un PLAN, no un efecto: quien escriba en la base decide cómo
+// ejecutarlo, y esta función se puede probar sin base.
+// --------------------------------------------------------------------------
+
+export type OrionLinkPlan =
+  | { action: "NOOP"; productId: string; orionCode: string }
+  | { action: "LINK"; productId: string; orionCode: string }
+  | {
+      action: "RELINK";
+      productId: string;
+      orionCode: string;
+      releasedFromProductId: string;
+    };
+
+export function planOrionLink(params: {
+  product: SkuIdentityRecord;
+  orionCode: string;
+  /** Producto que hoy tiene ese código Orion, si alguno lo tiene. */
+  holder: SkuIdentityRecord | null;
+  /** `RELINK` es una decisión explícita y auditada, nunca un efecto colateral. */
+  intent: "LINK" | "RELINK";
+}): OrionLinkPlan {
+  const orionCode = normalizeOrionCode(params.orionCode);
+  const { product, holder, intent } = params;
+
+  // Repetir el mismo vínculo no es conflicto ni escritura.
+  if (product.orionCode === orionCode) {
+    return { action: "NOOP", productId: product.id, orionCode };
+  }
+
+  // El código Orion es inmutable: pisarlo rompería la trazabilidad de todo el
+  // inventario que ya se movió bajo ese código.
+  if (product.orionCode !== null) throw new SkuIdentityError("ORION_CONFLICT");
+
+  if (holder && holder.id !== product.id) {
+    if (intent === "LINK") throw new SkuIdentityError("ORION_CONFLICT");
+
+    return {
+      action: "RELINK",
+      productId: product.id,
+      orionCode,
+      releasedFromProductId: holder.id,
+    };
+  }
+
+  return { action: "LINK", productId: product.id, orionCode };
 }
