@@ -44,7 +44,17 @@ function defaultRandomness(): Uint8Array {
   return crypto.getRandomValues(new Uint8Array(ULID_RANDOM_BYTES));
 }
 
-function isUniqueViolation(error: unknown): boolean {
+/**
+ * Violación de índice único (P2002).
+ *
+ * A propósito NO se mira QUÉ índice falló: con Prisma 7 y el adapter de `pg`,
+ * `meta.target` no existe y los campos quedan en una forma interna del adapter
+ * (`meta.driverAdapterError.cause.constraint.fields`). Colgar una decisión de
+ * negocio de esa estructura es atarse a un detalle no documentado que puede
+ * cambiar en cualquier versión. Quien necesite distinguir qué índice fue, que
+ * lo averigüe consultando la base.
+ */
+export function isUniqueViolation(error: unknown): boolean {
   return (
     typeof error === "object" &&
     error !== null &&
@@ -60,6 +70,43 @@ export type CreateProvisionalProductData = {
 };
 
 /**
+ * UN intento de alta con el SKU ya acuñado. Es una sola sentencia: o entra
+ * completa, o no entra.
+ *
+ * Existe aparte del reintento porque en PostgreSQL una violación de índice
+ * único ABORTA la transacción: quien necesite auditar en la misma transacción
+ * tiene que abrir una nueva por cada intento, y para eso necesita ejecutar los
+ * intentos de a uno.
+ */
+export async function insertProvisionalProduct(
+  client: Prisma.TransactionClient,
+  data: CreateProvisionalProductData & { internalSku: string },
+): Promise<Product> {
+  return client.product.create({
+    data: {
+      // El código interno heredado y el SKU nuevo son el mismo valor: no se
+      // inventa un segundo esquema de códigos para el mismo producto.
+      code: data.internalSku,
+      internalSku: data.internalSku,
+      name: data.name.trim(),
+      unit: data.unit,
+      minStock: data.minStock ?? 0,
+      reorderQty: data.reorderQty ?? 0,
+      skuStatus: "PROVISIONAL_REVIEW",
+      needsReview: true,
+    },
+  });
+}
+
+/** Acuña el SKU del próximo intento. */
+export function mintInternalSku(deps: SkuGenerationDeps = {}): string {
+  const now = deps.now ?? Date.now;
+  const randomness = deps.randomness ?? defaultRandomness;
+  return provisionalSkuFor(generateUlid(now(), randomness()));
+}
+
+
+/**
  * Acuña un SKU interno y crea el producto marcado para revisión.
  *
  * Si el índice único rechaza el SKU, reintenta con otro dentro del presupuesto
@@ -71,28 +118,13 @@ export async function createProvisionalProduct(
   deps: SkuGenerationDeps = {},
   client: Prisma.TransactionClient = prisma,
 ): Promise<Product> {
-  const now = deps.now ?? Date.now;
-  const randomness = deps.randomness ?? defaultRandomness;
-
   for (let attempt = 1; ; attempt += 1) {
     assertAttemptWithinBudget(attempt);
 
-    const internalSku = provisionalSkuFor(generateUlid(now(), randomness()));
-
     try {
-      return await client.product.create({
-        data: {
-          // El código interno heredado y el SKU nuevo son el mismo valor: no se
-          // inventa un segundo esquema de códigos para el mismo producto.
-          code: internalSku,
-          internalSku,
-          name: data.name.trim(),
-          unit: data.unit,
-          minStock: data.minStock ?? 0,
-          reorderQty: data.reorderQty ?? 0,
-          skuStatus: "PROVISIONAL_REVIEW",
-          needsReview: true,
-        },
+      return await insertProvisionalProduct(client, {
+        ...data,
+        internalSku: mintInternalSku(deps),
       });
     } catch (error) {
       if (!isUniqueViolation(error)) throw error;
