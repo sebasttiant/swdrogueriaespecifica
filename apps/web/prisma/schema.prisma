@@ -222,6 +222,8 @@ model Product {
   missingItems     MissingItem[]
   inventoryEntries InventoryEntry[]
   batches          ProductBatch[]
+  // Lotes del modelo canónico (T1.2). Convive con `batches`, que es el legado.
+  lots             Lot[]
   laboratoryId     String?
   laboratory       Laboratory? @relation(fields: [laboratoryId], references: [id])
   suppliers        ProductSupplier[]
@@ -232,6 +234,51 @@ model Product {
   // La cola de revisión de identidad se lee por este estado.
   @@index([skuStatus])
   @@map("products")
+}
+
+// --------------------------------------------------------------------------
+// Modelo CANÓNICO de lote (T1.2).
+//
+// Convive con `ProductBatch`, que es el modelo legado del stock físico y sigue
+// en uso hasta el cutover. Acá no se migran datos: el canónico se construye en
+// paralelo y el reemplazo se decide después.
+//
+// Dos decisiones que valen la pena leer antes de tocarlo:
+//
+//  - `expiresAt` es NULLABLE. No todo lo que entra a la droguería vence, y
+//    obligar la fecha llevaría a inventarla. FEFO los ordena al final.
+//  - VENCIDO no es un estado guardado: se DERIVA comparando `expiresAt` con el
+//    momento de la consulta. Un estado guardado se desincroniza el día que
+//    nadie corre el proceso que lo actualiza.
+// --------------------------------------------------------------------------
+
+enum LotStatus {
+  AVAILABLE
+  QUARANTINED
+}
+
+model Lot {
+  id        String    @id @default(cuid())
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId String
+  lotNumber String // número de lote del proveedor
+  // Nulo = sin vencimiento. FEFO lo manda al final, no al principio.
+  expiresAt DateTime?
+  // Cantidad física. La no-negatividad la sostiene un CHECK en la base, no
+  // solo el código: es la red que atrapa cualquier sobre-descuento futuro.
+  onHand    Int
+  // Momento de recepción: desempata FEFO cuando dos lotes vencen el mismo día.
+  receivedAt DateTime @default(now())
+  status    LotStatus @default(AVAILABLE)
+  location  String? // ubicación física (estante, depósito)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@unique([productId, lotNumber]) // identidad del lote
+  @@index([expiresAt]) // alertas de vencimiento globales
+  @@index([productId, status])
+  @@index([productId, expiresAt, id]) // orden FEFO por producto
+  @@map("lots")
 }
 
 model Laboratory {
