@@ -90,3 +90,34 @@ export function findLotById(
   return client.lot.findUnique({ where: { id } });
 }
 
+/**
+ * Lotes que se pueden consumir de un producto en el instante `at`, en orden
+ * FEFO: primero vence, primero sale.
+ *
+ * El vencimiento se deriva acá y no se guarda: el mismo lote es elegible antes
+ * de su fecha y deja de serlo después, sin que nadie tenga que correr un
+ * proceso que actualice estados.
+ *
+ * El orden es `(expiresAt null-last, expiresAt, receivedAt, id)`. Los NULL van
+ * al final porque "sin vencimiento" no es "vence ya", y el desempate por
+ * recepción e id hace que el orden sea estable entre corridas —condición para
+ * poder paginarlo y para que una reserva sea reproducible.
+ */
+export function listEligibleLots(
+  productId: string,
+  at: Date,
+  client: Prisma.TransactionClient = prisma,
+): Promise<Lot[]> {
+  return client.lot.findMany({
+    where: {
+      productId,
+      status: "AVAILABLE",
+      OR: [{ expiresAt: null }, { expiresAt: { gt: at } }],
+    },
+    orderBy: [
+      { expiresAt: { sort: "asc", nulls: "last" } },
+      { receivedAt: "asc" },
+      { id: "asc" },
+    ],
+  });
+}

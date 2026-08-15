@@ -4,12 +4,14 @@ import { prisma } from "@/lib/db/prisma";
 import {
   createLot,
   findLotById,
+  listEligibleLots,
   LotIdentityConflictError,
 } from "@/server/repositories/lot.repository";
 
 // Estas pruebas corren contra PostgreSQL real (harness de T0.2): que el índice
-// único y el check de no-negatividad rechacen de verdad es algo que solo la
-// base puede decir. Un doble de prueba diría que sí a cualquier cosa.
+// único, el check de no-negatividad y el orden FEFO con los NULL al final se
+// cumplan de verdad es algo que solo la base puede decir. Un doble de prueba
+// diría que sí a cualquier cosa, y un sort en memoria no se puede paginar.
 
 const AT = new Date("2026-08-15T12:00:00Z");
 const day = (offset: number) => new Date(AT.getTime() + offset * 86_400_000);
@@ -136,5 +138,109 @@ describe("createLot", () => {
       .catch((error: unknown) => error);
 
     expect(failure).toBeInstanceOf(Error);
+  });
+});
+
+describe("listEligibleLots", () => {
+  // FEFO: primero vence, primero sale. Los lotes sin vencimiento van al final,
+  // no al principio: un NULL no es "vence ya".
+  it("ordena por vencimiento con los sin vencimiento al final", async () => {
+    const sinVencimiento = await createLot({
+      productId,
+      lotNumber: nextLotNumber(),
+      expiresAt: null,
+      onHand: 1,
+    });
+    const tarde = await createLot({
+      productId,
+      lotNumber: nextLotNumber(),
+      expiresAt: day(60),
+      onHand: 1,
+    });
+    const temprano = await createLot({
+      productId,
+      lotNumber: nextLotNumber(),
+      expiresAt: day(10),
+      onHand: 1,
+    });
+
+    const eligible = await listEligibleLots(productId, AT);
+
+    expect(eligible.map((lot) => lot.id)).toEqual([temprano.id, tarde.id, sinVencimiento.id]);
+  });
+
+  // Mismo vencimiento: desempata el que llegó antes, y si empatan, el id. Sin
+  // ese desempate el orden sería inestable entre corridas.
+  it("desempata por recepción y después por id", async () => {
+    const expiresAt = day(10);
+    const nuevo = await createLot({
+      productId,
+      lotNumber: nextLotNumber(),
+      expiresAt,
+      onHand: 1,
+      receivedAt: day(-1),
+    });
+    const viejo = await createLot({
+      productId,
+      lotNumber: nextLotNumber(),
+      expiresAt,
+      onHand: 1,
+      receivedAt: day(-30),
+    });
+
+    const eligible = await listEligibleLots(productId, AT);
+
+    expect(eligible.map((lot) => lot.id)).toEqual([viejo.id, nuevo.id]);
+  });
+
+  it("deja afuera el lote en cuarentena y el vencido", async () => {
+    const disponible = await createLot({
+      productId,
+      lotNumber: nextLotNumber(),
+      expiresAt: day(30),
+      onHand: 4,
+    });
+    await createLot({
+      productId,
+      lotNumber: nextLotNumber(),
+      expiresAt: day(30),
+      onHand: 4,
+      status: "QUARANTINED",
+    });
+    await createLot({
+      productId,
+      lotNumber: nextLotNumber(),
+      expiresAt: day(-1),
+      onHand: 4,
+    });
+
+    const eligible = await listEligibleLots(productId, AT);
+
+    expect(eligible.map((lot) => lot.id)).toEqual([disponible.id]);
+  });
+
+  // El vencimiento se DERIVA de la fecha: el mismo lote es elegible antes y
+  // deja de serlo después, sin que nadie tenga que actualizar un estado.
+  it("el mismo lote deja de ser elegible al pasar su vencimiento", async () => {
+    const lot = await createLot({
+      productId,
+      lotNumber: nextLotNumber(),
+      expiresAt: day(5),
+      onHand: 2,
+    });
+
+    expect((await listEligibleLots(productId, AT)).map((row) => row.id)).toEqual([lot.id]);
+    expect(await listEligibleLots(productId, day(6))).toEqual([]);
+  });
+
+  it("no mezcla los lotes de otro producto", async () => {
+    await createLot({
+      productId: otherProductId,
+      lotNumber: nextLotNumber(),
+      expiresAt: day(1),
+      onHand: 9,
+    });
+
+    expect(await listEligibleLots(productId, AT)).toEqual([]);
   });
 });
