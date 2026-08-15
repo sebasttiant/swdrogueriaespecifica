@@ -3,11 +3,15 @@ import { describe, expect, it } from "vitest";
 import {
   assertAttemptWithinBudget,
   assertCanOnboardSku,
+  assertIdentityMatches,
   canOnboardSku,
   generateUlid,
   isProvisionalSku,
+  normalizeOrionCode,
+  planOrionLink,
   PROVISIONAL_SKU_PREFIX,
   provisionalSkuFor,
+  resolveIdentityMode,
   SKU_COLLISION_MAX_ATTEMPTS,
   SkuIdentityError,
   type SkuIdentityCode,
@@ -26,7 +30,9 @@ function codeOf(run: () => unknown): SkuIdentityCode | "SIN ERROR" {
 const CROCKFORD = /^[0-9ABCDEFGHJKMNPQRSTVWXYZ]{26}$/;
 
 // Aleatoriedad fija: el ULID tiene que ser determinístico para poder probarlo.
-const RANDOMNESS = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+const RANDOMNESS = new Uint8Array([
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+]);
 
 describe("canOnboardSku", () => {
   it("autoriza a quienes reciben mercadería y a la administración", () => {
@@ -79,7 +85,9 @@ describe("generateUlid", () => {
   });
 
   it("exige exactamente 10 bytes de aleatoriedad", () => {
-    expect(() => generateUlid(Date.now(), new Uint8Array([1, 2, 3]))).toThrow();
+    const at = Date.now();
+
+    expect(() => generateUlid(at, new Uint8Array([1, 2, 3]))).toThrow();
   });
 });
 
@@ -95,8 +103,6 @@ describe("provisionalSkuFor", () => {
       true,
     );
 
-    // `PROV-{nombre}` es el código que hoy genera el alta desde reportes: NO es
-    // un SKU provisional canónico, y no puede pasar por uno.
     for (const value of ["PROV-ibuprofeno", "7702001234567", "", "PRV-", "prv-abc"]) {
       expect(isProvisionalSku(value)).toBe(false);
     }
@@ -120,5 +126,178 @@ describe("presupuesto de colisión", () => {
     expect(codeOf(() => assertAttemptWithinBudget(SKU_COLLISION_MAX_ATTEMPTS + 1))).toBe(
       "GENERATION_EXHAUSTED",
     );
+  });
+});
+
+describe("normalizeOrionCode", () => {
+  it("recorta los espacios de los extremos", () => {
+    expect(normalizeOrionCode("  7702001234567  ")).toBe("7702001234567");
+  });
+
+  // La identidad es EXACTA: cambiarle las mayúsculas sería inventar otro código.
+  it("conserva las mayúsculas y minúsculas tal cual", () => {
+    expect(normalizeOrionCode("Ori-8842a")).toBe("Ori-8842a");
+  });
+
+  it("rechaza un código vacío o solo espacios", () => {
+    for (const raw of ["", "   ", "\t\n"]) {
+      expect(codeOf(() => normalizeOrionCode(raw))).toBe("MISSING_EXACT_IDENTITY");
+    }
+  });
+
+  it("rechaza un código con espacios internos", () => {
+    expect(codeOf(() => normalizeOrionCode("770200 1234567"))).toBe(
+      "MISSING_EXACT_IDENTITY",
+    );
+  });
+});
+
+describe("resolveIdentityMode", () => {
+  it("reconoce cada identidad exacta por separado", () => {
+    expect(resolveIdentityMode({ productId: "p1" })).toEqual({
+      mode: "PRODUCT_ID",
+      value: "p1",
+    });
+    expect(resolveIdentityMode({ internalSku: "PRV-ABC" })).toEqual({
+      mode: "INTERNAL_SKU",
+      value: "PRV-ABC",
+    });
+    expect(resolveIdentityMode({ orionCode: " 7702001234567 " })).toEqual({
+      mode: "ORION_CODE",
+      value: "7702001234567",
+    });
+  });
+
+  it("rechaza dos identidades exactas a la vez", () => {
+    expect(codeOf(() => resolveIdentityMode({ productId: "p1", orionCode: "X1" }))).toBe(
+      "AMBIGUOUS_MODE",
+    );
+  });
+
+  it("rechaza no recibir ninguna identidad exacta", () => {
+    expect(codeOf(() => resolveIdentityMode({}))).toBe("MISSING_EXACT_IDENTITY");
+  });
+
+  // ESTA es la regla del slice: el nombre no es identidad. Ni solo, ni
+  // parecido, ni "el único que coincide". Nunca.
+  it("nunca establece identidad por nombre", () => {
+    expect(codeOf(() => resolveIdentityMode({ name: "Ibuprofeno 400mg" }))).toBe(
+      "MISSING_EXACT_IDENTITY",
+    );
+  });
+
+  it("ignora el nombre cuando viene junto a una identidad exacta", () => {
+    expect(
+      resolveIdentityMode({ productId: "p1", name: "Ibuprofeno 400mg" }),
+    ).toEqual({ mode: "PRODUCT_ID", value: "p1" });
+  });
+});
+
+describe("assertIdentityMatches", () => {
+  const product = { id: "p1", internalSku: "PRV-ABC", orionCode: "7702001234567" };
+
+  it("acepta el producto que corresponde a la identidad pedida", () => {
+    expect(() =>
+      assertIdentityMatches({ productId: "p1", internalSku: "PRV-ABC" }, product),
+    ).not.toThrow();
+  });
+
+  it("rechaza cuando no hay producto para esa identidad", () => {
+    expect(codeOf(() => assertIdentityMatches({ internalSku: "PRV-XYZ" }, null))).toBe(
+      "UNKNOWN_SKU",
+    );
+  });
+
+  // Id y SKU que apuntan a productos distintos: el llamador está trabajando
+  // con datos viejos y no se puede adivinar cuál quiso.
+  it("rechaza el id y el SKU que no coinciden entre sí", () => {
+    expect(
+      codeOf(() =>
+        assertIdentityMatches({ productId: "p1", internalSku: "PRV-OTRO" }, product),
+      ),
+    ).toBe("ID_SKU_MISMATCH");
+  });
+});
+
+describe("planOrionLink", () => {
+  const target = { id: "p1", internalSku: "PRV-ABC", orionCode: null };
+  const linked = { id: "p1", internalSku: "PRV-ABC", orionCode: "7702001234567" };
+  const otro = { id: "p2", internalSku: "PRV-DEF", orionCode: "7702001234567" };
+
+  it("vincula un código libre", () => {
+    expect(
+      planOrionLink({ product: target, orionCode: "7702001234567", holder: null, intent: "LINK" }),
+    ).toEqual({ action: "LINK", productId: "p1", orionCode: "7702001234567" });
+  });
+
+  // Idempotencia: repetir el mismo vínculo no es un conflicto ni una escritura.
+  it("no hace nada si el producto ya tiene ese mismo código", () => {
+    expect(
+      planOrionLink({
+        product: linked,
+        orionCode: "7702001234567",
+        holder: linked,
+        intent: "LINK",
+      }),
+    ).toEqual({ action: "NOOP", productId: "p1", orionCode: "7702001234567" });
+  });
+
+  // El código Orion es INMUTABLE: pisarlo silenciosamente rompería la
+  // trazabilidad de todo el inventario del producto.
+  it("rechaza cambiarle el código a un producto que ya tiene otro", () => {
+    expect(
+      codeOf(() =>
+        planOrionLink({
+          product: linked,
+          orionCode: "7702009999999",
+          holder: null,
+          intent: "LINK",
+        }),
+      ),
+    ).toBe("ORION_CONFLICT");
+  });
+
+  it("rechaza tomar un código que ya tiene otro producto", () => {
+    expect(
+      codeOf(() =>
+        planOrionLink({
+          product: target,
+          orionCode: "7702001234567",
+          holder: otro,
+          intent: "LINK",
+        }),
+      ),
+    ).toBe("ORION_CONFLICT");
+  });
+
+  // Mover un código de un producto a otro es una decisión explícita y auditada,
+  // nunca un efecto colateral de un alta.
+  it("permite mudar el código solo con intención explícita de remapeo", () => {
+    expect(
+      planOrionLink({
+        product: target,
+        orionCode: "7702001234567",
+        holder: otro,
+        intent: "RELINK",
+      }),
+    ).toEqual({
+      action: "RELINK",
+      productId: "p1",
+      orionCode: "7702001234567",
+      releasedFromProductId: "p2",
+    });
+  });
+
+  it("rechaza el remapeo hacia un producto que ya tiene otro código", () => {
+    expect(
+      codeOf(() =>
+        planOrionLink({
+          product: linked,
+          orionCode: "7702009999999",
+          holder: otro,
+          intent: "RELINK",
+        }),
+      ),
+    ).toBe("ORION_CONFLICT");
   });
 });
