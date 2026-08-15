@@ -7,8 +7,15 @@ import type { Product } from "@/lib/generated/prisma/client";
 import {
   assertAttemptWithinBudget,
   assertCanOnboardSku,
+  assertIdentityMatches,
+  normalizeOrionCode,
+  planOrionLink,
+  type IdentityInput,
+  type SkuIdentityRecord,
 } from "@/server/domain/catalog/sku-identity";
 import {
+  applyOrionLink,
+  findProductByIdentity,
   findProductByIdentityCommandKey,
   insertProvisionalProduct,
   isUniqueViolation,
@@ -148,4 +155,104 @@ export async function onboardProvisionalSku(
       // siguiente acuña otro, en su propia transacción.
     }
   }
+}
+
+// --------------------------------------------------------------------------
+// Vínculo con el código Orion.
+//
+// La versión de identidad que llega es la que MOSTRÓ la pantalla, y viaja
+// directo al compare-and-set. No se relee fresco a propósito: releer sería
+// pisar en silencio lo que otro operador acaba de vincular. Si la versión
+// quedó vieja, el operador se entera y recarga.
+//
+// El vínculo y su auditoría entran en la MISMA transacción, igual que el alta.
+// --------------------------------------------------------------------------
+
+export type LinkOrionCodeInput = {
+  actor: SkuOnboardingActor;
+  /** Identidad EXACTA del producto destino: id, SKU interno o código Orion. */
+  identity: IdentityInput;
+  orionCode: string;
+  /** `RELINK` es una decisión explícita: mudar identidad nunca es colateral. */
+  intent: "LINK" | "RELINK";
+  /** Versión de identidad que la pantalla le mostró al operador. */
+  expectedVersion: number;
+  /** Ídem del producto que hoy tiene el código, cuando se lo muda. */
+  holderExpectedVersion?: number;
+  context?: AuditContext;
+};
+
+export type LinkOrionCodeDeps = {
+  writeAudit?: TransactionalAuditWriter;
+};
+
+export async function linkOrionCode(
+  input: LinkOrionCodeInput,
+  deps: LinkOrionCodeDeps = {},
+): Promise<Product> {
+  assertCanOnboardSku(input.actor.role);
+
+  const orionCode = normalizeOrionCode(input.orionCode);
+  const product = await findProductByIdentity(input.identity);
+  assertIdentityMatches(input.identity, product);
+
+  const holder = await findProductByIdentity({ orionCode });
+  const plan = planOrionLink({
+    product: product as SkuIdentityRecord,
+    orionCode,
+    holder,
+    intent: input.intent,
+  });
+
+  const writeAudit = deps.writeAudit ?? recordAuditInTransaction;
+
+  return prisma.$transaction(async (tx) => {
+    const linked = await applyOrionLink(
+      plan,
+      {
+        expectedVersion: input.expectedVersion,
+        ...(input.holderExpectedVersion === undefined
+          ? {}
+          : { holderExpectedVersion: input.holderExpectedVersion }),
+      },
+      tx,
+    );
+
+    // Repetir un vínculo que ya existe no es un evento: no escribió nada, y
+    // auditarlo llenaría la historia de ruido.
+    if (plan.action === "NOOP") return linked;
+
+    if (plan.action === "RELINK") {
+      await writeAudit(tx, {
+        action: AUDIT_ACTIONS.SKU_ORION_RELEASE,
+        module: AUDIT_MODULES.PRODUCTOS,
+        entity: "Product",
+        entityId: plan.releasedFromProductId,
+        before: { orionCode },
+        after: { orionCode: null, movedToProductId: plan.productId },
+        context: { ...input.context, userId: input.actor.id },
+      });
+    }
+
+    await writeAudit(tx, {
+      action:
+        plan.action === "RELINK"
+          ? AUDIT_ACTIONS.SKU_ORION_RELINK
+          : AUDIT_ACTIONS.SKU_ORION_LINK,
+      module: AUDIT_MODULES.PRODUCTOS,
+      entity: "Product",
+      entityId: linked.id,
+      before: { orionCode: null, identityVersion: input.expectedVersion },
+      after: {
+        orionCode: linked.orionCode,
+        identityVersion: linked.identityVersion,
+        ...(plan.action === "RELINK"
+          ? { releasedFromProductId: plan.releasedFromProductId }
+          : {}),
+      },
+      context: { ...input.context, userId: input.actor.id },
+    });
+
+    return linked;
+  });
 }
