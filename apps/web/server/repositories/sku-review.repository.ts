@@ -1,12 +1,15 @@
 // --------------------------------------------------------------------------
 // Repositorio de identidad de producto — ÚNICO lugar que toca Prisma para
-// acuñar un SKU interno y para buscar un producto por identidad exacta.
+// acuñar un SKU interno y para vincular el código Orion.
 //
 // Las reglas viven en `server/domain/catalog/sku-identity.ts`; acá solo se
-// ejecutan contra la base. Lo que este archivo garantiza y no se puede probar
-// sin PostgreSQL de verdad: la colisión de SKU la detecta el índice único de
-// la base, no una consulta previa. Entre un `SELECT` y un `INSERT` puede
-// meterse otro escritor, y entonces el que pierde es el índice quien lo dice.
+// ejecutan contra la base. Dos cosas que este archivo garantiza y que no se
+// pueden probar sin PostgreSQL de verdad:
+//
+//  - La colisión de SKU la detecta el índice único de la base, no una consulta
+//    previa: entre el `SELECT` y el `INSERT` puede meterse otro escritor.
+//  - El vínculo con el código Orion usa compare-and-set sobre la versión de
+//    identidad, así dos operadores simultáneos no se pisan.
 // --------------------------------------------------------------------------
 
 import { prisma } from "@/lib/db/prisma";
@@ -17,13 +20,21 @@ import {
   provisionalSkuFor,
   resolveIdentityMode,
   type IdentityInput,
+  type OrionLinkPlan,
 } from "@/server/domain/catalog/sku-identity";
+
+/** Perdió la carrera: otro escritor cambió la identidad primero. */
+export class SkuConcurrencyError extends Error {
+  constructor() {
+    super("identity version did not match the expected one");
+    this.name = "SkuConcurrencyError";
+  }
+}
 
 const ULID_RANDOM_BYTES = 10;
 
 // Reloj y azar inyectables: la prueba fuerza colisiones repitiendo el mismo
-// instante y los mismos bytes, que es la única forma honesta de ejercitar el
-// presupuesto de reintentos contra la base real.
+// ULID, que es la única forma honesta de ejercitar el presupuesto de reintentos.
 export type SkuGenerationDeps = {
   now?: () => number;
   randomness?: () => Uint8Array;
@@ -52,8 +63,8 @@ export type CreateProvisionalProductData = {
  * Acuña un SKU interno y crea el producto marcado para revisión.
  *
  * Si el índice único rechaza el SKU, reintenta con otro dentro del presupuesto
- * aprobado. Agotado el presupuesto el error es terminal y NO queda ninguna fila
- * a medio crear: cada intento es un `INSERT` completo, o nada.
+ * aprobado. Agotado el presupuesto el error es terminal y NO queda ninguna
+ * fila a medio crear: cada intento es un `INSERT` completo o nada.
  */
 export async function createProvisionalProduct(
   data: CreateProvisionalProductData,
@@ -85,7 +96,7 @@ export async function createProvisionalProduct(
       });
     } catch (error) {
       if (!isUniqueViolation(error)) throw error;
-      // SKU tomado: el intento siguiente acuña otro.
+      // SKU tomado: el siguiente intento acuña otro.
     }
   }
 }
@@ -109,4 +120,89 @@ export async function findProductByIdentity(
     case "ORION_CODE":
       return client.product.findUnique({ where: { orionCode: identity.value } });
   }
+}
+
+export type ApplyOrionLinkOptions = {
+  /** Versión de identidad que el llamador OBSERVÓ en el producto destino. */
+  expectedVersion: number;
+  /** Ídem para el producto que hoy tiene el código, cuando se lo muda. */
+  holderExpectedVersion?: number;
+};
+
+/**
+ * Ejecuta el plan de vínculo con compare-and-set.
+ *
+ * El remapeo libera el código del producto anterior y lo asigna al nuevo en UNA
+ * transacción: si algo falla en el medio, el código no queda en el aire.
+ */
+export async function applyOrionLink(
+  plan: OrionLinkPlan,
+  options: ApplyOrionLinkOptions,
+): Promise<Product> {
+  if (plan.action === "NOOP") {
+    // Idempotente: sin escritura y sin avanzar la versión.
+    const product = await prisma.product.findUnique({ where: { id: plan.productId } });
+    if (!product) throw new SkuConcurrencyError();
+    return product;
+  }
+
+  return prisma.$transaction(async (tx) => {
+    if (plan.action === "RELINK") {
+      await releaseOrionCode(tx, {
+        productId: plan.releasedFromProductId,
+        orionCode: plan.orionCode,
+        expectedVersion: options.holderExpectedVersion,
+      });
+    }
+
+    return assignOrionCode(tx, {
+      productId: plan.productId,
+      orionCode: plan.orionCode,
+      expectedVersion: options.expectedVersion,
+    });
+  });
+}
+
+async function releaseOrionCode(
+  tx: Prisma.TransactionClient,
+  params: { productId: string; orionCode: string; expectedVersion?: number },
+): Promise<void> {
+  const { count } = await tx.product.updateMany({
+    where: {
+      id: params.productId,
+      orionCode: params.orionCode,
+      ...(params.expectedVersion === undefined
+        ? {}
+        : { identityVersion: params.expectedVersion }),
+    },
+    data: { orionCode: null, identityVersion: { increment: 1 } },
+  });
+
+  if (count !== 1) throw new SkuConcurrencyError();
+}
+
+async function assignOrionCode(
+  tx: Prisma.TransactionClient,
+  params: { productId: string; orionCode: string; expectedVersion: number },
+): Promise<Product> {
+  const { count } = await tx.product.updateMany({
+    // El `orionCode: null` del filtro es la segunda red: aunque alguien haya
+    // avanzado la versión sin tocar el código, no se pisa una identidad puesta.
+    where: {
+      id: params.productId,
+      identityVersion: params.expectedVersion,
+      orionCode: null,
+    },
+    data: {
+      orionCode: params.orionCode,
+      skuStatus: "CONFIRMED",
+      identityVersion: { increment: 1 },
+    },
+  });
+
+  if (count !== 1) throw new SkuConcurrencyError();
+
+  const product = await tx.product.findUnique({ where: { id: params.productId } });
+  if (!product) throw new SkuConcurrencyError();
+  return product;
 }
