@@ -2,19 +2,22 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { prisma } from "@/lib/db/prisma";
 import {
+  planOrionLink,
   PROVISIONAL_SKU_PREFIX,
   SKU_COLLISION_MAX_ATTEMPTS,
   SkuIdentityError,
 } from "@/server/domain/catalog/sku-identity";
 import {
+  applyOrionLink,
   createProvisionalProduct,
   findProductByIdentity,
+  SkuConcurrencyError,
   type SkuGenerationDeps,
 } from "@/server/repositories/sku-review.repository";
 
 // Estas pruebas corren contra PostgreSQL de verdad (harness de T0.2): la
-// unicidad del SKU la decide el índice de la base, y eso no se puede simular
-// con un doble de prueba sin dejar de probar justamente lo que importa.
+// unicidad, el compare-and-set y las carreras entre dos escritores no existen
+// contra un doble de prueba.
 
 const created: string[] = [];
 
@@ -163,5 +166,122 @@ describe("findProductByIdentity", () => {
 
     expect(failure).toBeInstanceOf(SkuIdentityError);
     expect((failure as SkuIdentityError).code).toBe("MISSING_EXACT_IDENTITY");
+  });
+});
+
+describe("applyOrionLink", () => {
+  it("vincula el código Orion y avanza la versión de identidad", async () => {
+    const product = await newProvisional("Ranitidina");
+    const plan = planOrionLink({
+      product,
+      orionCode: "7702001234567",
+      holder: null,
+      intent: "LINK",
+    });
+
+    const linked = await applyOrionLink(plan, {
+      expectedVersion: product.identityVersion,
+    });
+
+    expect(linked.orionCode).toBe("7702001234567");
+    expect(linked.identityVersion).toBe(product.identityVersion + 1);
+    expect(linked.skuStatus).toBe("CONFIRMED");
+  });
+
+  // Concurrencia optimista: quien viene con una versión vieja perdió, y no pisa
+  // lo que ya escribió el otro.
+  it("rechaza la escritura con una versión de identidad vieja", async () => {
+    const product = await newProvisional("Metformina");
+    const plan = planOrionLink({
+      product,
+      orionCode: "7702009999999",
+      holder: null,
+      intent: "LINK",
+    });
+    await applyOrionLink(plan, { expectedVersion: product.identityVersion });
+
+    const stale = await applyOrionLink(plan, {
+      expectedVersion: product.identityVersion,
+    }).catch((error: unknown) => error);
+
+    expect(stale).toBeInstanceOf(SkuConcurrencyError);
+  });
+
+  // Dos operadores vinculando el mismo producto al mismo tiempo: esto es lo que
+  // ningún doble de prueba puede decirte.
+  it("con dos escritores simultáneos gana exactamente uno", async () => {
+    const product = await newProvisional("Losartán");
+    const plan = planOrionLink({
+      product,
+      orionCode: "7702005555555",
+      holder: null,
+      intent: "LINK",
+    });
+
+    const results = await Promise.allSettled([
+      applyOrionLink(plan, { expectedVersion: product.identityVersion }),
+      applyOrionLink(plan, { expectedVersion: product.identityVersion }),
+    ]);
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const after = await findProductByIdentity({ productId: product.id });
+    expect(after?.identityVersion).toBe(product.identityVersion + 1);
+  });
+
+  // Mudar el código es UNA transacción: o se libera del anterior y se asigna al
+  // nuevo, o no pasa nada. El código nunca queda en el aire.
+  it("muda el código de un producto a otro sin dejar estados intermedios", async () => {
+    const holder = await newProvisional("Enalapril viejo");
+    const target = await newProvisional("Enalapril nuevo");
+    const linked = await applyOrionLink(
+      planOrionLink({
+        product: holder,
+        orionCode: "7702007777777",
+        holder: null,
+        intent: "LINK",
+      }),
+      { expectedVersion: holder.identityVersion },
+    );
+
+    const relinked = await applyOrionLink(
+      planOrionLink({
+        product: target,
+        orionCode: "7702007777777",
+        holder: linked,
+        intent: "RELINK",
+      }),
+      {
+        expectedVersion: target.identityVersion,
+        holderExpectedVersion: linked.identityVersion,
+      },
+    );
+
+    expect(relinked.orionCode).toBe("7702007777777");
+    expect((await findProductByIdentity({ productId: holder.id }))?.orionCode).toBeNull();
+  });
+
+  it("no hace ninguna escritura cuando el plan es idempotente", async () => {
+    const product = await newProvisional("Atorvastatina");
+    const linked = await applyOrionLink(
+      planOrionLink({
+        product,
+        orionCode: "7702003333333",
+        holder: null,
+        intent: "LINK",
+      }),
+      { expectedVersion: product.identityVersion },
+    );
+
+    const again = await applyOrionLink(
+      planOrionLink({
+        product: linked,
+        orionCode: "7702003333333",
+        holder: linked,
+        intent: "LINK",
+      }),
+      { expectedVersion: linked.identityVersion },
+    );
+
+    expect(again.identityVersion).toBe(linked.identityVersion);
   });
 });
