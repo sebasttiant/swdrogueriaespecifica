@@ -180,32 +180,44 @@ export type ApplyOrionLinkOptions = {
  *
  * El remapeo libera el código del producto anterior y lo asigna al nuevo en UNA
  * transacción: si algo falla en el medio, el código no queda en el aire.
+ *
+ * `client` permite ejecutarlo dentro de una transacción que abrió el llamador
+ * —el servicio lo necesita para que la auditoría entre en la MISMA transacción
+ * que el vínculo—. Sin él, abre la suya.
  */
 export async function applyOrionLink(
+  plan: OrionLinkPlan,
+  options: ApplyOrionLinkOptions,
+  client?: Prisma.TransactionClient,
+): Promise<Product> {
+  if (client) return runOrionLinkPlan(client, plan, options);
+  return prisma.$transaction((tx) => runOrionLinkPlan(tx, plan, options));
+}
+
+async function runOrionLinkPlan(
+  tx: Prisma.TransactionClient,
   plan: OrionLinkPlan,
   options: ApplyOrionLinkOptions,
 ): Promise<Product> {
   if (plan.action === "NOOP") {
     // Idempotente: sin escritura y sin avanzar la versión.
-    const product = await prisma.product.findUnique({ where: { id: plan.productId } });
+    const product = await tx.product.findUnique({ where: { id: plan.productId } });
     if (!product) throw new SkuConcurrencyError();
     return product;
   }
 
-  return prisma.$transaction(async (tx) => {
-    if (plan.action === "RELINK") {
-      await releaseOrionCode(tx, {
-        productId: plan.releasedFromProductId,
-        orionCode: plan.orionCode,
-        expectedVersion: options.holderExpectedVersion,
-      });
-    }
-
-    return assignOrionCode(tx, {
-      productId: plan.productId,
+  if (plan.action === "RELINK") {
+    await releaseOrionCode(tx, {
+      productId: plan.releasedFromProductId,
       orionCode: plan.orionCode,
-      expectedVersion: options.expectedVersion,
+      expectedVersion: options.holderExpectedVersion,
     });
+  }
+
+  return assignOrionCode(tx, {
+    productId: plan.productId,
+    orionCode: plan.orionCode,
+    expectedVersion: options.expectedVersion,
   });
 }
 

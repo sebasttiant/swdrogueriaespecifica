@@ -31,6 +31,12 @@ export const AUDIT_ACTIONS = {
   // un producto de catálogo: lo que nace acá es la identidad con la que después
   // se mueve todo el inventario del producto.
   SKU_ONBOARD: "sku.onboard",
+  // Vínculo con el código Orion. El remapeo deja DOS entradas —una por
+  // producto— porque quien audite el que perdió el código tiene que poder ver
+  // por qué lo perdió, sin reconstruirlo desde la historia del otro.
+  SKU_ORION_LINK: "sku.orion.link",
+  SKU_ORION_RELINK: "sku.orion.relink",
+  SKU_ORION_RELEASE: "sku.orion.release",
   // Pendientes
   PENDING_CREATE: "pending.create",
   PENDING_STATUS_CHANGE: "pending.status.change",
