@@ -27,6 +27,10 @@ export const AUDIT_ACTIONS = {
   PRODUCT_CREATE: "product.create",
   PRODUCT_UPDATE: "product.update",
   PRODUCT_DEACTIVATE: "product.deactivate",
+  // Identidad de producto. Acuñar el SKU interno es un acto distinto de crear
+  // un producto de catálogo: lo que nace acá es la identidad con la que después
+  // se mueve todo el inventario del producto.
+  SKU_ONBOARD: "sku.onboard",
   // Pendientes
   PENDING_CREATE: "pending.create",
   PENDING_STATUS_CHANGE: "pending.status.change",
