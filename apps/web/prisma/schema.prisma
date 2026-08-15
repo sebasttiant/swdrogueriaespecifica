@@ -209,6 +209,12 @@ model Product {
   // Contador del compare-and-set que protege el vínculo con el código Orion:
   // quien escribe declara la versión que observó y pierde si otro llegó antes.
   identityVersion Int @default(0)
+  // Clave del INTENTO que acuñó la identidad: un reintento del operador
+  // devuelve el mismo producto en lugar de acuñar otro.
+  identityCommandKey String? @unique
+  // Huella del contenido del comando: la misma clave con otro contenido es un
+  // error del llamador, no un reintento.
+  identityCommandFingerprint String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 

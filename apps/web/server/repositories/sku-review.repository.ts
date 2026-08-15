@@ -69,6 +69,12 @@ export type CreateProvisionalProductData = {
   reorderQty?: number;
 };
 
+/** Rastro del comando que acuñó la identidad, cuando el alta viene de uno. */
+export type IdentityCommand = {
+  key: string;
+  fingerprint: string;
+};
+
 /**
  * UN intento de alta con el SKU ya acuñado. Es una sola sentencia: o entra
  * completa, o no entra.
@@ -80,7 +86,7 @@ export type CreateProvisionalProductData = {
  */
 export async function insertProvisionalProduct(
   client: Prisma.TransactionClient,
-  data: CreateProvisionalProductData & { internalSku: string },
+  data: CreateProvisionalProductData & { internalSku: string; command?: IdentityCommand },
 ): Promise<Product> {
   return client.product.create({
     data: {
@@ -94,6 +100,8 @@ export async function insertProvisionalProduct(
       reorderQty: data.reorderQty ?? 0,
       skuStatus: "PROVISIONAL_REVIEW",
       needsReview: true,
+      identityCommandKey: data.command?.key ?? null,
+      identityCommandFingerprint: data.command?.fingerprint ?? null,
     },
   });
 }
@@ -105,6 +113,12 @@ export function mintInternalSku(deps: SkuGenerationDeps = {}): string {
   return provisionalSkuFor(generateUlid(now(), randomness()));
 }
 
+export function findProductByIdentityCommandKey(
+  key: string,
+  client: Prisma.TransactionClient = prisma,
+): Promise<Product | null> {
+  return client.product.findUnique({ where: { identityCommandKey: key } });
+}
 
 /**
  * Acuña un SKU interno y crea el producto marcado para revisión.
