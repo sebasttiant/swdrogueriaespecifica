@@ -5,6 +5,7 @@ const { prismaMock } = vi.hoisted(() => {
     pending: {
       count: vi.fn(),
       findUnique: vi.fn(),
+      findFirst: vi.fn(),
       findMany: vi.fn(),
       updateMany: vi.fn(),
     },
@@ -255,33 +256,83 @@ describe("listPendings · scope", () => {
   });
 });
 
+describe("listPendings · ejes de revisión", () => {
+  it("no agrega condiciones cuando no se pide ningún eje", async () => {
+    await listPendings({ axes: {} });
+
+    const args = prismaMock.pending.findMany.mock.calls[0]![0];
+    expect(args.where).not.toHaveProperty("purchaseStatus");
+    expect(args.where).not.toHaveProperty("availabilityStatus");
+    expect(args.where).not.toHaveProperty("customerStatus");
+  });
+
+  // Cada eje es una condición más sobre la MISMA fila: van al ras del `where`,
+  // que es como Prisma las combina con Y. Un `OR` acá ensancharía el resultado.
+  it("suma los tres ejes como condiciones simultáneas", async () => {
+    await listPendings({
+      axes: {
+        purchase: "SOLICITADO",
+        availability: "LLEGO_BODEGA",
+        customer: "CONTACTADO",
+      },
+    });
+
+    const args = prismaMock.pending.findMany.mock.calls[0]![0];
+    expect(args.where).toEqual(
+      expect.objectContaining({
+        purchaseStatus: "SOLICITADO",
+        availabilityStatus: "LLEGO_BODEGA",
+        customerStatus: "CONTACTADO",
+      }),
+    );
+    expect(args.where).not.toHaveProperty("OR");
+  });
+
+  it("el eje no borra el recorte por dueño", async () => {
+    await listPendings({ ownerId: "seller-1", axes: { purchase: "AGOTADO" } });
+
+    const args = prismaMock.pending.findMany.mock.calls[0]![0];
+    expect(args.where).toEqual(
+      expect.objectContaining({ createdById: "seller-1", purchaseStatus: "AGOTADO" }),
+    );
+  });
+});
+
 describe("listPendings · seguridad del cursor", () => {
   it("ignora un cursor malformado y sirve la primera página", async () => {
     await listPendings({ cursor: "###no-es-base64###" });
 
     // decodeCursor descarta la basura antes de llegar a la base.
-    expect(prismaMock.pending.findUnique).not.toHaveBeenCalled();
+    expect(prismaMock.pending.findFirst).not.toHaveBeenCalled();
     const args = prismaMock.pending.findMany.mock.calls[0]![0];
     expect(args.cursor).toBeUndefined();
     expect(args.skip).toBeUndefined();
   });
 
-  it("ignora un cursor bien formado pero inexistente (primera página)", async () => {
-    prismaMock.pending.findUnique.mockResolvedValue(null);
+  // La pertenencia se pregunta con el MISMO `where` del listado más el id: una
+  // sola consulta cubre dueño, scope y ejes, y no puede desincronizarse del
+  // filtro real cuando se agregue una condición nueva.
+  it("ignora un cursor que no pertenece a la vista (primera página)", async () => {
+    prismaMock.pending.findFirst.mockResolvedValue(null);
 
     await listPendings({ cursor: encodeCursor("fantasma-9999") });
 
-    expect(prismaMock.pending.findUnique).toHaveBeenCalledWith({
-      where: { id: "fantasma-9999" },
-      select: { id: true, createdById: true, status: true },
+    expect(prismaMock.pending.findFirst).toHaveBeenCalledWith({
+      where: {
+        status: {
+          in: ["PENDIENTE", "PARCIAL", "SOLICITADO", "BUSQUEDA", "COTIZANDO", "AGOTADO"],
+        },
+        id: "fantasma-9999",
+      },
+      select: { id: true },
     });
     const args = prismaMock.pending.findMany.mock.calls[0]![0];
     expect(args.cursor).toBeUndefined();
     expect(args.skip).toBeUndefined();
   });
 
-  it("pagina normalmente con un cursor válido y existente", async () => {
-    prismaMock.pending.findUnique.mockResolvedValue({ id: "real-id", createdById: "owner-1", status: "PENDIENTE" });
+  it("pagina normalmente con un cursor que sí pertenece", async () => {
+    prismaMock.pending.findFirst.mockResolvedValue({ id: "real-id" });
 
     await listPendings({ cursor: encodeCursor("real-id") });
 
@@ -291,16 +342,37 @@ describe("listPendings · seguridad del cursor", () => {
   });
 
   it("ignores a cursor belonging to another owner", async () => {
-    prismaMock.pending.findUnique.mockResolvedValue({ id: "other", createdById: "seller-2", status: "PENDIENTE" });
+    // El `where` de la comprobación ya lleva el dueño, así que la fila ajena no
+    // aparece y el cursor se descarta.
+    prismaMock.pending.findFirst.mockResolvedValue(null);
     await listPendings({ ownerId: "seller-1", cursor: encodeCursor("other") });
+
+    expect(prismaMock.pending.findFirst).toHaveBeenCalledWith({
+      where: expect.objectContaining({ createdById: "seller-1", id: "other" }),
+      select: { id: true },
+    });
     const args = prismaMock.pending.findMany.mock.calls[0]![0];
     expect(args.cursor).toBeUndefined();
     expect(args.where).toEqual(expect.objectContaining({ createdById: "seller-1" }));
   });
 
   it("ignores an active cursor when requesting history", async () => {
-    prismaMock.pending.findUnique.mockResolvedValue({ id: "active", createdById: "seller-1", status: "PENDIENTE" });
+    prismaMock.pending.findFirst.mockResolvedValue(null);
     await listPendings({ scope: "history", ownerId: "seller-1", cursor: encodeCursor("active") });
+    expect(prismaMock.pending.findMany.mock.calls[0]![0].cursor).toBeUndefined();
+  });
+
+  it("descarta el cursor que un filtro de eje excluye", async () => {
+    prismaMock.pending.findFirst.mockResolvedValue(null);
+    await listPendings({
+      cursor: encodeCursor("de-otra-vista"),
+      axes: { purchase: "SOLICITADO" },
+    });
+
+    expect(prismaMock.pending.findFirst).toHaveBeenCalledWith({
+      where: expect.objectContaining({ purchaseStatus: "SOLICITADO", id: "de-otra-vista" }),
+      select: { id: true },
+    });
     expect(prismaMock.pending.findMany.mock.calls[0]![0].cursor).toBeUndefined();
   });
 });

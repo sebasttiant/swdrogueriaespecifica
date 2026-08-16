@@ -30,6 +30,7 @@ import {
   listUsedZones,
   updatePendingAfterDelivery,
   updatePendingManagementStatus,
+  type PendingAxisFilters,
   type PendingListItem,
   type PendingScope,
   lockPendingForEdit,
@@ -149,6 +150,9 @@ export async function getPendings(params: {
   // nunca una fuga silenciosa de PII. `false` fuerza la minimización abajo.
   canViewCustomerIdentity: boolean;
   ownerId?: string;
+  // Ejes de revisión: acotan QUÉ se lista, nunca QUIÉN puede verlo. El recorte
+  // por dueño y la minimización de identidad siguen mandando igual.
+  axes?: PendingAxisFilters;
 }): Promise<Paginated<PendingListItem>> {
   const { canViewCustomerIdentity, ...listParams } = params;
   const { items, nextCursor } = await listPendings(listParams);

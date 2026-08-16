@@ -11,7 +11,13 @@ import {
   encodeCursor,
   type Paginated,
 } from "@/lib/pagination";
-import type { PendingPurchaseStatus, PendingStatus, Prisma } from "@/lib/generated/prisma/client";
+import type {
+  PendingAvailabilityStatus,
+  PendingCustomerStatus,
+  PendingPurchaseStatus,
+  PendingStatus,
+  Prisma,
+} from "@/lib/generated/prisma/client";
 
 export type PendingListItem = {
   id: string;
@@ -107,32 +113,64 @@ const LIST_SELECT = {
 // la paginación.
 export type PendingScope = "active" | "history";
 
+// --------------------------------------------------------------------------
+// Ejes de revisión (T4.2).
+//
+// Los tres estados del pendiente son EJES INDEPENDIENTES —compras,
+// disponibilidad física y relación comercial— y por eso se filtran por
+// separado. Combinarlos estrecha el resultado: pedir "solicitado" Y "llegó a
+// bodega" son las dos condiciones a la vez, nunca cualquiera de las dos. Un
+// filtro que ensancha al agregarle condiciones no es un filtro.
+//
+// El eje que no viene NO filtra: ausente significa "cualquiera", no un valor
+// por defecto. Así la vista sin filtros sigue siendo exactamente la de antes.
+// --------------------------------------------------------------------------
+export type PendingAxisFilters = {
+  purchase?: PendingPurchaseStatus;
+  availability?: PendingAvailabilityStatus;
+  customer?: PendingCustomerStatus;
+};
+
+function axisWhere(axes: PendingAxisFilters | undefined): Prisma.PendingWhereInput {
+  if (!axes) return {};
+  return {
+    ...(axes.purchase ? { purchaseStatus: axes.purchase } : {}),
+    ...(axes.availability ? { availabilityStatus: axes.availability } : {}),
+    ...(axes.customer ? { customerStatus: axes.customer } : {}),
+  };
+}
+
 export async function listPendings(params: {
   cursor?: string | null;
   take?: number;
   scope?: PendingScope;
   ownerId?: string;
+  axes?: PendingAxisFilters;
 }): Promise<Paginated<PendingListItem>> {
   const take = clampTake(params.take);
   let cursorId = params.cursor ? decodeCursor(params.cursor) : null;
 
-  // El cursor es input controlado por el usuario. `decodeCursor` ya descarta la
-  // basura (round-trip), pero un cursor bien formado puede apuntar a un id que
-  // no existe (registro borrado o cursor inventado). Validamos su existencia con
-  // un lookup barato por PK: si no existe, lo ignoramos y servimos la primera
-  // página. Así un cursor inutilizable nunca rompe la consulta de paginación.
-  const where = {
+  const where: Prisma.PendingWhereInput = {
     status: { in: params.scope === "history" ? HISTORY_STATUSES : OPEN_STATUSES },
     ...(params.ownerId ? { createdById: params.ownerId } : {}),
+    ...axisWhere(params.axes),
   };
+
+  // El cursor es input controlado por el usuario. `decodeCursor` ya descarta la
+  // basura (round-trip), pero un cursor bien formado puede apuntar a una fila
+  // que ESTA vista no contiene: borrada, de otro dueño, de otro scope o
+  // excluida por un filtro de eje. Paginar desde ahí se saltearía resultados
+  // válidos, así que en ese caso lo ignoramos y servimos la primera página.
+  //
+  // Se valida contra el MISMO `where` del listado, no contra una copia de sus
+  // condiciones: así agregar un filtro nuevo no deja la validación atrás, que
+  // es como esto se convierte en una fuga.
   if (cursorId) {
-    const exists = await prisma.pending.findUnique({
-      where: { id: cursorId },
-      select: { id: true, createdById: true, status: true },
+    const belongsToView = await prisma.pending.findFirst({
+      where: { ...where, id: cursorId },
+      select: { id: true },
     });
-    const cursorMatchesOwner = !params.ownerId || exists?.createdById === params.ownerId;
-    const cursorMatchesScope = Boolean(exists && (params.scope === "history" ? HISTORY_STATUSES : OPEN_STATUSES).includes(exists.status));
-    if (!exists || !cursorMatchesOwner || !cursorMatchesScope) cursorId = null;
+    if (!belongsToView) cursorId = null;
   }
 
   // take + 1 para detectar página siguiente sin un count extra.
