@@ -39,9 +39,12 @@ type PendingListProps = {
   // estado de gestión. El vendedor no lo tiene y solo ve el badge.
   canManageStatus: boolean;
   canContactOrInvoice?: boolean;
-  // El scope viaja en el link de la página siguiente: sin esto, paginar dentro
-  // del historial devolvería al usuario a la vista activa sin avisar.
+  // El scope decide qué acciones tienen sentido sobre la fila.
   scope: PendingScope;
+  // El enlace a la página siguiente lo arma la página, que es la que conoce la
+  // vista completa: scope, formato y filtros de eje. Cuando esta lista lo
+  // construía sola, cada parámetro nuevo se perdía al paginar.
+  pageHref: (nextCursor: string) => string;
 };
 
 // Estados terminales: ya no hay nada operativo que hacer sobre el pendiente.
@@ -98,6 +101,7 @@ export function PendingList({
   canManageStatus,
   canContactOrInvoice = false,
   scope,
+  pageHref,
 }: PendingListProps) {
   if (items.length === 0) {
     return (
@@ -253,9 +257,7 @@ export function PendingList({
       {nextCursor ? (
         <div className="pt-1 text-center">
           <Link
-            href={`/pendientes?cursor=${encodeURIComponent(nextCursor)}${
-              scope === "history" ? "&scope=history" : ""
-            }`}
+            href={pageHref(nextCursor)}
             className="text-sm font-semibold text-primary hover:underline"
           >
             Ver más

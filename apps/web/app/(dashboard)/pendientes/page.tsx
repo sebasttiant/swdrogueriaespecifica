@@ -14,6 +14,12 @@ import {
 } from "@/features/pendientes/pending-form";
 import { PendingCompactList } from "@/features/pendientes/pending-compact-list";
 import { PendingList } from "@/features/pendientes/pending-list";
+import { PendingReviewFilters } from "@/features/pendientes/pending-review-filters";
+import {
+  parseReviewAxes,
+  reviewHref,
+  reviewPageHref,
+} from "@/features/pendientes/review-axes";
 import { getProducts } from "@/server/services/product.service";
 import { getPendings, getUsedZones } from "@/server/services/pending.service";
 
@@ -22,7 +28,14 @@ export const metadata: Metadata = { title: "Pendientes" };
 export default async function PendientesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ cursor?: string; scope?: string; view?: string }>;
+  searchParams: Promise<{
+    cursor?: string;
+    scope?: string;
+    view?: string;
+    purchase?: string;
+    availability?: string;
+    customer?: string;
+  }>;
 }) {
   const session = await requireCapability("canViewPendientes");
   const canManageAll = can(session.user.role, "canManageAllPendings");
@@ -39,7 +52,12 @@ export default async function PendientesPage({
   // capability que pedir un faltante, no la de cancelar.
   const canManageStatus = can(session.user.role, "canOrderMissingItems");
 
-  const { cursor, scope: rawScope, view: rawView } = await searchParams;
+  const { cursor, scope: rawScope, view: rawView, ...rawAxes } = await searchParams;
+
+  // Los ejes salen de la URL con la misma desconfianza que el scope: un valor
+  // que no está en el enum se descarta y equivale a no filtrar. Estos strings
+  // terminan en una consulta contra enums de PostgreSQL.
+  const axes = parseReviewAxes(rawAxes);
 
   // LISTADO por defecto: es la vista que pidió gerencia y la que se lee de un
   // vistazo con decenas de pendientes por hora. El detalle —cliente, teléfono,
@@ -54,7 +72,13 @@ export default async function PendientesPage({
   // productos activos (ver README — selector sin búsqueda todavía).
   const [products, pendings, zones] = await Promise.all([
     getProducts({ take: MAX_PAGE_SIZE }),
-    getPendings({ cursor, scope, canViewCustomerIdentity, ownerId: canManageAll ? undefined : session.user.id }),
+    getPendings({
+      cursor,
+      scope,
+      axes,
+      canViewCustomerIdentity,
+      ownerId: canManageAll ? undefined : session.user.id,
+    }),
     getUsedZones(),
   ]);
 
@@ -83,7 +107,7 @@ export default async function PendientesPage({
           porque el cursor de una vista no es válido en la otra. */}
       <nav aria-label="Vista de pendientes" className="flex gap-2 text-sm font-semibold">
         <Link
-          href={view === "lista" ? "/pendientes?view=lista" : "/pendientes"}
+          href={reviewHref({ scope: "active", view, axes })}
           aria-current={scope === "active" ? "page" : undefined}
           className={cn(
             "rounded-lg px-3 py-1.5 transition-colors",
@@ -95,7 +119,7 @@ export default async function PendientesPage({
           Abiertos
         </Link>
         <Link
-          href={view === "lista" ? "/pendientes?scope=history&view=lista" : "/pendientes?scope=history"}
+          href={reviewHref({ scope: "history", view, axes })}
           aria-current={scope === "history" ? "page" : undefined}
           className={cn(
             "rounded-lg px-3 py-1.5 transition-colors",
@@ -108,13 +132,17 @@ export default async function PendientesPage({
         </Link>
       </nav>
 
+      {/* Revisión por ejes: acotan QUÉ se lista. Quién ve qué no se toca acá —
+          eso ya lo resolvieron la capacidad y el `ownerId` de arriba. */}
+      <PendingReviewFilters axes={axes} scope={scope} view={view} />
+
       {/* Listado PRIMERO: es la vista con la que se trabaja —producto,
           cantidad, vendedor, estado y la acción— y por eso va antes. "Detalle"
           queda segundo, para cuando hace falta el cliente, el teléfono, la
           dirección o los abonos. */}
       <nav aria-label="Formato de la lista" className="flex gap-2 text-sm font-semibold">
         <Link
-          href={scope === "history" ? "/pendientes?scope=history" : "/pendientes"}
+          href={reviewHref({ scope, view: "lista", axes })}
           aria-current={view === "lista" ? "page" : undefined}
           className={cn(
             "inline-flex min-h-11 items-center rounded-lg px-4 transition-colors",
@@ -126,11 +154,7 @@ export default async function PendientesPage({
           Listado
         </Link>
         <Link
-          href={
-            scope === "history"
-              ? "/pendientes?scope=history&view=detalle"
-              : "/pendientes?view=detalle"
-          }
+          href={reviewHref({ scope, view: "detalle", axes })}
           aria-current={view === "detalle" ? "page" : undefined}
           className={cn(
             "inline-flex min-h-11 items-center rounded-lg px-4 transition-colors",
@@ -162,9 +186,7 @@ export default async function PendientesPage({
           canFollowUp={canManageAll && canViewCustomerIdentity}
           nextCursor={pendings.nextCursor}
           pageHref={(nextCursor) =>
-            `/pendientes?cursor=${encodeURIComponent(nextCursor)}&view=lista${
-              scope === "history" ? "&scope=history" : ""
-            }`
+            reviewPageHref({ scope, view: "lista", axes, cursor: nextCursor })
           }
         />
       ) : (
@@ -176,6 +198,9 @@ export default async function PendientesPage({
           canManageStatus={canManageStatus}
           canContactOrInvoice={canContactOrInvoice}
           scope={scope}
+          pageHref={(nextCursor) =>
+            reviewPageHref({ scope, view: "detalle", axes, cursor: nextCursor })
+          }
         />
       )}
     </div>

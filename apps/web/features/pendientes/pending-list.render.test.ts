@@ -25,6 +25,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { PendingListItem } from "@/server/repositories/pending.repository";
 
 import { PendingList } from "./pending-list";
+import { reviewPageHref, type ReviewAxes } from "./review-axes";
 
 type ActionState = { error: string | null; ok: boolean };
 
@@ -63,8 +64,11 @@ function renderList(
     items: PendingListItem[];
     nextCursor: string | null;
     scope: "active" | "history";
+    axes: ReviewAxes;
   }> = {},
 ): string {
+  const scope = props.scope ?? "active";
+  const axes = props.axes ?? {};
   return renderToStaticMarkup(
     createElement(PendingList, {
       items: props.items ?? [pending()],
@@ -72,7 +76,10 @@ function renderList(
       canDeliver: props.canDeliver ?? true,
       canCancel: props.canCancel ?? true,
       canManageStatus: props.canManageStatus ?? false,
-      scope: props.scope ?? "active",
+      scope,
+      // La página es la que arma el enlace, porque es la única que conoce la
+      // vista completa. Acá se usa el mismo constructor que en producción.
+      pageHref: (cursor) => reviewPageHref({ scope, view: "detalle", axes, cursor }),
     }),
   );
 }
@@ -98,6 +105,18 @@ describe("PendingList · scope-aware pagination", () => {
 
     expect(html).toContain("cursor=cursor-2");
     expect(html).not.toContain("scope=");
+  });
+
+  // Paginar no puede aflojar el filtro: la página siguiente tiene que mirar el
+  // mismo conjunto que la primera, o el recorrido cambia a mitad de camino.
+  it("carries the review axes into the next-page link", () => {
+    const html = renderList({
+      nextCursor: "cursor-2",
+      axes: { purchase: "SOLICITADO", customer: "CONTACTADO" },
+    });
+
+    expect(html).toContain("purchase=SOLICITADO");
+    expect(html).toContain("customer=CONTACTADO");
   });
 });
 
