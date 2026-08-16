@@ -354,6 +354,10 @@ model InventoryMovement {
 
   @@unique([commandId]) // un comando asienta UNA vez: sin doble asiento
   @@index([lotId])
+  // La derivación de cantidades (T1.4) suma los movimientos de UN lote
+  // filtrando por tipo. El ledger se retiene de forma permanente, así que sin
+  // este índice esa suma recorre una historia que solo crece.
+  @@index([lotId, type])
   @@index([productId, occurredAt])
   @@index([productId, type])
   @@map("inventory_movements")
