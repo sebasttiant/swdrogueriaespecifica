@@ -274,11 +274,89 @@ model Lot {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
+  movements InventoryMovement[]
+
   @@unique([productId, lotNumber]) // identidad del lote
   @@index([expiresAt]) // alertas de vencimiento globales
   @@index([productId, status])
   @@index([productId, expiresAt, id]) // orden FEFO por producto
   @@map("lots")
+}
+
+// --------------------------------------------------------------------------
+// Ledger inmutable de movimientos + store de comandos (T1.3).
+//
+// El ledger es el registro contable del inventario canónico: cada cambio de
+// cantidad queda como un asiento que NO se edita ni se borra. Por eso la tabla
+// no tiene `updatedAt` y el repositorio no expone update ni delete.
+//
+// Todo movimiento nace de un comando. Esa es la regla que hace que no haya
+// cambios sin rastro, y el `@@unique([commandId])` la sostiene: un comando
+// asienta una vez, aunque el llamador reintente.
+// --------------------------------------------------------------------------
+
+// Nombres técnicos en inglés (RECEIPT=entrada, RESERVATION=reserva,
+// RELEASE=liberación, DELIVERY=entrega, ADJUSTMENT=ajuste, RETURN=devolución,
+// EXPIRY=vencimiento).
+enum InventoryMovementType {
+  RECEIPT
+  RESERVATION
+  RELEASE
+  DELIVERY
+  ADJUSTMENT
+  RETURN
+  EXPIRY
+}
+
+model OperationalCommand {
+  id          String   @id @default(cuid())
+  actorId     String
+  // String y no enum a propósito: el store no se acopla a la lista de comandos
+  // del negocio, que crece con cada flujo.
+  commandType String
+  // Clave de idempotencia del llamador. El store la normaliza a minúsculas.
+  commandKey  String
+  // SHA-256 hex del payload canónico: ata la clave al contenido real.
+  fingerprint String
+  // De los dos, al menos uno no es nulo: un comando terminó con resultado o
+  // con error. Lo garantiza un CHECK en la base.
+  result      Json?
+  error       Json?
+  createdAt   DateTime @default(now())
+
+  movements InventoryMovement[]
+
+  @@unique([actorId, commandType, commandKey]) // identidad del comando
+  @@index([actorId, createdAt])
+  @@map("operational_commands")
+}
+
+model InventoryMovement {
+  id        String                @id @default(cuid())
+  // RESTRICT y no CASCADE: el ledger se retiene de forma permanente. Un lote
+  // con movimientos no se borra, y un producto con movimientos se desactiva.
+  // Un ledger que un DELETE puede borrar no es un ledger.
+  lot       Lot                   @relation(fields: [lotId], references: [id], onDelete: Restrict)
+  lotId     String
+  // Denormalizado del lote al asentar: evita un join por consulta y queda
+  // congelado con el hecho.
+  productId String
+  type      InventoryMovementType
+  // Delta firmado. El ledger guarda el hecho bruto; el significado por tipo lo
+  // interpretan los comandos y las derivaciones de T1.4.
+  quantity  Int
+  actorId   String
+  occurredAt DateTime             @default(now())
+  // Todo movimiento nace de un comando: cero cambios sin rastro.
+  command   OperationalCommand    @relation(fields: [commandId], references: [id], onDelete: Restrict)
+  commandId String
+  createdAt DateTime              @default(now())
+
+  @@unique([commandId]) // un comando asienta UNA vez: sin doble asiento
+  @@index([lotId])
+  @@index([productId, occurredAt])
+  @@index([productId, type])
+  @@map("inventory_movements")
 }
 
 model Laboratory {
