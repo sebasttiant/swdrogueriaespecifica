@@ -19,6 +19,7 @@
     "db:demo": "tsx prisma/seed-demo.ts",
     "db:wipe": "tsx prisma/wipe.ts",
     "db:verify": "tsx prisma/verify-fulfillment-invariants.ts",
+    "db:reconcile": "tsx prisma/reconcile-inventory.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {
