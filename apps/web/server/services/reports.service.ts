@@ -25,7 +25,7 @@ import {
   countAllMissingItems,
   countMissingItemsCreatedSince,
   countOpenMissingItems,
-  countUnclosedMissingItemsBefore,
+  countUnclosedActionableMissingItemsBefore,
   groupMissingItemsByStatusSince,
   listMissingItemCreatedAtSince,
 } from "@/server/repositories/missing-item.repository";
@@ -77,7 +77,8 @@ export async function getReportsSummary(
 
 export type ManagementMissingAlert = {
   createdToday: number;
-  // Faltantes abiertos con más de UNCLOSED_MISSING_ALERT_HOURS sin cerrarse.
+  // Faltantes accionables (solo por gestionar, sin los ya pedidos) con más de
+  // UNCLOSED_MISSING_ALERT_HOURS sin cerrarse.
   unclosedOverThreshold: number;
   exceedsDailyThreshold: boolean;
   // true si cualquiera de las dos condiciones se cumple: hay algo que avisar.
@@ -94,7 +95,7 @@ export async function getManagementMissingAlert(
 
   const [createdToday, unclosedOverThreshold] = await Promise.all([
     countMissingItemsCreatedSince(startOfDay),
-    countUnclosedMissingItemsBefore(staleThreshold),
+    countUnclosedActionableMissingItemsBefore(staleThreshold),
   ]);
 
   const exceedsDailyThreshold = createdToday > DAILY_MISSING_ALERT_THRESHOLD;

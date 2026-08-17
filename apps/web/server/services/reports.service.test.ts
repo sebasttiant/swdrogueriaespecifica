@@ -11,7 +11,7 @@ const repos = vi.hoisted(() => ({
   countAllMissingItems: vi.fn(),
   countOpenMissingItems: vi.fn(),
   countMissingItemsCreatedSince: vi.fn(),
-  countUnclosedMissingItemsBefore: vi.fn(),
+  countUnclosedActionableMissingItemsBefore: vi.fn(),
   groupMissingItemsByStatusSince: vi.fn(),
   listMissingItemCreatedAtSince: vi.fn(),
 }));
@@ -26,7 +26,8 @@ vi.mock("@/server/repositories/missing-item.repository", () => ({
   countAllMissingItems: repos.countAllMissingItems,
   countOpenMissingItems: repos.countOpenMissingItems,
   countMissingItemsCreatedSince: repos.countMissingItemsCreatedSince,
-  countUnclosedMissingItemsBefore: repos.countUnclosedMissingItemsBefore,
+  countUnclosedActionableMissingItemsBefore:
+    repos.countUnclosedActionableMissingItemsBefore,
   groupMissingItemsByStatusSince: repos.groupMissingItemsByStatusSince,
   listMissingItemCreatedAtSince: repos.listMissingItemCreatedAtSince,
 }));
@@ -80,7 +81,7 @@ describe("getReportsSummary", () => {
 describe("getManagementMissingAlert", () => {
   it("se activa cuando hay faltantes abiertos con más de 8h sin cerrar", async () => {
     repos.countMissingItemsCreatedSince.mockResolvedValue(3);
-    repos.countUnclosedMissingItemsBefore.mockResolvedValue(2);
+    repos.countUnclosedActionableMissingItemsBefore.mockResolvedValue(2);
 
     const alert = await getManagementMissingAlert(new Date("2026-07-07T18:00:00Z"));
 
@@ -93,7 +94,7 @@ describe("getManagementMissingAlert", () => {
     repos.countMissingItemsCreatedSince.mockResolvedValue(
       DAILY_MISSING_ALERT_THRESHOLD + 1,
     );
-    repos.countUnclosedMissingItemsBefore.mockResolvedValue(0);
+    repos.countUnclosedActionableMissingItemsBefore.mockResolvedValue(0);
 
     const alert = await getManagementMissingAlert(new Date("2026-07-07T18:00:00Z"));
 
@@ -105,7 +106,7 @@ describe("getManagementMissingAlert", () => {
     repos.countMissingItemsCreatedSince.mockResolvedValue(
       DAILY_MISSING_ALERT_THRESHOLD,
     );
-    repos.countUnclosedMissingItemsBefore.mockResolvedValue(0);
+    repos.countUnclosedActionableMissingItemsBefore.mockResolvedValue(0);
 
     const alert = await getManagementMissingAlert(new Date("2026-07-07T18:00:00Z"));
 
@@ -115,12 +116,12 @@ describe("getManagementMissingAlert", () => {
 
   it("consulta la ventana de faltantes viejos exactamente 8h antes de now", async () => {
     repos.countMissingItemsCreatedSince.mockResolvedValue(0);
-    repos.countUnclosedMissingItemsBefore.mockResolvedValue(0);
+    repos.countUnclosedActionableMissingItemsBefore.mockResolvedValue(0);
     const now = new Date("2026-07-07T18:00:00Z");
 
     await getManagementMissingAlert(now);
 
-    const threshold = repos.countUnclosedMissingItemsBefore.mock.calls[0]![0] as Date;
+    const threshold = repos.countUnclosedActionableMissingItemsBefore.mock.calls[0]![0] as Date;
     expect(now.getTime() - threshold.getTime()).toBe(
       UNCLOSED_MISSING_ALERT_HOURS * 60 * 60 * 1000,
     );

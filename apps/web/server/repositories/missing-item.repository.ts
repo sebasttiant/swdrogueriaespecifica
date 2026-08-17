@@ -326,13 +326,21 @@ export async function listMissingItemCreatedAtSince(since: Date): Promise<Date[]
   return rows.map((row) => row.createdAt);
 }
 
-// Faltantes abiertos (sin confirmar) creados antes de `threshold`: los que llevan
-// demasiado tiempo sin cerrarse. Base de la alerta de gerencia "no se han cerrado".
-export function countUnclosedMissingItemsBefore(threshold: Date): Promise<number> {
+// Faltantes ACCIONABLES (sin confirmar, solo FALTANTE) creados antes de
+// `threshold`: los que llevan demasiado tiempo sin que gerencia los gestione.
+// Base de la alerta de gerencia "no se han cerrado".
+//
+// Usa ACTIONABLE_STATUSES y NO OPEN_STATUSES a propósito: la alerta debe mostrar
+// solo lo que requiere trabajo de gestión. Los ya pedidos (PEDIDO) siguen su
+// curso hacia la llegada de la mercadería y no deben inflar este número —regla
+// de la reunión 2026-08-14: "cuando le dan 'ya lo pedí', sale de la alerta".
+export function countUnclosedActionableMissingItemsBefore(
+  threshold: Date,
+): Promise<number> {
   return prisma.missingItem.count({
     where: {
       confirmedAt: null,
-      status: { in: OPEN_STATUSES },
+      status: { in: ACTIONABLE_STATUSES },
       createdAt: { lt: threshold },
     },
   });
