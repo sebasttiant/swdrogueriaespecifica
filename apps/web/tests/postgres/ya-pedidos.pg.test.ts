@@ -3,7 +3,10 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { prisma } from "@/lib/db/prisma";
-import { listMissingItems } from "@/server/repositories/missing-item.repository";
+import {
+  listArrivedMissingItems,
+  listMissingItems,
+} from "@/server/repositories/missing-item.repository";
 import { registerInventoryEntry } from "@/server/services/inventory-entry.service";
 import { markMissingItemsOrdered } from "@/server/services/missing-item.service";
 
@@ -222,6 +225,29 @@ describe("Ya pedidos · recepción parcial", () => {
     expect(item.receivedQuantity).toBe(10);
     expect(item.status).toBe("RECIBIDO");
     expect(await activeQueueIds()).toEqual([]);
+  });
+
+  // REGRESIÓN: al dejar de escribir EN_BODEGA en un parcial, estos ítems se
+  // caían de la pantalla de entradas y bodega perdía de vista lo que llegó a
+  // medias. `listArrivedMissingItems` los nombra explícitamente.
+  it("un parcial sigue visible en la pantalla de entradas, con lo que falta", async () => {
+    const id = await newItem({ status: "PEDIDO", quantity: 10, orderedQuantity: 10 });
+
+    await receive(4);
+
+    const enBodega = await listArrivedMissingItems();
+    const item = enBodega.find((row) => row.id === id);
+    expect(item).toBeDefined();
+    expect(item?.pendingQuantity).toBe(6);
+  });
+
+  it("al completarse desaparece de la pantalla de entradas", async () => {
+    const id = await newItem({ status: "PEDIDO", quantity: 10, orderedQuantity: 10 });
+
+    await receive(10);
+
+    const enBodega = await listArrivedMissingItems();
+    expect(enBodega.map((row) => row.id)).not.toContain(id);
   });
 
   it("un FALTANTE que recibe parcial NO se convierte en pedido: nadie lo pidió", async () => {

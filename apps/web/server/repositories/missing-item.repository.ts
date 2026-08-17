@@ -492,7 +492,27 @@ export type ArrivedMissingItem = {
 
 export async function listArrivedMissingItems(): Promise<ArrivedMissingItem[]> {
   const items = await prisma.missingItem.findMany({
-    where: { status: "EN_BODEGA", confirmedAt: null },
+    // Lo que está FÍSICAMENTE en bodega esperando que lo terminen de cargar, y
+    // son dos poblaciones distintas:
+    //
+    //   * `EN_BODEGA`: bodega avisó que llegó y todavía no hay entrada.
+    //   * Parcialmente recibido: ya entró parte y falta el resto.
+    //
+    // La segunda hay que nombrarla aparte desde D10. Antes caía acá de rebote
+    // porque una recepción parcial escribía `EN_BODEGA`, y al dejar de hacerlo
+    // —ese valor significa otra cosa— estos ítems desaparecían de la pantalla
+    // de entradas: bodega perdía de vista lo que llegó a medias, que es justo
+    // lo que `pendingQuantity` existe para responder.
+    where: {
+      confirmedAt: null,
+      OR: [
+        { status: "EN_BODEGA" as const },
+        {
+          status: { in: ["FALTANTE", "PEDIDO"] as MissingItemStatus[] },
+          receivedQuantity: { gt: 0 },
+        },
+      ],
+    },
     orderBy: [{ arrivedAt: "asc" }, { id: "asc" }],
     select: {
       id: true,
