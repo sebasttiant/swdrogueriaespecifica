@@ -714,6 +714,7 @@ describe("markMissingItemsOrderedAction", () => {
     mocks.markMissingItemsOrdered.mockResolvedValue({
       ordered: ["m-1", "m-2"],
       skipped: ["m-3"],
+      expectedQuantities: { "m-1": 12, "m-2": 5 },
     });
 
     await markMissingItemsOrderedAction(
@@ -728,6 +729,31 @@ describe("markMissingItemsOrderedAction", () => {
         module: AUDIT_MODULES.FALTANTES,
         entity: "MissingItem",
         entityId: "m-1",
+      }),
+    );
+  });
+
+  // La auditoría tiene que decir lo que REALMENTE se escribió. Antes anotaba
+  // `orderedQuantity: null`, y desde D10 sí queda un número: dejarlo en null
+  // sería auditar una ficción. Se marca como derivada porque el gerente no la
+  // declaró, y atribuirle esa decisión es justo lo que no se puede hacer.
+  it("audita la cantidad esperada y la marca como derivada", async () => {
+    mocks.markMissingItemsOrdered.mockResolvedValue({
+      ordered: ["m-1"],
+      skipped: [],
+      expectedQuantities: { "m-1": 12 },
+    });
+
+    await markMissingItemsOrderedAction(PREV_STATE, quickOrderFormData(["m-1"]));
+
+    expect(mocks.recordAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        after: {
+          status: "PEDIDO",
+          supplierId: null,
+          expectedQuantity: 12,
+          expectedQuantitySource: "DERIVED_FROM_MISSING",
+        },
       }),
     );
   });

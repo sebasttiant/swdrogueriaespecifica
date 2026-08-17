@@ -102,6 +102,7 @@ function missingItemRow(
     id: "missing-1",
     quantity: 3,
     orderedQuantity: null,
+    receivedQuantity: 0,
     note: null,
     status: "FALTANTE",
     originId: "pending-1",

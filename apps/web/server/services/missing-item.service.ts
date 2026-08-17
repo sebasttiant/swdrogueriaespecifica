@@ -394,6 +394,10 @@ export type BulkOrderResult = {
   // Ya no estaban FALTANTE al tomar el lock: otro las pidió o descartó primero,
   // o son pedidos históricos ya confirmados. No es un error.
   skipped: string[];
+  // Cantidad esperada que quedó escrita en cada fila pedida, por id. La
+  // auditoría la necesita para registrar lo que REALMENTE se escribió: decir
+  // "cantidad: null" cuando se derivó un número sería auditar una ficción.
+  expectedQuantities: Record<string, number>;
 };
 
 /**
@@ -420,6 +424,7 @@ export async function markMissingItemsOrdered(
 ): Promise<BulkOrderResult> {
   const ordered: string[] = [];
   const skipped: string[] = [];
+  const expectedQuantities: Record<string, number> = {};
 
   for (const id of input.ids) {
     const written = await prisma.$transaction(async (tx) => {
@@ -430,16 +435,29 @@ export async function markMissingItemsOrdered(
       if (!canTransitionToOrdered(locked.status)) return 0;
       if (locked.confirmedAt !== null) return 0;
 
-      return persistOrderedMissingItem(tx, id, {
+      const expectedQuantity = locked.orderedQuantity ?? locked.quantity;
+      const count = await persistOrderedMissingItem(tx, id, {
         orderedById: input.orderedById,
         orderedAt: now,
+        // D10: el chulito NO pide cantidad, así que la ESPERADA se deriva de la
+        // necesidad ya registrada. Sin esto la fila quedaba con
+        // `orderedQuantity` nula y no había contra qué comparar lo recibido: el
+        // pedido nunca podía saberse completo. La cantidad REAL la carga bodega
+        // al recibir; son dos números distintos que no se pisan.
+        //
+        // Si el formulario completo ya declaró una cantidad, esa manda: una
+        // derivación no sobrescribe lo que una persona escribió.
+        orderedQuantity: expectedQuantity,
       });
+
+      if (count > 0) expectedQuantities[id] = expectedQuantity;
+      return count;
     });
 
     (written > 0 ? ordered : skipped).push(id);
   }
 
-  return { ordered, skipped };
+  return { ordered, skipped, expectedQuantities };
 }
 
 export async function discardMissingItems(

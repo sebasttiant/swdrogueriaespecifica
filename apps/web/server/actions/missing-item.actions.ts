@@ -374,9 +374,16 @@ export async function markMissingItemsOrderedAction(
         module: AUDIT_MODULES.FALTANTES,
         entity: "MissingItem",
         entityId: id,
-        // Pedido rápido: sin proveedor ni cantidad todavía. Se deja explícito
-        // para que la auditoría no aparente datos que nadie cargó.
-        after: { status: "PEDIDO", supplierId: null, orderedQuantity: null },
+        // Pedido rápido: sin proveedor todavía. La cantidad esperada SÍ queda
+        // escrita, derivada de lo que faltaba (D10), y se audita marcada como
+        // tal: el gerente no la declaró, así que atribuírsela sería falsear
+        // quién decidió qué.
+        after: {
+          status: "PEDIDO",
+          supplierId: null,
+          expectedQuantity: result.expectedQuantities[id] ?? null,
+          expectedQuantitySource: "DERIVED_FROM_MISSING",
+        },
         context,
       });
     }

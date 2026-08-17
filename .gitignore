@@ -17,6 +17,14 @@ build/
 .env.local
 .env.*.local
 
+# Archivos de alta masiva de usuarios (db:import:users). Llevan contraseñas
+# reales en texto plano: se crean, se corren y se borran. Nunca se versionan.
+# Está acá para que no dependa de que alguien se acuerde: un `git add .` a las
+# siete de la tarde no puede publicar las credenciales de la droguería.
+usuarios*.json
+users*.json
+*.usuarios.json
+
 # Logs
 *.log
 npm-debug.log*

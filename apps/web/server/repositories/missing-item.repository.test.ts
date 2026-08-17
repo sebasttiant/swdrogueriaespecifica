@@ -8,6 +8,11 @@ const { prismaMock } = vi.hoisted(() => {
       findUnique: vi.fn(),
       findMany: vi.fn(),
       update: vi.fn(),
+      // Referencias de campo de Prisma: la cola activa compara `receivedQuantity`
+      // contra `orderedQuantity` COLUMNA a COLUMNA, y para eso el repositorio le
+      // pide al cliente la referencia. Acá alcanza un centinela: lo que se
+      // verifica es que la consulta la incluya, no cómo la serializa Prisma.
+      fields: { orderedQuantity: "__ref:orderedQuantity" },
     },
   };
   return { prismaMock };
@@ -58,14 +63,16 @@ describe("listMissingItems · active confirmation filter", () => {
   it("lists only items that still need action by default", async () => {
     await listMissingItems({});
 
-    expect(prismaMock.missingItem.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: {
-          confirmedAt: null,
-          status: { in: ["FALTANTE"] },
-        },
-      }),
-    );
+    const where = prismaMock.missingItem.findMany.mock.calls[0]![0].where;
+    expect(where.AND[0]).toEqual({
+      confirmedAt: null,
+      status: { in: ["FALTANTE"] },
+    });
+    // Los datos inválidos tampoco requieren acción: nadie puede "pedir" un
+    // faltante que ya recibió más de lo esperado. Salen por cuarentena (D10).
+    expect(where.AND[1]).toEqual({
+      NOT: { receivedQuantity: { gt: "__ref:orderedQuantity" } },
+    });
   });
 
   // REGRESIÓN CRÍTICA: sacar PEDIDO de la cola NO puede sacarlo del eje
@@ -90,18 +97,50 @@ describe("listMissingItems · active confirmation filter", () => {
     expect(args.where).toBeUndefined();
   });
 
-  // "Ya pedidos": lo que gerencia compró. Incluye los pedidos históricos
-  // (`FALTANTE` + `confirmedAt`), que son órdenes reales anteriores al flujo
-  // actual. Sin esta rama esas filas no aparecerían en NINGUNA vista operativa.
+  // "Ya pedidos" es la cola ACTIVA: se pidió y todavía no llegó todo. Incluye
+  // los pedidos históricos (`FALTANTE` + `confirmedAt`), que son órdenes reales
+  // anteriores al flujo actual; sin esa rama no aparecerían en NINGUNA vista.
+  //
+  // RECIBIDO ya NO entra (D10): completado es historial. Mezclarlo hacía que la
+  // pantalla creciera para siempre y que "¿qué estoy esperando?" no tuviera
+  // respuesta.
   it("lists ordered items, including legacy confirmed rows", async () => {
     await listMissingItems({ scope: "ordered" });
 
     const args = prismaMock.missingItem.findMany.mock.calls[0]![0];
-    expect(args.where).toEqual({
+    expect(args.where.AND[0]).toEqual({
       OR: [
-        { status: { in: ["PEDIDO", "RECIBIDO"] } },
+        { status: "PEDIDO" },
         { status: "FALTANTE", confirmedAt: { not: null } },
       ],
+    });
+    // Le falta mercadería. `orderedQuantity` nula = sin derivar todavía, así
+    // que sigue faltando: una fila vieja no se esconde por un dato que nunca
+    // se le pidió cargar.
+    expect(args.where.AND[1]).toEqual({
+      OR: [
+        { orderedQuantity: null },
+        { receivedQuantity: { lt: "__ref:orderedQuantity" } },
+      ],
+    });
+    expect(args.where.AND[2]).toEqual({
+      NOT: { receivedQuantity: { gt: "__ref:orderedQuantity" } },
+    });
+  });
+
+  it("does not list RECIBIDO in the active queue: completed is history", async () => {
+    await listMissingItems({ scope: "ordered" });
+
+    const args = prismaMock.missingItem.findMany.mock.calls[0]![0];
+    expect(JSON.stringify(args.where)).not.toContain("RECIBIDO");
+  });
+
+  it("lists quarantined rows on their own scope", async () => {
+    await listMissingItems({ scope: "quarantine" });
+
+    const args = prismaMock.missingItem.findMany.mock.calls[0]![0];
+    expect(args.where).toEqual({
+      receivedQuantity: { gt: "__ref:orderedQuantity" },
     });
   });
 
