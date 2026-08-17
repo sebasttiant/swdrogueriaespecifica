@@ -108,6 +108,48 @@ export function releaseAllocation(
   return applyLines(params, "RELEASE", -1, client);
 }
 
+/**
+ * Entrega lo reservado: suelta la promesa y saca la unidad.
+ *
+ * Son dos asientos por lote y en ESTE orden. Sacar primero fallaría contra la
+ * guarda de T1.4 —esas unidades están prometidas—, y saltearse la liberación
+ * dejaría el compromiso vivo sobre stock que ya no está.
+ */
+export async function deliverAllocation(
+  params: {
+    plan: AllocationPlan;
+    actorId: string;
+    commandType: string;
+    releaseKeys: string[];
+    deliveryKeys: string[];
+  },
+  client: Prisma.TransactionClient,
+): Promise<AppliedLine[]> {
+  await applyLines(
+    {
+      plan: params.plan,
+      actorId: params.actorId,
+      commandType: `${params.commandType}.release`,
+      commandKeys: params.releaseKeys,
+    },
+    "RELEASE",
+    -1,
+    client,
+  );
+
+  return applyLines(
+    {
+      plan: params.plan,
+      actorId: params.actorId,
+      commandType: params.commandType,
+      commandKeys: params.deliveryKeys,
+    },
+    "DELIVERY",
+    -1,
+    client,
+  );
+}
+
 async function applyLines(
   params: ApplyParams,
   moveType: "RESERVATION" | "RELEASE" | "DELIVERY",
