@@ -130,9 +130,16 @@ export async function registerInventoryEntry(
         inventoryEntryId: entry.id, missingItemId: item.id, pendingId: item.originId,
         quantity: allocated,
       }});
+      // Una recepción PARCIAL no cambia de estado (D10). Antes pasaba a
+      // EN_BODEGA, y eso le daba dos significados al mismo valor: "recepción
+      // intentada, no confirmada" —lo que escribe `markMissingItemArrived`, y
+      // lo que además le avisa al pendiente del vendedor— y "recibido a
+      // medias". Un parcial YA se confirmó, así que el ítem sigue siendo lo
+      // que era: un PEDIDO al que le falta mercadería, o un FALTANTE que nadie
+      // pidió pero al que igual le entró stock. Solo completarlo lo cierra.
       await tx.missingItem.update({ where: { id: item.id }, data: {
         receivedQuantity,
-        status: receivedQuantity === needed ? "RECIBIDO" : "EN_BODEGA",
+        ...(receivedQuantity === needed ? { status: "RECIBIDO" as const } : {}),
       }});
       if (item.originId) {
         const pending = await tx.pending.findUniqueOrThrow({ where: { id: item.originId }, select: { quantity: true, inventoryReadyQuantity: true, reservedInventoryQuantity: true } });

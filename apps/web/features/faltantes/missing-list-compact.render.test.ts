@@ -11,6 +11,7 @@ function item(overrides: Partial<MissingItemListEntry> = {}): MissingItemListEnt
     id: "m-1",
     quantity: 4,
     orderedQuantity: null,
+    receivedQuantity: 0,
     note: null,
     status: "FALTANTE",
     originId: null,

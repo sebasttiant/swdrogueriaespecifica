@@ -25,9 +25,12 @@ export type CloseMissingItemsByEntryParams = {
 export type MissingItemListItem = {
   id: string;
   quantity: number;
-  // Cantidad que gerencia pidió. Null en faltantes abiertos y en registros
-  // anteriores a esta columna. No es lo mismo que `quantity` (necesidad).
+  // Cantidad ESPERADA. Desde D10 la deriva el chulito de `quantity`; sigue en
+  // null en faltantes sin pedir y en registros anteriores al backfill.
   orderedQuantity: number | null;
+  // Cantidad REAL que entró, cargada por bodega al recibir. Es otro número que
+  // el esperado y nunca lo pisa.
+  receivedQuantity: number;
   note: string | null;
   status: MissingItemStatus;
   originId: string | null;
@@ -95,6 +98,7 @@ export type CreateMissingItemData = {
 export type MissingItemScope =
   | "actionable"
   | "ordered"
+  | "quarantine"
   | "discarded"
   | "history";
 
@@ -121,6 +125,9 @@ const LIST_SELECT = {
   id: true,
   quantity: true,
   orderedQuantity: true,
+  // La vista dice "faltaban N · llegaron M": lo recibido es la mitad de esa
+  // frase, así que el listado tiene que traerlo.
+  receivedQuantity: true,
   note: true,
   status: true,
   originId: true,
@@ -225,13 +232,60 @@ const RECONCILABLE_STATUSES: MissingItemStatus[] = [
 const ACTIONABLE_STATUSES: MissingItemStatus[] = ["FALTANTE"];
 const ORDERED_STATUSES: MissingItemStatus[] = ["PEDIDO", "RECIBIDO"];
 
+// --------------------------------------------------------------------------
+// CUARENTENA (D10): datos genuinamente inválidos, que no pertenecen a ninguna
+// cola operativa. Queda UN caso, no dos.
+//
+// La otra invalidez imaginable —cantidad esperada ≤ 0— NO se filtra acá porque
+// la base ya la hace imposible: `missing_items_ordered_quantity_positive`
+// (CHECK "orderedQuantity" IS NULL OR > 0), agregado SIN `NOT VALID`, así que
+// PostgreSQL validó también las filas que ya existían. Filtrar por algo que un
+// constraint impide es un filtro que nunca coincide, y peor: le hace creer al
+// que lo lee que el caso ocurre. En su lugar el CHECK se fija con un test de
+// catálogo (`ya-pedidos.pg.test.ts`), que es lo que avisa si una migración
+// futura lo afloja.
+//
+// `orderedQuantity` NULA tampoco es inválida: es "todavía sin derivar", el
+// estado de las filas anteriores a D10. Esconderlas sería castigar a la
+// operación por un dato que nunca se le pidió; siguen en la cola hasta que el
+// backfill las complete.
+// --------------------------------------------------------------------------
+//
+// Son FUNCIONES y no constantes a propósito: `prisma.<model>.fields` se resuelve
+// contra el cliente, y evaluarlo al importar el módulo obligaría a cada test
+// unitario que mockea Prisma a declarar `fields` en su doble solo para que el
+// archivo cargue. Difiriéndolo, el import no toca el cliente y los dobles
+// siguen siendo tan chicos como el test necesita.
+function quarantineWhere() {
+  // Comparación COLUMNA contra COLUMNA: la hace PostgreSQL, no el código sobre
+  // filas ya traídas. En memoria, la paginación por cursor devolvería páginas
+  // de tamaños distintos según cuántas descartara después de consultarlas.
+  return { receivedQuantity: { gt: prisma.missingItem.fields.orderedQuantity } };
+}
+
+// Le falta mercadería por llegar. Null = sin derivar todavía, sigue faltando.
+function incompleteWhere() {
+  return {
+    OR: [
+      { orderedQuantity: null },
+      { receivedQuantity: { lt: prisma.missingItem.fields.orderedQuantity } },
+    ],
+  };
+}
+
 /**
  * Filtro de cada vista. `undefined` = sin filtro (historial completo).
  *
- * La rama `ordered` incluye los PEDIDOS HISTÓRICOS: filas que quedaron en
- * `FALTANTE` con `confirmedAt` del flujo viejo "OK gerencia". Son órdenes
- * reales; sin esta rama no aparecerían en ninguna vista operativa. Nunca se
- * reescriben ni se migran: se leen donde corresponde.
+ * `ordered` es la cola ACTIVA de "Ya pedidos", y activa significa UNA cosa: se
+ * pidió y todavía no llegó todo. Un RECIBIDO ya no está esperando nada, así
+ * que sale de acá y vive en el historial. Cola activa e historial son
+ * conjuntos disjuntos a propósito: mezclarlos hacía que la pantalla creciera
+ * para siempre y que "¿qué estoy esperando?" no tuviera respuesta.
+ *
+ * Incluye los PEDIDOS HISTÓRICOS: filas que quedaron en `FALTANTE` con
+ * `confirmedAt` del flujo viejo "OK gerencia". Son órdenes reales que nunca se
+ * recibieron; sin esta rama no aparecerían en ninguna vista operativa. Nunca
+ * se reescriben ni se migran: se leen donde corresponde.
  */
 function whereForScope(scope: MissingItemScope | undefined) {
   switch (scope) {
@@ -239,15 +293,28 @@ function whereForScope(scope: MissingItemScope | undefined) {
       return undefined;
     case "ordered":
       return {
-        OR: [
-          { status: { in: ORDERED_STATUSES } },
-          { status: "FALTANTE" as const, confirmedAt: { not: null } },
+        AND: [
+          {
+            OR: [
+              { status: "PEDIDO" as const },
+              { status: "FALTANTE" as const, confirmedAt: { not: null } },
+            ],
+          },
+          incompleteWhere(),
+          { NOT: quarantineWhere() },
         ],
       };
+    case "quarantine":
+      return quarantineWhere();
     case "discarded":
       return { status: "CANCELADO" as const };
     default:
-      return { confirmedAt: null, status: { in: ACTIONABLE_STATUSES } };
+      return {
+        AND: [
+          { confirmedAt: null, status: { in: ACTIONABLE_STATUSES } },
+          { NOT: quarantineWhere() },
+        ],
+      };
   }
 }
 
@@ -532,6 +599,9 @@ export type MissingItemForUpdate = {
   orderedById: string | null;
   supplierId: string | null;
   productId: string;
+  /** Necesidad registrada. Es de donde el chulito DERIVA la cantidad esperada (D10). */
+  quantity: number;
+  orderedQuantity: number | null;
 };
 
 /**
@@ -554,7 +624,8 @@ export async function lockMissingItemForUpdate(
 ): Promise<MissingItemForUpdate | null> {
   const rows = await client.$queryRaw<MissingItemForUpdate[]>`
     SELECT id, status, "confirmedAt", "confirmedById", "confirmationNote",
-           "orderedAt", "orderedById", "supplierId", "productId"
+           "orderedAt", "orderedById", "supplierId", "productId",
+           quantity, "orderedQuantity"
     FROM missing_items WHERE id = ${id} FOR UPDATE
   `;
   return rows[0] ?? null;

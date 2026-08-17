@@ -142,7 +142,7 @@ function orderDetails(missing: MissingItemListItem) {
       {order.orderedAt ? (
         <p>Pedido: {formatBogotaDate(order.orderedAt, { style: "datetime" })}</p>
       ) : null}
-      <p>{orderedQuantityLabel(order.orderedQuantity)}</p>
+      <p>{orderedQuantityLabel(order.orderedQuantity, order.receivedQuantity)}</p>
     </>
   );
 }
@@ -164,7 +164,7 @@ function orderCell(missing: MissingItemListItem) {
         </p>
       ) : null}
       <p className="text-muted-foreground">
-        {orderedQuantityLabel(order.orderedQuantity)}
+        {orderedQuantityLabel(order.orderedQuantity, order.receivedQuantity)}
       </p>
     </div>
   );

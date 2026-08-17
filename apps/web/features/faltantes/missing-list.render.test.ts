@@ -35,6 +35,7 @@ function item(overrides: Partial<MissingItemListEntry>): MissingItemListEntry {
     id: "missing-id",
     quantity: 1,
     orderedQuantity: null,
+    receivedQuantity: 0,
     note: null,
     status: "FALTANTE",
     originId: null,
@@ -221,17 +222,22 @@ describe("MissingList · order visibility", () => {
         status: "PEDIDO",
         orderedAt,
         orderedQuantity: 20,
+        receivedQuantity: 8,
         supplier,
         supplierId: supplier.id,
         product: product("Pedido", "PED-1"),
       }),
     ], false, { canSeeSupplier: true });
 
-    expect(countOccurrences(html, "Cantidad pedida: 20 unidades")).toBe(2);
+    // "Faltaban N · llegaron M", nunca "pediste N" (D10). El gerente no declara
+    // una cantidad: toca un chulito y el sistema deriva lo que faltaba.
+    // Escribirle "pediste 20" le atribuiría una decisión que no tomó.
+    expect(countOccurrences(html, "Faltaban 20 · llegaron 8")).toBe(2);
+    expect(html).not.toContain("Cantidad pedida");
   });
 
-  // Pedido anterior a la columna: se pidió, pero la cantidad no quedó
-  // registrada. Nunca se muestra `quantity` (necesidad) como si fuera lo pedido.
+  // Pedido anterior al backfill: se pidió, pero la cantidad esperada no quedó
+  // registrada. Nunca se muestra `quantity` en su lugar como si fuera lo mismo.
   it("marks the ordered quantity as unregistered for a legacy ordered item", () => {
     const html = renderMissingList([
       item({
@@ -246,8 +252,8 @@ describe("MissingList · order visibility", () => {
       }),
     ], false, { canSeeSupplier: true });
 
-    expect(countOccurrences(html, "Cantidad pedida no registrada")).toBe(2);
-    expect(html).not.toContain("Cantidad pedida: 3");
+    expect(countOccurrences(html, "Cantidad esperada no registrada")).toBe(2);
+    expect(html).not.toContain("Faltaban 3");
   });
 
   it("shows no order detail for an item that has not been ordered", () => {

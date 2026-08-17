@@ -9,6 +9,7 @@ function item(overrides: Partial<MissingItemListItem>): MissingItemListItem {
     id: "missing-id",
     quantity: 1,
     orderedQuantity: null,
+    receivedQuantity: 0,
     note: null,
     status: "FALTANTE",
     originId: null,
@@ -54,7 +55,12 @@ describe("getOrderMetadata", () => {
           supplierId: supplier.id,
         }),
       ),
-    ).toEqual({ supplierName: "Distribuidora Norte", orderedAt, orderedQuantity: 20 });
+    ).toEqual({
+      supplierName: "Distribuidora Norte",
+      orderedAt,
+      orderedQuantity: 20,
+      receivedQuantity: 0,
+    });
   });
 
   // Pedido anterior a la columna orderedQuantity: se pidió, pero la cantidad no
@@ -89,6 +95,7 @@ describe("getOrderMetadata", () => {
       supplierName: null,
       orderedAt,
       orderedQuantity: null,
+      receivedQuantity: 0,
     });
   });
 

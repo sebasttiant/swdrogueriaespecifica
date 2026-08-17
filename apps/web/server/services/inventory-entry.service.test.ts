@@ -243,9 +243,13 @@ describe("registerInventoryEntry", () => {
     await registerInventoryEntry({ ...BASE_INPUT, quantity: 6, idempotencyKey: "partial-report" });
     await registerInventoryEntry({ ...BASE_INPUT, quantity: 4, idempotencyKey: "full-report" });
 
+    // Un parcial NO toca el status (D10): el ítem sigue siendo lo que era. Antes
+    // pasaba a EN_BODEGA, que significa otra cosa —"recepción intentada, no
+    // confirmada", lo que escribe `markMissingItemArrived`— y le daba dos
+    // sentidos al mismo valor.
     expect(tx.missingItem.update).toHaveBeenNthCalledWith(1, {
       where: { id: "missing-partial" },
-      data: { receivedQuantity: 6, status: "EN_BODEGA" },
+      data: { receivedQuantity: 6 },
     });
     expect(markReportsReceivedByMissingItemIds).toHaveBeenNthCalledWith(1, tx, []);
     expect(markReportsReceivedByMissingItemIds).toHaveBeenNthCalledWith(2, tx, ["missing-full"]);
