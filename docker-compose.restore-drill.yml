@@ -1,0 +1,42 @@
+# ==========================================================================
+# Ensayo de restauración — Droguería Específica
+#
+# PostgreSQL descartable y AISLADO para restaurar una copia y verificarla sin
+# rozar ningún dato real. No lo levantes a mano: lo maneja
+# `scripts/restore-drill.sh`, que le pasa un nombre de proyecto único por
+# ensayo (`-p`) para que el volumen SIEMPRE nazca vacío.
+#
+# Deliberadamente no tiene `web`, `migrate` ni `seed`: una copia restaurada se
+# mira, no se migra ni se siembra. Migrarla la dejaría de parecer al original,
+# que es justo lo que el ensayo tiene que comprobar.
+# ==========================================================================
+
+services:
+  postgres:
+    image: postgres:18.4-alpine
+    environment:
+      POSTGRES_USER: ${DRILL_DB_USER:-drill}
+      POSTGRES_PASSWORD: ${DRILL_DB_PASSWORD:-drill}
+      # Base de mantenimiento. La copia se restaura en una base aparte que crea
+      # el script, para poder borrarla y rehacerla sin reiniciar el contenedor.
+      POSTGRES_DB: postgres
+    ports:
+      # Puerto propio del ensayo. NO es 5433 (PostgreSQL de desarrollo) ni
+      # 55432 (harness de tests): el script rechaza esos dos por si acaso.
+      - "127.0.0.1:${DRILL_PORT:-55433}:5432"
+    volumes:
+      # Postgres 18+ guarda los datos en un subdir por versión bajo
+      # /var/lib/postgresql; el volumen se monta ahí (no en .../data).
+      - drill_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DRILL_DB_USER:-drill} -d postgres"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+volumes:
+  # Volumen local y anónimo por proyecto: `docker compose -p <único> down -v`
+  # lo borra entero al terminar el ensayo.
+  drill_data:
+    driver: local

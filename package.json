@@ -25,6 +25,7 @@
     "data:reset:operational": "bash scripts/reset-operational-data.sh",
     "data:import:operational": "bash scripts/import-operational-excel-data.sh",
     "data:seed:operational": "bash scripts/seed-demo-operational.sh",
+    "data:restore:drill": "bash scripts/restore-drill.sh",
     "docker:build": "docker build -f apps/web/Dockerfile -t drogueria-especifica-web:local ."
   }
 }
