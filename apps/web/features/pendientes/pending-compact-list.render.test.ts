@@ -146,6 +146,8 @@ describe("PendingCompactList", () => {
     ["PARCIAL", "Entrega parcial"],
     ["ENTREGADO", "Entregado"],
     ["CANCELADO", "Cancelado"],
+    // T2.2b: el cierre parcial tiene label propio, no "Entregado".
+    ["CLOSED_PARTIAL", "Cerrado parcial"],
   ] as const)("no rotula %s como 'Pendiente'", (status, label) => {
     const html = render([pending({ status })], true);
 

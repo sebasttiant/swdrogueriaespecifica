@@ -58,6 +58,15 @@ describe("validateDelivery", () => {
     expect(validateDelivery({ ...base, status: "CANCELADO" })).toBe("ALREADY_CANCELLED");
   });
 
+  // T2.2b: el cierre parcial es terminal. Sin esta guarda, `remainingQuantity`
+  // (que no conoce cancelledQuantity) diría que quedan 7 y dejaría entregar
+  // sobre un pendiente que el cliente ya cerró en el mostrador.
+  it("rejects ALREADY_DELIVERED when status is CLOSED_PARTIAL", () => {
+    expect(
+      validateDelivery({ ...base, status: "CLOSED_PARTIAL", deliveredQuantity: 3, deliverQuantity: 7 }),
+    ).toBe("ALREADY_DELIVERED");
+  });
+
   it("rejects NON_POSITIVE_QUANTITY when deliverQuantity is 0", () => {
     expect(validateDelivery({ ...base, deliverQuantity: 0 })).toBe("NON_POSITIVE_QUANTITY");
   });
@@ -98,6 +107,13 @@ describe("validateCancellation", () => {
 
   it("rejects ALREADY_CANCELLED when status is CANCELADO", () => {
     expect(validateCancellation("CANCELADO")).toBe("ALREADY_CANCELLED");
+  });
+
+  // T2.2b: ya hubo entrega y el resto se cerró con la decisión del cliente;
+  // cancelarlo retroactivamente borraría esa historia. Mismo rechazo que
+  // ENTREGADO: el compromiso ya se cumplió (hasta donde el cliente quiso).
+  it("rejects ALREADY_DELIVERED when status is CLOSED_PARTIAL", () => {
+    expect(validateCancellation("CLOSED_PARTIAL")).toBe("ALREADY_DELIVERED");
   });
 
   it("allows cancellation when status is PENDIENTE", () => {

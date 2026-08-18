@@ -205,7 +205,10 @@ const OPEN_STATUSES: PendingStatus[] = [
   "COTIZANDO",
   "AGOTADO",
 ];
-const HISTORY_STATUSES: PendingStatus[] = ["ENTREGADO", "CANCELADO"];
+// T2.2b: el cierre parcial también es terminal y va al historial. Es DISTINTO
+// de ENTREGADO (no se entregó todo) y de CANCELADO (hubo entrega): su ecuación
+// `deliveredQuantity + cancelledQuantity = quantity` conserva la historia.
+const HISTORY_STATUSES: PendingStatus[] = ["ENTREGADO", "CANCELADO", "CLOSED_PARTIAL"];
 
 // Estados que disparan las ALERTAS de vencimiento/urgencia (banner rojo,
 // próximas 24h, lista de urgentes). Es OPEN_STATUSES MENOS `AGOTADO`: un
@@ -515,8 +518,9 @@ function legacyPurchaseStatus(status: PendingStatus | undefined): PendingPurchas
 /**
  * Compare-and-set del estado de gestión: escribe solo si el pendiente sigue en
  * un estado elegible. Devuelve las filas escritas (0 o 1). `0` significa que el
- * pendiente no existe o ya no admite gestión (entregado/parcial/cancelado): así
- * un cambio de gestión nunca pisa una entrega o cancelación concurrente.
+ * pendiente no existe o ya no admite gestión (entregado/parcial/cancelado/cierre
+ * parcial): así un cambio de gestión nunca pisa una entrega o cancelación
+ * concurrente.
  */
 export async function updatePendingManagementStatus(
   data: UpdatePendingManagementStatusData,
@@ -524,7 +528,7 @@ export async function updatePendingManagementStatus(
   const { count } = await prisma.pending.updateMany({
     where: {
       id: data.id,
-      status: { notIn: ["ENTREGADO", "CANCELADO"] },
+      status: { notIn: ["ENTREGADO", "CANCELADO", "CLOSED_PARTIAL"] },
       purchaseStatus: data.expectedPurchaseStatus ?? legacyPurchaseStatus(data.expectedStatus),
     },
     data: { purchaseStatus: data.purchaseStatus ?? legacyPurchaseStatus(data.status) ?? "POR_PEDIR" },

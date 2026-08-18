@@ -56,6 +56,10 @@ export function validateDelivery(
 ): DeliveryRejection | null {
   if (input.status === "ENTREGADO") return "ALREADY_DELIVERED";
   if (input.status === "CANCELADO") return "ALREADY_CANCELLED";
+  // T2.2b: el cierre parcial es terminal — ya hubo entrega. Sin esta guarda,
+  // `remainingQuantity` (que no conoce cancelledQuantity) permitiría entregar
+  // sobre un pendiente que el cliente ya cerró en el mostrador.
+  if (input.status === "CLOSED_PARTIAL") return "ALREADY_DELIVERED";
   // Facturar antes de entregar. `undefined` es una fila anterior a este eje: no
   // se le exige una factura que nunca se le pudo registrar.
   if (input.customerStatus !== undefined && input.customerStatus !== "FACTURADO") {
@@ -89,5 +93,8 @@ export function validateCancellation(
 ): "ALREADY_DELIVERED" | "ALREADY_CANCELLED" | null {
   if (status === "ENTREGADO") return "ALREADY_DELIVERED";
   if (status === "CANCELADO") return "ALREADY_CANCELLED";
+  // T2.2b: el cierre parcial es terminal con entrega: cancelarlo
+  // retroactivamente borraría la historia de lo que sí se entregó.
+  if (status === "CLOSED_PARTIAL") return "ALREADY_DELIVERED";
   return null;
 }

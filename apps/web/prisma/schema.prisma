@@ -68,6 +68,11 @@ enum PendingStatus {
   PARCIAL
   ENTREGADO
   CANCELADO
+  // Cierre parcial (T2.2b): se entregó una parte y el cliente no espera el
+  // resto. Terminal, pero DISTINTO de ENTREGADO/CANCELADO: la ecuación
+  // `deliveredQuantity + cancelledQuantity = quantity` es la única forma de
+  // saber cuánto se perdió del pedido original sin inventar una historia.
+  CLOSED_PARTIAL
   // Estados de gestión (Mejora 2): los fija gerencia/compras sobre un pendiente
   // abierto. AGOTADO no cancela: es una señal para que el vendedor rechace el
   // pendiente por el flujo normal. Ver features/pendientes/management-status.ts.
@@ -521,12 +526,17 @@ model Pending {
   updatedAt    DateTime      @updatedAt
 
   // --------------------------------------------------------------------
-  // Ciclo de vida de entrega (Slice A): entregas parciales + cancelación.
+  // Ciclo de vida de entrega (Slice A + T2.2b): entregas parciales,
+  // cancelación y cierre parcial.
   // `deliveredQuantity` es la SUMA desnormalizada de sus `PendingDelivery`,
   // mantenida por el service dentro de la misma transacción que crea la
-  // entrega. `completedAt` solo se completa en la transición a ENTREGADO.
+  // entrega. `cancelledQuantity` es lo que el cliente ya no espera (decisión
+  // "cerrar" sobre un PARCIAL): la ecuación del cierre parcial es
+  // `deliveredQuantity + cancelledQuantity = quantity`. `completedAt` solo se
+  // completa en las transiciones terminales (ENTREGADO, CLOSED_PARTIAL).
   // --------------------------------------------------------------------
   deliveredQuantity Int              @default(0)
+  cancelledQuantity Int              @default(0)
   completedAt       DateTime?
   cancelledAt       DateTime?
   cancelledBy       User?            @relation("PendingCancelledBy", fields: [cancelledById], references: [id])

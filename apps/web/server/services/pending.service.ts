@@ -591,8 +591,10 @@ export async function cancelPendingCommitment(
 // abierto para siempre, ensuciando la cola de todos con algo que ya se resolvió
 // en el mostrador.
 //
-// No es una cancelación: hubo entrega. Se cierra como ENTREGADO con la cantidad
-// real, y el motivo queda escrito.
+// No es una cancelación: hubo entrega. Desde T2.2b el cierre parcial tiene su
+// propio estado terminal CLOSED_PARTIAL: `cancelledQuantity` registra lo que
+// el cliente ya no espera (la ecuación `entregado + cancelado = pedido` cierra),
+// y `customerStatus` conserva el ENTREGADO para el eje de relación comercial.
 // --------------------------------------------------------------------------
 export type PartialDecision = "espera" | "va_con_pedido" | "cerrar";
 
@@ -664,8 +666,12 @@ export async function resolvePartialPending(
     const { count } = await tx.pending.updateMany({
       where: { id: current.id, status: "PARCIAL" },
       data: {
-        status: "ENTREGADO",
+        // T2.2b: el cierre parcial ya no se disfraza de ENTREGADO. `remaining`
+        // ES la cantidad que el cliente no espera; se registra como cancelada
+        // para que la ecuación entregado + cancelado = pedido cierre siempre.
+        status: "CLOSED_PARTIAL",
         customerStatus: "ENTREGADO",
+        cancelledQuantity: remaining,
         completedAt: now,
         cancelReason: `Cerrado sin los ${remaining} restantes: el cliente no los espera`,
       },
@@ -843,7 +849,11 @@ export async function updatePending(
       if (current.sellerEditedAt !== null) return { rejection: "ALREADY_EDITED", before: null };
     }
 
-    if (current.status === "ENTREGADO" || current.status === "CANCELADO") {
+    if (
+      current.status === "ENTREGADO" ||
+      current.status === "CANCELADO" ||
+      current.status === "CLOSED_PARTIAL"
+    ) {
       return { rejection: "ALREADY_CLOSED", before: null };
     }
 

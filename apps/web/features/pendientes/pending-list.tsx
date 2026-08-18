@@ -48,7 +48,8 @@ type PendingListProps = {
 };
 
 // Estados terminales: ya no hay nada operativo que hacer sobre el pendiente.
-const CLOSED_STATUSES: readonly PendingStatus[] = ["ENTREGADO", "CANCELADO"];
+// T2.2b: el cierre parcial también es terminal (se resolvió en el mostrador).
+const CLOSED_STATUSES: readonly PendingStatus[] = ["ENTREGADO", "CANCELADO", "CLOSED_PARTIAL"];
 
 const STATUS: Record<
   PendingStatus,
@@ -58,6 +59,9 @@ const STATUS: Record<
   PARCIAL: { label: "Parcial", tone: "primary" },
   ENTREGADO: { label: "Entregado", tone: "success" },
   CANCELADO: { label: "Cancelado", tone: "neutral" },
+  // T2.2b: hubo entrega parcial y el resto se cerró con el cliente. Tone danger
+  // para que se distinga de una entrega completa en el historial.
+  CLOSED_PARTIAL: { label: "Cerrado parcial", tone: "danger" },
   // Estados de gestión (Mejora 2). "Solicitado" ya está pedido → informativo.
   // "En búsqueda"/"Cotizando" siguen en curso → warning. "Agotado" es un
   // producto que no se consigue → danger, para que el vendedor lo distinga.

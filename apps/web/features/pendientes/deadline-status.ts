@@ -16,8 +16,9 @@ export type DeadlineStatus =
 // Ventana crítica: faltando 2 horas o menos para la promesa.
 export const SOON_WINDOW_MS = 2 * 60 * 60 * 1000;
 
-// Estados terminales: ya no hay nada operativo que vigilar.
-const FINAL_STATUSES: readonly PendingStatus[] = ["ENTREGADO", "CANCELADO"];
+// Estados terminales: ya no hay nada operativo que vigilar. T2.2b: el cierre
+// parcial también es terminal — la promesa se resolvió en el mostrador.
+const FINAL_STATUSES: readonly PendingStatus[] = ["ENTREGADO", "CANCELADO", "CLOSED_PARTIAL"];
 
 export function computeDeadlineStatus(
   promisedAt: Date,
