@@ -98,3 +98,27 @@ export function validateCancellation(
   if (status === "CLOSED_PARTIAL") return "ALREADY_DELIVERED";
   return null;
 }
+
+export type DeliverySummaryInput = {
+  status: PendingStatus;
+  quantity: number;
+  deliveredQuantity: number;
+  cancelledQuantity: number;
+  unit: string;
+};
+
+/**
+ * Línea de entrega de un pendiente para la UI (T4.2b·B).
+ *
+ * Explica la ecuación `delivered + cancelled = quantity`: un cierre parcial
+ * (CLOSED_PARTIAL) cuenta lo entregado Y lo cancelado, porque el formato viejo
+ * "Entregado: X / Y" dejaba muda la cantidad que el cliente ya no espera. Los
+ * estados sin entrega (CANCELADO) no dicen que se entregó algo.
+ */
+export function deliverySummary(input: DeliverySummaryInput): string {
+  if (input.status === "CANCELADO") return "Cancelado";
+  if (input.status === "CLOSED_PARTIAL") {
+    return `Entregado: ${input.deliveredQuantity} de ${input.quantity} · cancelado: ${input.cancelledQuantity} ${input.unit}`;
+  }
+  return `Entregado: ${input.deliveredQuantity} de ${input.quantity} ${input.unit}`;
+}

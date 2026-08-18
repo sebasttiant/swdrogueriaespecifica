@@ -122,6 +122,7 @@ function pendingRow(overrides: Partial<PendingListItem> = {}): PendingListItem {
     paidAmount: 20_000,
     createdAt: new Date("2026-07-09T10:00:00.000Z"),
     deliveredQuantity: 0,
+    cancelledQuantity: 0,
     product: { id: "prod-1", name: "Paracetamol", code: "P-001", unit: "unidad" },
     ...overrides,
   };

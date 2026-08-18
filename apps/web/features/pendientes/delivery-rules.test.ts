@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  deliverySummary,
   nextPendingStatus,
   remainingQuantity,
   validateCancellation,
@@ -122,5 +123,58 @@ describe("validateCancellation", () => {
 
   it("allows cancellation when status is PARCIAL", () => {
     expect(validateCancellation("PARCIAL")).toBeNull();
+  });
+});
+
+describe("deliverySummary", () => {
+  // T4.2b·B: la línea de entrega debe explicar la ecuación del cierre parcial
+  // (`delivered + cancelled = quantity`). Antes decía "Entregado: 3 / 5" y la
+  // cantidad que el cliente ya no espera quedaba muda.
+  it("cierre parcial: cuenta lo entregado y lo cancelado", () => {
+    expect(
+      deliverySummary({
+        status: "CLOSED_PARTIAL",
+        quantity: 5,
+        deliveredQuantity: 3,
+        cancelledQuantity: 2,
+        unit: "unidad",
+      }),
+    ).toBe("Entregado: 3 de 5 · cancelado: 2 unidad");
+  });
+
+  it("entregado completo: no menciona cancelados", () => {
+    expect(
+      deliverySummary({
+        status: "ENTREGADO",
+        quantity: 5,
+        deliveredQuantity: 5,
+        cancelledQuantity: 0,
+        unit: "unidad",
+      }),
+    ).toBe("Entregado: 5 de 5 unidad");
+  });
+
+  it("cancelado: no dice que se entregó algo", () => {
+    expect(
+      deliverySummary({
+        status: "CANCELADO",
+        quantity: 5,
+        deliveredQuantity: 0,
+        cancelledQuantity: 0,
+        unit: "unidad",
+      }),
+    ).toBe("Cancelado");
+  });
+
+  it("abierto: conserva el formato de siempre", () => {
+    expect(
+      deliverySummary({
+        status: "PARCIAL",
+        quantity: 5,
+        deliveredQuantity: 3,
+        cancelledQuantity: 0,
+        unit: "unidad",
+      }),
+    ).toBe("Entregado: 3 de 5 unidad");
   });
 });
