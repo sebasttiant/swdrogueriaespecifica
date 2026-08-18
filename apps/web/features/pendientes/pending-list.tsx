@@ -16,7 +16,7 @@ import {
 } from "./deadline-status";
 import { formatCop } from "@/lib/format/currency";
 import { formatPhone } from "./phone";
-import { remainingQuantity } from "./delivery-rules";
+import { deliverySummary, remainingQuantity } from "./delivery-rules";
 import { canSetManagementStatus } from "./management-status";
 import {
   derivePaymentState,
@@ -182,9 +182,17 @@ export function PendingList({
                     Dirección: {pending.customerAddress}
                   </p>
                 ) : null}
+                {/* T4.2b·B: la línea explica la ecuación del cierre parcial
+                    (entregado + cancelado = pedido). Antes "Entregado: 3 / 5"
+                    dejaba muda la cantidad que el cliente ya no espera. */}
                 <p className="text-sm text-muted-foreground">
-                  Entregado: {pending.deliveredQuantity} / {pending.quantity}{" "}
-                  {pending.product.unit}
+                  {deliverySummary({
+                    status: pending.status,
+                    quantity: pending.quantity,
+                    deliveredQuantity: pending.deliveredQuantity,
+                    cancelledQuantity: pending.cancelledQuantity,
+                    unit: pending.product.unit,
+                  })}
                 </p>
                 {/* Quién lo anotó: gerencia lo necesita para saber a nombre de
                     quién va la venta y quién factura. */}

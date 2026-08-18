@@ -49,6 +49,9 @@ export type PendingListItem = {
   paidAmount: number;
   createdAt: Date;
   deliveredQuantity: number;
+  // T2.2b: lo que el cliente ya no espera de un cierre parcial. Completa la
+  // ecuación `delivered + cancelled = quantity` en la UI (T4.2b·B).
+  cancelledQuantity: number;
   product: { id: string; name: string; code: string; unit: string };
   // Quién anotó el pendiente. Gerencia lo necesita para saber a nombre de quién
   // va la venta y quién factura. Se lee de la RELACIÓN, nunca de un texto
@@ -102,6 +105,7 @@ const LIST_SELECT = {
   paidAmount: true,
   createdAt: true,
   deliveredQuantity: true,
+  cancelledQuantity: true,
   product: { select: { id: true, name: true, code: true, unit: true } },
   createdBy: { select: { id: true, name: true } },
 } as const;

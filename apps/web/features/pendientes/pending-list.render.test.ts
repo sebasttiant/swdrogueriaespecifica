@@ -51,6 +51,7 @@ function pending(overrides: Partial<PendingListItem> = {}): PendingListItem {
     paidAmount: 0,
     createdAt: new Date("2026-07-09T10:00:00.000Z"),
     deliveredQuantity: 4,
+    cancelledQuantity: 0,
     product: { id: "prod-1", name: "Paracetamol", code: "P-001", unit: "unidad" },
     ...overrides,
   };
@@ -320,5 +321,44 @@ describe("PendingList · dirección de entrega", () => {
     const html = renderList({ items: [pending({ customerAddress: null })] });
 
     expect(html).not.toContain("Dirección:");
+  });
+});
+
+describe("PendingList · cantidades con semántica T2.2b (T4.2b·B)", () => {
+  // La línea de entrega explica la ecuación del cierre parcial: antes un
+  // CLOSED_PARTIAL (5 pedidos, 3 entregados, 2 cancelados) decía
+  // "Entregado: 3 / 5" y los 2 que el cliente no espera quedaban mudos.
+  it("cierre parcial: muestra lo entregado y lo cancelado", () => {
+    const html = renderList({
+      items: [pending({ status: "CLOSED_PARTIAL", quantity: 5, deliveredQuantity: 3, cancelledQuantity: 2 })],
+    });
+
+    expect(html).toContain("Entregado: 3 de 5");
+    expect(html).toContain("cancelado: 2");
+  });
+
+  it("cierre parcial: no usa la semántica vieja 'X / Y'", () => {
+    const html = renderList({
+      items: [pending({ status: "CLOSED_PARTIAL", quantity: 5, deliveredQuantity: 3, cancelledQuantity: 2 })],
+    });
+
+    expect(html).not.toContain("3 / 5");
+  });
+
+  it("cancelado: no dice que se entregó algo", () => {
+    const html = renderList({
+      items: [pending({ status: "CANCELADO", quantity: 5, deliveredQuantity: 0, cancelledQuantity: 0 })],
+    });
+
+    expect(html).toContain("Cancelado");
+    expect(html).not.toContain("Entregado:");
+  });
+
+  it("entregado completo: lo dice sin mencionar cancelados", () => {
+    const html = renderList({
+      items: [pending({ status: "ENTREGADO", quantity: 5, deliveredQuantity: 5, cancelledQuantity: 0 })],
+    });
+
+    expect(html).toContain("Entregado: 5 de 5");
   });
 });
