@@ -28,9 +28,17 @@ type PendingReviewFiltersProps = {
   axes: ReviewAxes;
   scope: "active" | "history";
   view: "lista" | "detalle";
+  // Ruta sobre la que se arman los enlaces. Se omite en `/pendientes`, que es
+  // el default; el módulo de revisión pasa la suya para no expulsar al usuario.
+  basePath?: string;
 };
 
-export function PendingReviewFilters({ axes, scope, view }: PendingReviewFiltersProps) {
+export function PendingReviewFilters({
+  axes,
+  scope,
+  view,
+  basePath,
+}: PendingReviewFiltersProps) {
   return (
     <section aria-label="Filtros de revisión" className="space-y-3">
       <AxisRow
@@ -38,21 +46,21 @@ export function PendingReviewFilters({ axes, scope, view }: PendingReviewFilters
         values={PURCHASE_AXIS_VALUES}
         labels={PURCHASE_AXIS_LABELS}
         active={axes.purchase}
-        hrefFor={(value) => reviewHref({ scope, view, axes: { ...axes, purchase: value } })}
+        hrefFor={(value) => reviewHref({ scope, view, basePath, axes: { ...axes, purchase: value } })}
       />
       <AxisRow
         legend="Disponibilidad"
         values={AVAILABILITY_AXIS_VALUES}
         labels={AVAILABILITY_AXIS_LABELS}
         active={axes.availability}
-        hrefFor={(value) => reviewHref({ scope, view, axes: { ...axes, availability: value } })}
+        hrefFor={(value) => reviewHref({ scope, view, basePath, axes: { ...axes, availability: value } })}
       />
       <AxisRow
         legend="Cliente"
         values={CUSTOMER_AXIS_VALUES}
         labels={CUSTOMER_AXIS_LABELS}
         active={axes.customer}
-        hrefFor={(value) => reviewHref({ scope, view, axes: { ...axes, customer: value } })}
+        hrefFor={(value) => reviewHref({ scope, view, basePath, axes: { ...axes, customer: value } })}
       />
 
       {/* Salida visible: con tres ejes es fácil terminar en una lista vacía sin
@@ -60,7 +68,7 @@ export function PendingReviewFilters({ axes, scope, view }: PendingReviewFilters
           la vista, no depender de que alguien edite la URL. */}
       {hasActiveAxis(axes) ? (
         <Link
-          href={reviewHref({ scope, view, axes: {} })}
+          href={reviewHref({ scope, view, basePath, axes: {} })}
           className="inline-flex min-h-11 items-center text-sm font-semibold text-primary underline underline-offset-4"
         >
           Quitar filtros

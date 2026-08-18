@@ -118,3 +118,40 @@ describe("etiquetas", () => {
     expect(PURCHASE_AXIS_LABELS.POR_PEDIR).toBe("Por pedir");
   });
 });
+
+describe("reviewHref · ruta base", () => {
+  // El default tiene que seguir siendo `/pendientes`: agregar el parámetro no
+  // puede cambiarle la navegación a la pantalla que ya existía.
+  it("sin ruta base sigue apuntando a /pendientes", () => {
+    expect(reviewHref({ scope: "active", view: "lista", axes: {} })).toBe("/pendientes");
+    expect(
+      reviewHref({ scope: "active", view: "lista", axes: { purchase: "SOLICITADO" } }),
+    ).toBe("/pendientes?purchase=SOLICITADO");
+  });
+
+  it("con ruta base arma el enlace sobre ella, con y sin filtros", () => {
+    expect(
+      reviewHref({ scope: "active", view: "lista", axes: {}, basePath: "/revision-pendientes" }),
+    ).toBe("/revision-pendientes");
+    expect(
+      reviewHref({
+        scope: "active",
+        view: "lista",
+        axes: { purchase: "SOLICITADO" },
+        basePath: "/revision-pendientes",
+      }),
+    ).toBe("/revision-pendientes?purchase=SOLICITADO");
+  });
+
+  it("la paginación también respeta la ruta base", () => {
+    expect(
+      reviewPageHref({
+        scope: "active",
+        view: "detalle",
+        axes: {},
+        basePath: "/revision-pendientes",
+        cursor: "abc",
+      }),
+    ).toBe("/revision-pendientes?cursor=abc&view=detalle");
+  });
+});

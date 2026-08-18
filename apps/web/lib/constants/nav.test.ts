@@ -22,11 +22,14 @@ describe("visibleNavItems", () => {
     expect(operador).not.toContain("Auditoría");
   });
 
-  it("OPERADOR ve exactamente los cinco items operativos", () => {
+  it("OPERADOR ve exactamente los seis items operativos", () => {
     expect(labels("OPERADOR")).toEqual([
       "Dashboard",
       "Pendientes",
       "Faltantes",
+      // Agregado por T4.2b·A: el vendedor revisa pendientes, acotado a los
+      // suyos. No se quitó ninguno de los anteriores.
+      "Revisión de pendientes",
       "Entradas",
       "Productos",
     ]);
@@ -38,6 +41,8 @@ describe("visibleNavItems", () => {
       "Dashboard",
       "Pendientes",
       "Faltantes",
+      // Agregado por T4.2b·A. No se quitó ninguno de los anteriores.
+      "Revisión de pendientes",
       "Entradas",
       "Productos",
     ]);
@@ -66,6 +71,39 @@ describe("visibleNavItems · revisión de reportes", () => {
   it("no ocupa un lugar en la barra inferior móvil", () => {
     const item = visibleNavItems("ADMIN").find(
       (navItem) => navItem.href === "/revision-faltantes",
+    );
+    expect(item).toBeDefined();
+    expect(item?.primaryMobile).toBeUndefined();
+  });
+});
+
+describe("visibleNavItems · revisión de pendientes", () => {
+  // A diferencia de la revisión de faltantes —que es solo de gerencia—, ésta la
+  // usa TODO el que ya trabaja con pendientes: el vendedor revisa y gestiona los
+  // suyos, gerencia los de todos. El módulo es el mismo; el recorte lo hace
+  // `ownerId` en la capa de datos, no una pantalla distinta.
+  it("la ven los roles que trabajan pendientes", () => {
+    for (const role of ["SUPERADMIN", "ADMIN", "SUPERVISOR", "OPERADOR"] as const) {
+      expect(labels(role)).toContain("Revisión de pendientes");
+    }
+  });
+
+  // BODEGA es recepción física: deliberadamente sin pendientes ni datos de
+  // cliente. Ojo al aseverar: buscar "BODEGA" en texto suelto da falso positivo
+  // porque aparece dentro de LLEGO_BODEGA, un valor del eje de disponibilidad.
+  it("BODEGA no la ve", () => {
+    expect(labels("BODEGA")).not.toContain("Revisión de pendientes");
+  });
+
+  it("sin sesión no aparece", () => {
+    expect(labels(null)).not.toContain("Revisión de pendientes");
+  });
+
+  // Misma regla que la revisión de faltantes: la barra inferior del celular es
+  // del flujo operativo y una vista de revisión no debe robarle un lugar.
+  it("no ocupa un lugar en la barra inferior móvil", () => {
+    const item = visibleNavItems("ADMIN").find(
+      (navItem) => navItem.href === "/revision-pendientes",
     );
     expect(item).toBeDefined();
     expect(item?.primaryMobile).toBeUndefined();

@@ -2,6 +2,7 @@ import {
   LayoutDashboard,
   Package,
   ClipboardList,
+  ClipboardCheck,
   PackageX,
   PackagePlus,
   BarChart3,
@@ -34,6 +35,10 @@ export const NAV_ITEMS: readonly NavItem[] = [
   // Sin `primaryMobile`: es una vista de gerencia, no debe ocupar un lugar en
   // la barra inferior del celular del vendedor.
   { label: "Revisión de faltantes", href: "/revision-faltantes", icon: Inbox, capability: "canReviewMissingReports" },
+  // Va pegado al de faltantes porque son las dos superficies de revisión, y
+  // tampoco ocupa lugar en la barra móvil. La diferencia con el de arriba es a
+  // quién alcanza: esta la ve también el vendedor, acotada a sus propias filas.
+  { label: "Revisión de pendientes", href: "/revision-pendientes", icon: ClipboardCheck, capability: "canReviewPendings" },
   { label: "Entradas", href: "/entradas", icon: PackagePlus, primaryMobile: true, capability: "canViewEntradas" },
   { label: "Productos", href: "/productos", icon: Package, capability: "canViewProductos" },
   { label: "Reportes", href: "/reportes", icon: BarChart3, capability: "canViewReports" },

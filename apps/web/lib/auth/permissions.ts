@@ -216,6 +216,13 @@ export const CAPABILITIES = [
   "canManageAllPendings",
   "canContactOwnPendings",
   "canInvoiceOwnPendings",
+  // Gatea el MÓDULO de revisión de pendientes. A diferencia de
+  // `canReviewMissingReports` —que es solo de gerencia porque decidir qué se
+  // compra lo es—, revisar pendientes lo hace todo el que ya trabaja con ellos:
+  // el vendedor sobre los suyos, gerencia sobre los de todos. El módulo es el
+  // mismo; quién ve qué lo decide `ownerId` en la capa de datos, no una
+  // pantalla distinta ni esta capacidad.
+  "canReviewPendings",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -246,6 +253,7 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     "canManageAllPendings",
     "canDeliverPendings",
     "canCancelPendings",
+    "canReviewPendings",
   ],
   OPERADOR: [
     "canViewDashboard",
@@ -263,6 +271,7 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     // recibe él. El alcance lo pone `canManageAllPendings`, que el vendedor no
     // tiene: el service rechaza cualquier pendiente ajeno.
     "canCancelPendings",
+    "canReviewPendings",
   ],
   // Recepción física: deliberadamente sin pendientes, PII ni acciones comerciales.
   BODEGA: ["canViewEntradas", "canViewProductos", "canCreateEntries"],
