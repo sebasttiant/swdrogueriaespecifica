@@ -126,6 +126,11 @@ type ReviewView = {
   scope: "active" | "history";
   view: "lista" | "detalle";
   axes: ReviewAxes;
+  // Sobre qué ruta se arma el enlace. Por defecto `/pendientes`, que es donde
+  // nacieron estos filtros. El módulo de revisión pasa la suya: sin esto, cada
+  // filtro devolvía al usuario a la cola operativa y lo expulsaba del módulo
+  // en el primer clic.
+  basePath?: string;
 };
 
 function buildHref(params: ReviewView, cursor: string | null): string {
@@ -138,5 +143,6 @@ function buildHref(params: ReviewView, cursor: string | null): string {
   if (params.axes.customer) query.set("customer", params.axes.customer);
 
   const search = query.toString();
-  return search ? `/pendientes?${search}` : "/pendientes";
+  const basePath = params.basePath ?? "/pendientes";
+  return search ? `${basePath}?${search}` : basePath;
 }

@@ -14,6 +14,11 @@ export const metadata: Metadata = { title: "Revisión de pendientes" };
 // Cola operativa en vivo: nunca cachear.
 export const dynamic = "force-dynamic";
 
+// Los enlaces de filtro y de paginación se arman sobre ESTA ruta. El default de
+// `reviewHref` es `/pendientes`: sin pasar esto, el primer clic en un filtro
+// sacaba al usuario del módulo y lo dejaba en la cola operativa.
+const BASE_PATH = "/revision-pendientes";
+
 // Módulo de revisión de pendientes.
 //
 // Vive en su propia ruta, separada de `/pendientes`, por la misma razón que
@@ -88,7 +93,12 @@ export default async function RevisionPendientesPage({
         }
       />
 
-      <PendingReviewFilters axes={axes} scope={scope} view="detalle" />
+      <PendingReviewFilters
+        axes={axes}
+        scope={scope}
+        view="detalle"
+        basePath={BASE_PATH}
+      />
 
       <PendingList
         items={pendings.items}
@@ -99,7 +109,7 @@ export default async function RevisionPendientesPage({
         canContactOrInvoice={canContactOrInvoice}
         scope={scope}
         pageHref={(nextCursor) =>
-          reviewPageHref({ scope, view: "detalle", axes, cursor: nextCursor })
+          reviewPageHref({ scope, view: "detalle", axes, basePath: BASE_PATH, cursor: nextCursor })
         }
       />
     </div>

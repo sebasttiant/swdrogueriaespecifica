@@ -118,6 +118,19 @@ describe("RevisionPendientesPage · ejes de revisión", () => {
     expect(html).toContain("Cliente");
   });
 
+  // Regresión: `reviewHref` arma los enlaces sobre `/pendientes` por defecto.
+  // Sin pasarle la ruta de este módulo, el primer clic en cualquier filtro
+  // expulsaba al usuario a la cola operativa. Aseverar que los ejes SE PINTAN
+  // no alcanzaba: hay que aseverar A DÓNDE APUNTAN.
+  it("los filtros apuntan a este módulo, no devuelven a la cola operativa", async () => {
+    const element = await RevisionPendientesPage({ searchParams: searchParams() });
+    const html = renderToStaticMarkup(element);
+
+    expect(html).toContain('href="/revision-pendientes?');
+    expect(html).not.toContain('href="/pendientes?');
+    expect(html).not.toContain('href="/pendientes"');
+  });
+
   it("reenvía un eje de la URL a la consulta, no lo filtra en la pantalla", async () => {
     await RevisionPendientesPage({
       searchParams: searchParams({ purchase: "SOLICITADO" }),
