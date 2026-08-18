@@ -252,7 +252,8 @@ export async function claimableStockForPending(
 
   const physical = await stockByProduct(productId, now, client);
   const committed = await client.pending.aggregate({
-    where: { productId, status: { notIn: ["ENTREGADO", "CANCELADO"] } },
+    // T2.2b: un cierre parcial es terminal y no compromete stock.
+    where: { productId, status: { notIn: ["ENTREGADO", "CANCELADO", "CLOSED_PARTIAL"] } },
     _sum: { inventoryReadyQuantity: true },
   });
 

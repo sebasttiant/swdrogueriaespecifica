@@ -85,6 +85,10 @@ function isTerminal(item: PendingListItem): boolean {
   return (
     item.status === "ENTREGADO" ||
     item.status === "CANCELADO" ||
+    // T2.2b: el cierre parcial es terminal. También lo cubre customerStatus
+    // ENTREGADO, pero enumerarlo acá deja la regla explícita y a prueba de
+    // futuros cambios en el eje comercial.
+    item.status === "CLOSED_PARTIAL" ||
     item.customerStatus === "ENTREGADO" ||
     item.customerStatus === "CANCELADO"
   );
@@ -97,6 +101,12 @@ function isTerminal(item: PendingListItem): boolean {
 // agotado) es otro eje y viaja aparte, en `purchaseNote`: es información para
 // el vendedor mientras su pendiente sigue pendiente, no el estado del pedido.
 function lifecycleLabel(item: PendingListItem): { label: string; tone: "neutral" | "primary" | "success" | "danger" } {
+  // T2.2b: ANTES del chequeo de customerStatus — un cierre parcial tiene
+  // customerStatus ENTREGADO, pero rotularlo "Entregado" mentiría en el
+  // historial: no se entregó todo.
+  if (item.status === "CLOSED_PARTIAL") {
+    return { label: "Cerrado parcial", tone: "danger" };
+  }
   if (item.customerStatus === "ENTREGADO" || item.status === "ENTREGADO") {
     return { label: "Entregado", tone: "success" };
   }

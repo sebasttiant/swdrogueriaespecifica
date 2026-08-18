@@ -471,7 +471,8 @@ export async function markMissingItemArrived(
       where: {
         id: arrived.originId,
         availabilityStatus: "ESPERANDO",
-        status: { notIn: ["ENTREGADO", "CANCELADO"] },
+        // T2.2b: un cierre parcial es terminal; no resucitar a LLEGO_BODEGA.
+        status: { notIn: ["ENTREGADO", "CANCELADO", "CLOSED_PARTIAL"] },
       },
       data: { availabilityStatus: "LLEGO_BODEGA" },
     });

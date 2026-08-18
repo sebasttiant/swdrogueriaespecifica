@@ -27,4 +27,11 @@ describe("computeDeadlineStatus", () => {
     expect(computeDeadlineStatus(overdue, "ENTREGADO", now)).toBe("FINALIZADO");
     expect(computeDeadlineStatus(overdue, "CANCELADO", now)).toBe("FINALIZADO");
   });
+
+  // T2.2b: el cierre parcial es tan terminal como los otros dos: ya no hay
+  // nada operativo que vigilar, aunque la promesa esté vencida.
+  it("finalizado: CLOSED_PARTIAL ignora la promesa", () => {
+    const overdue = new Date("2026-06-06T08:00:00");
+    expect(computeDeadlineStatus(overdue, "CLOSED_PARTIAL", now)).toBe("FINALIZADO");
+  });
 });

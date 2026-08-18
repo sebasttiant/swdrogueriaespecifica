@@ -981,7 +981,11 @@ describe("resolvePartialPending", () => {
     });
   });
 
-  it("si no los espera, cierra como ENTREGADO y libera la necesidad de compra", async () => {
+  // T2.2b (actualización intencional): antes de la ecuación terminal este test
+  // esperaba status ENTREGADO — el cierre parcial se disfrazaba de entrega
+  // completa y la única huella de lo no entregado era texto en cancelReason.
+  // Ahora espera el estado propio y la cantidad cancelada.
+  it("si no los espera, cierra como CLOSED_PARTIAL y libera la necesidad de compra", async () => {
     mockLockedPending(pendingForDelivery({ status: "PARCIAL", quantity: 5, deliveredQuantity: 3 }));
     mockCasWrote(1);
 
@@ -991,7 +995,12 @@ describe("resolvePartialPending", () => {
 
     expect(tx.pending.updateMany).toHaveBeenCalledWith({
       where: { id: "pend-1", status: "PARCIAL" },
-      data: expect.objectContaining({ status: "ENTREGADO", customerStatus: "ENTREGADO" }),
+      data: expect.objectContaining({
+        status: "CLOSED_PARTIAL",
+        customerStatus: "ENTREGADO",
+        // 5 pedidos, 3 entregados => 2 cancelados: la ecuación cierra.
+        cancelledQuantity: 2,
+      }),
     });
     expect(tx.missingItem.updateMany).toHaveBeenCalledWith({
       where: { originId: "pend-1", status: { in: ["FALTANTE", "PEDIDO", "EN_BODEGA"] } },
@@ -1014,6 +1023,78 @@ describe("resolvePartialPending", () => {
       resolvePartialPending({ id: "pend-1", decision: "espera", actorId: "op-1" }, now),
     ).resolves.toBe("NOT_OWNER");
     expect(tx.pending.update).not.toHaveBeenCalled();
+  });
+});
+
+// --------------------------------------------------------------------------
+// T2.2b — Ecuación terminal del cierre parcial.
+//
+// Hoy un pendiente de 10 del que salieron 3 y cuyo resto el cliente no espera
+// se cierra como ENTREGADO. La base afirma que se entregó, y lo único que dice
+// que faltaron 7 es un texto libre en `cancelReason`.
+//
+// Eso no es un detalle cosmético: cualquier lectura que cuente entregados —la
+// revisión de pendientes, los reportes, la conciliación— cuenta 10 donde
+// salieron 3. El spec pide un estado propio y la ecuación cerrada:
+//
+//   CLOSED_PARTIAL  ⟺  delivered > 0 ∧ cancelled > 0 ∧ delivered + cancelled = requested
+// --------------------------------------------------------------------------
+describe("resolvePartialPending · ecuación terminal (T2.2b)", () => {
+  const now = new Date("2026-08-18T12:00:00.000Z");
+
+  it("cierra como CLOSED_PARTIAL, no como ENTREGADO", async () => {
+    mockLockedPending(pendingForDelivery({ status: "PARCIAL", deliveredQuantity: 3 }));
+    mockCasWrote(1);
+
+    await resolvePartialPending({ id: "pend-1", decision: "cerrar", actorId: "op-1" }, now);
+
+    expect(tx.pending.updateMany).toHaveBeenCalledWith({
+      where: { id: "pend-1", status: "PARCIAL" },
+      data: expect.objectContaining({ status: "CLOSED_PARTIAL" }),
+    });
+  });
+
+  it("registra en cancelledQuantity lo que NO se entregó", async () => {
+    mockLockedPending(pendingForDelivery({ status: "PARCIAL", deliveredQuantity: 3 }));
+    mockCasWrote(1);
+
+    await resolvePartialPending({ id: "pend-1", decision: "cerrar", actorId: "op-1" }, now);
+
+    expect(tx.pending.updateMany).toHaveBeenCalledWith({
+      where: { id: "pend-1", status: "PARCIAL" },
+      // 10 pedidos, 3 entregados => 7 cancelados.
+      data: expect.objectContaining({ cancelledQuantity: 7 }),
+    });
+  });
+
+  // La invariante del spec, aseverada como ecuación y no como dos números
+  // sueltos: es la propiedad que tiene que valer, no el caso particular.
+  it("la ecuación cierra: entregado + cancelado = pedido", async () => {
+    const pedido = 10;
+    const entregado = 3;
+    mockLockedPending(
+      pendingForDelivery({ status: "PARCIAL", quantity: pedido, deliveredQuantity: entregado }),
+    );
+    mockCasWrote(1);
+
+    await resolvePartialPending({ id: "pend-1", decision: "cerrar", actorId: "op-1" }, now);
+
+    const written = tx.pending.updateMany.mock.calls.at(-1)?.[0]?.data as {
+      cancelledQuantity?: number;
+    };
+    expect(entregado + (written?.cancelledQuantity ?? 0)).toBe(pedido);
+  });
+
+  // Un cierre sin ninguna entrega es una cancelación, no un cierre parcial, y
+  // ya lo rechaza `NOT_PARTIAL`. Este test fija que el estado nuevo NUNCA se
+  // use con entregado en cero: `CLOSED_PARTIAL` exige `delivered > 0`.
+  it("no llega a CLOSED_PARTIAL sin ninguna entrega", async () => {
+    mockLockedPending(pendingForDelivery({ status: "PENDIENTE", deliveredQuantity: 0 }));
+
+    await expect(
+      resolvePartialPending({ id: "pend-1", decision: "cerrar", actorId: "op-1" }, now),
+    ).resolves.toBe("NOT_PARTIAL");
+    expect(tx.pending.updateMany).not.toHaveBeenCalled();
   });
 });
 

@@ -335,8 +335,9 @@ describe("pendingManagementStatusSchema", () => {
   });
 
   // No se puede forzar un estado del ciclo de entrega por esta vía.
+  // CLOSED_PARTIAL (T2.2b) también es del ciclo de entrega, no de gestión.
   it("rechaza estados que no son de gestión", () => {
-    for (const status of ["PENDIENTE", "PARCIAL", "ENTREGADO", "CANCELADO"]) {
+    for (const status of ["PENDIENTE", "PARCIAL", "ENTREGADO", "CANCELADO", "CLOSED_PARTIAL"]) {
       const result = pendingManagementStatusSchema.safeParse({ id: "pend-1", status });
       expect(result.success).toBe(false);
     }

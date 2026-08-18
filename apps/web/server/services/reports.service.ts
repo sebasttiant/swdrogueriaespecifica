@@ -148,6 +148,8 @@ const PENDING_STATUS_ORDER: PendingStatus[] = [
   "AGOTADO",
   "ENTREGADO",
   "CANCELADO",
+  // T2.2b: el cierre parcial se reporta como terminal, junto a los demás.
+  "CLOSED_PARTIAL",
 ];
 const PENDING_STATUS_LABEL: Record<PendingStatus, string> = {
   PENDIENTE: "Pendiente",
@@ -158,6 +160,7 @@ const PENDING_STATUS_LABEL: Record<PendingStatus, string> = {
   AGOTADO: "Agotado",
   ENTREGADO: "Entregado",
   CANCELADO: "Cancelado",
+  CLOSED_PARTIAL: "Cerrado parcial",
 };
 const MISSING_STATUS_ORDER: MissingItemStatus[] = [
   "FALTANTE",

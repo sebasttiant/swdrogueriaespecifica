@@ -38,7 +38,14 @@ export default async function EditarPendientePage({
     canManageAll,
   });
   if (!pending) notFound();
-  if (pending.status === "ENTREGADO" || pending.status === "CANCELADO") notFound();
+  // T2.2b: el cierre parcial es terminal — corregir un pedido que el cliente ya
+  // cerró en el mostrador no tiene sentido (el server lo rechaza igual).
+  if (
+    pending.status === "ENTREGADO" ||
+    pending.status === "CANCELADO" ||
+    pending.status === "CLOSED_PARTIAL"
+  )
+    notFound();
   // El vendedor ya usó su única corrección: el formulario no se le vuelve a
   // ofrecer. La Server Action lo rechaza igual; esto solo evita mostrarle algo
   // que no va a poder guardar.

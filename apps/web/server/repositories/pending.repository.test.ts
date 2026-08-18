@@ -210,6 +210,8 @@ describe("countUpcomingPendings", () => {
 
     const call = prismaMock.pending.count.mock.calls[0]![0];
     expect(call.where.status.in).not.toContain("ENTREGADO");
+    // T2.2b: el cierre parcial también es terminal: no debe generar urgencia.
+    expect(call.where.status.in).not.toContain("CLOSED_PARTIAL");
   });
 
   it("works without a now argument", async () => {
@@ -248,11 +250,13 @@ describe("listPendings · scope", () => {
     });
   });
 
+  // T2.2b (actualización intencional): el cierre parcial es terminal y su lugar
+  // está en el historial, junto a entregados y cancelados.
   it("filtra el historial a estados cerrados", async () => {
     await listPendings({ scope: "history" });
 
     const args = prismaMock.pending.findMany.mock.calls[0]![0];
-    expect(args.where).toEqual({ status: { in: ["ENTREGADO", "CANCELADO"] } });
+    expect(args.where).toEqual({ status: { in: ["ENTREGADO", "CANCELADO", "CLOSED_PARTIAL"] } });
   });
 });
 
@@ -427,8 +431,10 @@ describe("updatePendingManagementStatus", () => {
     });
 
     expect(written).toBe(1);
+    // T2.2b (actualización intencional): el cierre parcial es terminal y no
+    // admite gestión, igual que entregado/cancelado.
     expect(prismaMock.pending.updateMany).toHaveBeenCalledWith({
-      where: { id: "pend-1", status: { notIn: ["ENTREGADO", "CANCELADO"] }, purchaseStatus: undefined },
+      where: { id: "pend-1", status: { notIn: ["ENTREGADO", "CANCELADO", "CLOSED_PARTIAL"] }, purchaseStatus: undefined },
       data: { purchaseStatus: "SOLICITADO" },
     });
   });
@@ -443,7 +449,8 @@ describe("updatePendingManagementStatus", () => {
     });
 
     expect(prismaMock.pending.updateMany).toHaveBeenCalledWith({
-      where: { id: "pend-1", status: { notIn: ["ENTREGADO", "CANCELADO"] }, purchaseStatus: "POR_PEDIR" },
+      // T2.2b (actualización intencional): mismo CAS ampliado que el test de arriba.
+      where: { id: "pend-1", status: { notIn: ["ENTREGADO", "CANCELADO", "CLOSED_PARTIAL"] }, purchaseStatus: "POR_PEDIR" },
       data: { purchaseStatus: "SOLICITADO" },
     });
   });

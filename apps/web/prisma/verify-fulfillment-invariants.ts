@@ -118,7 +118,7 @@ async function main() {
   // El compromiso vive en el pendiente, no en el lote: es lo que permite saber
   // cuánto del stock ya tiene dueño sin alterar el conteo de la estantería.
   const committed = await prisma.pending.aggregate({
-    where: { productId: product.id, status: { notIn: ["ENTREGADO", "CANCELADO"] } },
+    where: { productId: product.id, status: { notIn: ["ENTREGADO", "CANCELADO", "CLOSED_PARTIAL"] } },
     _sum: { inventoryReadyQuantity: true },
   });
   assert(
@@ -274,9 +274,12 @@ async function main() {
     })) === null,
     "si no los espera, se cierra con lo entregado",
   );
+  // T2.2b: el cierre parcial tiene estado propio; la ecuación cierra con lo
+  // que el cliente ya no espera (5 pedidos, 3 entregados, 2 cancelados).
   const cerrado = await prisma.pending.findUniqueOrThrow({ where: { id: sinStock.pending.id } });
-  assert(cerrado.status === "ENTREGADO", "queda entregado, no cancelado: hubo entrega");
+  assert(cerrado.status === "CLOSED_PARTIAL", "cierra parcial, no cancelado: hubo entrega");
   assert(cerrado.deliveredQuantity === 3, "se cierra con las 3 que realmente recibió");
+  assert(cerrado.cancelledQuantity === 2, "registra los 2 que el cliente no espera");
 
   console.log("\nEscenario: corregir un pendiente");
   const { updatePending } = await import("@/server/services/pending.service");
