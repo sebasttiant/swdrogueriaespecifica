@@ -142,6 +142,11 @@ export function PendingList({
         const showManagement =
           canManageStatus && canSetManagementStatus(pending.purchaseStatus ?? pending.status);
         const showDeliverCancel = isOpen && (canDeliver || canCancel);
+        // T4.3: evidencia de cierre para el historial. `closedAt` es la fecha de
+        // cierre (última entrega, o la de cierre cuando no hay entregas); se
+        // calcula aparte para que el guard del render afine el tipo.
+        const lastDelivery = pending.deliveries?.at(-1) ?? null;
+        const closedAt = lastDelivery?.deliveredAt ?? pending.completedAt ?? null;
         // Filas previas a las columnas nuevas conservan su render histórico; las
         // filas nuevas siempre traen customerStatus y exigen FACTURADO.
         const canDeliverNow = canDeliver && (pending.customerStatus === "FACTURADO" || pending.customerStatus === undefined);
@@ -194,6 +199,30 @@ export function PendingList({
                     unit: pending.product.unit,
                   })}
                 </p>
+                {/* T4.3: el historial audita CÓMO se cerró, no solo que se
+                    cerró. Un ENTREGADO dice quién entregó y cuándo; un
+                    CANCELADO, quién, cuándo y el motivo; un cierre parcial, la
+                    fecha. Los registros anteriores a estas columnas no tienen
+                    el dato y no muestran la línea: no se inventa la historia. */}
+                {scope === "history" && pending.status === "ENTREGADO" && closedAt && (
+                  <p className="text-sm text-muted-foreground">
+                    Entregado por{" "}
+                    {lastDelivery?.deliveredBy?.name ?? pending.createdBy?.name ?? "…"} el{" "}
+                    {formatBogotaDate(closedAt, { style: "datetime" })}
+                  </p>
+                )}
+                {scope === "history" && pending.status === "CANCELADO" && pending.cancelledAt && (
+                  <p className="text-sm text-muted-foreground">
+                    Cancelado por {pending.cancelledBy?.name ?? pending.createdBy?.name ?? "…"} el{" "}
+                    {formatBogotaDate(pending.cancelledAt, { style: "datetime" })}
+                    {pending.cancelReason ? ` · ${pending.cancelReason}` : ""}
+                  </p>
+                )}
+                {scope === "history" && pending.status === "CLOSED_PARTIAL" && pending.completedAt && (
+                  <p className="text-sm text-muted-foreground">
+                    Cerrado el {formatBogotaDate(pending.completedAt, { style: "datetime" })}
+                  </p>
+                )}
                 {/* Quién lo anotó: gerencia lo necesita para saber a nombre de
                     quién va la venta y quién factura. */}
                 {pending.createdBy ? (

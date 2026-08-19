@@ -260,6 +260,48 @@ describe("listPendings · scope", () => {
   });
 });
 
+describe("listPendings · evidencia de cierre en el historial (T4.3)", () => {
+  // El historial no es solo "qué se cerró": es la auditoría de CÓMO se cerró.
+  // Un ENTREGADO en history tiene que poder decir quién entregó y cuándo; un
+  // CANCELADO, quién lo canceló, cuándo y por qué. Sin estas columnas la vista
+  // de historial muestra un estado sin historia.
+  it("selecciona completedAt y cancelledAt para fechar el cierre", async () => {
+    await listPendings({ scope: "history" });
+
+    const args = prismaMock.pending.findMany.mock.calls[0]![0];
+    expect(args.select.completedAt).toBe(true);
+    expect(args.select.cancelledAt).toBe(true);
+  });
+
+  // Mismo criterio de minimización que las demás atribuciones (creado/entregado/
+  // descartado): SOLO id y nombre, nunca email, rol ni credenciales.
+  it("selecciona quién canceló, limitado a id y nombre, y el motivo", async () => {
+    await listPendings({ scope: "history" });
+
+    const args = prismaMock.pending.findMany.mock.calls[0]![0];
+    expect(args.select.cancelledBy).toEqual({ select: { id: true, name: true } });
+    expect(args.select.cancelReason).toBe(true);
+  });
+
+  // Las entregas son la auditoría del ENTREGADO: cada fila dice qué cantidad,
+  // quién la entregó y cuándo. Sin el join, history solo sabe que "se entregó
+  // algo", no la trazabilidad completa.
+  it("selecciona las entregas con quién, cuándo y cantidad", async () => {
+    await listPendings({ scope: "history" });
+
+    const args = prismaMock.pending.findMany.mock.calls[0]![0];
+    expect(args.select.deliveries).toEqual({
+      select: {
+        id: true,
+        quantity: true,
+        deliveredAt: true,
+        deliveredBy: { select: { id: true, name: true } },
+      },
+      orderBy: { deliveredAt: "asc" },
+    });
+  });
+});
+
 describe("listPendings · ejes de revisión", () => {
   it("no agrega condiciones cuando no se pide ningún eje", async () => {
     await listPendings({ axes: {} });

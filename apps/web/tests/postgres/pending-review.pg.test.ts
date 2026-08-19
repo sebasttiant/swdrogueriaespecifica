@@ -40,6 +40,9 @@ beforeAll(async () => {
 });
 
 afterEach(async () => {
+  // Las entregas tienen onDelete Restrict: hay que limpiarlas ANTES que los
+  // pendientes, o el deleteMany de abajo falla por la clave foránea.
+  await prisma.pendingDelivery.deleteMany({ where: { pending: { productId } } });
   await prisma.pending.deleteMany({ where: { productId } });
 });
 
@@ -189,5 +192,124 @@ describe("listPendings con filtros de eje", () => {
     // El POR_PEDIR nunca aparece: el filtro vale en todas las páginas, no solo
     // en la primera.
     expect(pagina2.nextCursor).toBeNull();
+  });
+});
+
+describe("listPendings · historial: pertenencia terminal y evidencia de cierre (T4.3)", () => {
+  // La cola ACTIVA no puede devolver un terminal: un ENTREGADO ya no se trabaja
+  // y, si aparece, empuja los abiertos detrás de la paginación. Y en el
+  // historial cada terminal aparece EXACTAMENTE una vez.
+  it("la cola activa no devuelve un pendiente entregado completo", async () => {
+    const id = await newPending({});
+    await prisma.pending.update({
+      where: { id },
+      data: {
+        status: "ENTREGADO",
+        deliveredQuantity: 1,
+        invoicedQuantity: 1,
+        completedAt: new Date("2026-08-01T10:00:00Z"),
+      },
+    });
+
+    const active = await listPendings({});
+    expect(active.items.map((item) => item.id)).not.toContain(id);
+
+    const history = await listPendings({ scope: "history" });
+    expect(history.items.map((item) => item.id)).toContain(id);
+  });
+
+  it("historial: cada terminal aparece exactamente una vez", async () => {
+    const entregado = await newPending({});
+    const cancelado = await newPending({});
+    const parcial = await newPending({});
+
+    await prisma.pending.update({
+      where: { id: entregado },
+      data: {
+        status: "ENTREGADO",
+        deliveredQuantity: 1,
+        invoicedQuantity: 1,
+        completedAt: new Date("2026-08-01T10:00:00Z"),
+      },
+    });
+    await prisma.pending.update({
+      where: { id: cancelado },
+      data: { status: "CANCELADO", cancelledAt: new Date("2026-08-02T10:00:00Z") },
+    });
+    await prisma.pending.update({
+      where: { id: parcial },
+      data: {
+        status: "CLOSED_PARTIAL",
+        deliveredQuantity: 1,
+        invoicedQuantity: 1,
+        cancelledQuantity: 0,
+        completedAt: new Date("2026-08-03T10:00:00Z"),
+      },
+    });
+
+    const history = await listPendings({ scope: "history" });
+    const ids = history.items.map((item) => item.id);
+    expect(ids.filter((i) => i === entregado)).toHaveLength(1);
+    expect(ids.filter((i) => i === cancelado)).toHaveLength(1);
+    expect(ids.filter((i) => i === parcial)).toHaveLength(1);
+  });
+
+  it("historial: la fila cancelada trae autor, fecha y motivo", async () => {
+    const id = await newPending({});
+    const canceller = await prisma.user.create({
+      data: { email: `cancela-${randomUUID()}@test.local`, name: "Gerente" },
+    });
+    await prisma.pending.update({
+      where: { id },
+      data: {
+        status: "CANCELADO",
+        cancelledAt: new Date("2026-08-02T10:00:00Z"),
+        cancelledById: canceller.id,
+        cancelReason: "Cliente ya no lo necesita",
+      },
+    });
+
+    const history = await listPendings({ scope: "history" });
+    const row = history.items.find((i) => i.id === id);
+    expect(row).toBeDefined();
+    expect(row!.cancelledAt).toEqual(new Date("2026-08-02T10:00:00Z"));
+    expect(row!.cancelledBy).toEqual({ id: canceller.id, name: "Gerente" });
+    expect(row!.cancelReason).toBe("Cliente ya no lo necesita");
+  });
+
+  it("historial: la fila entregada trae las entregas con quién y cuándo", async () => {
+    const id = await newPending({});
+    const deliverer = await prisma.user.create({
+      data: { email: `entrega-${randomUUID()}@test.local`, name: "Vendedora" },
+    });
+    await prisma.pending.update({
+      where: { id },
+      data: {
+        status: "ENTREGADO",
+        deliveredQuantity: 1,
+        invoicedQuantity: 1,
+        completedAt: new Date("2026-08-01T10:00:00Z"),
+      },
+    });
+    await prisma.pendingDelivery.create({
+      data: {
+        pendingId: id,
+        quantity: 1,
+        deliveredAt: new Date("2026-08-01T10:00:00Z"),
+        deliveredById: deliverer.id,
+      },
+    });
+
+    const history = await listPendings({ scope: "history" });
+    const row = history.items.find((i) => i.id === id);
+    expect(row).toBeDefined();
+    expect(row!.completedAt).toEqual(new Date("2026-08-01T10:00:00Z"));
+    expect(row!.deliveries).toEqual([
+      expect.objectContaining({
+        quantity: 1,
+        deliveredAt: new Date("2026-08-01T10:00:00Z"),
+        deliveredBy: { id: deliverer.id, name: "Vendedora" },
+      }),
+    ]);
   });
 });
