@@ -28,7 +28,8 @@ const BASE_PATH = "/revision-pendientes";
 //
 // El módulo es UNO SOLO para todos los roles. Lo que cambia es el alcance, y no
 // lo decide esta pantalla: el vendedor recibe sus propias filas porque abajo va
-// `ownerId`, y gerencia no recibe recorte porque tiene `canManageAllPendings`.
+// `ownerId`, y quien ve la cola entera —por `canManageAllPendings` o por el eje
+// de lectura `canReadAllPendings` (T4.4)— no recibe recorte.
 // Dos pantallas distintas por rol habrían duplicado la lógica y, tarde o
 // temprano, se habrían desincronizado.
 //
@@ -48,10 +49,14 @@ export default async function RevisionPendientesPage({
   const session = await requireCapability("canReviewPendings");
 
   const canManageAll = can(session.user.role, "canManageAllPendings");
-  // Quien no gestiona todo recibe la lista acotada a sus propias filas, así que
-  // ve los datos de SUS clientes: son los que tiene que llamar. Ver los de todos
-  // es lo que exige la capacidad.
-  const canViewCustomerIdentity = canManageAll
+  // Eje de LECTURA global (T4.4): ver la cola entera ≠ mutarla. Un rol con
+  // `canReadAllPendings` pero sin `canManageAllPendings` vería todo sin poder
+  // operar nada ajeno; las acciones siguen gateando SOLO con la segunda.
+  const canSeeAll = canManageAll || can(session.user.role, "canReadAllPendings");
+  // Quien no ve toda la cola recibe la lista acotada a sus propias filas, así
+  // que ve los datos de SUS clientes: son los que tiene que llamar. Ver los de
+  // todos es lo que exige la capacidad.
+  const canViewCustomerIdentity = canSeeAll
     ? can(session.user.role, "canViewCustomerIdentity")
     : true;
   const canDeliver = can(session.user.role, "canDeliverPendings");
@@ -79,7 +84,7 @@ export default async function RevisionPendientesPage({
     scope,
     axes,
     canViewCustomerIdentity,
-    ownerId: canManageAll ? undefined : session.user.id,
+    ownerId: canSeeAll ? undefined : session.user.id,
   });
 
   return (
@@ -87,7 +92,7 @@ export default async function RevisionPendientesPage({
       <PageHeader
         title="Revisión de pendientes"
         description={
-          canManageAll
+          canSeeAll
             ? "Cómo viene cada pendiente de la droguería: qué se está consiguiendo, qué llegó y qué falta avisar."
             : "Cómo vienen tus pendientes: qué se está consiguiendo, qué llegó y qué falta avisarle al cliente."
         }
