@@ -147,13 +147,13 @@ function OperationalAlertContent({
 
 // El aviso le habla al responsable, no a quien pase por ahí.
 //
-// Gerencia ve el estado de toda la droguería. El vendedor ve SOLO las entregas
-// que él prometió: un lote por vencer no lo resuelve él. Y quien no tiene
-// pendientes a cargo —bodega— no recibe nada. Antes esta barra le mostraba a
-// bodega "Próximas 1", que son entregas a clientes: trabajo ajeno convertido en
-// ruido, en la única pantalla que esa persona usa.
+// Gerencia y supervisión ven el estado de toda la droguería. El vendedor ve
+// SOLO las entregas que él prometió: un lote por vencer no lo resuelve él. La
+// bodega, desde que opera pendientes propios (T4.4), recibe el mismo recorte
+// por dueño que el vendedor: sus entregas, no las ajenas.
 function alertScopeFor(role: SessionRole, userId: string): AlertScope {
-  if (can(role, "canManageAllPendings")) return { kind: "global" };
+  if (can(role, "canManageAllPendings") || can(role, "canReadAllPendings"))
+    return { kind: "global" };
   if (can(role, "canViewPendientes")) return { kind: "owner", ownerId: userId };
   return { kind: "none" };
 }

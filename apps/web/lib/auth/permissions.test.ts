@@ -169,23 +169,25 @@ describe("capabilities · can()", () => {
     expect(can("OPERADOR", "canManageProducts")).toBe(false);
   });
 
-  it("canDeliverPendings: todos los roles operativos lo tienen", () => {
+  it("canDeliverPendings: todos los roles operativos + BODEGA lo tienen", () => {
     expect(can("SUPERADMIN", "canDeliverPendings")).toBe(true);
     expect(can("ADMIN", "canDeliverPendings")).toBe(true);
     expect(can("SUPERVISOR", "canDeliverPendings")).toBe(true);
     expect(can("OPERADOR", "canDeliverPendings")).toBe(true);
+    expect(can("BODEGA", "canDeliverPendings")).toBe(true);
   });
 
   // El vendedor cancela SU pendiente: el cliente que desiste lo llama a él. Lo
   // que lo limita no es la capacidad sino el alcance —`canManageAllPendings`,
   // que no tiene—, y el service rechaza cualquier pendiente ajeno.
-  it("canCancelPendings: la tiene el vendedor, pero solo sobre lo suyo", () => {
+  it("canCancelPendings: la tiene el vendedor y bodega, pero solo sobre lo suyo", () => {
     expect(can("SUPERADMIN", "canCancelPendings")).toBe(true);
     expect(can("ADMIN", "canCancelPendings")).toBe(true);
     expect(can("SUPERVISOR", "canCancelPendings")).toBe(true);
     expect(can("OPERADOR", "canCancelPendings")).toBe(true);
     expect(can("OPERADOR", "canManageAllPendings")).toBe(false);
-    expect(can("BODEGA", "canCancelPendings")).toBe(false);
+    expect(can("BODEGA", "canCancelPendings")).toBe(true);
+    expect(can("BODEGA", "canManageAllPendings")).toBe(false);
   });
 
   it("SUPERVISOR tiene capabilities operativas y puede confirmar faltantes", () => {
@@ -270,6 +272,7 @@ describe("canSubmitMissingReports (capability)", () => {
     expect(can("ADMIN", "canSubmitMissingReports")).toBe(true);
     expect(can("SUPERVISOR", "canSubmitMissingReports")).toBe(true);
     expect(can("OPERADOR", "canSubmitMissingReports")).toBe(true);
+    expect(can("BODEGA", "canSubmitMissingReports")).toBe(true);
   });
 
   it("does not grant operational roles management capabilities", () => {
@@ -303,7 +306,13 @@ describe("canReviewMissingReports (capability)", () => {
 
 describe("rolesWithCapability", () => {
   it("preserva el orden de USER_ROLES", () => {
-    expect(rolesWithCapability("canViewDashboard")).toEqual(["SUPERADMIN", "ADMIN", "SUPERVISOR", "OPERADOR"]);
+    expect(rolesWithCapability("canViewDashboard")).toEqual([
+      "SUPERADMIN",
+      "ADMIN",
+      "SUPERVISOR",
+      "OPERADOR",
+      "BODEGA",
+    ]);
   });
 
   it("canViewReports solo la tienen los administradores", () => {
@@ -329,16 +338,23 @@ describe("rolesWithCapability", () => {
     ]);
   });
 
-  it("canDeliverPendings excluye BODEGA", () => {
-    expect(rolesWithCapability("canDeliverPendings")).toEqual(["SUPERADMIN", "ADMIN", "SUPERVISOR", "OPERADOR"]);
+  it("canDeliverPendings llega a todos los roles operativos + BODEGA", () => {
+    expect(rolesWithCapability("canDeliverPendings")).toEqual([
+      "SUPERADMIN",
+      "ADMIN",
+      "SUPERVISOR",
+      "OPERADOR",
+      "BODEGA",
+    ]);
   });
 
-  it("canCancelPendings llega al vendedor; BODEGA queda afuera", () => {
+  it("canCancelPendings llega al vendedor y a bodega, sin alcance global", () => {
     expect(rolesWithCapability("canCancelPendings")).toEqual([
       "SUPERADMIN",
       "ADMIN",
       "SUPERVISOR",
       "OPERADOR",
+      "BODEGA",
     ]);
   });
 
@@ -370,19 +386,69 @@ describe("canManageAllPendings (alcance de la cola)", () => {
     expect(can("OPERADOR", "canInvoiceOwnPendings")).toBe(true);
     expect(can("OPERADOR", "canManageAllPendings")).toBe(false);
   });
+});
 
-  it("BODEGA no toca pendientes ni datos de clientes", () => {
+// --------------------------------------------------------------------------
+// Matriz BODEGA (T4.4). La bodega pasó de "solo catálogo" a operar a nivel
+// vendedor: registra su operación (entradas, pendientes propios, faltantes),
+// revisa su propia cola y ejecuta las acciones de cumplimiento sobre lo suyo.
+// Quedan afuera la PII del cliente, la cola ajena y la lectura global.
+// --------------------------------------------------------------------------
+describe("BODEGA (matriz de perfil)", () => {
+  it("opera a nivel vendedor: tiene las capacidades de alcance propio", () => {
     for (const capability of [
+      "canViewDashboard",
       "canViewPendientes",
+      "canViewFaltantes",
+      "canViewProductos",
+      "canViewEntradas",
+      "canCreateEntries",
       "canCreatePendientes",
-      "canManageAllPendings",
+      "canSubmitMissingReports",
       "canContactOwnPendings",
       "canInvoiceOwnPendings",
       "canDeliverPendings",
       "canCancelPendings",
+      "canReviewPendings",
+    ] as const) {
+      expect(can("BODEGA", capability)).toBe(true);
+    }
+  });
+
+  it("queda SIN exposición de PII, cola ajena ni lectura global", () => {
+    for (const capability of [
       "canViewCustomerIdentity",
+      "canManageAllPendings",
+      "canReadAllPendings",
     ] as const) {
       expect(can("BODEGA", capability)).toBe(false);
     }
+  });
+});
+
+// --------------------------------------------------------------------------
+// Eje de lectura global (T4.4). `canReadAllPendings` separa VER la cola entera
+// de MUTAR pendientes ajenos: las superficies de lectura usan
+// `canManageAllPendings || canReadAllPendings`, mientras que las acciones de
+// cumplimiento siguen gateando SOLO con `canManageAllPendings`.
+// --------------------------------------------------------------------------
+describe("canReadAllPendings (lectura global ≠ mutación)", () => {
+  it("la tienen administradores y supervisión, nunca vendedor ni bodega", () => {
+    expect(rolesWithCapability("canReadAllPendings")).toEqual([
+      "SUPERADMIN",
+      "ADMIN",
+      "SUPERVISOR",
+    ]);
+    expect(can("OPERADOR", "canReadAllPendings")).toBe(false);
+    expect(can("BODEGA", "canReadAllPendings")).toBe(false);
+  });
+
+  it("tener las acciones de vendedor NO otorga lectura global", () => {
+    // BODEGA puede entregar/cancelar/facturar/contactar (lo suyo) pero no lee
+    // la cola ajena: canReadAllPendings es un eje aparte de las acciones.
+    expect(can("BODEGA", "canDeliverPendings")).toBe(true);
+    expect(can("BODEGA", "canCancelPendings")).toBe(true);
+    expect(can("BODEGA", "canReadAllPendings")).toBe(false);
+    expect(can("BODEGA", "canManageAllPendings")).toBe(false);
   });
 });

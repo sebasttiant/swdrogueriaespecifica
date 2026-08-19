@@ -69,10 +69,14 @@ export default async function DashboardPage() {
   const session = await requireCapability("canViewDashboard");
   const canViewCustomerIdentity = can(session.user.role, "canViewCustomerIdentity");
   const canManageAll = can(session.user.role, "canManageAllPendings");
+  // Eje de LECTURA global (T4.4): ver la cola entera ≠ mutarla. Las métricas
+  // del dashboard son lectura; las acciones siguen gateando SOLO con
+  // `canManageAllPendings`.
+  const canSeeAll = canManageAll || can(session.user.role, "canReadAllPendings");
 
   const now = new Date();
   const [dashboard, openMissingCount, expiringCounts] = await Promise.all([
-    getPendingDashboard({ canViewCustomerIdentity, now, scope: canManageAll ? "global" : "owner", ownerId: canManageAll ? undefined : session.user.id }),
+    getPendingDashboard({ canViewCustomerIdentity, now, scope: canSeeAll ? "global" : "owner", ownerId: canSeeAll ? undefined : session.user.id }),
     getOpenMissingCount(),
     getExpiringBatchCounts(now),
   ]);

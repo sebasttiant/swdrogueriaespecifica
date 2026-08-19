@@ -39,10 +39,14 @@ export default async function PendientesPage({
 }) {
   const session = await requireCapability("canViewPendientes");
   const canManageAll = can(session.user.role, "canManageAllPendings");
-  // Quien no gestiona todo recibe la lista acotada a sus propias filas (abajo,
+  // Eje de LECTURA global (T4.4): ver la cola entera ≠ mutarla. Un rol con
+  // `canReadAllPendings` pero sin `canManageAllPendings` vería todo sin poder
+  // operar nada ajeno; las acciones siguen gateando SOLO con la segunda.
+  const canSeeAll = canManageAll || can(session.user.role, "canReadAllPendings");
+  // Quien no ve toda la cola recibe la lista acotada a sus propias filas (abajo,
   // vía `ownerId`), así que ve los datos de SUS clientes: son los que tiene que
   // llamar. Ver los de todos es lo que exige la capacidad.
-  const canViewCustomerIdentity = canManageAll
+  const canViewCustomerIdentity = canSeeAll
     ? can(session.user.role, "canViewCustomerIdentity")
     : true;
   const canDeliver = can(session.user.role, "canDeliverPendings");
@@ -77,7 +81,7 @@ export default async function PendientesPage({
       scope,
       axes,
       canViewCustomerIdentity,
-      ownerId: canManageAll ? undefined : session.user.id,
+      ownerId: canSeeAll ? undefined : session.user.id,
     }),
     getUsedZones(),
   ]);

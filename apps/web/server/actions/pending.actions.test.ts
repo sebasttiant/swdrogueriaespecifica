@@ -603,6 +603,38 @@ describe("deliverPendingAction", () => {
 		},
 	);
 
+	// BODEGA (T4.4) puede entregar lo suyo, pero el service rechaza un pendiente
+	// ajeno con NOT_OWNER; la action mapea el mensaje y audita la denegación.
+	it("BODEGA no puede entregar un pendiente ajeno (NOT_OWNER) y lo audita", async () => {
+		mocks.requireCapability.mockResolvedValue({ user: { id: "bodega-1", role: "BODEGA" } });
+		mocks.deliverPending.mockResolvedValue({ rejection: "NOT_OWNER", pending: null });
+
+		const result = await deliverPendingAction(PREV, deliverFormData());
+
+		expect(result).toEqual({
+			error: "No podés operar un pendiente creado por otro vendedor.",
+			ok: false,
+		});
+		expect(mocks.requireCapability).toHaveBeenCalledWith("canDeliverPendings");
+
+		expect(mocks.recordAudit).toHaveBeenCalledTimes(1);
+		const auditCall = mocks.recordAudit.mock.calls[0]![0];
+		expect(auditCall).toEqual(
+			expect.objectContaining({
+				action: AUDIT_ACTIONS.PENDING_DELIVERED,
+				module: AUDIT_MODULES.PENDIENTES,
+				entity: "Pending",
+				entityId: "pend-1",
+				result: "FAILURE",
+				after: { reason: "NOT_OWNER", attemptedQuantity: 3 },
+			}),
+		);
+		expect(JSON.stringify(auditCall)).not.toContain("customerName");
+
+		expect(mocks.revalidatePath).toHaveBeenCalledWith("/pendientes");
+		expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard");
+	});
+
   it("rejects invalid input before calling the service", async () => {
     mocks.requireCapability.mockResolvedValue({ user: { id: "op-1", role: "OPERADOR" } });
 
@@ -690,6 +722,38 @@ describe("cancelPendingAction", () => {
 			expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard");
 		},
 	);
+
+	// BODEGA (T4.4) puede cancelar lo suyo, pero el service rechaza un pendiente
+	// ajeno con NOT_OWNER; la action mapea el mensaje y audita la denegación.
+	it("BODEGA no puede cancelar un pendiente ajeno (NOT_OWNER) y lo audita", async () => {
+		mocks.requireCapability.mockResolvedValue({ user: { id: "bodega-1", role: "BODEGA" } });
+		mocks.cancelPendingCommitment.mockResolvedValue({ rejection: "NOT_OWNER", pending: null });
+
+		const result = await cancelPendingAction(PREV, cancelFormData());
+
+		expect(result).toEqual({
+			error: "No podés operar un pendiente creado por otro vendedor.",
+			ok: false,
+		});
+		expect(mocks.requireCapability).toHaveBeenCalledWith("canCancelPendings");
+
+		expect(mocks.recordAudit).toHaveBeenCalledTimes(1);
+		const auditCall = mocks.recordAudit.mock.calls[0]![0];
+		expect(auditCall).toEqual(
+			expect.objectContaining({
+				action: AUDIT_ACTIONS.PENDING_CANCELLED,
+				module: AUDIT_MODULES.PENDIENTES,
+				entity: "Pending",
+				entityId: "pend-1",
+				result: "FAILURE",
+				after: { reason: "NOT_OWNER" },
+			}),
+		);
+		expect(JSON.stringify(auditCall)).not.toContain("customerName");
+
+		expect(mocks.revalidatePath).toHaveBeenCalledWith("/pendientes");
+		expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard");
+	});
 
 	// El motivo de cancelación es texto libre del operador: puede nombrar al
 	// cliente. En un rechazo la cancelación no ocurrió, así que el intento se

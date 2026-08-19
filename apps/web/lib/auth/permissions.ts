@@ -214,6 +214,14 @@ export const CAPABILITIES = [
   // `[...CAPABILITIES]`; no se agrega a SUPERVISOR/OPERADOR.
   "canReviewMissingReports",
   "canManageAllPendings",
+  // Gatea la LECTURA de la cola completa de pendientes (ver todas las filas,
+  // no solo las propias). Es un eje DISTINTO de `canManageAllPendings`: leer
+  // todo no autoriza a operar nada ajeno. Las superficies de lectura usan
+  // `canManageAllPendings || canReadAllPendings`; las acciones de cumplimiento
+  // siguen gateando SOLO con `canManageAllPendings`. Separar los ejes permite
+  // que en el futuro un rol pueda supervisar la cola sin mutar pendientes
+  // ajenos: un cambio de una línea en `ROLE_CAPABILITIES`, jamás de código.
+  "canReadAllPendings",
   "canContactOwnPendings",
   "canInvoiceOwnPendings",
   // Gatea el MÓDULO de revisión de pendientes. A diferencia de
@@ -229,9 +237,11 @@ export type Capability = (typeof CAPABILITIES)[number];
 
 // Exhaustive capability matrix — the authoritative mapping of role → what it
 // may do. SUPERADMIN and ADMIN currently share the full set; SUPERVISOR is the
-// operational middle tier with missing-item confirmation; OPERADOR is the basic
-// operational subset. Neither operational role gets reports/audit/user-management,
-// snooze, or catalog management.
+// operational middle tier with missing-item confirmation and full-queue scope;
+// OPERADOR is the basic operational subset; BODEGA operates at seller level
+// over its own pendings (no customer PII, no foreign queue, no global read).
+// Neither operational role gets reports/audit/user-management, snooze, or
+// catalog management.
 const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
   SUPERADMIN: [...CAPABILITIES],
   ADMIN: [...CAPABILITIES],
@@ -251,6 +261,10 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     // alcance por vendedor; sin esta capacidad el alcance lo habría encerrado
     // en sus propias filas.
     "canManageAllPendings",
+    // La supervisión también tiene el eje de LECTURA global explícito: hoy es
+    // redundante con canManageAllPendings en las superficies de lectura, pero
+    // declara la intención y deja el eje listo si mañana se le quita la mutación.
+    "canReadAllPendings",
     "canDeliverPendings",
     "canCancelPendings",
     "canReviewPendings",
@@ -273,8 +287,27 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     "canCancelPendings",
     "canReviewPendings",
   ],
-  // Recepción física: deliberadamente sin pendientes, PII ni acciones comerciales.
-  BODEGA: ["canViewEntradas", "canViewProductos", "canCreateEntries"],
+  // Recepción física a nivel vendedor (T4.4): la bodega opera su propio
+  // circuito — registra entradas, crea y cumple SUS pendientes, reporta
+  // faltantes y revisa su propia cola. Quedan fuera la PII del cliente
+  // (`canViewCustomerIdentity`), la cola ajena (`canManageAllPendings`) y la
+  // lectura global (`canReadAllPendings`): la bodega no ve ni opera pendientes
+  // de vendedores.
+  BODEGA: [
+    "canViewDashboard",
+    "canViewPendientes",
+    "canViewFaltantes",
+    "canViewProductos",
+    "canViewEntradas",
+    "canCreateEntries",
+    "canCreatePendientes",
+    "canSubmitMissingReports",
+    "canContactOwnPendings",
+    "canInvoiceOwnPendings",
+    "canDeliverPendings",
+    "canCancelPendings",
+    "canReviewPendings",
+  ],
 };
 
 /** Whether `role` holds `capability`. The single check for module/action access. */
