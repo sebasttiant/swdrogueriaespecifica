@@ -83,16 +83,18 @@ describe("visibleNavItems · revisión de pendientes", () => {
   // suyos, gerencia los de todos. El módulo es el mismo; el recorte lo hace
   // `ownerId` en la capa de datos, no una pantalla distinta.
   it("la ven los roles que trabajan pendientes", () => {
-    for (const role of ["SUPERADMIN", "ADMIN", "SUPERVISOR", "OPERADOR"] as const) {
+    for (const role of ["SUPERADMIN", "ADMIN", "SUPERVISOR", "OPERADOR", "BODEGA"] as const) {
       expect(labels(role)).toContain("Revisión de pendientes");
     }
   });
 
-  // BODEGA es recepción física: deliberadamente sin pendientes ni datos de
-  // cliente. Ojo al aseverar: buscar "BODEGA" en texto suelto da falso positivo
-  // porque aparece dentro de LLEGO_BODEGA, un valor del eje de disponibilidad.
-  it("BODEGA no la ve", () => {
-    expect(labels("BODEGA")).not.toContain("Revisión de pendientes");
+  // BODEGA (T4.4) pasó a operar pendientes propios, así que también revisa su
+  // propia cola desde este módulo — el recorte por dueño lo hace `ownerId`, no
+  // una pantalla distinta. Ojo al aseverar: buscar "BODEGA" en texto suelto da
+  // falso positivo porque aparece dentro de LLEGO_BODEGA, un valor del eje de
+  // disponibilidad.
+  it("BODEGA la ve (revisa su propia cola)", () => {
+    expect(labels("BODEGA")).toContain("Revisión de pendientes");
   });
 
   it("sin sesión no aparece", () => {
