@@ -362,3 +362,79 @@ describe("PendingList · cantidades con semántica T2.2b (T4.2b·B)", () => {
     expect(html).toContain("Entregado: 5 de 5");
   });
 });
+
+describe("PendingList · historial con evidencia de cierre (T4.3)", () => {
+  // El historial audita CÓMO se cerró, no solo que se cerró. La tarjeta de un
+  // ENTREGADO dice quién entregó y cuándo; la de un CANCELADO, quién, cuándo y
+  // el motivo. Sin esto, history es un estado sin historia.
+  it("entregado: muestra quién entregó", () => {
+    const html = renderList({
+      scope: "history",
+      items: [
+        pending({
+          status: "ENTREGADO",
+          deliveredQuantity: 5,
+          cancelledQuantity: 0,
+          completedAt: new Date("2026-07-10T17:30:00.000Z"),
+          deliveries: [
+            {
+              id: "del-1",
+              quantity: 5,
+              deliveredAt: new Date("2026-07-10T17:30:00.000Z"),
+              deliveredBy: { id: "seller-1", name: "Ana" },
+            },
+          ],
+        }),
+      ],
+    });
+
+    expect(html).toContain("Entregado por Ana");
+    expect(html).not.toContain("Cancelado por");
+  });
+
+  it("cancelado: muestra quién, cuándo y el motivo", () => {
+    const html = renderList({
+      scope: "history",
+      items: [
+        pending({
+          status: "CANCELADO",
+          deliveredQuantity: 0,
+          cancelledQuantity: 0,
+          cancelledAt: new Date("2026-07-11T09:00:00.000Z"),
+          cancelledBy: { id: "seller-2", name: "Luis" },
+          cancelReason: "El cliente ya no lo necesita",
+        }),
+      ],
+    });
+
+    expect(html).toContain("Cancelado por Luis");
+    expect(html).toContain("El cliente ya no lo necesita");
+  });
+
+  it("cierre parcial: muestra la fecha de cierre", () => {
+    const html = renderList({
+      scope: "history",
+      items: [
+        pending({
+          status: "CLOSED_PARTIAL",
+          deliveredQuantity: 3,
+          cancelledQuantity: 2,
+          completedAt: new Date("2026-07-12T11:00:00.000Z"),
+        }),
+      ],
+    });
+
+    expect(html).toContain("Cerrado el");
+  });
+
+  it("pendiente abierto: no inventa una línea de cierre", () => {
+    const html = renderList({
+      scope: "active",
+      items: [pending({ status: "PENDIENTE", deliveredQuantity: 0, cancelledQuantity: 0 })],
+    });
+
+    expect(html).not.toContain("Cancelado por");
+    expect(html).not.toContain("Entregado por");
+    expect(html).not.toContain("Cerrado el");
+  });
+});

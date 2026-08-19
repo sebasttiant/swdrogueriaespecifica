@@ -52,6 +52,21 @@ export type PendingListItem = {
   // T2.2b: lo que el cliente ya no espera de un cierre parcial. Completa la
   // ecuación `delivered + cancelled = quantity` en la UI (T4.2b·B).
   cancelledQuantity: number;
+  // T4.3: evidencia de cierre, presente SOLO en la vista de historial (la cola
+  // activa no la trae: una fila abierta no se cerró, y el join extra no se paga
+  // en la consulta operativa de alta frecuencia). Opcionales a propósito: los
+  // registros anteriores a estas columnas no tienen el dato y no se inventa.
+  completedAt?: Date | null;
+  cancelledAt?: Date | null;
+  cancelledBy?: { id: string; name: string } | null;
+  cancelReason?: string | null;
+  // Auditoría del ENTREGADO: cada entrega dice cantidad, quién y cuándo.
+  deliveries?: Array<{
+    id: string;
+    quantity: number;
+    deliveredAt: Date;
+    deliveredBy: { id: string; name: string } | null;
+  }>;
   product: { id: string; name: string; code: string; unit: string };
   // Quién anotó el pendiente. Gerencia lo necesita para saber a nombre de quién
   // va la venta y quién factura. Se lee de la RELACIÓN, nunca de un texto
@@ -108,6 +123,28 @@ const LIST_SELECT = {
   cancelledQuantity: true,
   product: { select: { id: true, name: true, code: true, unit: true } },
   createdBy: { select: { id: true, name: true } },
+} as const;
+
+// T4.3: el historial es la AUDITORÍA de cómo se cerró, no solo qué se cerró.
+// Este select extiende el listado con la evidencia de cierre: quién canceló y
+// cuándo, el motivo, la fecha de cierre y las entregas (cantidad, quién,
+// cuándo). Se usa SOLO con scope history; la cola activa no necesita el join y
+// no lo paga en la consulta operativa de alta frecuencia.
+const HISTORY_SELECT = {
+  ...LIST_SELECT,
+  completedAt: true,
+  cancelledAt: true,
+  cancelledBy: { select: { id: true, name: true } },
+  cancelReason: true,
+  deliveries: {
+    select: {
+      id: true,
+      quantity: true,
+      deliveredAt: true,
+      deliveredBy: { select: { id: true, name: true } },
+    },
+    orderBy: { deliveredAt: "asc" as const },
+  },
 } as const;
 
 // Mismo eje que `MissingItemScope`: "active" es la vista operativa (lo que
@@ -183,7 +220,7 @@ export async function listPendings(params: {
     ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
     where,
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    select: LIST_SELECT,
+    select: params.scope === "history" ? HISTORY_SELECT : LIST_SELECT,
   });
 
   const hasMore = rows.length > take;
