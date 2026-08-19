@@ -167,6 +167,7 @@ model User {
   resolvedMissingReports MissingReport[] @relation("MissingReportResolvedBy")
   arrivedMissingReports MissingReport[] @relation("MissingReportArrivedBy")
   arrivedMissingItems MissingItem[] @relation("MissingItemArrivedBy")
+  notificationOutbox   NotificationOutbox[]
 
   @@index([active])
   @@index([archivedAt])
@@ -779,4 +780,45 @@ model MissingReport {
   @@index([linkedProductId])
   @@index([linkedMissingItemId])
   @@map("missing_reports")
+}
+
+// --------------------------------------------------------------------------
+// Outbox de notificaciones (T5.1 — avisos al dueño).
+//
+// Es la cola transaccional de avisos: una transición de disponibilidad
+// (parcial/completa) encola EXACTAMENTE un evento por transición, en la misma
+// transacción que cambió el pendiente. El transporte es at-least-once e in-app
+// (D5): la presentación deduplica por la identidad del evento.
+//
+// La unicidad es por TRANSICIÓN del agregado (recipient, aggregate,
+// transitionKey): reintentar la misma transición NO duplica. El `eventType` y
+// el payload van en el `fingerprint` — si la misma transición llega con otro
+// contenido, es un error del llamador (igual que el command store).
+// --------------------------------------------------------------------------
+enum NotificationOutboxStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+model NotificationOutbox {
+  id            String                   @id @default(cuid())
+  recipient     User                     @relation(fields: [recipientId], references: [id])
+  recipientId   String
+  eventType     String
+  aggregateType String
+  aggregateId   String
+  transitionKey String
+  fingerprint   String
+  payload       Json
+  status        NotificationOutboxStatus @default(PENDING)
+  attempts      Int                      @default(0)
+  sentAt        DateTime?
+  lastError     String?
+  createdAt     DateTime                 @default(now())
+  updatedAt     DateTime                 @updatedAt
+
+  @@unique([recipientId, aggregateType, aggregateId, transitionKey], map: "notification_outbox_transition_unique")
+  @@index([status, createdAt])
+  @@map("notification_outbox")
 }
