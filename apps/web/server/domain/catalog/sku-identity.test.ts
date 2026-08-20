@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   assertAttemptWithinBudget,
+  assertCanFixSkuIdentity,
   assertCanOnboardSku,
   assertIdentityMatches,
+  canFixSkuIdentity,
   canOnboardSku,
   generateUlid,
   isProvisionalSku,
@@ -13,6 +15,7 @@ import {
   provisionalSkuFor,
   resolveIdentityMode,
   SKU_COLLISION_MAX_ATTEMPTS,
+  SKU_FIX_ROLES,
   SkuIdentityError,
   type SkuIdentityCode,
 } from "./sku-identity";
@@ -299,5 +302,128 @@ describe("planOrionLink", () => {
         }),
       ),
     ).toBe("ORION_CONFLICT");
+  });
+});
+
+// --------------------------------------------------------------------------
+// Corregir una identidad mal cargada.
+//
+// El código Orion se copia a mano desde el ERP, y quien lo copia suele estar en
+// el mostrador con un cliente enfrente. Se va a tipear mal. Hasta ahora eso era
+// permanente: `assignOrionCode` filtra por `orionCode: null`, así que un código
+// ya puesto no se podía cambiar por ninguna vía.
+//
+// La razón escrita para esa inmutabilidad —"pisarlo rompería la trazabilidad de
+// todo el inventario que ya se movió bajo ese código"— no se sostiene:
+// `orionCode` aparece UNA sola vez en todo el esquema, en `products`. Los
+// movimientos se anclan en `lotId`, y asignaciones, reservas y entradas en
+// `productId`. Cambiar el código no huerfaniza una sola fila. Lo que sí se
+// pierde es reconciliar hacia atrás contra Orion, y para eso está la auditoría,
+// que se escribe en la misma transacción.
+//
+// FIX es distinto de RELINK: RELINK mueve un código de un producto a otro; FIX
+// cambia el código equivocado de ESTE producto por el correcto.
+// --------------------------------------------------------------------------
+describe("corrección de identidad", () => {
+  const conCodigo = { id: "p1", internalSku: "PRV-ABC", orionCode: "7702001234567" };
+  const sinCodigo = { id: "p1", internalSku: "PRV-ABC", orionCode: null };
+  const otro = { id: "p2", internalSku: "PRV-DEF", orionCode: "7702009999999" };
+
+  it("cambia el código equivocado por el correcto", () => {
+    expect(
+      planOrionLink({
+        product: conCodigo,
+        orionCode: "7702009999999",
+        holder: null,
+        intent: "FIX",
+      }),
+    ).toEqual({
+      action: "FIX",
+      productId: "p1",
+      orionCode: "7702009999999",
+      // El anterior viaja en el plan porque es el compare-and-set de la
+      // escritura: sin él se podría pisar un código que cambió en el medio.
+      previousOrionCode: "7702001234567",
+    });
+  });
+
+  // Que el corrector se equivoque de nuevo y escriba el código de un tercero no
+  // puede resolverse solo: son dos productos y dos decisiones. Primero se libera
+  // el otro, después se corrige este, y cada paso queda auditado por separado.
+  it("rechaza corregir hacia un código que ya tiene otro producto", () => {
+    expect(
+      codeOf(() =>
+        planOrionLink({
+          product: conCodigo,
+          orionCode: "7702009999999",
+          holder: otro,
+          intent: "FIX",
+        }),
+      ),
+    ).toBe("ORION_CONFLICT");
+  });
+
+  it("corregir hacia el mismo código que ya tiene no escribe nada", () => {
+    expect(
+      planOrionLink({
+        product: conCodigo,
+        orionCode: "7702001234567",
+        holder: conCodigo,
+        intent: "FIX",
+      }),
+    ).toEqual({ action: "NOOP", productId: "p1", orionCode: "7702001234567" });
+  });
+
+  // Corregir un producto que todavía no tiene código no es un error del que
+  // corrige: es la carrera de que alguien lo haya vinculado —o no— mientras
+  // tenía el formulario abierto. Vale como alta normal; si la versión quedó
+  // vieja, el compare-and-set de la escritura lo frena igual.
+  it("sobre un producto sin código se comporta como un alta normal", () => {
+    expect(
+      planOrionLink({
+        product: sinCodigo,
+        orionCode: "7702001234567",
+        holder: null,
+        intent: "FIX",
+      }),
+    ).toEqual({ action: "LINK", productId: "p1", orionCode: "7702001234567" });
+  });
+
+  // La intención sigue siendo explícita: LINK nunca pisa un código puesto.
+  it("LINK sigue sin poder cambiar un código ya puesto", () => {
+    expect(
+      codeOf(() =>
+        planOrionLink({
+          product: conCodigo,
+          orionCode: "7702009999999",
+          holder: null,
+          intent: "LINK",
+        }),
+      ),
+    ).toBe("ORION_CONFLICT");
+  });
+});
+
+// --------------------------------------------------------------------------
+// Quién corrige.
+//
+// El conjunto es MÁS ancho que el de acuñación, y a propósito: acuñar crea
+// identidad nueva, corregir repara una que ya está mal. Supervisión entra
+// porque es quien recibe el reclamo del vendedor; el vendedor NO, porque su
+// única corrección va por su propio pendiente y con su límite de una sola vez.
+// --------------------------------------------------------------------------
+describe("canFixSkuIdentity", () => {
+  it("habilita a superadmin, admin, supervisor y bodega", () => {
+    for (const role of ["SUPERADMIN", "ADMIN", "SUPERVISOR", "BODEGA"] as const) {
+      expect(canFixSkuIdentity(role)).toBe(true);
+    }
+    expect([...SKU_FIX_ROLES].sort()).toEqual(
+      ["ADMIN", "BODEGA", "SUPERADMIN", "SUPERVISOR"].sort(),
+    );
+  });
+
+  it("deja afuera al vendedor", () => {
+    expect(canFixSkuIdentity("OPERADOR")).toBe(false);
+    expect(codeOf(() => { assertCanFixSkuIdentity("OPERADOR"); })).toBe("FORBIDDEN_ACTOR");
   });
 });

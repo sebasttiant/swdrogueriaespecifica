@@ -215,11 +215,65 @@ async function runOrionLinkPlan(
     });
   }
 
+  if (plan.action === "FIX") {
+    return fixOrionCode(tx, {
+      productId: plan.productId,
+      orionCode: plan.orionCode,
+      previousOrionCode: plan.previousOrionCode,
+      expectedVersion: options.expectedVersion,
+    });
+  }
+
   return assignOrionCode(tx, {
     productId: plan.productId,
     orionCode: plan.orionCode,
     expectedVersion: options.expectedVersion,
   });
+}
+
+/**
+ * Reemplaza un código mal cargado por el correcto.
+ *
+ * Se separa de `assignOrionCode` por el filtro, que es lo único que importa
+ * acá: aquel exige `orionCode: null` —su segunda red contra pisar identidad—
+ * y este exige el código ANTERIOR exacto. Es la misma idea aplicada al revés:
+ * la corrección solo escribe si el código sigue siendo el que se vio en
+ * pantalla. Si cambió en el medio, `count` da 0 y nadie pisa nada.
+ */
+async function fixOrionCode(
+  tx: Prisma.TransactionClient,
+  params: {
+    productId: string;
+    orionCode: string;
+    previousOrionCode: string;
+    expectedVersion: number;
+  },
+): Promise<Product> {
+  const { count } = await tx.product
+    .updateMany({
+      where: {
+        id: params.productId,
+        identityVersion: params.expectedVersion,
+        orionCode: params.previousOrionCode,
+      },
+      data: {
+        orionCode: params.orionCode,
+        skuStatus: "CONFIRMED",
+        identityVersion: { increment: 1 },
+      },
+    })
+    .catch((error: unknown) => {
+      // Mismo caso que en el alta: la lectura previa vio el código libre y otro
+      // lo tomó antes de que llegara esta escritura. Lo frena el `@unique`.
+      if (isUniqueViolation(error)) throw new SkuIdentityError("ORION_CONFLICT");
+      throw error;
+    });
+
+  if (count !== 1) throw new SkuConcurrencyError();
+
+  const product = await tx.product.findUnique({ where: { id: params.productId } });
+  if (!product) throw new SkuConcurrencyError();
+  return product;
 }
 
 async function releaseOrionCode(

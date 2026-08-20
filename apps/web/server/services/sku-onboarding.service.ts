@@ -6,6 +6,7 @@ import { prisma } from "@/lib/db/prisma";
 import type { Product } from "@/lib/generated/prisma/client";
 import {
   assertAttemptWithinBudget,
+  assertCanFixSkuIdentity,
   assertCanOnboardSku,
   assertIdentityMatches,
   normalizeOrionCode,
@@ -173,8 +174,12 @@ export type LinkOrionCodeInput = {
   /** Identidad EXACTA del producto destino: id, SKU interno o código Orion. */
   identity: IdentityInput;
   orionCode: string;
-  /** `RELINK` es una decisión explícita: mudar identidad nunca es colateral. */
-  intent: "LINK" | "RELINK";
+  /**
+   * `RELINK` y `FIX` son decisiones explícitas: cambiar identidad nunca es
+   * colateral. RELINK mueve un código a OTRO producto; FIX reemplaza el código
+   * equivocado de ESTE.
+   */
+  intent: "LINK" | "RELINK" | "FIX";
   /** Versión de identidad que la pantalla le mostró al operador. */
   expectedVersion: number;
   /** Ídem del producto que hoy tiene el código, cuando se lo muda. */
@@ -190,7 +195,14 @@ export async function linkOrionCode(
   input: LinkOrionCodeInput,
   deps: LinkOrionCodeDeps = {},
 ): Promise<Product> {
-  assertCanOnboardSku(input.actor.role);
+  // Corregir y acuñar no son la misma autoridad. Acuñar CREA identidad, así
+  // que queda en quien da de alta catálogo; corregir REPARA una que ya está
+  // mal, y ahí entra supervisión, que es quien recibe el reclamo del vendedor.
+  if (input.intent === "FIX") {
+    assertCanFixSkuIdentity(input.actor.role);
+  } else {
+    assertCanOnboardSku(input.actor.role);
+  }
 
   const orionCode = normalizeOrionCode(input.orionCode);
   const product = await findProductByIdentity(input.identity);
@@ -234,15 +246,24 @@ export async function linkOrionCode(
       });
     }
 
+    const AUDIT_BY_ACTION = {
+      FIX: AUDIT_ACTIONS.SKU_ORION_FIX,
+      RELINK: AUDIT_ACTIONS.SKU_ORION_RELINK,
+      LINK: AUDIT_ACTIONS.SKU_ORION_LINK,
+    } as const;
+
     await writeAudit(tx, {
-      action:
-        plan.action === "RELINK"
-          ? AUDIT_ACTIONS.SKU_ORION_RELINK
-          : AUDIT_ACTIONS.SKU_ORION_LINK,
+      action: AUDIT_BY_ACTION[plan.action],
       module: AUDIT_MODULES.PRODUCTOS,
       entity: "Product",
       entityId: linked.id,
-      before: { orionCode: null, identityVersion: input.expectedVersion },
+      // En una corrección el "antes" NO es nulo, y ese dato es justamente lo
+      // que hace reconstruible el error: sin el código viejo, reconciliar
+      // hacia atrás contra Orion es imposible.
+      before: {
+        orionCode: plan.action === "FIX" ? plan.previousOrionCode : null,
+        identityVersion: input.expectedVersion,
+      },
       after: {
         orionCode: linked.orionCode,
         identityVersion: linked.identityVersion,
