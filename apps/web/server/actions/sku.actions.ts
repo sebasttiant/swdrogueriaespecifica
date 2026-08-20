@@ -1,0 +1,94 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+
+import {
+  SKU_IDENTITY_CONCURRENCY_MESSAGE,
+  messageForIdentityError,
+} from "@/features/productos/sku-identity-messages";
+import { orionLinkSchema } from "@/features/productos/sku-schema";
+import { requireCapability } from "@/lib/auth/require-role";
+import { SkuIdentityError } from "@/server/domain/catalog/sku-identity";
+import { SkuConcurrencyError } from "@/server/repositories/sku-review.repository";
+import { auditContextFromHeaders } from "@/server/services/audit.service";
+import { linkOrionCode } from "@/server/services/sku-onboarding.service";
+
+// --------------------------------------------------------------------------
+// Server Action del vínculo con el código Orion.
+//
+// FINA a propósito: Zod → capability → servicio → revalidate. Toda la regla
+// —qué se puede pisar, qué es inmutable, quién puede acuñar— ya vive en
+// `sku-identity.ts` y `sku-onboarding.service.ts`, con sus tests contra
+// PostgreSQL real. Si acá apareciera una decisión de negocio, estaría
+// duplicada, y las dos copias se van a separar el día que alguien toque una.
+//
+// TAMPOCO audita: `linkOrionCode` escribe el asiento DENTRO de la misma
+// transacción que el vínculo. Auditar de nuevo acá dejaría dos asientos por
+// un solo hecho, y el de afuera sobreviviría a un rollback del de adentro.
+//
+// DOS GUARDS, a propósito y no por duplicación:
+//   · `requireCapability` es el portón — DB-authoritative, rechaza un JWT
+//     viejo de alguien a quien degradaron.
+//   · `assertCanOnboardSku`, adentro del servicio, es la cerradura: protege
+//     al servicio de cualquier otro llamador, hoy y mañana.
+//
+// Hoy `canManageProducts` es de ADMIN y SUPERADMIN; el dominio además admite
+// BODEGA. La diferencia se cierra sola cuando entre el PR #151, que le da esa
+// capacidad a bodega. Mientras tanto el portón es MÁS angosto que la
+// cerradura, que es el lado seguro para equivocarse.
+// --------------------------------------------------------------------------
+
+export type OrionLinkFormState = { error: string | null; ok: boolean };
+
+export async function linkOrionCodeAction(
+  _prev: OrionLinkFormState,
+  formData: FormData,
+): Promise<OrionLinkFormState> {
+  const session = await requireCapability("canManageProducts");
+
+  const parsed = orionLinkSchema.safeParse({
+    expectedVersion: formData.get("expectedVersion"),
+    orionCode: formData.get("orionCode"),
+    productId: formData.get("productId"),
+  });
+
+  if (!parsed.success) {
+    // El mensaje del schema, no uno genérico: cada rechazo ya sabe explicar
+    // qué está mal con lo que se escribió.
+    return {
+      error: parsed.error.issues[0]?.message ?? "Revisá los datos del vínculo.",
+      ok: false,
+    };
+  }
+
+  try {
+    await linkOrionCode({
+      actor: { id: session.user.id, role: session.user.role },
+      context: await auditContextFromHeaders(session.user.id),
+      expectedVersion: parsed.data.expectedVersion,
+      // SOLO `productId`. Mandar dos identidades exactas a la vez hace que
+      // `resolveIdentityMode` tire `AMBIGUOUS_MODE`: no adivina por nosotros.
+      identity: { productId: parsed.data.productId },
+      // Nunca RELINK desde acá. Mudarle el código a otro producto es una
+      // decisión explícita con su propia pantalla, no algo que salga de
+      // apretar "vincular" sin querer.
+      intent: "LINK",
+      orionCode: parsed.data.orionCode,
+    });
+  } catch (error) {
+    if (error instanceof SkuConcurrencyError) {
+      return { error: SKU_IDENTITY_CONCURRENCY_MESSAGE, ok: false };
+    }
+    if (error instanceof SkuIdentityError) {
+      return { error: messageForIdentityError(error.code), ok: false };
+    }
+    // Cualquier otra cosa no se le filtra al operador: queda en el server.
+    console.error("[productos] No se pudo vincular el código Orion:", error);
+    return { error: messageForIdentityError(undefined), ok: false };
+  }
+
+  revalidatePath(`/productos/${parsed.data.productId}`);
+  revalidatePath("/productos");
+
+  return { error: null, ok: true };
+}
