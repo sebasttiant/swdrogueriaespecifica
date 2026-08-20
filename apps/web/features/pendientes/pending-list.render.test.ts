@@ -460,3 +460,62 @@ describe("PendingList · el nombre no se corta en el celular", () => {
     expect(html).not.toContain("truncate");
   });
 });
+
+// --------------------------------------------------------------------------
+// El aviso de llegada, en la pantalla donde se revisa la cola.
+//
+// `fulfillmentNotice` existía solo en la vista Listado. `/revision-pendientes`
+// usa ESTA lista, así que un pendiente cuya mercancía ya llegó se veía
+// exactamente igual que uno que sigue esperando: el sistema sabía que se podía
+// facturar y no se lo decía a nadie en la pantalla donde se toman esas
+// decisiones.
+//
+// Son los dos momentos distintos que ya distinguía la otra vista: la mercancía
+// llegó a la droguería (todavía no se puede facturar) y bodega la cargó al
+// sistema (ya se puede).
+// --------------------------------------------------------------------------
+describe("PendingList · aviso de llegada", () => {
+  it("anuncia que la mercancía llegó a la droguería y sigue sin cargar", () => {
+    const html = renderList({
+      items: [pending({ availabilityStatus: "LLEGO_BODEGA", customerStatus: "CONTACTADO" })],
+    });
+
+    expect(html).toContain("Llegó a la droguería");
+  });
+
+  it("anuncia que ya se puede facturar cuando bodega cargó la mercancía", () => {
+    const html = renderList({
+      items: [
+        pending({ inventoryReadyQuantity: 10, quantity: 10, customerStatus: "CONTACTADO" }),
+      ],
+    });
+
+    expect(html).toContain("Cargado");
+  });
+
+  it("dice cuánto llegó cuando bodega cargó solo una parte", () => {
+    const html = renderList({
+      items: [
+        pending({ inventoryReadyQuantity: 4, quantity: 10, customerStatus: "CONTACTADO" }),
+      ],
+    });
+
+    // "4 de 10" a secas ya lo imprime la línea "Entregado: 4 de 10 unidad" de
+    // la tarjeta: afirmarlo suelto pasaría sin que el aviso exista.
+    expect(html).toContain("Cargado: 4 de 10");
+  });
+
+  it("calla sobre un pendiente ya cerrado: no queda nada que facturar", () => {
+    const html = renderList({
+      items: [
+        pending({
+          status: "ENTREGADO",
+          customerStatus: "ENTREGADO",
+          inventoryReadyQuantity: 10,
+        }),
+      ],
+    });
+
+    expect(html).not.toContain("Cargado");
+  });
+});
