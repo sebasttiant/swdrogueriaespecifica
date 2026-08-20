@@ -35,7 +35,22 @@ export type ProductOption = {
   id: string;
   name: string;
   code: string;
+  /**
+   * Identidad en Orion, o `null` si el producto todavía no la tiene.
+   *
+   * Es lo que el vendedor puede cotejar contra la pantalla del ERP que ya tiene
+   * abierta. El `code` interno (`PROV-…`, `MED-001`) no existe del otro lado.
+   */
+  orionCode: string | null;
 };
+
+// De 30 referencias de Eucerin, el nombre no distingue ninguna. Lo que las
+// distingue es el código de Orion, así que va en la etiqueta y no escondido.
+// Cuando falta se dice: un producto sin identidad es trabajo pendiente, no un
+// detalle que convenga tapar.
+export function optionLabel(product: ProductOption): string {
+  return `${product.name} · ${product.orionCode ?? "sin código de Orion"}`;
+}
 
 type PendingFormProps = {
   products: ProductOption[];
@@ -262,7 +277,7 @@ function PendingFormFields({
               <option value="">Elegí un producto…</option>
               {products.map((product) => (
                 <option key={product.id} value={product.id}>
-                  {product.name} ({product.code})
+                  {optionLabel(product)}
                 </option>
               ))}
             </Select>

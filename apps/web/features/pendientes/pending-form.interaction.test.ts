@@ -14,7 +14,7 @@ vi.mock("@/server/actions/pending.actions", () => ({
   createPendingAction: mocks.createPendingAction,
 }));
 
-import { PendingForm } from "./pending-form";
+import { PendingForm, type ProductOption } from "./pending-form";
 
 // --------------------------------------------------------------------------
 // Regresión del incidente de julio/agosto de 2026.
@@ -29,9 +29,9 @@ import { PendingForm } from "./pending-form";
 // navegador y el incidente se reportó sobre Enter.
 // --------------------------------------------------------------------------
 
-const PRODUCTS = [
-  { id: "p1", name: "Acetaminofén", code: "ACE-1" },
-  { id: "p2", name: "Ibuprofeno", code: "IBU-1" },
+const PRODUCTS: ProductOption[] = [
+  { id: "p1", name: "Acetaminofén", code: "ACE-1", orionCode: null },
+  { id: "p2", name: "Ibuprofeno", code: "IBU-1", orionCode: null },
 ];
 
 const CARGA = {

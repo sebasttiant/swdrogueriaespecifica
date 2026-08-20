@@ -58,7 +58,12 @@ export default async function EditarPendientePage({
 
   const productOptions: ProductOption[] = products.items
     .filter((product) => product.active)
-    .map((product) => ({ id: product.id, name: product.name, code: product.code }));
+    .map((product) => ({
+      id: product.id,
+      name: product.name,
+      code: product.code,
+      orionCode: product.orionCode,
+    }));
 
   return (
     <div className="space-y-6">
