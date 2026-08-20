@@ -25,6 +25,7 @@ function searchParams(params: Record<string, string> = {}) {
 // este test tiene que enterarse.
 const VENDEDOR = { user: { id: "vendedor-1", role: "OPERADOR" } };
 const GERENCIA = { user: { id: "admin-1", role: "ADMIN" } };
+const SUPERVISION = { user: { id: "supervisor-1", role: "SUPERVISOR" } };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -84,6 +85,18 @@ describe("RevisionPendientesPage · alcance por rol", () => {
 
   it("a gerencia no le acota nada: ve los de todos", async () => {
     mocks.requireCapability.mockResolvedValue(GERENCIA);
+
+    await RevisionPendientesPage({ searchParams: searchParams() });
+
+    expect(mocks.getPendings).toHaveBeenCalledWith(
+      expect.objectContaining({ ownerId: undefined }),
+    );
+  });
+
+  it("a la supervisión tampoco: revisa la cola entera", async () => {
+    // Faltaba, y es el rol del que depende la revisión diaria. Sin este caso,
+    // quitarle el alcance global a la supervisión no rompía nada acá.
+    mocks.requireCapability.mockResolvedValue(SUPERVISION);
 
     await RevisionPendientesPage({ searchParams: searchParams() });
 

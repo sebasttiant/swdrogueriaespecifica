@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { PageHeader } from "@/app/_components/app-shell/page-header";
-import { can } from "@/lib/auth/permissions";
+import { can, seesAllPendings } from "@/lib/auth/permissions";
 import { requireCapability } from "@/lib/auth/require-role";
 import { Card, CardTitle } from "@/app/_components/ui/card";
 import { MAX_PAGE_SIZE } from "@/lib/pagination";
@@ -39,10 +39,9 @@ export default async function PendientesPage({
 }) {
   const session = await requireCapability("canViewPendientes");
   const canManageAll = can(session.user.role, "canManageAllPendings");
-  // Eje de LECTURA global (T4.4): ver la cola entera ≠ mutarla. Un rol con
-  // `canReadAllPendings` pero sin `canManageAllPendings` vería todo sin poder
-  // operar nada ajeno; las acciones siguen gateando SOLO con la segunda.
-  const canSeeAll = canManageAll || can(session.user.role, "canReadAllPendings");
+  // Ver la cola entera ≠ mutarla: la regla vive en `seesAllPendings`, una sola
+  // vez. Las acciones de cumplimiento siguen gateando SOLO con `canManageAll`.
+  const canSeeAll = seesAllPendings(session.user.role);
   // Quien no ve toda la cola recibe la lista acotada a sus propias filas (abajo,
   // vía `ownerId`), así que ve los datos de SUS clientes: son los que tiene que
   // llamar. Ver los de todos es lo que exige la capacidad.
