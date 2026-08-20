@@ -157,7 +157,9 @@ describe("capabilities · can()", () => {
     expect(can("OPERADOR", "canViewProductos")).toBe(true);
     expect(can("OPERADOR", "canViewEntradas")).toBe(true);
     expect(can("OPERADOR", "canCreatePendientes")).toBe(true);
-    expect(can("OPERADOR", "canCreateEntries")).toBe(true);
+    // El circuito de recepción es de gerencia y bodega: el vendedor ve la
+    // lista de entradas pero no registra.
+    expect(can("OPERADOR", "canCreateEntries")).toBe(false);
   });
 
   it("OPERADOR NO tiene las capabilities sensibles", () => {
@@ -197,7 +199,9 @@ describe("capabilities · can()", () => {
     expect(can("SUPERVISOR", "canViewProductos")).toBe(true);
     expect(can("SUPERVISOR", "canViewEntradas")).toBe(true);
     expect(can("SUPERVISOR", "canCreatePendientes")).toBe(true);
-    expect(can("SUPERVISOR", "canCreateEntries")).toBe(true);
+    // El circuito de recepción es de gerencia y bodega: la supervisión ve la
+    // lista de entradas pero no registra.
+    expect(can("SUPERVISOR", "canCreateEntries")).toBe(false);
     expect(can("SUPERVISOR", "canConfirmMissingItems")).toBe(true);
     expect(can("SUPERVISOR", "canDeliverPendings")).toBe(true);
     expect(can("SUPERVISOR", "canCancelPendings")).toBe(true);
@@ -403,6 +407,10 @@ describe("BODEGA (matriz de perfil)", () => {
       "canViewProductos",
       "canViewEntradas",
       "canCreateEntries",
+      // Gestión de catálogo: la bodega recibe mercadería que no siempre nace de
+      // un faltante, y si el producto no está en el catálogo necesita crearlo
+      // para poder registrar la recepción.
+      "canManageProducts",
       "canCreatePendientes",
       "canSubmitMissingReports",
       "canContactOwnPendings",

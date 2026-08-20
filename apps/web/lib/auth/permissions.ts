@@ -252,7 +252,6 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     "canViewProductos",
     "canViewEntradas",
     "canCreatePendientes",
-    "canCreateEntries",
     "canSubmitMissingReports",
     "canConfirmMissingItems",
     "canViewCustomerIdentity",
@@ -276,7 +275,6 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     "canViewProductos",
     "canViewEntradas",
     "canCreatePendientes",
-    "canCreateEntries",
     "canSubmitMissingReports",
     "canContactOwnPendings",
     "canInvoiceOwnPendings",
@@ -293,12 +291,19 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
   // (`canViewCustomerIdentity`), la cola ajena (`canManageAllPendings`) y la
   // lectura global (`canReadAllPendings`): la bodega no ve ni opera pendientes
   // de vendedores.
+  //
+  // La bodega TAMBIÉN gestiona catálogo (`canManageProducts`) y registra
+  // entradas (`canCreateEntries`): recibe mercadería que no siempre nace de un
+  // faltante, y si el producto no está en el catálogo necesita crearlo para
+  // poder registrar la recepción. Es el único rol operativo con estas dos
+  // capacidades: OPERADOR y SUPERVISOR solo ven la lista de entradas.
   BODEGA: [
     "canViewDashboard",
     "canViewPendientes",
     "canViewFaltantes",
     "canViewProductos",
     "canViewEntradas",
+    "canManageProducts",
     "canCreateEntries",
     "canCreatePendientes",
     "canSubmitMissingReports",
