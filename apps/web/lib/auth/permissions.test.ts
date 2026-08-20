@@ -529,3 +529,37 @@ describe("seesAllPendings (alcance de la cola, en una sola regla)", () => {
     }
   });
 });
+
+// --------------------------------------------------------------------------
+// Corregir la identidad de un producto es un eje PROPIO, y no un pedazo de
+// `canManageProducts`.
+//
+// SUPERVISOR tiene que poder corregir un código de Orion mal cargado —es quien
+// recibe el reclamo del vendedor— pero NO tiene que poder crear ni editar
+// productos. Meterlo en `canManageProducts` para conseguir lo primero le
+// regalaría lo segundo.
+//
+// Es el mismo criterio con el que ya están separados `canOrderMissingItems` y
+// `canViewSupplierIdentity`: una acción y una exposición de datos que hoy viven
+// en el mismo rol, pero que se pueden mover por separado.
+// --------------------------------------------------------------------------
+describe("canFixProductIdentity", () => {
+  it("lo tienen quienes reciben o cargan el error: gerencia, supervisión y bodega", () => {
+    expect(can("SUPERADMIN", "canFixProductIdentity")).toBe(true);
+    expect(can("ADMIN", "canFixProductIdentity")).toBe(true);
+    expect(can("SUPERVISOR", "canFixProductIdentity")).toBe(true);
+    expect(can("BODEGA", "canFixProductIdentity")).toBe(true);
+  });
+
+  it("el vendedor no corrige el catálogo", () => {
+    expect(can("OPERADOR", "canFixProductIdentity")).toBe(false);
+  });
+
+  // La razón de existir de esta capability: SUPERVISOR corrige SIN poder tocar
+  // el resto del catálogo. Si algún día alguien la colapsa dentro de
+  // `canManageProducts`, esta afirmación falla y explica por qué no se hace.
+  it("SUPERVISOR corrige identidad pero sigue sin poder gestionar productos", () => {
+    expect(can("SUPERVISOR", "canFixProductIdentity")).toBe(true);
+    expect(can("SUPERVISOR", "canManageProducts")).toBe(false);
+  });
+});

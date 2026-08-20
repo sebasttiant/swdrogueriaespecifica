@@ -7,6 +7,7 @@ import {
   messageForIdentityError,
 } from "@/features/productos/sku-identity-messages";
 import { orionLinkSchema } from "@/features/productos/schema";
+import type { Capability } from "@/lib/auth/permissions";
 import { requireCapability } from "@/lib/auth/require-role";
 import { SkuIdentityError } from "@/server/domain/catalog/sku-identity";
 import { SkuConcurrencyError } from "@/server/repositories/sku-review.repository";
@@ -44,7 +45,42 @@ export async function linkOrionCodeAction(
   _prev: OrionLinkFormState,
   formData: FormData,
 ): Promise<OrionLinkFormState> {
-  const session = await requireCapability("canManageProducts");
+  return runOrionIdentityAction(
+    { capability: "canManageProducts", intent: "LINK", label: "Vínculo Orion" },
+    formData,
+  );
+}
+
+/**
+ * Corregir un código de Orion mal cargado.
+ *
+ * Portón propio (`canFixProductIdentity`) y no `canManageProducts`: SUPERVISOR
+ * corrige sin poder crear ni editar productos. Ver `lib/auth/permissions.ts`.
+ *
+ * Comparte todo lo demás con el vínculo porque es la misma operación con otra
+ * intención; dos copias de este cuerpo se separarían el día que alguien toque
+ * una sola.
+ */
+export async function fixOrionCodeAction(
+  _prev: OrionLinkFormState,
+  formData: FormData,
+): Promise<OrionLinkFormState> {
+  return runOrionIdentityAction(
+    { capability: "canFixProductIdentity", intent: "FIX", label: "Corrección Orion" },
+    formData,
+  );
+}
+
+async function runOrionIdentityAction(
+  operation: {
+    capability: Capability;
+    intent: "LINK" | "FIX";
+    /** Cómo se nombra esta operación en los logs del servidor. */
+    label: string;
+  },
+  formData: FormData,
+): Promise<OrionLinkFormState> {
+  const session = await requireCapability(operation.capability);
 
   const parsed = orionLinkSchema.safeParse({
     expectedVersion: formData.get("expectedVersion"),
@@ -69,10 +105,10 @@ export async function linkOrionCodeAction(
       // SOLO `productId`. Mandar dos identidades exactas a la vez hace que
       // `resolveIdentityMode` tire `AMBIGUOUS_MODE`: no adivina por nosotros.
       identity: { productId: parsed.data.productId },
-      // Nunca RELINK desde acá. Mudarle el código a otro producto es una
+      // Nunca RELINK desde acá. Mudarle el código a OTRO producto es una
       // decisión explícita con su propia pantalla, no algo que salga de
-      // apretar "vincular" sin querer.
-      intent: "LINK",
+      // apretar "vincular" o "corregir" sin querer.
+      intent: operation.intent,
       orionCode: parsed.data.orionCode,
     });
   } catch (error) {
@@ -88,15 +124,15 @@ export async function linkOrionCodeAction(
     };
 
     if (error instanceof SkuConcurrencyError) {
-      console.warn("[productos] Vínculo Orion: perdió el compare-and-set", intento);
+      console.warn(`[productos] ${operation.label}: perdió el compare-and-set`, intento);
       return { error: SKU_IDENTITY_CONCURRENCY_MESSAGE, ok: false };
     }
     if (error instanceof SkuIdentityError) {
-      console.warn("[productos] Vínculo Orion rechazado:", error.code, intento);
+      console.warn(`[productos] ${operation.label} rechazada:`, error.code, intento);
       return { error: messageForIdentityError(error.code), ok: false };
     }
     // Cualquier otra cosa no se le filtra al operador: queda en el server.
-    console.error("[productos] No se pudo vincular el código Orion:", intento, error);
+    console.error(`[productos] ${operation.label}: no se pudo escribir`, intento, error);
     return { error: messageForIdentityError(undefined), ok: false };
   }
 
@@ -109,7 +145,7 @@ export async function linkOrionCodeAction(
     revalidatePath(`/productos/${parsed.data.productId}`);
     revalidatePath("/productos");
   } catch (error) {
-    console.error("[productos] Vínculo escrito, pero falló el refresco:", error);
+    console.error(`[productos] ${operation.label} escrita, pero falló el refresco:`, error);
   }
 
   return { error: null, ok: true };
