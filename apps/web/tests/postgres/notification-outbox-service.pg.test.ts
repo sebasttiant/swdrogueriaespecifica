@@ -3,19 +3,13 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { prisma } from "@/lib/db/prisma";
-import { NotificationPayloadConflictError } from "@/server/repositories/notification-outbox.repository";
-import {
-  deliverInAppNotifications,
-  listDeliveredNotifications,
-} from "@/server/notifications/notification-transport";
-import {
-  enqueuePendingAvailabilityNotification,
-} from "@/server/services/notification-outbox.service";
+import { listInboxNotifications } from "@/server/notifications/notification-inbox";
+import { enqueuePendingAvailabilityNotification } from "@/server/services/notification-outbox.service";
 
-// El service es quien decide a quién avisar: deriva el dueño del pendiente
-// (createdBy), nunca del llamador. El transport entrega at-least-once e in-app
-// (D5): la presentación deduplica por la identidad del evento. Se prueba contra
-// PostgreSQL real porque la unicidad la garantiza el índice de la base.
+// El service es quien decide a quién avisar y cuál es la transición: deriva el
+// dueño del pendiente (createdBy) y la clave del estado alcanzado, nunca del
+// llamador. Se prueba contra PostgreSQL real porque la unicidad la garantiza el
+// índice de la base: entre consultar y escribir se mete el reintento.
 
 let productId = "";
 let ownerId = "";
@@ -68,7 +62,6 @@ describe("enqueuePendingAvailabilityNotification", () => {
     const outbox = await enqueuePendingAvailabilityNotification({
       pendingId,
       availabilityStatus: "DISPONIBLE_PARCIAL",
-      transitionKey: randomUUID(),
     });
 
     expect(outbox).not.toBeNull();
@@ -85,65 +78,62 @@ describe("enqueuePendingAvailabilityNotification", () => {
     const outbox = await enqueuePendingAvailabilityNotification({
       pendingId,
       availabilityStatus: "DISPONIBLE_COMPLETO",
-      transitionKey: randomUUID(),
     });
 
     expect(outbox?.eventType).toBe("pending.availability.full");
   });
 
-  it("deriva el destinatario del pendiente, nunca del llamador", async () => {
+  it("deriva el destinatario del pendiente", async () => {
     const pendingId = await newPendingFor(ownerId);
 
-    // El llamador podría pasar un recipientIdOverride arbitrario; el servicio lo ignora.
     const outbox = await enqueuePendingAvailabilityNotification({
       pendingId,
       availabilityStatus: "DISPONIBLE_PARCIAL",
-      transitionKey: randomUUID(),
-      recipientIdOverride: otherOwnerId,
     });
 
     expect(outbox?.recipientId).toBe(ownerId);
+    // El otro vendedor no recibe nada: no hay parámetro para redirigirlo.
+    const intruso = await listInboxNotifications(otherOwnerId);
+    expect(intruso.items).toHaveLength(0);
   });
 
-  it("reintentar la misma transición NO duplica la notificación", async () => {
+  it("reintentar la misma transición NO duplica, sin que el llamador haga nada", async () => {
+    // REGRESIÓN. Cuando la clave de transición venía del llamador, un reintento
+    // que generara un UUID nuevo no chocaba nunca contra el índice único: el
+    // dedupe se veía correcto en las pruebas y en producción el dueño recibía
+    // un aviso por intento. Acá se llama dos veces igual que el flujo real, sin
+    // pasar ninguna clave.
     const pendingId = await newPendingFor(ownerId);
-    const transitionKey = randomUUID();
 
     const first = await enqueuePendingAvailabilityNotification({
       pendingId,
       availabilityStatus: "DISPONIBLE_PARCIAL",
-      transitionKey,
     });
     const second = await enqueuePendingAvailabilityNotification({
       pendingId,
       availabilityStatus: "DISPONIBLE_PARCIAL",
-      transitionKey,
     });
 
     expect(second?.id).toBe(first?.id);
-    const rows = await prisma.notificationOutbox.count({
-      where: { aggregateId: pendingId },
-    });
+    const rows = await prisma.notificationOutbox.count({ where: { aggregateId: pendingId } });
     expect(rows).toBe(1);
   });
 
-  it("misma transición con contenido distinto es un error del llamador", async () => {
+  it("parcial y completa son transiciones DISTINTAS: avisa las dos veces", async () => {
     const pendingId = await newPendingFor(ownerId);
-    const transitionKey = randomUUID();
 
-    await enqueuePendingAvailabilityNotification({
+    const parcial = await enqueuePendingAvailabilityNotification({
       pendingId,
       availabilityStatus: "DISPONIBLE_PARCIAL",
-      transitionKey,
+    });
+    const completa = await enqueuePendingAvailabilityNotification({
+      pendingId,
+      availabilityStatus: "DISPONIBLE_COMPLETO",
     });
 
-    await expect(
-      enqueuePendingAvailabilityNotification({
-        pendingId,
-        availabilityStatus: "DISPONIBLE_COMPLETO",
-        transitionKey,
-      }),
-    ).rejects.toBeInstanceOf(NotificationPayloadConflictError);
+    expect(completa?.id).not.toBe(parcial?.id);
+    const rows = await prisma.notificationOutbox.count({ where: { aggregateId: pendingId } });
+    expect(rows).toBe(2);
   });
 
   it("se encola en la MISMA transacción: si esta hace rollback, no queda nada", async () => {
@@ -152,20 +142,14 @@ describe("enqueuePendingAvailabilityNotification", () => {
     await expect(
       prisma.$transaction(async (tx) => {
         await enqueuePendingAvailabilityNotification(
-          {
-            pendingId,
-            availabilityStatus: "DISPONIBLE_PARCIAL",
-            transitionKey: randomUUID(),
-          },
+          { pendingId, availabilityStatus: "DISPONIBLE_PARCIAL" },
           tx,
         );
         throw new Error("boom");
       }),
     ).rejects.toThrow("boom");
 
-    const rows = await prisma.notificationOutbox.count({
-      where: { aggregateId: pendingId },
-    });
+    const rows = await prisma.notificationOutbox.count({ where: { aggregateId: pendingId } });
     expect(rows).toBe(0);
   });
 
@@ -185,44 +169,64 @@ describe("enqueuePendingAvailabilityNotification", () => {
     const outbox = await enqueuePendingAvailabilityNotification({
       pendingId: pending.id,
       availabilityStatus: "DISPONIBLE_PARCIAL",
-      transitionKey: randomUUID(),
     });
 
     expect(outbox).toBeNull();
   });
 });
 
-describe("transport in-app (entrega)", () => {
-  it("entrega los eventos pendientes y los marca SENT", async () => {
+describe("bandeja in-app", () => {
+  it("el aviso se ve apenas se encola, sin ningún paso de entrega", async () => {
+    // REGRESIÓN. La pantalla filtraba por SENT y nadie corría el ciclo que lo
+    // marcaba, así que el evento se quedaba en PENDING y el dueño no lo veía
+    // nunca.
     const pendingId = await newPendingFor(ownerId);
     await enqueuePendingAvailabilityNotification({
       pendingId,
       availabilityStatus: "DISPONIBLE_PARCIAL",
-      transitionKey: randomUUID(),
     });
 
-    const delivered = await deliverInAppNotifications();
+    const inbox = await listInboxNotifications(ownerId);
 
-    expect(delivered).toBe(1);
-    const deliveredList = await listDeliveredNotifications(ownerId);
-    expect(deliveredList).toHaveLength(1);
-    expect(deliveredList[0]!.eventType).toBe("pending.availability.partial");
-    expect(deliveredList[0]!.payload).toEqual({
+    expect(inbox.items).toHaveLength(1);
+    expect(inbox.items[0]!.eventType).toBe("pending.availability.partial");
+    expect(inbox.items[0]!.payload).toEqual({
       pendingId,
       availabilityStatus: "DISPONIBLE_PARCIAL",
     });
+    expect(inbox.nextCursor).toBeNull();
   });
 
-  it("la presentación solo ve las notificaciones del destinatario", async () => {
+  it("cada persona ve solo lo suyo", async () => {
     const pendingId = await newPendingFor(ownerId);
     await enqueuePendingAvailabilityNotification({
       pendingId,
       availabilityStatus: "DISPONIBLE_PARCIAL",
-      transitionKey: randomUUID(),
     });
-    await deliverInAppNotifications();
 
-    const otherList = await listDeliveredNotifications(otherOwnerId);
-    expect(otherList).toHaveLength(0);
+    const otra = await listInboxNotifications(otherOwnerId);
+    expect(otra.items).toHaveLength(0);
+  });
+
+  it("pagina y ofrece cursor cuando hay más", async () => {
+    const primero = await newPendingFor(ownerId);
+    const segundo = await newPendingFor(ownerId);
+    await enqueuePendingAvailabilityNotification({
+      pendingId: primero,
+      availabilityStatus: "DISPONIBLE_PARCIAL",
+    });
+    await enqueuePendingAvailabilityNotification({
+      pendingId: segundo,
+      availabilityStatus: "DISPONIBLE_PARCIAL",
+    });
+
+    const page = await listInboxNotifications(ownerId, { limit: 1 });
+    expect(page.items).toHaveLength(1);
+    expect(page.nextCursor).not.toBeNull();
+
+    const next = await listInboxNotifications(ownerId, { limit: 1, cursor: page.nextCursor! });
+    expect(next.items).toHaveLength(1);
+    expect(next.items[0]!.id).not.toBe(page.items[0]!.id);
+    expect(next.nextCursor).toBeNull();
   });
 });

@@ -2,12 +2,22 @@
 // Servicio del outbox de notificaciones (T5.1 — avisos al dueño).
 //
 // Encola EXACTAMENTE un evento por transición de disponibilidad, en la misma
-// transacción que cambió el pendiente. El destinatario se deriva del agregado
-// (el dueño que creó el pendiente), nunca del llamador: un `recipientIdOverride`
-// se ignora — el servicio es el único que decide a quién avisar.
+// transacción que cambió el pendiente.
 //
-// El transporte es at-least-once e in-app (D5): la entrega puede repetirse y la
-// presentación deduplica por la identidad del evento.
+// DOS COSAS LAS DECIDE ESTE SERVICIO Y NO EL LLAMADOR, y por la misma razón:
+// una garantía que dependa de que el llamador se acuerde no es una garantía.
+//
+//   El destinatario sale del agregado —el vendedor que creó el pendiente—. No
+//   hay parámetro para pasarlo: lo que no existe en la firma no se puede
+//   equivocar.
+//
+//   La clave de transición sale del estado alcanzado. Si viniera de afuera, un
+//   llamador que generara un UUID nuevo en cada intento haría que el índice
+//   único no choque nunca: el dedupe se vería correcto en las pruebas y en
+//   producción el dueño recibiría el mismo aviso una vez por reintento.
+//
+// El transporte externo es at-least-once; la presentación in-app lee el outbox
+// directo y no depende de que nadie marque nada (D5).
 // --------------------------------------------------------------------------
 
 import { prisma } from "@/lib/db/prisma";
@@ -30,12 +40,22 @@ export type AvailabilityStatus = "DISPONIBLE_PARCIAL" | "DISPONIBLE_COMPLETO";
 export type PendingAvailabilityNotification = {
   pendingId: string;
   availabilityStatus: AvailabilityStatus;
-  /** Identifica la transición ÚNICA del pendiente (p.ej. el idempotencyKey del
-   * flujo que cambió la disponibilidad). El reintento usa la misma clave. */
-  transitionKey: string;
-  /** A prueba de diseño: el servicio ignora este valor. */
-  recipientIdOverride?: string;
 };
+
+/**
+ * La transición ES el estado alcanzado.
+ *
+ * El pendiente ya identifica al agregado en la clave única, así que alcanza con
+ * el estado para distinguir "pasó a parcial" de "pasó a completo" y para que un
+ * reintento de la misma transición produzca la misma clave por construcción.
+ *
+ * Consecuencia buscada: si un pendiente vuelve a parcial después de haber
+ * estado en parcial, no se avisa de nuevo. El vendedor ya sabe que hay stock
+ * parcial; repetirlo es ruido, no información.
+ */
+function transitionKeyFor(availabilityStatus: AvailabilityStatus): string {
+  return availabilityStatus;
+}
 
 /**
  * Encola la notificación de disponibilidad para el dueño del pendiente.
@@ -63,16 +83,18 @@ export async function enqueuePendingAvailabilityNotification(
     pendingId: pending.id,
     availabilityStatus: input.availabilityStatus,
   };
-  const fingerprint = fingerprintOf(payload);
 
   const data: EnqueueOutboxEventData = {
     recipientId: pending.createdById,
     eventType,
     aggregateType: AGGREGATE_TYPE_PENDING,
     aggregateId: pending.id,
-    transitionKey: input.transitionKey,
+    transitionKey: transitionKeyFor(input.availabilityStatus),
     payload,
   };
 
-  return enqueueOutboxEvent({ ...data, fingerprint }, client);
+  return enqueueOutboxEvent(
+    { ...data, fingerprint: fingerprintOf(eventType, payload) },
+    client,
+  );
 }
