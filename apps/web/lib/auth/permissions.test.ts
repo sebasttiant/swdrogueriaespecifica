@@ -150,16 +150,39 @@ describe("capabilities · can()", () => {
     expect(can("ADMIN", "canManageUsers")).toBe(true);
   });
 
-  it("OPERADOR tiene solo las capabilities operativas", () => {
-    expect(can("OPERADOR", "canViewDashboard")).toBe(true);
-    expect(can("OPERADOR", "canViewPendientes")).toBe(true);
-    expect(can("OPERADOR", "canViewFaltantes")).toBe(true);
-    expect(can("OPERADOR", "canViewProductos")).toBe(true);
-    expect(can("OPERADOR", "canViewEntradas")).toBe(true);
+  it("OPERADOR ve exactamente los cuatro módulos de su circuito", () => {
+    // La lista completa, no una muestra: si mañana alguien le suma un módulo al
+    // vendedor, tiene que romper acá y no descubrirse en producción.
+    const modulos = [
+      "canViewDashboard",
+      "canViewPendientes",
+      "canViewFaltantes",
+      "canViewProductos",
+      "canViewEntradas",
+      "canViewReports",
+      "canViewAudit",
+    ] as const;
+
+    const visibles = modulos.filter((m) => can("OPERADOR", m));
+    expect(visibles).toEqual(["canViewDashboard", "canViewPendientes", "canViewFaltantes"]);
+    // El cuarto lugar del menú es la revisión de pendientes, que no tiene
+    // capability de "ver módulo" propia.
+    expect(can("OPERADOR", "canReviewPendings")).toBe(true);
+  });
+
+  it("OPERADOR opera dentro de esos módulos", () => {
     expect(can("OPERADOR", "canCreatePendientes")).toBe(true);
-    // El circuito de recepción es de gerencia y bodega: el vendedor ve la
-    // lista de entradas pero no registra.
+    expect(can("OPERADOR", "canSubmitMissingReports")).toBe(true);
+    expect(can("OPERADOR", "canDeliverPendings")).toBe(true);
+  });
+
+  it("OPERADOR queda fuera del circuito de recepción y del catálogo", () => {
+    // Ni el módulo ni la acción: quitar solo la vista dejaría la Server Action
+    // alcanzable para quien supiera invocarla.
+    expect(can("OPERADOR", "canViewEntradas")).toBe(false);
     expect(can("OPERADOR", "canCreateEntries")).toBe(false);
+    expect(can("OPERADOR", "canViewProductos")).toBe(false);
+    expect(can("OPERADOR", "canManageProducts")).toBe(false);
   });
 
   it("OPERADOR NO tiene las capabilities sensibles", () => {
@@ -168,7 +191,6 @@ describe("capabilities · can()", () => {
     expect(can("OPERADOR", "canManageUsers")).toBe(false);
     expect(can("OPERADOR", "canConfirmMissingItems")).toBe(false);
     expect(can("OPERADOR", "canSnoozeAlerts")).toBe(false);
-    expect(can("OPERADOR", "canManageProducts")).toBe(false);
   });
 
   it("canDeliverPendings: todos los roles operativos + BODEGA lo tienen", () => {

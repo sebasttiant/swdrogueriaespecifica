@@ -20,19 +20,32 @@ describe("visibleNavItems", () => {
     expect(operador).not.toContain("Reportes");
     expect(operador).not.toContain("Usuarios");
     expect(operador).not.toContain("Auditoría");
+    // El circuito de recepción y el catálogo salieron del menú del vendedor:
+    // no administra productos ni recibe mercadería.
+    expect(operador).not.toContain("Entradas");
+    expect(operador).not.toContain("Productos");
   });
 
-  it("OPERADOR ve exactamente los seis items operativos", () => {
+  it("OPERADOR ve exactamente los cuatro items de su circuito", () => {
     expect(labels("OPERADOR")).toEqual([
       "Dashboard",
       "Pendientes",
       "Faltantes",
       // Agregado por T4.2b·A: el vendedor revisa pendientes, acotado a los
-      // suyos. No se quitó ninguno de los anteriores.
+      // suyos.
       "Revisión de pendientes",
-      "Entradas",
-      "Productos",
     ]);
+  });
+
+  it("la barra del celular le queda con tres accesos, no con una fila rota", () => {
+    // `MobileNav` renderiza los `primaryMobile` visibles más la pestaña "Más" y
+    // deriva las columnas de esa cuenta. Al vendedor le quedan tres: la barra
+    // se reparte en cuatro columnas y no queda un hueco donde estaba Entradas.
+    const primarios = visibleNavItems("OPERADOR")
+      .filter((item) => item.primaryMobile)
+      .map((item) => item.label);
+
+    expect(primarios).toEqual(["Dashboard", "Pendientes", "Faltantes"]);
   });
 
   it("SUPERVISOR ve items operativos, incluyendo Faltantes, sin administración", () => {

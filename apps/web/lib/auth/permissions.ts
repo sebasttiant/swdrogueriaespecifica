@@ -268,12 +268,21 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     "canCancelPendings",
     "canReviewPendings",
   ],
+  // El vendedor ve SU circuito y nada más: dashboard, pendientes, faltantes y
+  // la revisión de pendientes. Catálogo y entradas quedan afuera —no administra
+  // productos ni recibe mercadería—, y una pantalla que no se usa igual pesa:
+  // ocupa un lugar en la barra del celular y habilita tocar donde no
+  // corresponde.
+  //
+  // Quitarle `canViewProductos` NO le quita elegir un producto. Crear un
+  // pendiente o reportar un faltante pasa por `searchProductsAction`, que exige
+  // sesión activa y no esta capacidad. Son dos cosas distintas —buscar un
+  // producto para trabajar, y administrar el catálogo— y por eso tienen guardas
+  // distintas.
   OPERADOR: [
     "canViewDashboard",
     "canViewPendientes",
     "canViewFaltantes",
-    "canViewProductos",
-    "canViewEntradas",
     "canCreatePendientes",
     "canSubmitMissingReports",
     "canContactOwnPendings",
