@@ -13,7 +13,7 @@ import {
   type PendingFormState,
 } from "@/server/actions/pending.actions";
 
-import type { ProductOption } from "./pending-form";
+import { optionLabel, type ProductOption } from "./pending-form";
 
 const INITIAL_STATE: PendingFormState = { error: null, ok: false };
 
@@ -89,7 +89,7 @@ export function PendingEditForm({
           <Select id="productId" name="productId" required defaultValue={pending.productId}>
             {products.map((product) => (
               <option key={product.id} value={product.id}>
-                {product.name} ({product.code})
+                {optionLabel(product)}
               </option>
             ))}
           </Select>

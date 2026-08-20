@@ -91,6 +91,7 @@ export default async function PendientesPage({
       id: product.id,
       name: product.name,
       code: product.code,
+      orionCode: product.orionCode,
     }));
 
   return (

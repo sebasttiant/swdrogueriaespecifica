@@ -14,7 +14,18 @@ import type { Prisma, Product } from "@/lib/generated/prisma/client";
 
 export type ProductListItem = Pick<
   Product,
-  "id" | "code" | "name" | "unit" | "minStock" | "reorderQty" | "active" | "createdAt"
+  | "id"
+  | "code"
+  | "name"
+  | "unit"
+  | "minStock"
+  | "reorderQty"
+  | "active"
+  | "createdAt"
+  // Identidad canónica. Viaja en el listado porque quien elige un producto para
+  // un pendiente necesita cotejarlo contra Orion, y el `code` interno no existe
+  // del otro lado.
+  | "orionCode"
 > & {
   // Earliest expiry among batches with quantity > 0. Null if no active batches.
   // Used to compute per-product worst expiry tier in the catalog list (S3).
@@ -39,6 +50,7 @@ export type CreateProductData = {
 const LIST_SELECT = {
   id: true,
   code: true,
+  orionCode: true,
   name: true,
   unit: true,
   minStock: true,
