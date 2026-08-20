@@ -43,6 +43,18 @@ function docker(args: string[]): string {
   return execFileSync("docker", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 }
 
+// Se conecta por TCP a 127.0.0.1 y NO por el socket de Unix, y esa diferencia
+// es la que decide si el chequeo de "ya está listo" dice la verdad.
+//
+// La imagen de postgres arranca PRIMERO un servidor temporal para correr initdb
+// —con `listen_addresses` vacío, o sea socket y nada de TCP—, lo usa, y después
+// LO APAGA para levantar el definitivo. Un `SELECT 1` por el socket responde
+// contra ese servidor temporal: el bucle de espera se da por satisfecho, los
+// tests arrancan, e initdb apaga el servidor debajo de ellos.
+//
+// De ahí salía `FATAL: the database system is shutting down` en CI, seguido del
+// socket desaparecido. Por TCP no pasa: el temporal no escucha ahí, así que la
+// espera solo termina cuando el servidor real está arriba.
 function psql(sql: string): string {
   return docker([
     "exec",
@@ -50,6 +62,8 @@ function psql(sql: string): string {
     `PGPASSWORD=${postgresPassword}`,
     containerName,
     "psql",
+    "-h",
+    "127.0.0.1",
     "-v",
     "ON_ERROR_STOP=1",
     "-U",
@@ -72,6 +86,8 @@ function runMigration(): void {
       `PGPASSWORD=${postgresPassword}`,
       containerName,
       "psql",
+      "-h",
+      "127.0.0.1",
       "-v",
       "ON_ERROR_STOP=1",
       "-U",
