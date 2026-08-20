@@ -1,0 +1,24 @@
+# Override local para desarrollo desde el host.
+# NO tocar docker-compose.yml (base de despliegue): este override solo publica
+# el puerto de Postgres hacia el host para que prisma migrate y el dev server
+# puedan conectarse desde fuera del compose.
+#
+# Uso:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres
+#
+# Conexión desde el host: DATABASE_URL=postgresql://<USER>:<PASS>@127.0.0.1:5433/<DB>?schema=public
+services:
+  postgres:
+    ports:
+      # BIND A LOCALHOST, no a todas las interfaces.
+      #
+      # `"5433:5432"` a secas publica en 0.0.0.0: la base queda alcanzable desde
+      # cualquier equipo de la red donde esté esta máquina —el wifi de la
+      # droguería, un café, la VPN—. Y la publica Docker escribiendo reglas
+      # DIRECTAS en iptables, por debajo de firewalld: `firewall-cmd` no la
+      # tapa, así que la protección que uno cree tener no está.
+      #
+      # Del otro lado del puerto están los datos de clientes del sistema. El
+      # prefijo `127.0.0.1` deja el puerto donde tiene que estar: accesible para
+      # `prisma migrate` y el dev server de esta máquina, invisible para el resto.
+      - "127.0.0.1:5433:5432"
