@@ -30,7 +30,7 @@ export function EntryList({ items, nextCursor }: EntryListProps) {
       {items.map((entry) => (
         <Card key={entry.id} className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="truncate font-semibold text-text">
+            <p className="break-words font-semibold text-text">
               {entry.product.name}
             </p>
             <p className="text-sm text-muted-foreground">

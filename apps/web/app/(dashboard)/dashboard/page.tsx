@@ -234,10 +234,10 @@ export default async function DashboardPage() {
                     className="flex items-center justify-between gap-3 rounded-lg bg-muted/60 px-3 py-2"
                   >
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-medium text-text">
+                      <p className="break-words text-sm font-medium text-text">
                         {pending.product.name}
                       </p>
-                      <p className="truncate text-xs text-muted-foreground">
+                      <p className="break-words text-xs text-muted-foreground">
                         {pending.quantity} {pending.product.unit} ·{" "}
                         {formatBogotaDate(pending.promisedAt, { style: "datetime" })}
                       </p>

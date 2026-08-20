@@ -59,8 +59,8 @@ export function UserMenu({ name, email }: UserMenuProps) {
           className="absolute right-0 top-12 z-40 w-60 rounded-[var(--radius-btn)] border border-border bg-surface shadow-lg"
         >
           <div className="border-b border-border px-4 py-3">
-            <p className="truncate font-semibold text-text">{name}</p>
-            <p className="truncate text-sm text-muted-foreground">{email}</p>
+            <p className="break-words font-semibold text-text">{name}</p>
+            <p className="break-words text-sm text-muted-foreground">{email}</p>
           </div>
           {/* Preferencias. Solo por debajo de lg: en escritorio ya están como
               íconos en la topbar y repetirlas confundiría. */}
