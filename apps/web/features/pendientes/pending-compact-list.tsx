@@ -381,10 +381,10 @@ export function PendingCompactList({
             <Card key={pending.id} className="space-y-2 p-3">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="truncate font-medium text-text">
+                  <p className="break-words font-medium text-text">
                     {pending.product.name}
                   </p>
-                  <p className="truncate text-xs text-muted-foreground">
+                  <p className="break-words text-xs text-muted-foreground">
                     {pending.createdBy?.name ?? "Sin vendedor"}
                     {" · "}
                     {/* Quien hace seguimiento necesita la HORA comprometida, no

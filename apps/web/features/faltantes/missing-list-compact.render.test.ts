@@ -239,3 +239,25 @@ describe("MissingListCompact · atribución", () => {
     expect(out).toContain("Sin registrar");
   });
 });
+
+
+// --------------------------------------------------------------------------
+// Pedido de Andrés Bonilla (20/8/2026, vía Daniel): trabaja desde el celular y
+// el nombre del producto le llegaba cortado, así que tenía que girar el
+// teléfono para leerlo.
+//
+// El corte no molestaba por incompleto: se llevaba el FINAL, que en farmacia
+// es donde vive lo que distingue un producto de otro —la presentación, la
+// cantidad, la etapa, el laboratorio—. "PAÑITOS HUMEDOS HUGGI…" no dice cuál
+// de todos los Huggies es.
+//
+// Se afirma sobre la clase porque acá la clase ES el comportamiento: el texto
+// completo siempre estuvo en el DOM, lo que lo escondía era el CSS.
+// --------------------------------------------------------------------------
+describe("MissingListCompact · el nombre no se corta en el celular", () => {
+  it("no aplica `truncate` a ningún dato de la tarjeta", () => {
+    const html = render([item()]);
+
+    expect(html).not.toContain("truncate");
+  });
+});

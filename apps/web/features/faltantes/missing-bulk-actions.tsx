@@ -114,7 +114,7 @@ export function MissingBulkActions({ items }: MissingBulkActionsProps) {
                 onChange={() => toggle(item.id)}
                 className="h-4 w-4 shrink-0 rounded border-border accent-primary"
               />
-              <span className="min-w-0 truncate">
+              <span className="min-w-0 break-words">
                 {item.productName}
                 <span className="ml-1 text-muted-foreground">
                   {item.sellerCode ?? (item.quantity === null ? "—" : `${item.quantity} ${item.unit}`)}

@@ -85,8 +85,8 @@ export function UserList({
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="truncate font-semibold text-text">{user.name}</p>
-                  <p className="truncate text-sm text-muted-foreground">
+                  <p className="break-words font-semibold text-text">{user.name}</p>
+                  <p className="break-words text-sm text-muted-foreground">
                     {user.email}
                   </p>
                 </div>

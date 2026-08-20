@@ -187,7 +187,7 @@ function missingCard(
     <Card key={missing.id} className="space-y-3 p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-base font-semibold text-text">
+          <p className="break-words text-base font-semibold text-text">
             {missing.product.name}
           </p>
           <p className="text-xs text-muted-foreground">
@@ -197,7 +197,7 @@ function missingCard(
           {/* Trazabilidad (Mejora 5): quién lo pidió. El vendedor que reportó,
               o quien lo creó. Visible para todos: es contexto operativo. */}
           {missing.requestedByName ? (
-            <p className="truncate text-xs text-muted-foreground">
+            <p className="break-words text-xs text-muted-foreground">
               Solicitado por {missing.requestedByName}
             </p>
           ) : null}

@@ -87,7 +87,7 @@ export function StatusDonut({ data, unitLabel }: StatusDonutProps) {
               style={{ backgroundColor: colorFor(slice.status) }}
               aria-hidden
             />
-            <span className="min-w-0 flex-1 truncate">{slice.label}</span>
+            <span className="min-w-0 flex-1 break-words">{slice.label}</span>
             <span className="tabular-nums text-muted-foreground">
               {slice.count} · {slice.percent}%
             </span>

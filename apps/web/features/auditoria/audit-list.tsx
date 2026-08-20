@@ -109,11 +109,11 @@ export function AuditList({
                   {formatAuditModule(log.module)} · {entity.label}
                 </p>
                 {entity.reference ? (
-                  <p className="truncate text-xs text-muted-foreground/70">
+                  <p className="break-words text-xs text-muted-foreground/70">
                     Ref. {entity.reference}
                   </p>
                 ) : null}
-                <p className="truncate text-sm text-muted-foreground">
+                <p className="break-words text-sm text-muted-foreground">
                   {stampFormatter.format(log.createdAt)}
                 </p>
               </div>
