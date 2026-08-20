@@ -301,3 +301,106 @@ describe("linkOrionCode · la carrera por el mismo código", () => {
     expect(sinCodigo.orionCode).toBeNull();
   });
 });
+
+// --------------------------------------------------------------------------
+// Corregir un código Orion mal cargado.
+//
+// El código se copia a mano desde el ERP, y quien lo copia está en el mostrador
+// con un cliente enfrente. Hasta ahora ese error era PERMANENTE: la escritura
+// filtra por `orionCode: null`, así que nada podía cambiar un código ya puesto.
+//
+// Va contra PostgreSQL real y no con dobles porque lo que hay que probar es el
+// compare-and-set: que la corrección no pise un código que cambió en el medio,
+// y que el `@unique` de la base frene una colisión que la lectura previa no vio.
+// --------------------------------------------------------------------------
+describe("corrección del código Orion", () => {
+  async function linkedProduct(name: string, orionCode: string) {
+    const product = await newProduct(name);
+    const linked = await linkOrionCode({
+      actor: BODEGA,
+      identity: { internalSku: product.internalSku },
+      orionCode,
+      intent: "LINK",
+      expectedVersion: product.identityVersion,
+    });
+    return linked;
+  }
+
+  it("cambia el código equivocado y deja rastro del anterior", async () => {
+    const malCargado = nextOrionCode();
+    const correcto = nextOrionCode();
+    const product = await linkedProduct("Losartán 50mg", malCargado);
+
+    const fixed = await linkOrionCode({
+      actor: SUPERVISOR,
+      identity: { productId: product.id },
+      orionCode: correcto,
+      intent: "FIX",
+      expectedVersion: product.identityVersion,
+    });
+
+    expect(fixed.orionCode).toBe(correcto);
+    expect(fixed.identityVersion).toBe(product.identityVersion + 1);
+
+    // El rastro tiene que decir de qué código se venía: sin eso, reconciliar
+    // contra Orion hacia atrás es imposible, y esa es la única razón real por
+    // la que el código valía la pena protegerlo.
+    const audit = await prisma.auditLog.findFirst({
+      where: { entity: "Product", entityId: product.id, action: AUDIT_ACTIONS.SKU_ORION_FIX },
+    });
+    expect(audit?.userId).toBe(SUPERVISOR.id);
+    expect(audit?.before).toMatchObject({ orionCode: malCargado });
+    expect(audit?.after).toMatchObject({ orionCode: correcto });
+  });
+
+  it("el vendedor no puede corregir", async () => {
+    const product = await linkedProduct("Naproxeno 250mg", nextOrionCode());
+
+    await expect(
+      linkOrionCode({
+        actor: { id: BODEGA.id, role: "OPERADOR" },
+        identity: { productId: product.id },
+        orionCode: nextOrionCode(),
+        intent: "FIX",
+        expectedVersion: product.identityVersion,
+      }),
+    ).rejects.toBeInstanceOf(SkuIdentityError);
+  });
+
+  // La versión que llega es la que vio quien corrige. Si otro tocó la identidad
+  // mientras tanto, este pierde: corregir sobre una pantalla vieja escribiría
+  // encima de una decisión que no se vio.
+  it("rechaza corregir con una versión vencida", async () => {
+    const product = await linkedProduct("Omeprazol 20mg", nextOrionCode());
+
+    await expect(
+      linkOrionCode({
+        actor: SUPERVISOR,
+        identity: { productId: product.id },
+        orionCode: nextOrionCode(),
+        intent: "FIX",
+        expectedVersion: product.identityVersion - 1,
+      }),
+    ).rejects.toBeInstanceOf(SkuConcurrencyError);
+  });
+
+  it("rechaza corregir hacia un código que ya tiene otro producto", async () => {
+    const ocupado = nextOrionCode();
+    await linkedProduct("Metformina 850mg", ocupado);
+    const product = await linkedProduct("Enalapril 10mg", nextOrionCode());
+
+    await expect(
+      linkOrionCode({
+        actor: SUPERVISOR,
+        identity: { productId: product.id },
+        orionCode: ocupado,
+        intent: "FIX",
+        expectedVersion: product.identityVersion,
+      }),
+    ).rejects.toBeInstanceOf(SkuIdentityError);
+
+    // Y el producto queda como estaba: un rechazo no puede dejarlo sin código.
+    const after = await prisma.product.findUniqueOrThrow({ where: { id: product.id } });
+    expect(after.orionCode).toBe(product.orionCode);
+  });
+});

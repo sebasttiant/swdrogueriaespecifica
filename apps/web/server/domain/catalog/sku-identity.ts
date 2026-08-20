@@ -57,6 +57,30 @@ export const SKU_ONBOARDING_ROLES: readonly SessionRole[] = [
   "BODEGA",
 ];
 
+/**
+ * Quién CORRIGE una identidad ya cargada.
+ *
+ * El conjunto es más ancho que el de acuñación, y a propósito: acuñar crea
+ * identidad nueva, corregir repara una que ya está mal. Supervisión entra
+ * porque es quien recibe el reclamo del vendedor cuando el código quedó
+ * cambiado. El vendedor NO: su única corrección va por su propio pendiente,
+ * con el límite de una sola vez que ya rige ahí.
+ */
+export const SKU_FIX_ROLES: readonly SessionRole[] = [
+  "SUPERADMIN",
+  "ADMIN",
+  "SUPERVISOR",
+  "BODEGA",
+];
+
+export function canFixSkuIdentity(role: SessionRole): boolean {
+  return SKU_FIX_ROLES.includes(role);
+}
+
+export function assertCanFixSkuIdentity(role: SessionRole): void {
+  if (!canFixSkuIdentity(role)) throw new SkuIdentityError("FORBIDDEN_ACTOR");
+}
+
 export function canOnboardSku(role: SessionRole): boolean {
   return SKU_ONBOARDING_ROLES.includes(role);
 }
@@ -214,6 +238,17 @@ export type OrionLinkPlan =
       productId: string;
       orionCode: string;
       releasedFromProductId: string;
+    }
+  | {
+      action: "FIX";
+      productId: string;
+      orionCode: string;
+      /**
+       * El código que se está reemplazando. Viaja en el plan porque es el
+       * compare-and-set de la escritura: filtrar por él impide pisar un código
+       * que cambió entre que se leyó el producto y que se escribió.
+       */
+      previousOrionCode: string;
     };
 
 export function planOrionLink(params: {
@@ -221,8 +256,12 @@ export function planOrionLink(params: {
   orionCode: string;
   /** Producto que hoy tiene ese código Orion, si alguno lo tiene. */
   holder: SkuIdentityRecord | null;
-  /** `RELINK` es una decisión explícita y auditada, nunca un efecto colateral. */
-  intent: "LINK" | "RELINK";
+  /**
+   * `RELINK` y `FIX` son decisiones explícitas y auditadas, nunca efectos
+   * colaterales. RELINK mueve un código de un producto a OTRO; FIX cambia el
+   * código equivocado de ESTE producto por el correcto.
+   */
+  intent: "LINK" | "RELINK" | "FIX";
 }): OrionLinkPlan {
   const orionCode = normalizeOrionCode(params.orionCode);
   const { product, holder, intent } = params;
@@ -232,12 +271,29 @@ export function planOrionLink(params: {
     return { action: "NOOP", productId: product.id, orionCode };
   }
 
-  // El código Orion es inmutable: pisarlo rompería la trazabilidad de todo el
-  // inventario que ya se movió bajo ese código.
-  if (product.orionCode !== null) throw new SkuIdentityError("ORION_CONFLICT");
+  // Un código ya puesto no se cambia por accidente. Solo `FIX` puede, porque
+  // el código se copia a mano desde el ERP y quien lo copia está en el
+  // mostrador: tipearlo mal es cuestión de tiempo, y sin una vía de corrección
+  // el primer error sería permanente.
+  //
+  // Corregir hacia un código que YA tiene otro producto no se resuelve solo:
+  // son dos productos y dos decisiones. Primero se libera aquel, después se
+  // corrige este, y cada paso queda auditado por separado.
+  if (product.orionCode !== null) {
+    if (intent !== "FIX" || (holder && holder.id !== product.id)) {
+      throw new SkuIdentityError("ORION_CONFLICT");
+    }
+
+    return {
+      action: "FIX",
+      productId: product.id,
+      orionCode,
+      previousOrionCode: product.orionCode,
+    };
+  }
 
   if (holder && holder.id !== product.id) {
-    if (intent === "LINK") throw new SkuIdentityError("ORION_CONFLICT");
+    if (intent !== "RELINK") throw new SkuIdentityError("ORION_CONFLICT");
 
     return {
       action: "RELINK",
