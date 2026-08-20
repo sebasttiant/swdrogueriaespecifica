@@ -55,6 +55,7 @@ export default async function ProductDetailPage({
         internalSku={product.internalSku}
         identityVersion={product.identityVersion}
         canLink={can(session.user.role, "canManageProducts")}
+        canFix={can(session.user.role, "canFixProductIdentity")}
       />
 
       <div className="space-y-3">

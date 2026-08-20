@@ -64,8 +64,8 @@ export function OrionLinkForm({ productId, identityVersion }: OrionLinkFormProps
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Una vez vinculado, este código no se cambia: es lo que va a permitir
-        cuadrar el inventario.
+        Es lo que va a permitir cuadrar el inventario, así que copialo exacto.
+        Si queda mal, se puede corregir, pero queda registrado.
       </p>
 
       {state.error ? (
