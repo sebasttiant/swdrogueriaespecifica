@@ -4,7 +4,8 @@
 #
 # Crea datos realistas y determinísticos para demostración post-reset:
 # 10 pendientes + 10 faltantes, con 10 clientes distintos. No requiere Excel.
-# Por seguridad corre en DRY_RUN por defecto.
+# Por seguridad corre en DRY_RUN por defecto, y sembrar de verdad exige escribir
+# la confirmación a mano: es el único freno entre esto y una base real.
 # ==========================================================================
 set -Eeuo pipefail
 
@@ -18,7 +19,7 @@ SKIP_BACKUP="${SKIP_BACKUP:-0}"
 
 usage() {
   cat <<'EOF'
-Uso: scripts/import-operational-excel-data.sh [--dry-run] [--execute] [--skip-backup]
+Uso: scripts/seed-operational-data.sh [--dry-run] [--execute] [--skip-backup]
 
 Siembra datos operativos demo seguros para VPS:
 - 10 pendientes con clientes y teléfonos distintos.
@@ -27,13 +28,18 @@ Siembra datos operativos demo seguros para VPS:
 - Si no existen, crea productos determinísticos IMP-DEMO-*.
 
 El script NO lee archivos Excel y NO ejecuta reset. Para dejar la base limpia,
-ejecutá primero data:reset:operational y luego este seed.
+ejecutá primero pnpm data:reset:operational y luego este seed.
 
 Opciones:
   --dry-run       Prueba la siembra dentro de una transacción y revierte todo.
-  --execute       Siembra realmente. Exige confirmación fuerte y backup por defecto.
+  --execute       Siembra realmente. Pide la confirmación por teclado y hace
+                  backup previo por defecto.
   --skip-backup   Omite backup previo en --execute. No recomendado.
   --help          Muestra esta ayuda.
+
+Atajos pnpm:
+  pnpm data:seed:operational:dry   Ensayo sin escribir nada.
+  pnpm data:seed:operational       Siembra real; te va a pedir la confirmación.
 
 Variables equivalentes:
   DRY_RUN=0 CONFIRM_IMPORT=YES SKIP_BACKUP=1 DB_SERVICE=postgres
