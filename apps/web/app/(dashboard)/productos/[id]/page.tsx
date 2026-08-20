@@ -1,9 +1,11 @@
 import { notFound } from "next/navigation";
 
 import { PageHeader } from "@/app/_components/app-shell/page-header";
+import { can } from "@/lib/auth/permissions";
 import { requireCapability } from "@/lib/auth/require-role";
 import { Card, CardTitle } from "@/app/_components/ui/card";
 import { BatchList } from "@/features/productos/batch-list";
+import { ProductIdentityCard } from "@/features/productos/product-identity-card";
 import {
   getBatchesByProduct,
   getSellableStock,
@@ -17,7 +19,7 @@ export default async function ProductDetailPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ cursor?: string }>;
 }) {
-  await requireCapability("canViewProductos");
+  const session = await requireCapability("canViewProductos");
 
   const { id } = await params;
   const { cursor } = await searchParams;
@@ -46,6 +48,14 @@ export default async function ProductDetailPage({
           Suma de lotes disponibles, con stock y no vencidos.
         </p>
       </Card>
+
+      <ProductIdentityCard
+        productId={product.id}
+        orionCode={product.orionCode}
+        internalSku={product.internalSku}
+        identityVersion={product.identityVersion}
+        canLink={can(session.user.role, "canManageProducts")}
+      />
 
       <div className="space-y-3">
         <CardTitle>Lotes</CardTitle>

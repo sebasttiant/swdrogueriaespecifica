@@ -3,7 +3,10 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { AUDIT_ACTIONS } from "@/lib/constants/audit";
 import { prisma } from "@/lib/db/prisma";
 import { SkuIdentityError } from "@/server/domain/catalog/sku-identity";
-import { SkuConcurrencyError } from "@/server/repositories/sku-review.repository";
+import {
+  applyOrionLink,
+  SkuConcurrencyError,
+} from "@/server/repositories/sku-review.repository";
 import {
   linkOrionCode,
   onboardProvisionalSku,
@@ -248,5 +251,53 @@ describe("linkOrionCode · remapeo", () => {
 
     expect(again.identityVersion).toBe(linked.identityVersion);
     expect(await prisma.auditLog.count({ where: { entity: "Product" } })).toBe(0);
+  });
+});
+
+// --------------------------------------------------------------------------
+// La CARRERA que descubrió la revisión del 20/8/2026.
+//
+// `linkOrionCode` lee al `holder` del código FUERA de la transacción. Si dos
+// operadores vinculan el MISMO código a productos DISTINTOS a la vez, los dos
+// leen `holder = null`, los dos planean LINK, y los dos pasan su propio
+// compare-and-set —que solo mira su propia fila—. Al segundo lo frena el
+// `@unique` de la base, no la aplicación.
+//
+// Sin traducir ese P2002, el que pierde recibe el mensaje genérico "intentá de
+// nuevo" para algo que NUNCA va a funcionar. Tiene que recibir ORION_CONFLICT,
+// que es lo que de verdad pasó.
+//
+// Se ejercita `applyOrionLink` directamente con un plan LINK: es exactamente
+// el estado en el que la carrera deja al segundo escritor —plan ya decidido
+// sobre una lectura que quedó vieja—, y hacerlo así lo vuelve determinista.
+// --------------------------------------------------------------------------
+describe("linkOrionCode · la carrera por el mismo código", () => {
+  it("traduce el choque contra el unique de la base, en vez de dejarlo escapar crudo", async () => {
+    const orionCode = nextOrionCode();
+    const ganador = await newProduct("El que llegó primero");
+    const perdedor = await newProduct("El que llegó tarde");
+
+    await linkOrionCode({
+      actor: BODEGA,
+      identity: { productId: ganador.id },
+      orionCode,
+      intent: "LINK",
+      expectedVersion: ganador.identityVersion,
+    });
+
+    // El plan que la carrera dejó armado: LINK, sobre una lectura ya vieja.
+    const fallo = await applyOrionLink(
+      { action: "LINK", productId: perdedor.id, orionCode },
+      { expectedVersion: perdedor.identityVersion },
+    ).catch((error: unknown) => error);
+
+    expect(fallo).toBeInstanceOf(SkuIdentityError);
+    expect((fallo as SkuIdentityError).code).toBe("ORION_CONFLICT");
+
+    // Y el código sigue donde estaba: la base no se dejó pisar.
+    const intacto = await prisma.product.findUniqueOrThrow({ where: { id: ganador.id } });
+    expect(intacto.orionCode).toBe(orionCode);
+    const sinCodigo = await prisma.product.findUniqueOrThrow({ where: { id: perdedor.id } });
+    expect(sinCodigo.orionCode).toBeNull();
   });
 });
