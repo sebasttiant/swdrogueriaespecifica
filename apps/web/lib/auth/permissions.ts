@@ -321,3 +321,23 @@ export function rolesWithCapability(
 ): readonly SessionRole[] {
   return USER_ROLES.filter((role) => can(role, capability));
 }
+
+/**
+ * Whether `role` sees EVERY pending, or only the ones it created.
+ *
+ * Two capabilities answer this, and they are not interchangeable:
+ * `canManageAllPendings` grants the full queue because the role operates it,
+ * and `canReadAllPendings` grants the full queue for reading alone (T4.4). A
+ * role with only the second sees everything and may still mutate nothing —
+ * fulfilment actions keep gating on the first.
+ *
+ * IT LIVES HERE, ONCE, ON PURPOSE. This disjunction used to be written out at
+ * every surface that lists pendings — the review module, the operational queue,
+ * the dashboard and the alert bar. A rule that decides who sees whose customers
+ * cannot be copied four times: the day one copy drifts, exactly one screen
+ * leaks, and it leaks quietly. Callers that need the owner filter derive it from
+ * this: `ownerId: seesAllPendings(role) ? undefined : userId`.
+ */
+export function seesAllPendings(role: SessionRole): boolean {
+  return can(role, "canManageAllPendings") || can(role, "canReadAllPendings");
+}

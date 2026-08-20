@@ -2,7 +2,7 @@ import Link from "next/link";
 
 import { Alert, type AlertTone } from "@/app/_components/ui/alert";
 import { alertSignature, type AlertCounts } from "@/lib/alertas/signature";
-import { can } from "@/lib/auth/permissions";
+import { can, seesAllPendings } from "@/lib/auth/permissions";
 import type { SessionRole } from "@/lib/auth/session";
 import { cn } from "@/lib/utils/cn";
 import {
@@ -152,8 +152,7 @@ function OperationalAlertContent({
 // bodega, desde que opera pendientes propios (T4.4), recibe el mismo recorte
 // por dueño que el vendedor: sus entregas, no las ajenas.
 function alertScopeFor(role: SessionRole, userId: string): AlertScope {
-  if (can(role, "canManageAllPendings") || can(role, "canReadAllPendings"))
-    return { kind: "global" };
+  if (seesAllPendings(role)) return { kind: "global" };
   if (can(role, "canViewPendientes")) return { kind: "owner", ownerId: userId };
   return { kind: "none" };
 }

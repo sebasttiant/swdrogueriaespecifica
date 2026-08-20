@@ -10,6 +10,7 @@ import {
   isSuperAdminRole,
   isUserManager,
   rolesWithCapability,
+  seesAllPendings,
   USER_ROLES,
 } from "./permissions";
 
@@ -450,5 +451,51 @@ describe("canReadAllPendings (lectura global ≠ mutación)", () => {
     expect(can("BODEGA", "canCancelPendings")).toBe(true);
     expect(can("BODEGA", "canReadAllPendings")).toBe(false);
     expect(can("BODEGA", "canManageAllPendings")).toBe(false);
+  });
+});
+
+// --------------------------------------------------------------------------
+// Quién ve los pendientes de TODOS y quién solo los suyos.
+//
+// Esta es la pregunta que hace el dueño de la droguería, y hasta ahora había
+// que responderla leyendo dos capacidades y haciendo la cuenta a mano en cada
+// pantalla. `seesAllPendings` la contesta en un solo lugar, y este bloque la
+// fija por rol: una tabla, no una muestra.
+// --------------------------------------------------------------------------
+describe("seesAllPendings (alcance de la cola, en una sola regla)", () => {
+  it("la cola completa es de gerencia y supervisión, nunca del vendedor", () => {
+    const alcance = USER_ROLES.map((role) => [role, seesAllPendings(role)] as const);
+
+    expect(alcance).toEqual([
+      ["SUPERADMIN", true],
+      ["ADMIN", true],
+      ["SUPERVISOR", true],
+      ["OPERADOR", false],
+      ["BODEGA", false],
+    ]);
+  });
+
+  it("el vendedor entra al módulo de revisión, pero acotado a lo suyo", () => {
+    // Las dos mitades de la regla del negocio: puede revisar, y lo que revisa
+    // son sus propios pendientes. Separarlas es lo que evita las dos fallas
+    // opuestas —dejarlo afuera del módulo, o mostrarle la cola entera—.
+    expect(can("OPERADOR", "canReviewPendings")).toBe(true);
+    expect(seesAllPendings("OPERADOR")).toBe(false);
+  });
+
+  it("la supervisión revisa la cola entera", () => {
+    expect(can("SUPERVISOR", "canReviewPendings")).toBe(true);
+    expect(seesAllPendings("SUPERVISOR")).toBe(true);
+  });
+
+  it("cualquiera de los dos ejes alcanza para ver todo", () => {
+    // La regla es una disyunción: alcanza con leer globalmente, aunque no se
+    // pueda mutar. Si mañana se le quita la mutación a la supervisión, tiene
+    // que seguir viendo la cola.
+    for (const role of USER_ROLES) {
+      expect(seesAllPendings(role)).toBe(
+        can(role, "canManageAllPendings") || can(role, "canReadAllPendings"),
+      );
+    }
   });
 });
