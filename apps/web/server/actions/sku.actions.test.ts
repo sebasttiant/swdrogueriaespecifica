@@ -157,3 +157,49 @@ describe("linkOrionCodeAction · éxito", () => {
     expect(auditContextFromHeaders).toHaveBeenCalledWith("u1");
   });
 });
+
+// --------------------------------------------------------------------------
+// Hallazgos de la revisión del 20/8/2026.
+// --------------------------------------------------------------------------
+describe("linkOrionCodeAction · después de escribir", () => {
+  it("un refresco de caché caído NO convierte en error un vínculo que sí se escribió", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    revalidatePath.mockImplementation(() => {
+      throw new Error("revalidate exploded");
+    });
+
+    const state = await linkOrionCodeAction(PREV, form(VALID));
+
+    // El código quedó puesto en la base: decirle "no se pudo" lo mandaría a
+    // reintentar sobre una identidad que ya existe.
+    expect(state).toEqual({ error: null, ok: true });
+    spy.mockRestore();
+  });
+});
+
+describe("linkOrionCodeAction · qué queda para soporte", () => {
+  it("loguea qué se intentaba y quién, también cuando el rechazo es esperado", async () => {
+    const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    linkOrionCode.mockRejectedValue(new SkuIdentityError("ORION_CONFLICT"));
+
+    await linkOrionCodeAction(PREV, form(VALID));
+
+    expect(spy).toHaveBeenCalledOnce();
+    const registrado = JSON.stringify(spy.mock.calls[0]);
+    expect(registrado).toContain("p1");
+    expect(registrado).toContain("7702057012345");
+    expect(registrado).toContain("u1");
+    spy.mockRestore();
+  });
+
+  it("deja rastro de la carrera perdida, que es lo que hay que poder contar", async () => {
+    const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    linkOrionCode.mockRejectedValue(new SkuConcurrencyError());
+
+    await linkOrionCodeAction(PREV, form(VALID));
+
+    expect(spy).toHaveBeenCalledOnce();
+    expect(JSON.stringify(spy.mock.calls[0])).toContain("7702057012345");
+    spy.mockRestore();
+  });
+});

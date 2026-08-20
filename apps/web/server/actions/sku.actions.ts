@@ -6,7 +6,7 @@ import {
   SKU_IDENTITY_CONCURRENCY_MESSAGE,
   messageForIdentityError,
 } from "@/features/productos/sku-identity-messages";
-import { orionLinkSchema } from "@/features/productos/sku-schema";
+import { orionLinkSchema } from "@/features/productos/schema";
 import { requireCapability } from "@/lib/auth/require-role";
 import { SkuIdentityError } from "@/server/domain/catalog/sku-identity";
 import { SkuConcurrencyError } from "@/server/repositories/sku-review.repository";
@@ -76,19 +76,41 @@ export async function linkOrionCodeAction(
       orionCode: parsed.data.orionCode,
     });
   } catch (error) {
+    // TODA falla se loguea con QUÉ se intentaba y QUIÉN lo intentaba, no solo
+    // la desconocida. Sin esto, un "no me deja vincular" por teléfono no se
+    // puede atar a ningún intento, y un conflicto que se repite —la carrera
+    // por el mismo código -- no deja rastro para saber cuán seguido pasa.
+    // Es un producto y su código: nada de esto es dato personal.
+    const intento = {
+      actorId: session.user.id,
+      orionCode: parsed.data.orionCode,
+      productId: parsed.data.productId,
+    };
+
     if (error instanceof SkuConcurrencyError) {
+      console.warn("[productos] Vínculo Orion: perdió el compare-and-set", intento);
       return { error: SKU_IDENTITY_CONCURRENCY_MESSAGE, ok: false };
     }
     if (error instanceof SkuIdentityError) {
+      console.warn("[productos] Vínculo Orion rechazado:", error.code, intento);
       return { error: messageForIdentityError(error.code), ok: false };
     }
     // Cualquier otra cosa no se le filtra al operador: queda en el server.
-    console.error("[productos] No se pudo vincular el código Orion:", error);
+    console.error("[productos] No se pudo vincular el código Orion:", intento, error);
     return { error: messageForIdentityError(undefined), ok: false };
   }
 
-  revalidatePath(`/productos/${parsed.data.productId}`);
-  revalidatePath("/productos");
+  // El vínculo YA está escrito y es durable. Si refrescar la caché falla, eso
+  // no puede convertirse en un error en pantalla: el operador vería "no se
+  // pudo" para algo que sí se hizo, y volvería a intentarlo sobre una identidad
+  // que ya quedó puesta. Lo peor que pasa acá es que vea la pantalla vieja un
+  // rato, y para eso alcanza con recargar.
+  try {
+    revalidatePath(`/productos/${parsed.data.productId}`);
+    revalidatePath("/productos");
+  } catch (error) {
+    console.error("[productos] Vínculo escrito, pero falló el refresco:", error);
+  }
 
   return { error: null, ok: true };
 }
