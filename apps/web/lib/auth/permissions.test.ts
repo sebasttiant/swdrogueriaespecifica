@@ -10,6 +10,7 @@ import {
   isSuperAdminRole,
   isUserManager,
   rolesWithCapability,
+  seesAllPendings,
   USER_ROLES,
 } from "./permissions";
 
@@ -150,14 +151,39 @@ describe("capabilities · can()", () => {
     expect(can("ADMIN", "canManageUsers")).toBe(true);
   });
 
-  it("OPERADOR tiene solo las capabilities operativas", () => {
-    expect(can("OPERADOR", "canViewDashboard")).toBe(true);
-    expect(can("OPERADOR", "canViewPendientes")).toBe(true);
-    expect(can("OPERADOR", "canViewFaltantes")).toBe(true);
-    expect(can("OPERADOR", "canViewProductos")).toBe(true);
-    expect(can("OPERADOR", "canViewEntradas")).toBe(true);
+  it("OPERADOR ve exactamente los cuatro módulos de su circuito", () => {
+    // La lista completa, no una muestra: si mañana alguien le suma un módulo al
+    // vendedor, tiene que romper acá y no descubrirse en producción.
+    const modulos = [
+      "canViewDashboard",
+      "canViewPendientes",
+      "canViewFaltantes",
+      "canViewProductos",
+      "canViewEntradas",
+      "canViewReports",
+      "canViewAudit",
+    ] as const;
+
+    const visibles = modulos.filter((m) => can("OPERADOR", m));
+    expect(visibles).toEqual(["canViewDashboard", "canViewPendientes", "canViewFaltantes"]);
+    // El cuarto lugar del menú es la revisión de pendientes, que no tiene
+    // capability de "ver módulo" propia.
+    expect(can("OPERADOR", "canReviewPendings")).toBe(true);
+  });
+
+  it("OPERADOR opera dentro de esos módulos", () => {
     expect(can("OPERADOR", "canCreatePendientes")).toBe(true);
-    expect(can("OPERADOR", "canCreateEntries")).toBe(true);
+    expect(can("OPERADOR", "canSubmitMissingReports")).toBe(true);
+    expect(can("OPERADOR", "canDeliverPendings")).toBe(true);
+  });
+
+  it("OPERADOR queda fuera del circuito de recepción y del catálogo", () => {
+    // Ni el módulo ni la acción: quitar solo la vista dejaría la Server Action
+    // alcanzable para quien supiera invocarla.
+    expect(can("OPERADOR", "canViewEntradas")).toBe(false);
+    expect(can("OPERADOR", "canCreateEntries")).toBe(false);
+    expect(can("OPERADOR", "canViewProductos")).toBe(false);
+    expect(can("OPERADOR", "canManageProducts")).toBe(false);
   });
 
   it("OPERADOR NO tiene las capabilities sensibles", () => {
@@ -166,7 +192,6 @@ describe("capabilities · can()", () => {
     expect(can("OPERADOR", "canManageUsers")).toBe(false);
     expect(can("OPERADOR", "canConfirmMissingItems")).toBe(false);
     expect(can("OPERADOR", "canSnoozeAlerts")).toBe(false);
-    expect(can("OPERADOR", "canManageProducts")).toBe(false);
   });
 
   it("canDeliverPendings: todos los roles operativos + BODEGA lo tienen", () => {
@@ -197,7 +222,9 @@ describe("capabilities · can()", () => {
     expect(can("SUPERVISOR", "canViewProductos")).toBe(true);
     expect(can("SUPERVISOR", "canViewEntradas")).toBe(true);
     expect(can("SUPERVISOR", "canCreatePendientes")).toBe(true);
-    expect(can("SUPERVISOR", "canCreateEntries")).toBe(true);
+    // El circuito de recepción es de gerencia y bodega: la supervisión ve la
+    // lista de entradas pero no registra.
+    expect(can("SUPERVISOR", "canCreateEntries")).toBe(false);
     expect(can("SUPERVISOR", "canConfirmMissingItems")).toBe(true);
     expect(can("SUPERVISOR", "canDeliverPendings")).toBe(true);
     expect(can("SUPERVISOR", "canCancelPendings")).toBe(true);
@@ -403,6 +430,10 @@ describe("BODEGA (matriz de perfil)", () => {
       "canViewProductos",
       "canViewEntradas",
       "canCreateEntries",
+      // Gestión de catálogo: la bodega recibe mercadería que no siempre nace de
+      // un faltante, y si el producto no está en el catálogo necesita crearlo
+      // para poder registrar la recepción.
+      "canManageProducts",
       "canCreatePendientes",
       "canSubmitMissingReports",
       "canContactOwnPendings",
@@ -450,5 +481,85 @@ describe("canReadAllPendings (lectura global ≠ mutación)", () => {
     expect(can("BODEGA", "canCancelPendings")).toBe(true);
     expect(can("BODEGA", "canReadAllPendings")).toBe(false);
     expect(can("BODEGA", "canManageAllPendings")).toBe(false);
+  });
+});
+
+// --------------------------------------------------------------------------
+// Quién ve los pendientes de TODOS y quién solo los suyos.
+//
+// Esta es la pregunta que hace el dueño de la droguería, y hasta ahora había
+// que responderla leyendo dos capacidades y haciendo la cuenta a mano en cada
+// pantalla. `seesAllPendings` la contesta en un solo lugar, y este bloque la
+// fija por rol: una tabla, no una muestra.
+// --------------------------------------------------------------------------
+describe("seesAllPendings (alcance de la cola, en una sola regla)", () => {
+  it("la cola completa es de gerencia y supervisión, nunca del vendedor", () => {
+    const alcance = USER_ROLES.map((role) => [role, seesAllPendings(role)] as const);
+
+    expect(alcance).toEqual([
+      ["SUPERADMIN", true],
+      ["ADMIN", true],
+      ["SUPERVISOR", true],
+      ["OPERADOR", false],
+      ["BODEGA", false],
+    ]);
+  });
+
+  it("el vendedor entra al módulo de revisión, pero acotado a lo suyo", () => {
+    // Las dos mitades de la regla del negocio: puede revisar, y lo que revisa
+    // son sus propios pendientes. Separarlas es lo que evita las dos fallas
+    // opuestas —dejarlo afuera del módulo, o mostrarle la cola entera—.
+    expect(can("OPERADOR", "canReviewPendings")).toBe(true);
+    expect(seesAllPendings("OPERADOR")).toBe(false);
+  });
+
+  it("la supervisión revisa la cola entera", () => {
+    expect(can("SUPERVISOR", "canReviewPendings")).toBe(true);
+    expect(seesAllPendings("SUPERVISOR")).toBe(true);
+  });
+
+  it("cualquiera de los dos ejes alcanza para ver todo", () => {
+    // La regla es una disyunción: alcanza con leer globalmente, aunque no se
+    // pueda mutar. Si mañana se le quita la mutación a la supervisión, tiene
+    // que seguir viendo la cola.
+    for (const role of USER_ROLES) {
+      expect(seesAllPendings(role)).toBe(
+        can(role, "canManageAllPendings") || can(role, "canReadAllPendings"),
+      );
+    }
+  });
+});
+
+// --------------------------------------------------------------------------
+// Corregir la identidad de un producto es un eje PROPIO, y no un pedazo de
+// `canManageProducts`.
+//
+// SUPERVISOR tiene que poder corregir un código de Orion mal cargado —es quien
+// recibe el reclamo del vendedor— pero NO tiene que poder crear ni editar
+// productos. Meterlo en `canManageProducts` para conseguir lo primero le
+// regalaría lo segundo.
+//
+// Es el mismo criterio con el que ya están separados `canOrderMissingItems` y
+// `canViewSupplierIdentity`: una acción y una exposición de datos que hoy viven
+// en el mismo rol, pero que se pueden mover por separado.
+// --------------------------------------------------------------------------
+describe("canFixProductIdentity", () => {
+  it("lo tienen quienes reciben o cargan el error: gerencia, supervisión y bodega", () => {
+    expect(can("SUPERADMIN", "canFixProductIdentity")).toBe(true);
+    expect(can("ADMIN", "canFixProductIdentity")).toBe(true);
+    expect(can("SUPERVISOR", "canFixProductIdentity")).toBe(true);
+    expect(can("BODEGA", "canFixProductIdentity")).toBe(true);
+  });
+
+  it("el vendedor no corrige el catálogo", () => {
+    expect(can("OPERADOR", "canFixProductIdentity")).toBe(false);
+  });
+
+  // La razón de existir de esta capability: SUPERVISOR corrige SIN poder tocar
+  // el resto del catálogo. Si algún día alguien la colapsa dentro de
+  // `canManageProducts`, esta afirmación falla y explica por qué no se hace.
+  it("SUPERVISOR corrige identidad pero sigue sin poder gestionar productos", () => {
+    expect(can("SUPERVISOR", "canFixProductIdentity")).toBe(true);
+    expect(can("SUPERVISOR", "canManageProducts")).toBe(false);
   });
 });

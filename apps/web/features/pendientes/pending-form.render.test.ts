@@ -15,9 +15,9 @@ vi.mock("@/server/actions/pending.actions", () => ({
 
 import { parseBogotaWallTime } from "@/lib/datetime/bogota";
 
-import { PendingForm } from "./pending-form";
+import { PendingForm, type ProductOption } from "./pending-form";
 
-const PRODUCTS = [{ id: "p1", name: "Acetaminofén", code: "ACE-1" }];
+const PRODUCTS: ProductOption[] = [{ id: "p1", name: "Acetaminofén", code: "ACE-1", orionCode: null }];
 
 function bogotaNow(wall: string): Date {
   const parsed = parseBogotaWallTime(wall);
@@ -32,6 +32,7 @@ function render(
     zones: string[];
     actionState: { error: string | null; ok: boolean };
     isPending: boolean;
+    products: typeof PRODUCTS;
   }> = {},
 ): string {
   useActionStateMock.mockReturnValue([
@@ -41,7 +42,7 @@ function render(
   ]);
   return renderToStaticMarkup(
     createElement(PendingForm, {
-      products: PRODUCTS,
+      products: props.products ?? PRODUCTS,
       zones: props.zones,
       now: props.now ?? bogotaNow("2026-07-24T10:00"),
       defaultCustom: props.defaultCustom ?? false,
@@ -216,5 +217,53 @@ describe("PendingForm · terminal action state", () => {
     expect(html).toContain("No se pudo registrar el pendiente. Intentá de nuevo.");
     expect(html).toContain("Registrar pendiente");
     expect(html).not.toContain("Guardando…");
+  });
+});
+
+// --------------------------------------------------------------------------
+// El código de Orion, en el momento de elegir el producto.
+//
+// Es el caso que contó Andrés en la reunión del 20/08: dejan pendiente un
+// Eucerin tono medio, en bodega llega un tono claro porque el proveedor se
+// equivocó, y bodega le pone "ingresado" sin manera de verificar que sea el
+// mismo. De 30 referencias de Eucerin, el nombre no alcanza para distinguirlas
+// y el código interno del catálogo no significa nada en Orion.
+//
+// La lista mostraba `nombre (código interno)` — un `PROV-…` o un `MED-001`, que
+// no existe del otro lado. Ahora muestra el código de Orion, que es el único
+// dato que el vendedor puede cotejar contra la pantalla que ya tiene abierta.
+//
+// Y cuando el producto NO lo tiene, se dice: un producto sin identidad es
+// trabajo pendiente, no un detalle que convenga esconder.
+// --------------------------------------------------------------------------
+describe("PendingForm · identidad del producto al elegirlo", () => {
+  it("muestra el código de Orion del producto que ya lo tiene", () => {
+    const html = render({
+      products: [
+        { id: "p1", name: "Eucerin tono medio", code: "PROV-euc", orionCode: "7702001234567" },
+      ],
+    });
+
+    expect(html).toContain("7702001234567");
+  });
+
+  it("avisa cuando el producto todavía no tiene código de Orion", () => {
+    const html = render({
+      products: [{ id: "p1", name: "Eucerin tono claro", code: "PROV-euc2", orionCode: null }],
+    });
+
+    expect(html).toContain("sin código de Orion");
+  });
+
+  // El código interno (`PROV-…`) no identifica nada del lado de Orion y compite
+  // por el ancho de la fila justo donde el vendedor tiene que leer rápido.
+  it("deja de mostrar el código interno del catálogo", () => {
+    const html = render({
+      products: [
+        { id: "p1", name: "Eucerin tono medio", code: "PROV-euc", orionCode: "7702001234567" },
+      ],
+    });
+
+    expect(html).not.toContain("PROV-euc");
   });
 });

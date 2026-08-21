@@ -11,6 +11,7 @@ import type { PendingListItem } from "@/server/repositories/pending.repository";
 
 import { computeDeadlineStatus } from "./deadline-status";
 import { derivePaymentState } from "./payment-state";
+import { fulfillmentNotice, isTerminal, outstanding } from "./fulfillment-notice";
 import {
   isManagementStatus,
   MANAGEMENT_STATUS_LABELS,
@@ -81,19 +82,6 @@ const URGENCY: Record<
 // Los estados de gestión viven en el MISMO enum que el ciclo de vida, así que
 // "todavía sin gestionar" es `PENDIENTE`. Se dice "Por pedir" y no "Pendiente"
 // porque en esta vista lo que importa es qué hacer, no cómo se llama el estado.
-function isTerminal(item: PendingListItem): boolean {
-  return (
-    item.status === "ENTREGADO" ||
-    item.status === "CANCELADO" ||
-    // T2.2b: el cierre parcial es terminal. También lo cubre customerStatus
-    // ENTREGADO, pero enumerarlo acá deja la regla explícita y a prueba de
-    // futuros cambios en el eje comercial.
-    item.status === "CLOSED_PARTIAL" ||
-    item.customerStatus === "ENTREGADO" ||
-    item.customerStatus === "CANCELADO"
-  );
-}
-
 // El estado que le importa al negocio, con las palabras de la reunión:
 // Pendiente → Facturado → Entregado o Cancelado.
 //
@@ -125,56 +113,6 @@ function purchaseNote(item: PendingListItem): string | null {
   if (isTerminal(item) || item.customerStatus === "FACTURADO") return null;
   const purchaseStatus = item.purchaseStatus ?? "POR_PEDIR";
   return isManagementStatus(purchaseStatus) ? MANAGEMENT_STATUS_LABELS[purchaseStatus] : null;
-}
-
-// Cuánto de este pendiente ya está en bodega y todavía no se facturó, y cuánto
-// se facturó y todavía no se entregó. Son las dos cifras que definen qué puede
-// hacer el vendedor ahora mismo; el resto de la fila es contexto.
-function outstanding(item: PendingListItem): { toInvoice: number; toDeliver: number } {
-  const invoiced = item.invoicedQuantity ?? 0;
-  return {
-    toInvoice: Math.max(item.quantity - invoiced, 0),
-    toDeliver: Math.max(Math.min(invoiced, item.quantity) - item.deliveredQuantity, 0),
-  };
-}
-
-// El aviso que le faltaba al vendedor. Sin esto un pendiente se ve EXACTAMENTE
-// igual antes y después de que su mercancía llegue a bodega: el sistema ya sabe
-// que puede facturar, pero no se lo dice a nadie, y el cliente espera de más.
-// Va como texto además de color porque estas filas se leen en un celular al sol.
-function fulfillmentNotice(
-  item: PendingListItem,
-): { label: string; tone: "success" | "primary" | "warning" } | null {
-  if (isTerminal(item)) return null;
-
-  const available = item.inventoryReadyQuantity ?? 0;
-  const notInvoiced = item.customerStatus !== "FACTURADO";
-
-  // AMARILLO — bodega ya lo subió al sistema. Es el aviso que espera el
-  // vendedor: "ya te llegó, te lo vamos a mandar".
-  if (notInvoiced && available > 0) {
-    return {
-      label:
-        available < item.quantity
-          ? `Cargado: ${available} de ${item.quantity} · podés facturar`
-          : "Cargado · podés facturar",
-      tone: "warning",
-    };
-  }
-
-  // VERDE — llegó a la droguería pero todavía no está cargado. El vendedor ya
-  // puede avisarle al cliente; facturarlo todavía no.
-  if (notInvoiced && item.availabilityStatus === "LLEGO_BODEGA") {
-    return { label: "Llegó a la droguería · sin cargar", tone: "success" };
-  }
-
-  // Sin repetir "Facturado": la insignia de estado, justo al lado, ya lo dice.
-  // Repetirlo alargaba la frase y la partía en tres líneas dentro de una
-  // columna angosta, sin agregar ninguna información.
-  if (outstanding(item).toDeliver > 0) {
-    return { label: "Listo para entregar", tone: "primary" };
-  }
-  return null;
 }
 
 // Lo que el cliente respondió sobre lo que faltó. Se muestra para que la fila
@@ -381,10 +319,10 @@ export function PendingCompactList({
             <Card key={pending.id} className="space-y-2 p-3">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="truncate font-medium text-text">
+                  <p className="break-words font-medium text-text">
                     {pending.product.name}
                   </p>
-                  <p className="truncate text-xs text-muted-foreground">
+                  <p className="break-words text-xs text-muted-foreground">
                     {pending.createdBy?.name ?? "Sin vendedor"}
                     {" · "}
                     {/* Quien hace seguimiento necesita la HORA comprometida, no

@@ -1,0 +1,52 @@
+name: "Setup Node + pnpm"
+description: >-
+  Prepara el toolchain que el repositorio DECLARA —Node desde .nvmrc, pnpm desde
+  packageManager— lo verifica, e instala dependencias.
+
+runs:
+  using: composite
+  steps:
+    # La versión NO se escribe acá: se lee de .nvmrc, que es el mismo archivo
+    # que usa `nvm use` en la máquina de quien desarrolla. Una sola fuente.
+    - uses: actions/setup-node@v4
+      with:
+        node-version-file: .nvmrc
+
+    # Tampoco se fija la de pnpm. `corepack enable` alcanza: el shim resuelve la
+    # versión desde el campo `packageManager` de package.json, que además trae
+    # un hash sha512.
+    #
+    # Los workflows traían además `corepack prepare pnpm@11.10.0 --activate`.
+    # Esa línea era INERTE y conviene dejar escrito por qué, para que nadie la
+    # reponga: `packageManager` le gana al default activado. Medido:
+    #
+    #   corepack prepare pnpm@11.17.0 --activate   → "Preparing pnpm@11.17.0…"
+    #   pnpm -v                                     → 11.18.0
+    #
+    # Así que CI ya venía corriendo 11.18.0, igual que la imagen de producción.
+    # Lo que la línea hacía era descargar un pnpm que nadie usaba, en los cuatro
+    # jobs, y —peor para un repositorio auditado— nombrar en el workflow una
+    # versión que no es la que corre. Quien leyera el pipeline concluía otra cosa
+    # que la que pasaba.
+    #
+    # Nota: `engines.pnpm` NO es decorativo. pnpm lo hace cumplir solo; con una
+    # versión por debajo, `pnpm install` corta con ERR_PNPM_UNSUPPORTED_ENGINE.
+    - name: Activar pnpm desde packageManager (Corepack)
+      shell: bash
+      env:
+        COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+      run: |
+        corepack enable
+        pnpm -v
+
+    # El repo ya traía este chequeo (`scripts/check-toolchain.mjs`) y CI no lo
+    # corría nunca. Va acá, dentro del setup, y no como un job aparte: así
+    # ningún job puede quedar corriendo sobre un toolchain equivocado mientras
+    # otro lo valida. Cuesta milisegundos y falla fuerte.
+    - name: Verificar toolchain declarado
+      shell: bash
+      run: pnpm check:toolchain
+
+    - name: Instalar dependencias
+      shell: bash
+      run: pnpm install --frozen-lockfile

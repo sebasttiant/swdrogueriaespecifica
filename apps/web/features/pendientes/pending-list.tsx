@@ -18,6 +18,7 @@ import { formatCop } from "@/lib/format/currency";
 import { formatPhone } from "./phone";
 import { deliverySummary, remainingQuantity } from "./delivery-rules";
 import { canSetManagementStatus } from "./management-status";
+import { fulfillmentNotice } from "./fulfillment-notice";
 import {
   derivePaymentState,
   remainingAmount,
@@ -154,12 +155,15 @@ export function PendingList({
         const paymentState = derivePaymentState(pending);
         const balance = remainingAmount(pending);
         const payment = paymentState === "SIN_ABONO" ? null : PAYMENT[paymentState];
+        // El aviso de que la mercancía llegó. Es la razón por la que alguien
+        // abre esta pantalla: saber sobre cuáles ya se puede actuar.
+        const notice = fulfillmentNotice(pending);
 
         return (
           <Card key={pending.id} className="space-y-3">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="truncate font-semibold text-text">
+                <p className="break-words font-semibold text-text">
                   {pending.product.name}
                 </p>
                 <p className="text-sm text-muted-foreground">
@@ -250,6 +254,16 @@ export function PendingList({
                 {payment ? <Badge tone={payment.tone}>{payment.label}</Badge> : null}
               </div>
             </div>
+
+            {/* Renglón propio, ancho completo: la etiqueta del aviso es larga
+                ("Cargado: 4 de 10 · podés facturar") y en la columna de badges
+                apretaría el nombre del producto, que es lo que #157 acaba de
+                dejar de cortar en el celular. */}
+            {notice ? (
+              <Badge tone={notice.tone} className="w-full justify-center">
+                {notice.label}
+              </Badge>
+            ) : null}
 
             {showManagement || showDeliverCancel ? (
               <div className="flex flex-col gap-3 border-t border-border pt-3">

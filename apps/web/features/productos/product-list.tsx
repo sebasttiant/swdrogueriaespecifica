@@ -67,7 +67,7 @@ export function ProductList({ items, nextCursor, q }: ProductListProps) {
           <Link key={product.id} href={`/productos/${product.id}`} className="block">
             <Card className="flex items-center justify-between gap-3 transition-colors hover:bg-muted/40">
               <div className="min-w-0">
-                <p className="truncate font-semibold text-text">{product.name}</p>
+                <p className="break-words font-semibold text-text">{product.name}</p>
                 <p className="text-sm text-muted-foreground">
                   {product.code} · {product.unit} · stock mín. {product.minStock}
                 </p>

@@ -14,9 +14,10 @@ import { inventoryEntryCreateSchema } from "@/features/entradas/schema";
 // --------------------------------------------------------------------------
 // Server Actions de entradas de inventario: Zod → requireCapability →
 // service (atomic $transaction) → audit best-effort → revalidate.
-// Roles permitidos: SUPERADMIN, ADMIN, OPERADOR — mismo gate que pendientes.
-// La transacción (upsert lote + ledger + cierre de faltantes) vive en el
-// service; acá solo orquestamos.
+// Roles permitidos: SUPERADMIN, ADMIN, BODEGA (el circuito de recepción es de
+// gerencia y bodega; OPERADOR/SUPERVISOR solo ven la lista). La transacción
+// (upsert lote + ledger + cierre de faltantes) vive en el service; acá solo
+// orquestamos.
 // --------------------------------------------------------------------------
 
 export type EntryFormState = {

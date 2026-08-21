@@ -84,22 +84,22 @@ export function MissingListCompact({
             <Card key={item.id} className="space-y-2 p-3">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="truncate font-medium text-text">{item.product.name}</p>
-                  <p className="truncate text-xs text-muted-foreground">
+                  <p className="break-words font-medium text-text">{item.product.name}</p>
+                  <p className="break-words text-xs text-muted-foreground">
                     {item.product.laboratory?.name ?? "Sin laboratorio"}
                   </p>
                   {/* Quién lo anotó: gerencia lo necesita para saber qué vendedor
                       registró el faltante. Es el punto del pedido (F1), así que va
                       también en la vista compacta, no solo en la completa. */}
                   {item.requestedByName ? (
-                    <p className="truncate text-xs text-muted-foreground">
+                    <p className="break-words text-xs text-muted-foreground">
                       Solicitado por {item.requestedByName}
                     </p>
                   ) : null}
                   {/* Quién lo pidió o lo descartó. Son dos personas trabajando
                       la misma cola: sin esto había que preguntarlo por teléfono. */}
                   {attribution ? (
-                    <p className="truncate text-xs font-medium text-muted-foreground">
+                    <p className="break-words text-xs font-medium text-muted-foreground">
                       {attribution.label} {attribution.name}
                     </p>
                   ) : null}

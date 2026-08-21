@@ -51,7 +51,7 @@ export function BatchList({ productId, items, nextCursor }: BatchListProps) {
         return (
           <Card key={batch.id} className="space-y-2">
             <div className="flex items-center justify-between gap-3">
-              <p className="truncate font-semibold text-text">
+              <p className="break-words font-semibold text-text">
                 Lote {batch.batchCode}
               </p>
               <Badge tone={EXPIRY_TONE[level]}>{EXPIRY_LABEL[level]}</Badge>

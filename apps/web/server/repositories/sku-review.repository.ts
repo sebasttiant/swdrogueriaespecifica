@@ -19,6 +19,7 @@ import {
   generateUlid,
   provisionalSkuFor,
   resolveIdentityMode,
+  SkuIdentityError,
   type IdentityInput,
   type OrionLinkPlan,
 } from "@/server/domain/catalog/sku-identity";
@@ -214,11 +215,65 @@ async function runOrionLinkPlan(
     });
   }
 
+  if (plan.action === "FIX") {
+    return fixOrionCode(tx, {
+      productId: plan.productId,
+      orionCode: plan.orionCode,
+      previousOrionCode: plan.previousOrionCode,
+      expectedVersion: options.expectedVersion,
+    });
+  }
+
   return assignOrionCode(tx, {
     productId: plan.productId,
     orionCode: plan.orionCode,
     expectedVersion: options.expectedVersion,
   });
+}
+
+/**
+ * Reemplaza un código mal cargado por el correcto.
+ *
+ * Se separa de `assignOrionCode` por el filtro, que es lo único que importa
+ * acá: aquel exige `orionCode: null` —su segunda red contra pisar identidad—
+ * y este exige el código ANTERIOR exacto. Es la misma idea aplicada al revés:
+ * la corrección solo escribe si el código sigue siendo el que se vio en
+ * pantalla. Si cambió en el medio, `count` da 0 y nadie pisa nada.
+ */
+async function fixOrionCode(
+  tx: Prisma.TransactionClient,
+  params: {
+    productId: string;
+    orionCode: string;
+    previousOrionCode: string;
+    expectedVersion: number;
+  },
+): Promise<Product> {
+  const { count } = await tx.product
+    .updateMany({
+      where: {
+        id: params.productId,
+        identityVersion: params.expectedVersion,
+        orionCode: params.previousOrionCode,
+      },
+      data: {
+        orionCode: params.orionCode,
+        skuStatus: "CONFIRMED",
+        identityVersion: { increment: 1 },
+      },
+    })
+    .catch((error: unknown) => {
+      // Mismo caso que en el alta: la lectura previa vio el código libre y otro
+      // lo tomó antes de que llegara esta escritura. Lo frena el `@unique`.
+      if (isUniqueViolation(error)) throw new SkuIdentityError("ORION_CONFLICT");
+      throw error;
+    });
+
+  if (count !== 1) throw new SkuConcurrencyError();
+
+  const product = await tx.product.findUnique({ where: { id: params.productId } });
+  if (!product) throw new SkuConcurrencyError();
+  return product;
 }
 
 async function releaseOrionCode(
@@ -243,20 +298,36 @@ async function assignOrionCode(
   tx: Prisma.TransactionClient,
   params: { productId: string; orionCode: string; expectedVersion: number },
 ): Promise<Product> {
-  const { count } = await tx.product.updateMany({
-    // El `orionCode: null` del filtro es la segunda red: aunque alguien haya
-    // avanzado la versión sin tocar el código, no se pisa una identidad puesta.
-    where: {
-      id: params.productId,
-      identityVersion: params.expectedVersion,
-      orionCode: null,
-    },
-    data: {
-      orionCode: params.orionCode,
-      skuStatus: "CONFIRMED",
-      identityVersion: { increment: 1 },
-    },
-  });
+  // El compare-and-set mira SOLO esta fila, así que es incapaz de ver que otro
+  // producto se quedó con el mismo código. Ese caso lo frena el `@unique` de la
+  // base y llega hasta acá como P2002.
+  //
+  // Pasa cuando dos operadores vinculan el mismo código a productos distintos
+  // al mismo tiempo: `linkOrionCode` lee al holder FUERA de la transacción, así
+  // que los dos leen "no lo tiene nadie" y los dos planean LINK.
+  //
+  // Sin traducirlo, ese P2002 escapa crudo y termina en el mensaje genérico
+  // "intentá de nuevo" — el peor consejo posible, porque reintentar eso no va a
+  // funcionar nunca. Es justo el conflicto que `ORION_CONFLICT` ya sabe nombrar.
+  const { count } = await tx.product
+    .updateMany({
+      // El `orionCode: null` del filtro es la segunda red: aunque alguien haya
+      // avanzado la versión sin tocar el código, no se pisa una identidad puesta.
+      where: {
+        id: params.productId,
+        identityVersion: params.expectedVersion,
+        orionCode: null,
+      },
+      data: {
+        orionCode: params.orionCode,
+        skuStatus: "CONFIRMED",
+        identityVersion: { increment: 1 },
+      },
+    })
+    .catch((error: unknown) => {
+      if (isUniqueViolation(error)) throw new SkuIdentityError("ORION_CONFLICT");
+      throw error;
+    });
 
   if (count !== 1) throw new SkuConcurrencyError();
 

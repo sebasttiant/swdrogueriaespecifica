@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { PageHeader } from "@/app/_components/app-shell/page-header";
 import { Card, CardTitle } from "@/app/_components/ui/card";
 import { MAX_PAGE_SIZE } from "@/lib/pagination";
+import { can } from "@/lib/auth/permissions";
 import { requireCapability } from "@/lib/auth/require-role";
 import { EntryForm, type ProductOption } from "@/features/entradas/entry-form";
 import { EntryList } from "@/features/entradas/entry-list";
@@ -17,7 +18,10 @@ export default async function EntradasPage({
 }: {
   searchParams: Promise<{ cursor?: string; productId?: string; quantity?: string }>;
 }) {
-  await requireCapability("canViewEntradas");
+  const session = await requireCapability("canViewEntradas");
+  // El circuito de recepción (form de nueva entrada + cola de bodega) es de
+  // gerencia y bodega: OPERADOR y SUPERVISOR ven la lista pero no registran.
+  const canCreate = can(session.user.role, "canCreateEntries");
 
   const { cursor, productId, quantity } = await searchParams;
 
@@ -49,23 +53,25 @@ export default async function EntradasPage({
         description="Registrá una recepción de stock para actualizar el inventario."
       />
 
-      <ArrivedMissingQueue items={arrivedItems} />
+      {canCreate ? <ArrivedMissingQueue items={arrivedItems} /> : null}
 
-      <Card id="nueva-entrada" className="scroll-mt-24 space-y-4">
-        <CardTitle>Nueva entrada</CardTitle>
-        {/* `key` fuerza a REMONTAR el formulario cuando cambia el producto que
-            se viene a cargar.
-            Sin esto, tocar "Cargar entrada" navegaba a la MISMA ruta con otros
-            parámetros: React reconciliaba en vez de remontar, y el `defaultValue`
-            del selector —que solo se aplica al montar— quedaba ignorado. El
-            producto viajaba en la URL y el campo se veía vacío igual. */}
-        <EntryForm
-          key={`${productId ?? "sin-producto"}:${suggestedQuantity ?? 0}`}
-          products={productOptions}
-          selectedProductId={productId}
-          selectedQuantity={suggestedQuantity}
-        />
-      </Card>
+      {canCreate ? (
+        <Card id="nueva-entrada" className="scroll-mt-24 space-y-4">
+          <CardTitle>Nueva entrada</CardTitle>
+          {/* `key` fuerza a REMONTAR el formulario cuando cambia el producto que
+              se viene a cargar.
+              Sin esto, tocar "Cargar entrada" navegaba a la MISMA ruta con otros
+              parámetros: React reconciliaba en vez de remontar, y el `defaultValue`
+              del selector —que solo se aplica al montar— quedaba ignorado. El
+              producto viajaba en la URL y el campo se veía vacío igual. */}
+          <EntryForm
+            key={`${productId ?? "sin-producto"}:${suggestedQuantity ?? 0}`}
+            products={productOptions}
+            selectedProductId={productId}
+            selectedQuantity={suggestedQuantity}
+          />
+        </Card>
+      ) : null}
 
       <EntryList items={entries.items} nextCursor={entries.nextCursor} />
     </div>

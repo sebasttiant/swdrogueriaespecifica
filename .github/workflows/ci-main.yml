@@ -15,18 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24.18.0"
-
-      - name: Activar pnpm 11.10.0 (Corepack)
-        run: |
-          corepack enable
-          corepack prepare pnpm@11.10.0 --activate
-          pnpm -v
-
-      - name: Instalar dependencias
-        run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/setup
 
       - name: Lint
         run: pnpm lint
@@ -65,18 +54,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24.18.0"
-
-      - name: Activar pnpm 11.10.0 (Corepack)
-        run: |
-          corepack enable
-          corepack prepare pnpm@11.10.0 --activate
-          pnpm -v
-
-      - name: Instalar dependencias
-        run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/setup
 
       - name: Gate PostgreSQL
         # Base de mantenimiento del servicio; el harness crea la suya aparte.

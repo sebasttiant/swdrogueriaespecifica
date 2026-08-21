@@ -23,8 +23,8 @@
     "db:deploy": "pnpm --filter @drogueria/web db:deploy",
     "db:seed": "pnpm --filter @drogueria/web db:seed",
     "data:reset:operational": "bash scripts/reset-operational-data.sh",
-    "data:import:operational": "bash scripts/import-operational-excel-data.sh",
-    "data:seed:operational": "bash scripts/seed-demo-operational.sh",
+    "data:seed:operational:dry": "bash scripts/seed-operational-data.sh --dry-run",
+    "data:seed:operational": "bash scripts/seed-operational-data.sh --execute",
     "data:restore:drill": "bash scripts/restore-drill.sh",
     "docker:build": "docker build -f apps/web/Dockerfile -t drogueria-especifica-web:local ."
   }

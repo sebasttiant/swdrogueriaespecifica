@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 
 import { PageHeader } from "@/app/_components/app-shell/page-header";
-import { can } from "@/lib/auth/permissions";
+import { can, seesAllPendings } from "@/lib/auth/permissions";
 import { requireCapability } from "@/lib/auth/require-role";
 import { Card, CardTitle } from "@/app/_components/ui/card";
 import { EmptyState } from "@/app/_components/ui/empty-state";
@@ -69,10 +69,9 @@ export default async function DashboardPage() {
   const session = await requireCapability("canViewDashboard");
   const canViewCustomerIdentity = can(session.user.role, "canViewCustomerIdentity");
   const canManageAll = can(session.user.role, "canManageAllPendings");
-  // Eje de LECTURA global (T4.4): ver la cola entera ≠ mutarla. Las métricas
-  // del dashboard son lectura; las acciones siguen gateando SOLO con
-  // `canManageAllPendings`.
-  const canSeeAll = canManageAll || can(session.user.role, "canReadAllPendings");
+  // Las métricas son lectura, así que usan la misma regla de alcance que las
+  // listas; las acciones siguen gateando SOLO con `canManageAll`.
+  const canSeeAll = seesAllPendings(session.user.role);
 
   const now = new Date();
   const [dashboard, openMissingCount, expiringCounts] = await Promise.all([
@@ -235,10 +234,10 @@ export default async function DashboardPage() {
                     className="flex items-center justify-between gap-3 rounded-lg bg-muted/60 px-3 py-2"
                   >
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-medium text-text">
+                      <p className="break-words text-sm font-medium text-text">
                         {pending.product.name}
                       </p>
-                      <p className="truncate text-xs text-muted-foreground">
+                      <p className="break-words text-xs text-muted-foreground">
                         {pending.quantity} {pending.product.unit} ·{" "}
                         {formatBogotaDate(pending.promisedAt, { style: "datetime" })}
                       </p>

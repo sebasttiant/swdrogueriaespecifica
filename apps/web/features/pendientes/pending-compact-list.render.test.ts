@@ -219,7 +219,11 @@ describe("PendingCompactList", () => {
       { canContactOrInvoice: true },
     );
 
-    expect(countOccurrences(html, "Ya le facturé")).toBe(2);
+    // "Facturar" a secas es subcadena de "Facturar el resto", así que contarla
+    // sola no distingue el caso completo del parcial. Se fijan las dos.
+    expect(countOccurrences(html, "Facturar")).toBe(2);
+    expect(html).not.toContain("Facturar el resto");
+    expect(html).not.toContain("Ya le facturé");
     expect(html).not.toContain("Ya lo pedí");
   });
 
@@ -231,7 +235,9 @@ describe("PendingCompactList", () => {
       { canContactOrInvoice: true, canDeliver: true },
     );
 
-    expect(countOccurrences(html, "Ya le facturé")).toBe(2);
+    expect(countOccurrences(html, "Facturar")).toBe(2);
+    expect(html).not.toContain("Facturar el resto");
+    expect(html).not.toContain("Ya le facturé");
   });
 
   it("shows seller delivery actions in the desktop table", () => {
@@ -434,5 +440,27 @@ describe("PendingCompactList · seguimiento", () => {
 
     expect(html).toContain("Pagado");
     expect(html).not.toContain("Debe");
+  });
+});
+
+
+// --------------------------------------------------------------------------
+// Pedido de Andrés Bonilla (20/8/2026, vía Daniel): trabaja desde el celular y
+// el nombre del producto le llegaba cortado, así que tenía que girar el
+// teléfono para leerlo.
+//
+// El corte no molestaba por incompleto: se llevaba el FINAL, que en farmacia
+// es donde vive lo que distingue un producto de otro —la presentación, la
+// cantidad, la etapa, el laboratorio—. "PAÑITOS HUMEDOS HUGGI…" no dice cuál
+// de todos los Huggies es.
+//
+// Se afirma sobre la clase porque acá la clase ES el comportamiento: el texto
+// completo siempre estuvo en el DOM, lo que lo escondía era el CSS.
+// --------------------------------------------------------------------------
+describe("PendingCompactList · el nombre no se corta en el celular", () => {
+  it("no aplica `truncate` a ningún dato de la tarjeta", () => {
+    const html = render([pending()]);
+
+    expect(html).not.toContain("truncate");
   });
 });

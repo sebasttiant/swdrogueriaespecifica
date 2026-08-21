@@ -51,8 +51,8 @@ export function KpiCard({
       </span>
       <div className="min-w-0">
         <p className="truncate text-3xl font-bold leading-tight text-text">{value}</p>
-        <p className="truncate text-sm font-medium text-muted-foreground">{label}</p>
-        {hint ? <p className="mt-0.5 truncate text-xs text-muted-foreground">{hint}</p> : null}
+        <p className="break-words text-sm font-medium text-muted-foreground">{label}</p>
+        {hint ? <p className="mt-0.5 break-words text-xs text-muted-foreground">{hint}</p> : null}
       </div>
     </Card>
   );

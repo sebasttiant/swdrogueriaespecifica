@@ -37,6 +37,10 @@ export const AUDIT_ACTIONS = {
   SKU_ORION_LINK: "sku.orion.link",
   SKU_ORION_RELINK: "sku.orion.relink",
   SKU_ORION_RELEASE: "sku.orion.release",
+  // Corrección de un código mal cargado. Distinta de RELINK, que mueve un
+  // código de un producto a otro: acá el producto es el mismo y lo que cambia
+  // es su código. Se separan porque responden preguntas distintas al auditar.
+  SKU_ORION_FIX: "sku.orion.fix",
   // Pendientes
   PENDING_CREATE: "pending.create",
   PENDING_STATUS_CHANGE: "pending.status.change",

@@ -149,6 +149,12 @@ export const CAPABILITIES = [
   "canConfirmMissingItems",
   "canSnoozeAlerts",
   "canManageProducts",
+  // Corregir la identidad (el código de Orion) de un producto YA cargado. Es un
+  // eje PROPIO y no un pedazo de `canManageProducts`, porque SUPERVISOR tiene
+  // que poder corregir —es quien recibe el reclamo del vendedor— sin poder
+  // crear ni editar productos. Colapsarlas para conseguir lo primero regalaría
+  // lo segundo.
+  "canFixProductIdentity",
   "canCreatePendientes",
   "canCreateEntries",
   // Reporting a name that is missing from stock is an operational observation,
@@ -251,8 +257,9 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     "canViewFaltantes",
     "canViewProductos",
     "canViewEntradas",
+    // Corrige identidad SIN gestionar catálogo: ver `canFixProductIdentity`.
+    "canFixProductIdentity",
     "canCreatePendientes",
-    "canCreateEntries",
     "canSubmitMissingReports",
     "canConfirmMissingItems",
     "canViewCustomerIdentity",
@@ -269,14 +276,22 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     "canCancelPendings",
     "canReviewPendings",
   ],
+  // El vendedor ve SU circuito y nada más: dashboard, pendientes, faltantes y
+  // la revisión de pendientes. Catálogo y entradas quedan afuera —no administra
+  // productos ni recibe mercadería—, y una pantalla que no se usa igual pesa:
+  // ocupa un lugar en la barra del celular y habilita tocar donde no
+  // corresponde.
+  //
+  // Quitarle `canViewProductos` NO le quita elegir un producto. Crear un
+  // pendiente o reportar un faltante pasa por `searchProductsAction`, que exige
+  // sesión activa y no esta capacidad. Son dos cosas distintas —buscar un
+  // producto para trabajar, y administrar el catálogo— y por eso tienen guardas
+  // distintas.
   OPERADOR: [
     "canViewDashboard",
     "canViewPendientes",
     "canViewFaltantes",
-    "canViewProductos",
-    "canViewEntradas",
     "canCreatePendientes",
-    "canCreateEntries",
     "canSubmitMissingReports",
     "canContactOwnPendings",
     "canInvoiceOwnPendings",
@@ -293,12 +308,20 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
   // (`canViewCustomerIdentity`), la cola ajena (`canManageAllPendings`) y la
   // lectura global (`canReadAllPendings`): la bodega no ve ni opera pendientes
   // de vendedores.
+  //
+  // La bodega TAMBIÉN gestiona catálogo (`canManageProducts`) y registra
+  // entradas (`canCreateEntries`): recibe mercadería que no siempre nace de un
+  // faltante, y si el producto no está en el catálogo necesita crearlo para
+  // poder registrar la recepción. Es el único rol operativo con estas dos
+  // capacidades: OPERADOR y SUPERVISOR solo ven la lista de entradas.
   BODEGA: [
     "canViewDashboard",
     "canViewPendientes",
     "canViewFaltantes",
     "canViewProductos",
     "canViewEntradas",
+    "canManageProducts",
+    "canFixProductIdentity",
     "canCreateEntries",
     "canCreatePendientes",
     "canSubmitMissingReports",
@@ -320,4 +343,24 @@ export function rolesWithCapability(
   capability: Capability,
 ): readonly SessionRole[] {
   return USER_ROLES.filter((role) => can(role, capability));
+}
+
+/**
+ * Whether `role` sees EVERY pending, or only the ones it created.
+ *
+ * Two capabilities answer this, and they are not interchangeable:
+ * `canManageAllPendings` grants the full queue because the role operates it,
+ * and `canReadAllPendings` grants the full queue for reading alone (T4.4). A
+ * role with only the second sees everything and may still mutate nothing —
+ * fulfilment actions keep gating on the first.
+ *
+ * IT LIVES HERE, ONCE, ON PURPOSE. This disjunction used to be written out at
+ * every surface that lists pendings — the review module, the operational queue,
+ * the dashboard and the alert bar. A rule that decides who sees whose customers
+ * cannot be copied four times: the day one copy drifts, exactly one screen
+ * leaks, and it leaks quietly. Callers that need the owner filter derive it from
+ * this: `ownerId: seesAllPendings(role) ? undefined : userId`.
+ */
+export function seesAllPendings(role: SessionRole): boolean {
+  return can(role, "canManageAllPendings") || can(role, "canReadAllPendings");
 }

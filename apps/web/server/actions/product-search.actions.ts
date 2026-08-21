@@ -5,9 +5,19 @@ import { prepareProductQuery } from "@/lib/productos/search-query";
 import { getProducts } from "@/server/services/product.service";
 
 // --------------------------------------------------------------------------
-// Read-only Server Action backing the mobile topbar autocomplete. Any active
-// session may read the catalog (same rule as the /productos page). Returns a
-// small, flat suggestion list — never the full paginated payload.
+// Read-only Server Action backing the mobile topbar autocomplete and the
+// product pickers of the pending and missing-item forms.
+//
+// The guard is `requireSession`, deliberately NOT `canViewProductos`. Picking a
+// product to work with and browsing the catalog module are different things: a
+// seller who may not open /productos still has to name the product of a pending
+// or a missing-item report, and gating this on the module capability would
+// break that flow the moment the module is taken away from a role.
+//
+// This once read "same rule as the /productos page". That stopped being true
+// when OPERADOR lost `canViewProductos`; the rule below is the one that holds.
+//
+// Returns a small, flat suggestion list — never the full paginated payload.
 // --------------------------------------------------------------------------
 
 export type ProductSuggestion = {
