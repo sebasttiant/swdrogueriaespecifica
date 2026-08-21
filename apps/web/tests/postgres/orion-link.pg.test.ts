@@ -404,3 +404,80 @@ describe("corrección del código Orion", () => {
     expect(after.orionCode).toBe(product.orionCode);
   });
 });
+
+// --------------------------------------------------------------------------
+// La autoridad sigue a la ACCIÓN ejecutada, no a la INTENCIÓN pedida.
+//
+// `planOrionLink` degrada a propósito un `intent: "FIX"` sobre un producto que
+// todavía no tiene código: cubre la carrera de que otro operador lo vincule
+// mientras el formulario de corrección estaba abierto. Ese paso se conserva.
+//
+// Pero el efecto de esa degradación es ACUÑAR la identidad canónica, y acuñar
+// es una autoridad más angosta que corregir. Si la cerradura se elige por el
+// `intent` que mandó el llamador, un SUPERVISOR —que corrige pero NO acuña—
+// entra por la puerta de corrección y sale acuñando. El portón queda más ancho
+// que la cerradura, que es la dirección peligrosa.
+//
+// Por eso la autoridad se verifica DESPUÉS de que el plan resuelva, contra
+// `plan.action`.
+// --------------------------------------------------------------------------
+describe("la autoridad sigue a la acción resuelta", () => {
+  it("no deja que supervisión acuñe un código pidiéndolo como corrección", async () => {
+    const product = await newProduct("Clonazepam 0.5mg");
+
+    const failure = await linkOrionCode({
+      actor: SUPERVISOR,
+      identity: { productId: product.id },
+      orionCode: nextOrionCode(),
+      intent: "FIX",
+      expectedVersion: product.identityVersion,
+    }).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(SkuIdentityError);
+    expect((failure as SkuIdentityError).code).toBe("FORBIDDEN_ACTOR");
+
+    // Y no escribió nada: el producto sigue sin identidad canónica.
+    const after = await prisma.product.findUniqueOrThrow({ where: { id: product.id } });
+    expect(after.orionCode).toBeNull();
+    expect(after.identityVersion).toBe(product.identityVersion);
+  });
+
+  // La carrera legítima sigue funcionando para quien SÍ puede acuñar.
+  it("deja que bodega vincule aunque haya pedido una corrección", async () => {
+    const product = await newProduct("Sertralina 50mg");
+    const orionCode = nextOrionCode();
+
+    const linked = await linkOrionCode({
+      actor: BODEGA,
+      identity: { productId: product.id },
+      orionCode,
+      intent: "FIX",
+      expectedVersion: product.identityVersion,
+    });
+
+    expect(linked.orionCode).toBe(orionCode);
+    expect(linked.skuStatus).toBe("CONFIRMED");
+  });
+
+  it("sigue dejando que supervisión corrija un código ya cargado", async () => {
+    const product = await newProduct("Metoprolol 50mg");
+    const linked = await linkOrionCode({
+      actor: BODEGA,
+      identity: { productId: product.id },
+      orionCode: nextOrionCode(),
+      intent: "LINK",
+      expectedVersion: product.identityVersion,
+    });
+    const correcto = nextOrionCode();
+
+    const fixed = await linkOrionCode({
+      actor: SUPERVISOR,
+      identity: { productId: product.id },
+      orionCode: correcto,
+      intent: "FIX",
+      expectedVersion: linked.identityVersion,
+    });
+
+    expect(fixed.orionCode).toBe(correcto);
+  });
+});
