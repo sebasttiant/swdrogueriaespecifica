@@ -10,19 +10,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // el test la resuelven del mismo módulo mockeado, y por eso el `instanceof`
 // sigue significando algo.
 const {
-  requireCapability,
+  checkCapability,
   linkOrionCode,
   auditContextFromHeaders,
   revalidatePath,
 } = vi.hoisted(() => ({
-  requireCapability: vi.fn(),
+  checkCapability: vi.fn(),
   linkOrionCode: vi.fn(),
   auditContextFromHeaders: vi.fn(),
   revalidatePath: vi.fn(),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath }));
-vi.mock("@/lib/auth/require-role", () => ({ requireCapability }));
+vi.mock("@/lib/auth/require-role", () => ({ checkCapability }));
 vi.mock("@/server/services/sku-onboarding.service", () => ({ linkOrionCode }));
 vi.mock("@/server/services/audit.service", () => ({ auditContextFromHeaders }));
 vi.mock("@/server/repositories/sku-review.repository", () => ({
@@ -32,12 +32,11 @@ vi.mock("@/server/repositories/sku-review.repository", () => ({
 import {
   SKU_IDENTITY_CONCURRENCY_MESSAGE,
   SKU_IDENTITY_MESSAGES,
-  messageForIdentityError,
 } from "@/features/productos/sku-identity-messages";
 import { SkuIdentityError } from "@/server/domain/catalog/sku-identity";
 import { SkuConcurrencyError } from "@/server/repositories/sku-review.repository";
 
-import { linkOrionCodeAction } from "./sku.actions";
+import { fixOrionCodeAction, linkOrionCodeAction } from "./sku.actions";
 
 const PREV = { error: null, ok: false };
 const session = { user: { id: "u1", email: "a@x.com", name: "A", role: "ADMIN" } };
@@ -52,23 +51,27 @@ const VALID = { expectedVersion: "0", orionCode: "7702057012345", productId: "p1
 
 beforeEach(() => {
   vi.clearAllMocks();
-  requireCapability.mockResolvedValue(session);
+  checkCapability.mockResolvedValue({ ok: true, session });
   auditContextFromHeaders.mockResolvedValue({});
   linkOrionCode.mockResolvedValue({ id: "p1" });
 });
 
 describe("linkOrionCodeAction · guard", () => {
-  it("pasa por requireCapability('canManageProducts'), no por el rol del JWT", async () => {
+  it("pasa exactamente por checkCapability('canManageProducts') y manda intent LINK", async () => {
     await linkOrionCodeAction(PREV, form(VALID));
 
-    expect(requireCapability).toHaveBeenCalledWith("canManageProducts");
+    expect(checkCapability).toHaveBeenCalledOnce();
+    expect(checkCapability).toHaveBeenCalledWith("canManageProducts");
+    expect(linkOrionCode).toHaveBeenCalledWith(
+      expect.objectContaining({ intent: "LINK" }),
+    );
   });
 
   it("verifica el permiso ANTES de mirar lo que vino en el formulario", async () => {
     const order: string[] = [];
-    requireCapability.mockImplementation(() => {
+    checkCapability.mockImplementation(() => {
       order.push("guard");
-      return Promise.resolve(session);
+      return Promise.resolve({ ok: true, session });
     });
     linkOrionCode.mockImplementation(() => {
       order.push("service");
@@ -79,6 +82,37 @@ describe("linkOrionCodeAction · guard", () => {
 
     expect(order).toEqual(["guard", "service"]);
   });
+});
+
+describe("fixOrionCodeAction · contrato", () => {
+  it("pasa exactamente por checkCapability('canFixProductIdentity') y manda intent FIX", async () => {
+    await fixOrionCodeAction(PREV, form(VALID));
+
+    expect(checkCapability).toHaveBeenCalledOnce();
+    expect(checkCapability).toHaveBeenCalledWith("canFixProductIdentity");
+    expect(linkOrionCode).toHaveBeenCalledWith(
+      expect.objectContaining({ intent: "FIX" }),
+    );
+  });
+
+  it.each([
+    ["NO_SESSION", /sesión/i],
+    ["INACTIVE", /inactivo/i],
+    ["FORBIDDEN", /permiso/i],
+  ] as const)(
+    "devuelve un error accionable para %s sin servicio ni revalidación",
+    async (reason, expectedMessage) => {
+      checkCapability.mockResolvedValue({ ok: false, reason });
+
+      const state = await fixOrionCodeAction(PREV, form(VALID));
+
+      expect(state.ok).toBe(false);
+      expect(state.error).toMatch(expectedMessage);
+      expect(linkOrionCode).not.toHaveBeenCalled();
+      expect(auditContextFromHeaders).not.toHaveBeenCalled();
+      expect(revalidatePath).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("linkOrionCodeAction · qué le manda al servicio", () => {
@@ -126,7 +160,10 @@ describe("linkOrionCodeAction · errores", () => {
 
     const state = await linkOrionCodeAction(PREV, form(VALID));
 
-    expect(state).toEqual({ error: messageForIdentityError(undefined), ok: false });
+    expect(state).toEqual({
+      error: "No se pudo guardar el código. Intentá de nuevo; si sigue, avisá a soporte.",
+      ok: false,
+    });
     expect(state.error).not.toContain("connection");
     spy.mockRestore();
   });

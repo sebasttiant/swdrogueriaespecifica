@@ -39,6 +39,7 @@ export function OrionFixForm({
 }: OrionFixFormProps) {
   const [state, formAction, isPending] = useActionState(fixOrionCodeAction, INITIAL_STATE);
   const [open, setOpen] = useState(false);
+  const [orionCode, setOrionCode] = useState("");
   const inputId = useId();
 
   if (!open) {
@@ -61,6 +62,8 @@ export function OrionFixForm({
         <Input
           id={inputId}
           name="orionCode"
+          value={orionCode}
+          onChange={(event) => setOrionCode(event.target.value)}
           // Sin ayuda del teclado: se copia y pega desde Orion tal cual, y
           // cualquier autocorrección acá sería un error de datos.
           autoCapitalize="off"

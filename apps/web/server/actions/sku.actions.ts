@@ -8,7 +8,7 @@ import {
 } from "@/features/productos/sku-identity-messages";
 import { orionLinkSchema } from "@/features/productos/schema";
 import type { Capability } from "@/lib/auth/permissions";
-import { requireCapability } from "@/lib/auth/require-role";
+import { checkCapability, type CapabilityDenial } from "@/lib/auth/require-role";
 import { SkuIdentityError } from "@/server/domain/catalog/sku-identity";
 import { SkuConcurrencyError } from "@/server/repositories/sku-review.repository";
 import { auditContextFromHeaders } from "@/server/services/audit.service";
@@ -28,8 +28,8 @@ import { linkOrionCode } from "@/server/services/sku-onboarding.service";
 // un solo hecho, y el de afuera sobreviviría a un rollback del de adentro.
 //
 // DOS GUARDS, a propósito y no por duplicación:
-//   · `requireCapability` es el portón — DB-authoritative, rechaza un JWT
-//     viejo de alguien a quien degradaron.
+//   · `checkCapability` es el portón — DB-authoritative, rechaza un JWT viejo
+//     de alguien a quien degradaron sin redirigir ni perder el formulario.
 //   · `assertCanOnboardSku`, adentro del servicio, es la cerradura: protege
 //     al servicio de cualquier otro llamador, hoy y mañana.
 //
@@ -40,6 +40,16 @@ import { linkOrionCode } from "@/server/services/sku-onboarding.service";
 // --------------------------------------------------------------------------
 
 export type OrionLinkFormState = { error: string | null; ok: boolean };
+
+function authorizationMessage(reason: CapabilityDenial): string {
+  if (reason === "NO_SESSION") {
+    return "Tu sesión venció. Abrí el ingreso en otra pestaña, iniciá sesión de nuevo y volvé acá: el código sigue cargado.";
+  }
+  if (reason === "INACTIVE") {
+    return "Tu usuario está inactivo. Pedile a un administrador que lo reactive: el código sigue cargado.";
+  }
+  return "Tu usuario no tiene permiso para guardar códigos de Orion. Pedile a un administrador que lo habilite.";
+}
 
 export async function linkOrionCodeAction(
   _prev: OrionLinkFormState,
@@ -80,7 +90,11 @@ async function runOrionIdentityAction(
   },
   formData: FormData,
 ): Promise<OrionLinkFormState> {
-  const session = await requireCapability(operation.capability);
+  const authorization = await checkCapability(operation.capability);
+  if (!authorization.ok) {
+    return { error: authorizationMessage(authorization.reason), ok: false };
+  }
+  const session = authorization.session;
 
   const parsed = orionLinkSchema.safeParse({
     expectedVersion: formData.get("expectedVersion"),
