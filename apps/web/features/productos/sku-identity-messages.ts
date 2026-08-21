@@ -39,7 +39,7 @@ export const SKU_IDENTITY_CONCURRENCY_MESSAGE =
 // texto, la causa no es ninguna que sepamos nombrar, y eso hay que poder
 // distinguirlo al leer un reporte de soporte.
 const UNKNOWN_CAUSE =
-  "No se pudo vincular el código. Intentá de nuevo; si sigue, avisá a soporte.";
+  "No se pudo guardar el código. Intentá de nuevo; si sigue, avisá a soporte.";
 
 export function messageForIdentityError(code: SkuIdentityCode | undefined): string {
   if (code === undefined) return UNKNOWN_CAUSE;

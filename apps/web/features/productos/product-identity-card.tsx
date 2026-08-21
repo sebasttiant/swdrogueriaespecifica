@@ -1,4 +1,5 @@
 import { Card, CardTitle } from "@/app/_components/ui/card";
+import { OrionFixForm } from "@/features/productos/orion-fix-form";
 import { OrionLinkForm } from "@/features/productos/orion-link-form";
 
 type ProductIdentityCardProps = {
@@ -10,6 +11,12 @@ type ProductIdentityCardProps = {
   identityVersion: number;
   /** Si este operador puede vincular. Mirar no es lo mismo que poder cambiar. */
   canLink: boolean;
+  /**
+   * Si puede CORREGIR un código ya puesto. Es un eje distinto de `canLink`:
+   * supervisión corrige el error que le reporta el vendedor, pero no da de alta
+   * catálogo. Ver `canFixProductIdentity` en `lib/auth/permissions.ts`.
+   */
+  canFix: boolean;
 };
 
 // --------------------------------------------------------------------------
@@ -29,6 +36,7 @@ export function ProductIdentityCard({
   internalSku,
   identityVersion,
   canLink,
+  canFix,
 }: ProductIdentityCardProps) {
   return (
     <Card className="space-y-3">
@@ -40,9 +48,17 @@ export function ProductIdentityCard({
           <p className="break-words font-mono text-lg font-medium text-text">
             {orionCode}
           </p>
-          <p className="text-xs text-muted-foreground">
-            Vinculado. Este código no se cambia desde acá.
-          </p>
+          {canFix ? (
+            <OrionFixForm
+              productId={productId}
+              currentOrionCode={orionCode}
+              identityVersion={identityVersion}
+            />
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Vinculado. Este código no se cambia desde acá.
+            </p>
+          )}
         </div>
       ) : (
         <div className="space-y-3">

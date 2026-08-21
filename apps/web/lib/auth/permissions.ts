@@ -149,6 +149,12 @@ export const CAPABILITIES = [
   "canConfirmMissingItems",
   "canSnoozeAlerts",
   "canManageProducts",
+  // Corregir la identidad (el código de Orion) de un producto YA cargado. Es un
+  // eje PROPIO y no un pedazo de `canManageProducts`, porque SUPERVISOR tiene
+  // que poder corregir —es quien recibe el reclamo del vendedor— sin poder
+  // crear ni editar productos. Colapsarlas para conseguir lo primero regalaría
+  // lo segundo.
+  "canFixProductIdentity",
   "canCreatePendientes",
   "canCreateEntries",
   // Reporting a name that is missing from stock is an operational observation,
@@ -251,6 +257,8 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     "canViewFaltantes",
     "canViewProductos",
     "canViewEntradas",
+    // Corrige identidad SIN gestionar catálogo: ver `canFixProductIdentity`.
+    "canFixProductIdentity",
     "canCreatePendientes",
     "canSubmitMissingReports",
     "canConfirmMissingItems",
@@ -313,6 +321,7 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     "canViewProductos",
     "canViewEntradas",
     "canManageProducts",
+    "canFixProductIdentity",
     "canCreateEntries",
     "canCreatePendientes",
     "canSubmitMissingReports",

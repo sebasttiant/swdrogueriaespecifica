@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useId } from "react";
+import { useActionState, useId, useState } from "react";
 
 import { Button } from "@/app/_components/ui/button";
 import { Input } from "@/app/_components/ui/input";
@@ -30,10 +30,15 @@ type OrionLinkFormProps = {
 // exacta, y "7702-A" y "7702-a" son dos productos distintos hasta que alguien
 // de Orion diga lo contrario.
 export function OrionLinkForm({ productId, identityVersion }: OrionLinkFormProps) {
-  const [state, formAction, isPending] = useActionState(
-    linkOrionCodeAction,
-    INITIAL_STATE,
-  );
+  const [orionCode, setOrionCode] = useState("");
+  const [state, formAction, isPending] = useActionState(async (
+    prev: OrionLinkFormState,
+    formData: FormData,
+  ) => {
+    const next = await linkOrionCodeAction(prev, formData);
+    if (next.ok) setOrionCode("");
+    return next;
+  }, INITIAL_STATE);
   const inputId = useId();
 
   return (
@@ -48,6 +53,8 @@ export function OrionLinkForm({ productId, identityVersion }: OrionLinkFormProps
         <Input
           id={inputId}
           name="orionCode"
+          value={orionCode}
+          onChange={(event) => setOrionCode(event.target.value)}
           // Sin `autoCapitalize` ni corrección: se copia y pega desde Orion tal
           // cual, y cualquier ayuda del teclado acá sería un error de datos.
           autoCapitalize="off"
@@ -64,8 +71,8 @@ export function OrionLinkForm({ productId, identityVersion }: OrionLinkFormProps
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Una vez vinculado, este código no se cambia: es lo que va a permitir
-        cuadrar el inventario.
+        Es lo que va a permitir cuadrar el inventario, así que copialo exacto.
+        Si queda mal, se puede corregir, pero queda registrado.
       </p>
 
       {state.error ? (
