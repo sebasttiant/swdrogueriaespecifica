@@ -167,6 +167,7 @@ model User {
   resolvedMissingReports MissingReport[] @relation("MissingReportResolvedBy")
   arrivedMissingReports MissingReport[] @relation("MissingReportArrivedBy")
   arrivedMissingItems MissingItem[] @relation("MissingItemArrivedBy")
+  notificationOutbox   NotificationOutbox[]
 
   @@index([active])
   @@index([archivedAt])
@@ -779,4 +780,56 @@ model MissingReport {
   @@index([linkedProductId])
   @@index([linkedMissingItemId])
   @@map("missing_reports")
+}
+
+// --------------------------------------------------------------------------
+// Outbox de notificaciones (T5.1 — avisos al dueño).
+//
+// Es la cola transaccional de avisos: una transición de disponibilidad
+// (parcial/completa) encola EXACTAMENTE un evento por transición, en la misma
+// transacción que cambió el pendiente.
+//
+// La unicidad es por TRANSICIÓN del agregado (recipient, aggregate,
+// transitionKey): reintentar la misma transición NO duplica. El `eventType` y
+// el payload van en el `fingerprint` —por la firma de `fingerprintOf`, no por
+// convención— así que la misma transición con otro contenido es un error del
+// llamador, igual que en el command store.
+//
+// `status`, `attempts` y `lastError` describen a un transporte EXTERNO, que
+// todavía no existe (D5). La bandeja in-app NO los mira: lee los eventos del
+// destinatario directo, para que un fallo de ese transporte futuro no pueda
+// borrarle un aviso de la pantalla al dueño.
+// --------------------------------------------------------------------------
+enum NotificationOutboxStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+model NotificationOutbox {
+  id            String                   @id @default(cuid())
+  recipient     User                     @relation(fields: [recipientId], references: [id])
+  recipientId   String
+  eventType     String
+  aggregateType String
+  aggregateId   String
+  transitionKey String
+  fingerprint   String
+  payload       Json
+  status        NotificationOutboxStatus @default(PENDING)
+  attempts      Int                      @default(0)
+  sentAt        DateTime?
+  lastError     String?
+  createdAt     DateTime                 @default(now())
+  updatedAt     DateTime                 @updatedAt
+
+  @@unique([recipientId, aggregateType, aggregateId, transitionKey], map: "notification_outbox_transition_unique")
+  // El drenador del transporte externo: PENDING por antigüedad.
+  @@index([status, createdAt])
+  // La bandeja in-app: lo de una persona, de lo más nuevo a lo más viejo. El
+  // índice único arranca por `recipientId` pero sigue por `aggregateType`, así
+  // que no ordena por fecha; y el de estado arranca por una columna de tres
+  // valores. Sin este índice la bandeja recorre la tabla entera.
+  @@index([recipientId, createdAt])
+  @@map("notification_outbox")
 }
