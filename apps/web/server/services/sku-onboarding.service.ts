@@ -12,6 +12,7 @@ import {
   normalizeOrionCode,
   planOrionLink,
   type IdentityInput,
+  type OrionLinkPlan,
   type SkuIdentityRecord,
 } from "@/server/domain/catalog/sku-identity";
 import {
@@ -191,6 +192,37 @@ export type LinkOrionCodeDeps = {
   writeAudit?: TransactionalAuditWriter;
 };
 
+/**
+ * La autoridad que EXIGE la acción que el plan resolvió.
+ *
+ * El `switch` es exhaustivo sobre el tipo a propósito: si mañana aparece una
+ * acción nueva, el compilador obliga a decidir su autoridad acá en vez de
+ * dejarla pasar por omisión, que es exactamente cómo se abrió este agujero.
+ */
+function assertAuthorityForAction(
+  action: OrionLinkPlan["action"],
+  role: SessionRole,
+): void {
+  switch (action) {
+    // Las dos escriben la identidad canónica de un producto que no la tenía:
+    // eso es acuñar, sin importar con qué intención se haya pedido.
+    case "LINK":
+    case "RELINK":
+      assertCanOnboardSku(role);
+      return;
+    case "FIX":
+      assertCanFixSkuIdentity(role);
+      return;
+    // No escribe nada, así que no agrega exigencia.
+    case "NOOP":
+      return;
+    default: {
+      const unhandled: never = action;
+      throw new Error(`Acción de vínculo Orion sin autoridad definida: ${String(unhandled)}`);
+    }
+  }
+}
+
 export async function linkOrionCode(
   input: LinkOrionCodeInput,
   deps: LinkOrionCodeDeps = {},
@@ -198,6 +230,13 @@ export async function linkOrionCode(
   // Corregir y acuñar no son la misma autoridad. Acuñar CREA identidad, así
   // que queda en quien da de alta catálogo; corregir REPARA una que ya está
   // mal, y ahí entra supervisión, que es quien recibe el reclamo del vendedor.
+  //
+  // El `intent` es lo que PIDE el llamador; el efecto lo decide la acción que
+  // resuelve el plan, y las dos no siempre coinciden: un FIX sobre un producto
+  // que todavía no tiene código degrada a LINK, o sea a acuñar. Por eso este
+  // chequeo es solo un rechazo barato —frena a quien no tiene ninguna autoridad
+  // antes de tocar la base—, y la verificación que manda va después del plan,
+  // contra `plan.action`.
   if (input.intent === "FIX") {
     assertCanFixSkuIdentity(input.actor.role);
   } else {
@@ -215,6 +254,9 @@ export async function linkOrionCode(
     holder,
     intent: input.intent,
   });
+
+  // La verificación autoritativa: contra el efecto que se va a ejecutar.
+  assertAuthorityForAction(plan.action, input.actor.role);
 
   const writeAudit = deps.writeAudit ?? recordAuditInTransaction;
 
