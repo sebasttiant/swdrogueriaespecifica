@@ -219,7 +219,11 @@ describe("PendingCompactList", () => {
       { canContactOrInvoice: true },
     );
 
-    expect(countOccurrences(html, "Ya le facturé")).toBe(2);
+    // "Facturar" a secas es subcadena de "Facturar el resto", así que contarla
+    // sola no distingue el caso completo del parcial. Se fijan las dos.
+    expect(countOccurrences(html, "Facturar")).toBe(2);
+    expect(html).not.toContain("Facturar el resto");
+    expect(html).not.toContain("Ya le facturé");
     expect(html).not.toContain("Ya lo pedí");
   });
 
@@ -231,7 +235,9 @@ describe("PendingCompactList", () => {
       { canContactOrInvoice: true, canDeliver: true },
     );
 
-    expect(countOccurrences(html, "Ya le facturé")).toBe(2);
+    expect(countOccurrences(html, "Facturar")).toBe(2);
+    expect(html).not.toContain("Facturar el resto");
+    expect(html).not.toContain("Ya le facturé");
   });
 
   it("shows seller delivery actions in the desktop table", () => {

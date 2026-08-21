@@ -27,7 +27,7 @@ type PendingCustomerLifecycleFormProps = {
 };
 
 // --------------------------------------------------------------------------
-// "Ya le facturé" — el paso del vendedor sobre su propio pendiente.
+// "Facturar" — el paso del vendedor sobre su propio pendiente.
 //
 // Una sola acción, sin pasos previos. Antes había que registrar un contacto y
 // esperar a que el sistema viera stock, y hasta entonces el vendedor no tenía
@@ -71,7 +71,7 @@ export function PendingCustomerLifecycleForm({
       />
       <Button type="submit" disabled={invoicing}>
         <FileText className="size-4" aria-hidden />
-        {isPartial ? "Facturar el resto" : "Ya le facturé"}
+        {isPartial ? "Facturar el resto" : "Facturar"}
       </Button>
       {state.error ? (
         <p role="alert" className="basis-full text-xs text-danger">
