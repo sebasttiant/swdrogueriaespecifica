@@ -1,145 +1,146 @@
-import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-// S2b · 1a: la migración del aplazamiento de identidad, probada SOBRE DATOS QUE
-// YA EXISTÍAN. Que sea aditiva no se afirma leyendo el SQL: se demuestra
-// creando una fila con el esquema anterior, aplicando la migración encima y
-// comprobando que la fila sigue igual, byte por byte.
-//
-// Contenedor propio y no el harness compartido porque hay que partir de un
-// esquema PREVIO a esta migración, que el harness ya trae aplicada.
+import { prisma } from "@/lib/db/prisma";
 
-const migrationSql = readFileSync(
+// S2b · 1a: la migración del aplazamiento, probada SOBRE DATOS QUE YA EXISTÍAN.
+// Aditiva no se afirma leyendo el SQL: se demuestra con una fila del esquema
+// anterior y el archivo real aplicado encima.
+//
+// UNA infraestructura: el harness que `globalSetup` ya provisiona. Un segundo
+// contenedor daría dos bases para una prueba. El estado pre-migración va en un
+// ESQUEMA aparte de esa misma base, donde `pendings` todavía no existe.
+
+const SQL = readFileSync(
   resolve(process.cwd(), "prisma/migrations/20260821200000_add_pending_identity_deferral/migration.sql"),
   "utf8",
 );
+const PROBE = "s2b_pre_migration";
+const ROW = { id: "pend-historico", productId: "prod-1", createdById: "user-1", quantity: 7, note: "dos cajas" };
 
-const containerName = `s2b-mig-${randomUUID().replaceAll("-", "").slice(0, 12)}`;
-const user = "s2b_migration";
-const password = randomUUID();
+beforeAll(async () => {
+  await prisma.$executeRawUnsafe(`DROP SCHEMA IF EXISTS ${PROBE} CASCADE`);
+  await prisma.$executeRawUnsafe(`CREATE SCHEMA ${PROBE}`);
 
-function docker(args: string[]): string {
-  return execFileSync("docker", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-}
-
-// Por TCP y no por el socket: el servidor temporal de initdb responde en el
-// socket y después se apaga, así que esperar por ahí da un listo que miente.
-function psql(sql: string): string {
-  return docker([
-    "exec", "-e", `PGPASSWORD=${password}`, containerName,
-    "psql", "-h", "127.0.0.1", "-v", "ON_ERROR_STOP=1", "-U", user, "-d", "postgres", "-At", "-c", sql,
-  ]);
-}
-
-function applyMigration(): void {
-  execFileSync(
-    "docker",
-    ["exec", "-i", "-e", `PGPASSWORD=${password}`, containerName,
-     "psql", "-h", "127.0.0.1", "-v", "ON_ERROR_STOP=1", "-U", user, "-d", "postgres"],
-    { input: migrationSql, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] },
-  );
-}
-
-/** El `pendings` de ANTES: solo lo que la migración necesita encontrar. */
-function createPreMigrationSchema(): void {
-  psql(`
-    CREATE TABLE pendings (
-      id text PRIMARY KEY,
-      "productId" text NOT NULL,
-      "createdById" text,
-      quantity integer NOT NULL,
-      note text
+  // El `pendings` de ANTES: solo lo que la migración necesita encontrar.
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe(`SET LOCAL search_path TO ${PROBE}`);
+    await tx.$executeRawUnsafe(`
+      CREATE TABLE pendings (
+        id text PRIMARY KEY,
+        "productId" text NOT NULL,
+        "createdById" text,
+        quantity integer NOT NULL,
+        note text
+      )`);
+    await tx.$executeRawUnsafe(
+      `INSERT INTO pendings VALUES ('${ROW.id}', '${ROW.productId}', '${ROW.createdById}', ${ROW.quantity}, '${ROW.note}')`,
     );
-  `);
-}
+  });
 
-const HISTORICAL = { id: "pend-historico", productId: "prod-1", createdById: "user-1", quantity: 7, note: "cliente pidió dos cajas" };
+  // Comentarios fuera ANTES de partir: uno contiene un `;`. BEGIN/COMMIT se
+  // afirman aparte — `$transaction` ya abrió una y anidar no es válido.
+  const statements = SQL.replace(/--[^\n]*/g, "")
+    .replace(/\b(BEGIN|COMMIT)\s*;/gi, "")
+    .split(";")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
 
-beforeAll(() => {
-  docker([
-    "run", "--detach", "--rm", "--name", containerName,
-    "--label", "ai.gentle.disposable=true", "--network", "none",
-    "-e", `POSTGRES_USER=${user}`, "-e", `POSTGRES_PASSWORD=${password}`,
-    "postgres:18-alpine",
-  ]);
-  for (let attempt = 0; attempt < 30; attempt += 1) {
-    try {
-      psql("SELECT 1");
-      break;
-    } catch {
-      execFileSync("sleep", ["1"]);
-    }
-  }
-
-  createPreMigrationSchema();
-  psql(`INSERT INTO pendings VALUES ('${HISTORICAL.id}', '${HISTORICAL.productId}', '${HISTORICAL.createdById}', ${HISTORICAL.quantity}, '${HISTORICAL.note}');`);
-  applyMigration();
-}, 60_000);
-
-afterAll(() => {
-  execFileSync("docker", ["rm", "--force", "--volumes", containerName], { stdio: "ignore" });
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe(`SET LOCAL search_path TO ${PROBE}`);
+    for (const statement of statements) await tx.$executeRawUnsafe(statement);
+  });
 });
 
+afterAll(async () => {
+  await prisma.$executeRawUnsafe(`DROP SCHEMA IF EXISTS ${PROBE} CASCADE`);
+});
+
+function probe<T>(sql: string): Promise<T[]> {
+  return prisma.$queryRawUnsafe<T[]>(sql);
+}
+
 describe("migración del aplazamiento de identidad", () => {
-  it("deja intacta la fila que ya existía", () => {
-    const row = psql(`SELECT id, "productId", "createdById", quantity, note FROM pendings WHERE id = '${HISTORICAL.id}';`).trim();
+  // Un DDL que falle a mitad dejaría la migración marcada como aplicada.
+  it("aplica todo su DDL en una sola transacción", () => {
+    expect(SQL).toMatch(/^\s*BEGIN;/m);
+    expect(SQL.trimEnd()).toMatch(/COMMIT;$/);
+  });
 
-    expect(row).toBe(
-      `${HISTORICAL.id}|${HISTORICAL.productId}|${HISTORICAL.createdById}|${HISTORICAL.quantity}|${HISTORICAL.note}`,
+  it("deja intacta la fila que ya existía", async () => {
+    const rows = await probe<Record<string, unknown>>(
+      `SELECT id, "productId", "createdById", quantity, note FROM ${PROBE}.pendings WHERE id = '${ROW.id}'`,
     );
-  });
 
-  // NULL en la fila vieja significa "no se aplazó", no "se desconoce": la
-  // migración no infiere nada sobre ventas que ocurrieron antes de existir.
-  it("no inventa un aplazamiento donde no lo hubo", () => {
-    const nulls = psql(`SELECT "identitySkippedReason" IS NULL AND "identitySkippedNote" IS NULL FROM pendings WHERE id = '${HISTORICAL.id}';`).trim();
-
-    expect(nulls).toBe("t");
-  });
-
-  it("agrega las dos columnas nullable y sin default", () => {
-    const cols = psql(`
-      SELECT column_name || ':' || is_nullable || ':' || coalesce(column_default, 'none')
-      FROM information_schema.columns
-      WHERE table_name = 'pendings' AND column_name LIKE 'identitySkipped%'
-      ORDER BY column_name;
-    `).trim().split("\n");
-
-    expect(cols).toEqual([
-      "identitySkippedNote:YES:none",
-      "identitySkippedReason:YES:none",
+    expect(rows).toEqual([
+      { id: ROW.id, productId: ROW.productId, createdById: ROW.createdById, quantity: ROW.quantity, note: ROW.note },
     ]);
   });
 
-  it("declara los cuatro motivos cerrados, en orden", () => {
-    const labels = psql(`
-      SELECT e.enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid
-      WHERE t.typname = 'PendingIdentityDeferral' ORDER BY e.enumsortorder;
-    `).trim().split("\n");
+  // NULL significa "no se aplazó", nunca "se desconoce".
+  it("no inventa un aplazamiento donde no lo hubo", async () => {
+    const rows = await probe<{ virgen: boolean }>(
+      `SELECT ("identitySkippedReason" IS NULL AND "identitySkippedNote" IS NULL) AS virgen
+       FROM ${PROBE}.pendings WHERE id = '${ROW.id}'`,
+    );
 
-    expect(labels).toEqual(["ORION_UNAVAILABLE", "CODE_NOT_FOUND", "CODE_ALREADY_ASSIGNED", "OTHER"]);
+    expect(rows[0]?.virgen).toBe(true);
   });
 
-  // Parciales, y por eso se afirma el WHERE: un índice total crecería con el
-  // mostrador entero en vez de con el trabajo que hay por resolver.
-  it("crea los dos índices parciales que la cola necesita", () => {
-    const defs = psql(`
-      SELECT indexname || '|' || indexdef FROM pg_indexes
-      WHERE tablename = 'pendings' AND indexdef ILIKE '%identitySkippedReason%'
-      ORDER BY indexname;
-    `).trim().split("\n");
+  it("agrega las dos columnas nullable y sin default", async () => {
+    const rows = await probe<{ column_name: string; is_nullable: string; column_default: string | null }>(
+      `SELECT column_name, is_nullable, column_default FROM information_schema.columns
+       WHERE table_schema = '${PROBE}' AND table_name = 'pendings'
+         AND column_name LIKE 'identitySkipped%' ORDER BY column_name`,
+    );
 
-    expect(defs).toHaveLength(2);
-    expect(defs[0]).toContain("createdById");
-    expect(defs[1]).toContain("productId");
-    for (const d of defs) expect(d).toMatch(/WHERE .*identitySkippedReason.* IS NOT NULL/i);
+    expect(rows).toEqual([
+      { column_name: "identitySkippedNote", is_nullable: "YES", column_default: null },
+      { column_name: "identitySkippedReason", is_nullable: "YES", column_default: null },
+    ]);
   });
 
-  it("no agrega ni borra filas", () => {
-    expect(psql("SELECT count(*) FROM pendings;").trim()).toBe("1");
+  it("declara los cuatro motivos cerrados, en orden", async () => {
+    const rows = await probe<{ enumlabel: string }>(
+      `SELECT e.enumlabel FROM pg_enum e
+       JOIN pg_type t ON t.oid = e.enumtypid
+       JOIN pg_namespace n ON n.oid = t.typnamespace
+       WHERE n.nspname = '${PROBE}' AND t.typname = 'PendingIdentityDeferral'
+       ORDER BY e.enumsortorder`,
+    );
+
+    expect(rows.map((r) => r.enumlabel)).toEqual([
+      "ORION_UNAVAILABLE",
+      "CODE_NOT_FOUND",
+      "CODE_ALREADY_ASSIGNED",
+      "OTHER",
+    ]);
+  });
+
+  // Nombre, orden y predicado EXACTOS: (createdById, productId) no sirve para
+  // agrupar por producto, y el predicado es lo que acota el tamaño del índice.
+  it("crea los dos índices parciales exactos que la cola necesita", async () => {
+    const rows = await probe<{ indexname: string; indexdef: string }>(
+      `SELECT indexname, indexdef FROM pg_indexes
+       WHERE schemaname = '${PROBE}' AND tablename = 'pendings'
+         AND indexdef ILIKE '%identitySkippedReason%' ORDER BY indexname`,
+    );
+    const byName = Object.fromEntries(rows.map((r) => [r.indexname, r.indexdef]));
+    const predicate = `WHERE ("identitySkippedReason" IS NOT NULL)`;
+
+    expect(Object.keys(byName)).toEqual([
+      "pendings_identity_deferred_creator_product_idx",
+      "pendings_identity_deferred_product_idx",
+    ]);
+    expect(byName.pendings_identity_deferred_creator_product_idx).toContain(`("createdById", "productId") ${predicate}`);
+    expect(byName.pendings_identity_deferred_product_idx).toContain(`("productId") ${predicate}`);
+  });
+
+  it("no agrega ni borra filas", async () => {
+    const rows = await probe<{ n: bigint }>(`SELECT count(*) AS n FROM ${PROBE}.pendings`);
+
+    expect(Number(rows[0]?.n)).toBe(1);
   });
 });
