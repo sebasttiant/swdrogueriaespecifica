@@ -50,6 +50,16 @@ enum PendingAvailabilityStatus {
 // Qué respondió el cliente sobre lo que faltó de una entrega parcial. Solo las
 // respuestas que dejan el pendiente ABIERTO: "no los espera" lo cierra, y eso
 // ya se ve en el estado.
+// Por qué se capturó un pendiente sin el código de Orion (D7). Lista CERRADA:
+// con texto libre la cola no se puede contar, y sin contarla no se sabe si la
+// exigencia estorba o si Orion se cae seguido. La nota opcional va aparte.
+enum PendingIdentityDeferral {
+  ORION_UNAVAILABLE
+  CODE_NOT_FOUND
+  CODE_ALREADY_ASSIGNED
+  OTHER
+}
+
 enum PendingPartialDecision {
   ESPERA
   VA_CON_PEDIDO
@@ -481,6 +491,12 @@ model Pending {
   // nombre y el teléfono.
   customerAddress           String?
   note                      String?
+  // Aplazamiento de identidad: el vendedor capturó sin el código. Vive en el
+  // PENDIENTE porque es un hecho de ESTA venta, no del catálogo. El aviso se
+  // DERIVA de este motivo más `product.orionCode IS NULL`, así que se cura solo
+  // al vincular el producto; el motivo se retiene como historial (D9).
+  identitySkippedReason     PendingIdentityDeferral?
+  identitySkippedNote       String?
   // --------------------------------------------------------------------
   // Seguimiento del cliente: zona de entrega y estado de pago.
   //
