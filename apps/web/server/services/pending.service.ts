@@ -15,6 +15,7 @@ import {
   type MissingItem,
   type PendingStatus,
   type Product,
+  type PendingIdentityDeferral,
 } from "@/lib/generated/prisma/client";
 import {
   cancelPending,
@@ -45,6 +46,11 @@ import {
   releasePendingReservations,
 } from "@/server/repositories/product-batch.repository";
 import { prisma } from "@/lib/db/prisma";
+import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
+import {
+  recordAuditInTransaction,
+  type TransactionalAuditWriter,
+} from "@/server/services/transactional-audit.service";
 import type { Paginated } from "@/lib/pagination";
 import {
   nextPendingStatus,
@@ -75,6 +81,8 @@ export type RegisterPendingInput = {
   createdById?: string | null;
   productId?: string;
   manual?: ManualProductInput;
+  identitySkippedReason?: PendingIdentityDeferral;
+  identitySkippedNote?: string;
   // Clave del INTENTO. Obligatoria para toda alta nueva; las filas históricas
   // siguen nullable únicamente por compatibilidad de datos.
   idempotencyKey: string;
@@ -85,6 +93,10 @@ export class PendingIdempotencyPayloadConflictError extends Error {
     super("idempotency key was already used for a different pending payload");
   }
 }
+
+export type RegisterPendingDependencies = {
+  writeAudit?: TransactionalAuditWriter;
+};
 
 // Prefijo de código para productos creados desde un pendiente manual. Sufijo
 // aleatorio para no colisionar con el índice único `code` sin coordinar un
@@ -228,14 +240,18 @@ export async function getPendingDashboard(params: {
  */
 export async function registerPending(
   data: RegisterPendingInput,
+  deps: RegisterPendingDependencies = {},
 ): Promise<CreatePendingResult> {
+  if (data.identitySkippedNote?.trim() && !data.identitySkippedReason) {
+    throw new Error("identitySkippedNote requires identitySkippedReason");
+  }
   const fingerprint = requestFingerprint(data);
   // Camino barato: el intento ya tiene su pendiente. Ni transacción ni lock.
   const existing = await findPendingByIdempotencyKey(data.idempotencyKey);
   if (existing) return replayRegistration(existing, fingerprint);
 
   try {
-    return await createPendingRegistration(data, fingerprint);
+    return await createPendingRegistration(data, fingerprint, deps);
   } catch (error) {
     // Camino correcto: perdimos la carrera contra otro envío con la MISMA clave.
     // El pendiente existe —lo creó el otro— así que esto es un éxito, no un
@@ -278,6 +294,12 @@ function requestFingerprint(data: RegisterPendingInput): string {
     totalAmount: data.totalAmount ?? null,
     paidAmount: data.paidAmount ?? 0,
     createdById: data.createdById ?? null,
+    ...(data.identitySkippedReason
+      ? {
+          identitySkippedReason: data.identitySkippedReason,
+          identitySkippedNote: data.identitySkippedNote?.trim() || null,
+        }
+      : {}),
   });
 }
 
@@ -316,8 +338,10 @@ async function replayRegistration(
 function createPendingRegistration(
   data: RegisterPendingInput,
   fingerprint: string,
+  deps: RegisterPendingDependencies,
 ): Promise<CreatePendingResult> {
   return prisma.$transaction(async (tx) => {
+    const writeAudit = deps.writeAudit ?? recordAuditInTransaction;
     // Resolver el producto: existente (catálogo) o creado al vuelo (manual).
     let productId = data.productId;
     let createdProduct: Product | null = null;
@@ -351,8 +375,20 @@ function createPendingRegistration(
         createdById: data.createdById ?? null,
         idempotencyKey: data.idempotencyKey,
         requestFingerprint: fingerprint,
+        identitySkippedReason: data.identitySkippedReason,
+        identitySkippedNote: data.identitySkippedNote,
       }, tx,
     );
+    if (data.identitySkippedReason) {
+      await writeAudit(tx, {
+        action: AUDIT_ACTIONS.PENDING_IDENTITY_DEFERRED,
+        module: AUDIT_MODULES.PENDIENTES,
+        entity: "Pending",
+        entityId: pending.id,
+        after: { productId, reason: data.identitySkippedReason },
+        context: { userId: data.createdById ?? null },
+      });
+    }
     const inventoryReadyQuantity = await claimableStockForPending(
       tx,
       productId,
