@@ -13,6 +13,7 @@ import {
   seesAllPendings,
   USER_ROLES,
 } from "./permissions";
+import { SKU_CAPTURE_LINK_ROLES } from "@/server/domain/catalog/sku-identity";
 
 describe("assignableRolesFor", () => {
   it("SUPERADMIN puede asignar todos los roles", () => {
@@ -567,6 +568,10 @@ describe("canFixProductIdentity", () => {
 // Vincular al capturar es un eje propio: lo tienen los mismos cinco que crean
 // pendientes, y NO implica gestionar el catálogo.
 describe("canLinkProductIdentity", () => {
+  it("matches the capture domain authority exactly", () => {
+    expect(rolesWithCapability("canLinkProductIdentity")).toEqual(SKU_CAPTURE_LINK_ROLES);
+  });
+
   it("la tienen exactamente los cinco roles que crean pendientes", () => {
     expect(rolesWithCapability("canLinkProductIdentity")).toEqual(
       rolesWithCapability("canCreatePendientes"),

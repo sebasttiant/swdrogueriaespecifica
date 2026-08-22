@@ -190,12 +190,17 @@ export function assertAttemptWithinBudget(attempt: number): void {
  * distinto que la base sería rechazar códigos que la base acepta.
  */
 export const ORION_CODE_MAX_CHARS = 80;
+const INTERNAL_ORION_CODE_WHITESPACE = /[\p{White_Space}\uFEFF]/u;
 
 /** Recorta los extremos y valida; NO cambia mayúsculas: la identidad es exacta. */
 export function normalizeOrionCode(raw: string): string {
   const code = raw.trim();
 
-  if (code === "" || /\s/.test(code) || [...code].length > ORION_CODE_MAX_CHARS) {
+  if (
+    code === "" ||
+    INTERNAL_ORION_CODE_WHITESPACE.test(code) ||
+    [...code].length > ORION_CODE_MAX_CHARS
+  ) {
     throw new SkuIdentityError("MISSING_EXACT_IDENTITY");
   }
 

@@ -462,8 +462,15 @@ describe("normalizeOrionCode · forma del código", () => {
     expect(normalizeOrionCode("  7702-Ab  ")).toBe("7702-Ab");
   });
 
-  it("rechaza whitespace interno", () => {
-    for (const raw of ["7702 001", "7702\t001", "7702\n001"]) {
+  it("rechaza whitespace interno Unicode y BOM", () => {
+    for (const raw of [
+      "7702 001",
+      "7702\t001",
+      "7702\n001",
+      "7702\u0085001",
+      "7702\u00A0001",
+      "7702\uFEFF001",
+    ]) {
       expect(codeOf(() => normalizeOrionCode(raw))).toBe("MISSING_EXACT_IDENTITY");
     }
   });
