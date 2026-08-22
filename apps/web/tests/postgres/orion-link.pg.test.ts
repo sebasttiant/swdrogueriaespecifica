@@ -9,6 +9,7 @@ import {
 } from "@/server/repositories/sku-review.repository";
 import {
   linkOrionCode,
+  linkOrionCodeAtCapture,
   onboardProvisionalSku,
 } from "@/server/services/sku-onboarding.service";
 
@@ -299,6 +300,248 @@ describe("linkOrionCode · la carrera por el mismo código", () => {
     expect(intacto.orionCode).toBe(orionCode);
     const sinCodigo = await prisma.product.findUniqueOrThrow({ where: { id: perdedor.id } });
     expect(sinCodigo.orionCode).toBeNull();
+  });
+});
+
+describe("linkOrionCodeAtCapture", () => {
+  it("links with the capture authority and records the complete atomic audit", async () => {
+    const product = await newProduct("Capture-only product");
+    const orionCode = nextOrionCode();
+
+    const result = await linkOrionCodeAtCapture({
+      actor: BODEGA,
+      identity: { productId: product.id },
+      orionCode,
+      expectedVersion: product.identityVersion,
+    });
+
+    expect(result).toMatchObject({ status: "LINKED", product: { id: product.id, orionCode } });
+    const audit = await prisma.auditLog.findFirstOrThrow({
+      where: { entityId: product.id, action: AUDIT_ACTIONS.SKU_ORION_LINK },
+    });
+    expect(audit).toMatchObject({
+      action: AUDIT_ACTIONS.SKU_ORION_LINK,
+      module: "productos",
+      entity: "Product",
+      entityId: product.id,
+      userId: BODEGA.id,
+      before: { orionCode: null, identityVersion: product.identityVersion },
+      after: { orionCode, identityVersion: product.identityVersion + 1 },
+    });
+  });
+
+  it("does not let an ungranted runtime role write a product or audit", async () => {
+    const product = await newProduct("Denied capture product");
+
+    await expect(
+      linkOrionCodeAtCapture({
+        actor: { id: BODEGA.id, role: "AUDITOR" as never },
+        identity: { productId: product.id },
+        orionCode: nextOrionCode(),
+        expectedVersion: product.identityVersion,
+      }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN_ACTOR" });
+
+    expect(await prisma.product.findUniqueOrThrow({ where: { id: product.id } })).toMatchObject({
+      orionCode: null,
+      identityVersion: product.identityVersion,
+    });
+    expect(
+      await prisma.auditLog.count({ where: { entityId: product.id, action: AUDIT_ACTIONS.SKU_ORION_LINK } }),
+    ).toBe(0);
+  });
+
+  it("returns the existing holder without moving a code", async () => {
+    const holder = await newProduct("Existing holder");
+    const target = await newProduct("Conflict target");
+    const orionCode = nextOrionCode();
+    await linkOrionCode({
+      actor: BODEGA,
+      identity: { productId: holder.id },
+      orionCode,
+      intent: "LINK",
+      expectedVersion: holder.identityVersion,
+    });
+
+    const result = await linkOrionCodeAtCapture({
+      actor: BODEGA,
+      identity: { productId: target.id },
+      orionCode,
+      expectedVersion: target.identityVersion,
+    });
+
+    expect(result).toEqual({ status: "ORION_CONFLICT", holder: { id: holder.id, name: holder.name } });
+    expect(await prisma.product.findUniqueOrThrow({ where: { id: target.id } })).toMatchObject({
+      orionCode: null,
+      identityVersion: target.identityVersion,
+    });
+  });
+
+  it("ignores a forged RELINK intent because capture only executes LINK", async () => {
+    const holder = await newProduct("Forged-intent holder");
+    const target = await newProduct("Forged-intent target");
+    const orionCode = nextOrionCode();
+    await linkOrionCode({
+      actor: BODEGA,
+      identity: { productId: holder.id },
+      orionCode,
+      intent: "LINK",
+      expectedVersion: holder.identityVersion,
+    });
+
+    const result = await linkOrionCodeAtCapture({
+      actor: BODEGA,
+      identity: { productId: target.id },
+      orionCode,
+      expectedVersion: target.identityVersion,
+      intent: "RELINK",
+    } as never);
+
+    expect(result).toEqual({ status: "ORION_CONFLICT", holder: { id: holder.id, name: holder.name } });
+    expect(await prisma.product.findUniqueOrThrow({ where: { id: holder.id } })).toMatchObject({ orionCode });
+    expect(await prisma.product.findUniqueOrThrow({ where: { id: target.id } })).toMatchObject({
+      orionCode: null,
+      identityVersion: target.identityVersion,
+    });
+  });
+
+  it("returns NOOP without audit or writes, and revalidates it after a concurrent change", async () => {
+    const product = await newProduct("NOOP target");
+    const orionCode = nextOrionCode();
+    const linked = await linkOrionCode({
+      actor: BODEGA,
+      identity: { productId: product.id },
+      orionCode,
+      intent: "LINK",
+      expectedVersion: product.identityVersion,
+    });
+    await prisma.auditLog.deleteMany({ where: { entityId: product.id } });
+
+    const noop = await linkOrionCodeAtCapture({
+      actor: BODEGA,
+      identity: { productId: product.id },
+      orionCode,
+      expectedVersion: linked.identityVersion,
+    });
+    expect(noop).toMatchObject({ status: "NOOP", product: { identityVersion: linked.identityVersion } });
+    expect(await prisma.auditLog.count({ where: { entityId: product.id } })).toBe(0);
+  });
+
+  it("rolls back the code and version when the LINK audit fails", async () => {
+    const product = await newProduct("Audit rollback target");
+
+    await expect(
+      linkOrionCodeAtCapture(
+        {
+          actor: BODEGA,
+          identity: { productId: product.id },
+          orionCode: nextOrionCode(),
+          expectedVersion: product.identityVersion,
+        },
+        { writeAudit: async () => { throw new Error("audit unavailable"); } },
+      ),
+    ).rejects.toThrow("audit unavailable");
+
+    expect(await prisma.product.findUniqueOrThrow({ where: { id: product.id } })).toMatchObject({
+      orionCode: null,
+      identityVersion: product.identityVersion,
+    });
+    expect(
+      await prisma.auditLog.count({ where: { entityId: product.id, action: AUDIT_ACTIONS.SKU_ORION_LINK } }),
+    ).toBe(0);
+  });
+
+  it("revalidates a NOOP after a concurrent FIX instead of returning stale success", async () => {
+    const product = await newProduct("Concurrent NOOP target");
+    const originalCode = nextOrionCode();
+    const linked = await linkOrionCode({
+      actor: BODEGA,
+      identity: { productId: product.id },
+      orionCode: originalCode,
+      intent: "LINK",
+      expectedVersion: product.identityVersion,
+    });
+    await prisma.auditLog.deleteMany({ where: { entityId: product.id } });
+
+    let allowNoop!: () => void;
+    const noopReady = new Promise<void>((resolve) => { allowNoop = resolve; });
+    let observedNoop!: () => void;
+    const noopObserved = new Promise<void>((resolve) => { observedNoop = resolve; });
+    const attempt = linkOrionCodeAtCapture(
+      {
+        actor: BODEGA,
+        identity: { productId: product.id },
+        orionCode: originalCode,
+        expectedVersion: linked.identityVersion,
+      },
+      {
+        beforeApply: async () => {
+          observedNoop();
+          await noopReady;
+        },
+      },
+    );
+    await noopObserved;
+    await linkOrionCode({
+      actor: SUPERVISOR,
+      identity: { productId: product.id },
+      orionCode: nextOrionCode(),
+      intent: "FIX",
+      expectedVersion: linked.identityVersion,
+    });
+    allowNoop();
+
+    await expect(attempt).rejects.toBeInstanceOf(SkuConcurrencyError);
+    expect(await prisma.auditLog.count({ where: { entityId: product.id } })).toBe(1);
+    expect(
+      await prisma.auditLog.count({ where: { entityId: product.id, action: AUDIT_ACTIONS.SKU_ORION_LINK } }),
+    ).toBe(0);
+  });
+
+  it("forces both contenders past pre-read and returns the P2002 winner as holder", async () => {
+    const first = await newProduct("Race contender one");
+    const second = await newProduct("Race contender two");
+    const orionCode = nextOrionCode();
+    let arrivals = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let bothReady!: () => void;
+    const bothArrived = new Promise<void>((resolve) => { bothReady = resolve; });
+    const beforeApply = async () => {
+      arrivals += 1;
+      if (arrivals === 2) bothReady();
+      await gate;
+    };
+
+    const attempts = [first, second].map((product) =>
+      linkOrionCodeAtCapture(
+        {
+          actor: BODEGA,
+          identity: { productId: product.id },
+          orionCode,
+          expectedVersion: product.identityVersion,
+        },
+        { beforeApply },
+      ),
+    );
+    await bothArrived;
+    release();
+    const results = await Promise.all(attempts);
+
+    expect(arrivals).toBe(2);
+    const winner = results.find((result) => result.status === "LINKED");
+    const loser = results.find((result) => result.status === "ORION_CONFLICT");
+    expect(winner).toMatchObject({ status: "LINKED", product: { orionCode } });
+    expect(loser).toEqual({
+      status: "ORION_CONFLICT",
+      holder: { id: winner?.product.id, name: winner?.product.name },
+    });
+    expect(await prisma.auditLog.count({ where: { action: AUDIT_ACTIONS.SKU_ORION_LINK } })).toBe(1);
+    const losingProduct = [first, second].find((product) => product.id !== winner?.product.id);
+    expect(await prisma.product.findUniqueOrThrow({ where: { id: losingProduct!.id } })).toMatchObject({
+      orionCode: null,
+      identityVersion: losingProduct!.identityVersion,
+    });
   });
 });
 

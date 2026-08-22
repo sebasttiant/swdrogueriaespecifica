@@ -6,6 +6,7 @@ import { prisma } from "@/lib/db/prisma";
 import type { Product } from "@/lib/generated/prisma/client";
 import {
   assertAttemptWithinBudget,
+  assertCanLinkAtCapture,
   assertCanFixSkuIdentity,
   assertCanOnboardSku,
   assertIdentityMatches,
@@ -13,6 +14,7 @@ import {
   planOrionLink,
   type IdentityInput,
   type OrionLinkPlan,
+  SkuIdentityError,
   type SkuIdentityRecord,
 } from "@/server/domain/catalog/sku-identity";
 import {
@@ -22,6 +24,7 @@ import {
   insertProvisionalProduct,
   isUniqueViolation,
   mintInternalSku,
+  SkuConcurrencyError,
   type SkuGenerationDeps,
 } from "@/server/repositories/sku-review.repository";
 import type { AuditContext } from "@/server/services/audit.service";
@@ -191,6 +194,96 @@ export type LinkOrionCodeInput = {
 export type LinkOrionCodeDeps = {
   writeAudit?: TransactionalAuditWriter;
 };
+
+export type CaptureOrionLinkInput = {
+  actor: SkuOnboardingActor;
+  identity: IdentityInput;
+  orionCode: string;
+  expectedVersion: number;
+  context?: AuditContext;
+};
+
+export type CaptureOrionLinkResult =
+  | { status: "LINKED"; product: Product }
+  | { status: "NOOP"; product: Product }
+  | { status: "ORION_CONFLICT"; holder: Pick<Product, "id" | "name"> };
+
+export type CaptureOrionLinkDeps = LinkOrionCodeDeps & {
+  /** Test seam: makes the stale-read P2002 race deterministic. */
+  beforeApply?: () => Promise<void>;
+};
+
+/**
+ * Capture has exactly one identity operation: LINK. It deliberately cannot
+ * accept an intent, so RELINK and FIX remain unreachable from this boundary.
+ */
+export async function linkOrionCodeAtCapture(
+  input: CaptureOrionLinkInput,
+  deps: CaptureOrionLinkDeps = {},
+): Promise<CaptureOrionLinkResult> {
+  assertCanLinkAtCapture(input.actor.role);
+
+  const orionCode = normalizeOrionCode(input.orionCode);
+  const product = await findProductByIdentity(input.identity);
+  assertIdentityMatches(input.identity, product);
+  const holder = await findProductByIdentity({ orionCode });
+  if (holder && holder.id !== product?.id) {
+    return { status: "ORION_CONFLICT", holder: { id: holder.id, name: holder.name } };
+  }
+
+  const plan = planOrionLink({
+    product: product as SkuIdentityRecord,
+    orionCode,
+    holder,
+    intent: "LINK",
+  });
+  if (plan.action !== "LINK" && plan.action !== "NOOP") {
+    throw new SkuIdentityError("ORION_CONFLICT");
+  }
+
+  await deps.beforeApply?.();
+
+  if (plan.action === "NOOP") {
+    const current = await prisma.$transaction((tx) =>
+      tx.product.findUnique({ where: { id: product!.id } }),
+    );
+    if (
+      !current ||
+      current.orionCode !== orionCode ||
+      current.identityVersion !== input.expectedVersion
+    ) {
+      throw new SkuConcurrencyError();
+    }
+    return { status: "NOOP", product: current };
+  }
+
+  const writeAudit = deps.writeAudit ?? recordAuditInTransaction;
+  try {
+    const linked = await prisma.$transaction(async (tx) => {
+      const updated = await applyOrionLink(plan, { expectedVersion: input.expectedVersion }, tx);
+      await writeAudit(tx, {
+        action: AUDIT_ACTIONS.SKU_ORION_LINK,
+        module: AUDIT_MODULES.PRODUCTOS,
+        entity: "Product",
+        entityId: updated.id,
+        before: { orionCode: null, identityVersion: input.expectedVersion },
+        after: { orionCode: updated.orionCode, identityVersion: updated.identityVersion },
+        context: { ...input.context, userId: input.actor.id },
+      });
+      return updated;
+    });
+    return { status: "LINKED", product: linked };
+  } catch (error) {
+    if (!isUniqueViolation(error) && !(error instanceof SkuIdentityError && error.code === "ORION_CONFLICT")) {
+      throw error;
+    }
+    // The failed transaction is aborted. Query with the root client only after
+    // rollback, otherwise PostgreSQL raises 25P02 and hides the real conflict.
+    const winner = await findProductByIdentity({ orionCode });
+    if (!winner) throw error;
+    return { status: "ORION_CONFLICT", holder: { id: winner.id, name: winner.name } };
+  }
+}
 
 /**
  * La autoridad que EXIGE la acción que el plan resolvió.
