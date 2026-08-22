@@ -138,43 +138,41 @@ enum BatchStatus {
 // --------------------------------------------------------------------------
 
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
+  id           String    @id @default(cuid())
+  email        String    @unique
   name         String
   passwordHash String? // se completa cuando se implemente auth (Fase 2)
-  role         UserRole @default(OPERADOR)
+  role         UserRole  @default(OPERADOR)
   active       Boolean   @default(true)
   archivedAt   DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
   // Entidades creadas por este usuario (trazabilidad de autoría)
-  pendings        Pending[] @relation("PendingCreatedBy")
+  pendings               Pending[]            @relation("PendingCreatedBy")
   // Pendientes cancelados / entregas registradas por este usuario (Slice A:
   // ciclo de vida de entrega). Relaciones nombradas porque `Pending` ahora
   // tiene más de una relación con `User`.
-  pendingsCancelled Pending[] @relation("PendingCancelledBy")
-  pendingDeliveries PendingDelivery[] @relation("PendingDeliveredBy")
-  contactedPendings Pending[] @relation("PendingContactedBy")
-  invoicedPendings Pending[] @relation("PendingInvoicedBy")
-  missingItems    MissingItem[] @relation("MissingItemCreatedBy")
-  confirmedMissingItems MissingItem[] @relation("MissingItemConfirmedBy")
-  inventoryEntries InventoryEntry[]
-  auditLogs       AuditLog[]
-  orderedMissingItems MissingItem[] @relation("MissingItemOrderedBy")
-  discardedMissingItems MissingItem[] @relation("MissingItemDiscardedBy")
-  missingReports  MissingReport[] @relation("MissingReportReportedBy")
-  resolvedMissingReports MissingReport[] @relation("MissingReportResolvedBy")
-  arrivedMissingReports MissingReport[] @relation("MissingReportArrivedBy")
-  arrivedMissingItems MissingItem[] @relation("MissingItemArrivedBy")
-  notificationOutbox   NotificationOutbox[]
+  pendingsCancelled      Pending[]            @relation("PendingCancelledBy")
+  pendingDeliveries      PendingDelivery[]    @relation("PendingDeliveredBy")
+  contactedPendings      Pending[]            @relation("PendingContactedBy")
+  invoicedPendings       Pending[]            @relation("PendingInvoicedBy")
+  missingItems           MissingItem[]        @relation("MissingItemCreatedBy")
+  confirmedMissingItems  MissingItem[]        @relation("MissingItemConfirmedBy")
+  inventoryEntries       InventoryEntry[]
+  auditLogs              AuditLog[]
+  orderedMissingItems    MissingItem[]        @relation("MissingItemOrderedBy")
+  discardedMissingItems  MissingItem[]        @relation("MissingItemDiscardedBy")
+  missingReports         MissingReport[]      @relation("MissingReportReportedBy")
+  resolvedMissingReports MissingReport[]      @relation("MissingReportResolvedBy")
+  arrivedMissingReports  MissingReport[]      @relation("MissingReportArrivedBy")
+  arrivedMissingItems    MissingItem[]        @relation("MissingItemArrivedBy")
+  notificationOutbox     NotificationOutbox[]
 
   @@index([active])
   @@index([archivedAt])
   @@map("users")
 }
-
-
 
 // --------------------------------------------------------------------------
 // Productos
@@ -189,40 +187,40 @@ enum SkuStatus {
 }
 
 model Product {
-  id         String   @id @default(cuid())
-  code       String   @unique // SKU / código interno
-  name       String
-  unit       String // unidad de medida (ej: "unidad", "caja", "ml")
-  minStock   Int      @default(0) // stock mínimo para alertas
-  reorderQty Int      @default(0) // cantidad sugerida de reorden
-  active     Boolean  @default(true)
+  id                         String     @id @default(cuid())
+  code                       String     @unique // SKU / código interno
+  name                       String
+  unit                       String // unidad de medida (ej: "unidad", "caja", "ml")
+  minStock                   Int        @default(0) // stock mínimo para alertas
+  reorderQty                 Int        @default(0) // cantidad sugerida de reorden
+  active                     Boolean    @default(true)
   // Producto creado al vuelo desde un pendiente manual (no estaba en catálogo).
   // Queda marcado para que un ADMIN lo complete/apruebe (código y unidad reales).
-  needsReview Boolean @default(false)
+  needsReview                Boolean    @default(false)
   // Clave canónica solo para productos provisionales creados desde reportes.
   // El unique hace idempotente la creación concurrente por nombre normalizado.
-  provisionalNormalizedName String? @unique
+  provisionalNormalizedName  String?    @unique
   // Identidad canónica del producto en Orion: exacta e INMUTABLE una vez
   // vinculada. Nula mientras nadie la vinculó; el vínculo y el remapeo quedan
   // auditados. Las reglas viven en server/domain/catalog/sku-identity.ts.
-  orionCode   String?  @unique
+  orionCode                  String?    @unique
   // SKU interno que acuña el servidor (`PRV-{ULID}`) cuando el producto entra
   // al catálogo sin código Orion. Único y buscable de forma exacta.
-  internalSku String?  @unique
+  internalSku                String?    @unique
   // Marca de revisión de identidad. Nula en el catálogo histórico, que nunca
   // pasó por este flujo.
-  skuStatus   SkuStatus?
+  skuStatus                  SkuStatus?
   // Contador del compare-and-set que protege el vínculo con el código Orion:
   // quien escribe declara la versión que observó y pierde si otro llegó antes.
-  identityVersion Int @default(0)
+  identityVersion            Int        @default(0)
   // Clave del INTENTO que acuñó la identidad: un reintento del operador
   // devuelve el mismo producto en lugar de acuñar otro.
-  identityCommandKey String? @unique
+  identityCommandKey         String?    @unique
   // Huella del contenido del comando: la misma clave con otro contenido es un
   // error del llamador, no un reintento.
   identityCommandFingerprint String?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  createdAt                  DateTime   @default(now())
+  updatedAt                  DateTime   @updatedAt
 
   pendings         Pending[]
   missingItems     MissingItem[]
@@ -231,7 +229,7 @@ model Product {
   // Lotes del modelo canónico (T1.2). Convive con `batches`, que es el legado.
   lots             Lot[]
   laboratoryId     String?
-  laboratory       Laboratory? @relation(fields: [laboratoryId], references: [id])
+  laboratory       Laboratory?       @relation(fields: [laboratoryId], references: [id])
   suppliers        ProductSupplier[]
 
   @@index([active])
@@ -264,21 +262,21 @@ enum LotStatus {
 }
 
 model Lot {
-  id        String    @id @default(cuid())
-  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
-  productId String
-  lotNumber String // número de lote del proveedor
+  id         String    @id @default(cuid())
+  product    Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId  String
+  lotNumber  String // número de lote del proveedor
   // Nulo = sin vencimiento. FEFO lo manda al final, no al principio.
-  expiresAt DateTime?
+  expiresAt  DateTime?
   // Cantidad física. La no-negatividad la sostiene un CHECK en la base, no
   // solo el código: es la red que atrapa cualquier sobre-descuento futuro.
-  onHand    Int
+  onHand     Int
   // Momento de recepción: desempata FEFO cuando dos lotes vencen el mismo día.
-  receivedAt DateTime @default(now())
-  status    LotStatus @default(AVAILABLE)
-  location  String? // ubicación física (estante, depósito)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  receivedAt DateTime  @default(now())
+  status     LotStatus @default(AVAILABLE)
+  location   String? // ubicación física (estante, depósito)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
 
   movements InventoryMovement[]
 
@@ -338,25 +336,25 @@ model OperationalCommand {
 }
 
 model InventoryMovement {
-  id        String                @id @default(cuid())
+  id         String                @id @default(cuid())
   // RESTRICT y no CASCADE: el ledger se retiene de forma permanente. Un lote
   // con movimientos no se borra, y un producto con movimientos se desactiva.
   // Un ledger que un DELETE puede borrar no es un ledger.
-  lot       Lot                   @relation(fields: [lotId], references: [id], onDelete: Restrict)
-  lotId     String
+  lot        Lot                   @relation(fields: [lotId], references: [id], onDelete: Restrict)
+  lotId      String
   // Denormalizado del lote al asentar: evita un join por consulta y queda
   // congelado con el hecho.
-  productId String
-  type      InventoryMovementType
+  productId  String
+  type       InventoryMovementType
   // Delta firmado. El ledger guarda el hecho bruto; el significado por tipo lo
   // interpretan los comandos y las derivaciones de T1.4.
-  quantity  Int
-  actorId   String
-  occurredAt DateTime             @default(now())
+  quantity   Int
+  actorId    String
+  occurredAt DateTime              @default(now())
   // Todo movimiento nace de un comando: cero cambios sin rastro.
-  command   OperationalCommand    @relation(fields: [commandId], references: [id], onDelete: Restrict)
-  commandId String
-  createdAt DateTime              @default(now())
+  command    OperationalCommand    @relation(fields: [commandId], references: [id], onDelete: Restrict)
+  commandId  String
+  createdAt  DateTime              @default(now())
 
   @@unique([commandId]) // un comando asienta UNA vez: sin doble asiento
   @@index([lotId])
@@ -412,16 +410,16 @@ model ProductSupplier {
 // --------------------------------------------------------------------------
 
 model ProductBatch {
-  id        String      @id @default(cuid())
-  product   Product     @relation(fields: [productId], references: [id])
-  productId String
-  batchCode String // número de lote del proveedor
-  expiresAt DateTime // vencimiento de ESTE lote
-  quantity  Int // stock físico de ESTE lote
-  location  String? // ubicación física (estante, depósito)
-  status    BatchStatus @default(DISPONIBLE)
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
+  id                  String                        @id @default(cuid())
+  product             Product                       @relation(fields: [productId], references: [id])
+  productId           String
+  batchCode           String // número de lote del proveedor
+  expiresAt           DateTime // vencimiento de ESTE lote
+  quantity            Int // stock físico de ESTE lote
+  location            String? // ubicación física (estante, depósito)
+  status              BatchStatus                   @default(DISPONIBLE)
+  createdAt           DateTime                      @default(now())
+  updatedAt           DateTime                      @updatedAt
   pendingReservations PendingInventoryReservation[]
 
   @@unique([productId, batchCode])
@@ -436,38 +434,38 @@ model ProductBatch {
 // --------------------------------------------------------------------------
 
 model Pending {
-  id           String        @id @default(cuid())
-  product      Product       @relation(fields: [productId], references: [id])
-  productId    String
-  quantity     Int
-  status       PendingStatus @default(PENDIENTE)
+  id                        String                    @id @default(cuid())
+  product                   Product                   @relation(fields: [productId], references: [id])
+  productId                 String
+  quantity                  Int
+  status                    PendingStatus             @default(PENDIENTE)
   // Ejes independientes: compras, disponibilidad física y relación comercial.
   // `status` se conserva para compatibilidad histórica de listados existentes.
-  purchaseStatus PendingPurchaseStatus @default(POR_PEDIR)
-  availabilityStatus PendingAvailabilityStatus @default(ESPERANDO)
-  customerStatus PendingCustomerStatus @default(POR_CONTACTAR)
-  inventoryReadyQuantity Int @default(0)
-  reservedInventoryQuantity Int @default(0)
-  invoicedQuantity Int @default(0)
-  contactedAt DateTime?
-  contactedBy User? @relation("PendingContactedBy", fields: [contactedById], references: [id])
-  contactedById String?
-  invoicedAt DateTime?
-  invoicedBy User? @relation("PendingInvoicedBy", fields: [invoicedById], references: [id])
-  invoicedById String?
+  purchaseStatus            PendingPurchaseStatus     @default(POR_PEDIR)
+  availabilityStatus        PendingAvailabilityStatus @default(ESPERANDO)
+  customerStatus            PendingCustomerStatus     @default(POR_CONTACTAR)
+  inventoryReadyQuantity    Int                       @default(0)
+  reservedInventoryQuantity Int                       @default(0)
+  invoicedQuantity          Int                       @default(0)
+  contactedAt               DateTime?
+  contactedBy               User?                     @relation("PendingContactedBy", fields: [contactedById], references: [id])
+  contactedById             String?
+  invoicedAt                DateTime?
+  invoicedBy                User?                     @relation("PendingInvoicedBy", fields: [invoicedById], references: [id])
+  invoicedById              String?
   // Cuándo el VENDEDOR corrigió su propio pendiente. Puede hacerlo una sola vez:
   // equivocarse al cargar pasa, corregir en bucle es reescribir la historia de
   // un compromiso con un cliente. Gerencia no tiene ese límite.
   // Null = todavía no lo corrigió. Las ediciones de gerencia NO lo tocan.
-  sellerEditedAt DateTime?
+  sellerEditedAt            DateTime?
   // La respuesta del cliente sobre el resto, ya registrada. Sin esto la fila no
   // sabía que la pregunta ya se había contestado y la volvía a hacer para
   // siempre: la nota se escribía, pero nada la delataba.
-  partialDecision   PendingPartialDecision?
-  partialDecisionAt DateTime?
+  partialDecision           PendingPartialDecision?
+  partialDecisionAt         DateTime?
   // Promesa de entrega al cliente: cuándo le respondemos. Obligatoria: en
   // droguería el pendiente es operativo y necesita una fecha/hora comprometida.
-  promisedAt   DateTime
+  promisedAt                DateTime
   // Nombre y teléfono del cliente. Obligatorios EN EL FORMULARIO desde julio de
   // 2026 (pedido de gerencia: sin teléfono no se puede avisar que llegó), pero
   // la columna sigue siendo nullable a propósito.
@@ -475,14 +473,14 @@ model Pending {
   // Volverlas NOT NULL obligaría a inventarle un valor a cada pendiente
   // anterior, y ahí la base pasaría a mentir sobre el pasado. La regla nueva
   // aplica hacia adelante; la historia se conserva como fue.
-  customerName String?
-  customerPhone String?
+  customerName              String?
+  customerPhone             String?
   // Dirección de entrega del cliente. Opcional: la zona ya da el ruteo grueso,
   // la dirección exacta afina la entrega. Es PII —dónde vive el cliente—, así
   // que se minimiza server-side con `canViewCustomerIdentity`, igual que el
   // nombre y el teléfono.
-  customerAddress String?
-  note         String?
+  customerAddress           String?
+  note                      String?
   // --------------------------------------------------------------------
   // Seguimiento del cliente: zona de entrega y estado de pago.
   //
@@ -500,11 +498,11 @@ model Pending {
   // Sin índice sobre `zone`: todavía no hay query que agrupe por zona. Se
   // agrega cuando exista el reporte que lo use, no antes.
   // --------------------------------------------------------------------
-  zone         String?
-  totalAmount  Int?
-  paidAmount   Int           @default(0)
-  createdBy    User?         @relation("PendingCreatedBy", fields: [createdById], references: [id])
-  createdById  String?
+  zone                      String?
+  totalAmount               Int?
+  paidAmount                Int                       @default(0)
+  createdBy                 User?                     @relation("PendingCreatedBy", fields: [createdById], references: [id])
+  createdById               String?
   // --------------------------------------------------------------------
   // Clave de idempotencia del INTENTO que creó este pendiente.
   //
@@ -519,12 +517,12 @@ model Pending {
   // que los pendientes anteriores a esta columna conviven sin inventarles una
   // clave. La regla aplica hacia adelante; la historia queda como fue.
   // --------------------------------------------------------------------
-  idempotencyKey String?      @unique
+  idempotencyKey            String?                   @unique
   // Canonical representation of the actor and semantic create payload. It is
   // nullable only for rows that predate idempotent Pending creation.
-  requestFingerprint String?
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+  requestFingerprint        String?
+  createdAt                 DateTime                  @default(now())
+  updatedAt                 DateTime                  @updatedAt
 
   // --------------------------------------------------------------------
   // Ciclo de vida de entrega (Slice A + T2.2b): entregas parciales,
@@ -536,18 +534,18 @@ model Pending {
   // `deliveredQuantity + cancelledQuantity = quantity`. `completedAt` solo se
   // completa en las transiciones terminales (ENTREGADO, CLOSED_PARTIAL).
   // --------------------------------------------------------------------
-  deliveredQuantity Int              @default(0)
-  cancelledQuantity Int              @default(0)
+  deliveredQuantity Int               @default(0)
+  cancelledQuantity Int               @default(0)
   completedAt       DateTime?
   cancelledAt       DateTime?
-  cancelledBy       User?            @relation("PendingCancelledBy", fields: [cancelledById], references: [id])
+  cancelledBy       User?             @relation("PendingCancelledBy", fields: [cancelledById], references: [id])
   cancelledById     String?
   cancelReason      String?
   deliveries        PendingDelivery[]
 
   // Faltantes generados a partir de este pendiente (lógica de Fase 2)
-  missingItems MissingItem[]
-  inventoryAllocations InventoryAllocation[]
+  missingItems          MissingItem[]
+  inventoryAllocations  InventoryAllocation[]
   inventoryReservations PendingInventoryReservation[]
 
   @@index([status])
@@ -583,51 +581,51 @@ model PendingDelivery {
 // --------------------------------------------------------------------------
 
 model MissingItem {
-  id          String            @id @default(cuid())
-  product     Product           @relation(fields: [productId], references: [id])
-  productId   String
-  quantity    Int
-  receivedQuantity Int @default(0)
+  id                   String                @id @default(cuid())
+  product              Product               @relation(fields: [productId], references: [id])
+  productId            String
+  quantity             Int
+  receivedQuantity     Int                   @default(0)
   // Cantidad que gerencia efectivamente pidió al proveedor. Distinta de
   // `quantity` (necesidad/déficit histórico): null mientras el faltante sigue
   // abierto, y en registros anteriores a esta columna. Nunca se deriva de
   // `quantity`. Un CHECK aditivo refuerza `IS NULL OR > 0`.
-  orderedQuantity Int?
-  note        String?
-  status      MissingItemStatus @default(FALTANTE)
+  orderedQuantity      Int?
+  note                 String?
+  status               MissingItemStatus     @default(FALTANTE)
   // Pendiente que lo originó (cuando se genera automáticamente). Null = manual.
-  origin      Pending?          @relation(fields: [originId], references: [id])
-  originId    String?
-  createdBy   User?             @relation("MissingItemCreatedBy", fields: [createdById], references: [id])
-  createdById String?
+  origin               Pending?              @relation(fields: [originId], references: [id])
+  originId             String?
+  createdBy            User?                 @relation("MissingItemCreatedBy", fields: [createdById], references: [id])
+  createdById          String?
   // Código del vendedor que reportó/registró el faltante (opcional, para trazabilidad operativa).
-  sellerCode  String?
-  confirmedAt DateTime?
-  confirmedBy User?             @relation("MissingItemConfirmedBy", fields: [confirmedById], references: [id])
-  confirmedById String?
-  confirmationNote String?
-  orderedAt DateTime?
-  orderedBy User? @relation("MissingItemOrderedBy", fields: [orderedById], references: [id])
-  orderedById String?
-  arrivedAt DateTime?
-  arrivedBy User? @relation("MissingItemArrivedBy", fields: [arrivedById], references: [id])
-  arrivedById String?
-  supplier Supplier? @relation(fields: [supplierId], references: [id])
-  supplierId String?
+  sellerCode           String?
+  confirmedAt          DateTime?
+  confirmedBy          User?                 @relation("MissingItemConfirmedBy", fields: [confirmedById], references: [id])
+  confirmedById        String?
+  confirmationNote     String?
+  orderedAt            DateTime?
+  orderedBy            User?                 @relation("MissingItemOrderedBy", fields: [orderedById], references: [id])
+  orderedById          String?
+  arrivedAt            DateTime?
+  arrivedBy            User?                 @relation("MissingItemArrivedBy", fields: [arrivedById], references: [id])
+  arrivedById          String?
+  supplier             Supplier?             @relation(fields: [supplierId], references: [id])
+  supplierId           String?
   // Descarte de un faltante duplicado o que ya no hace falta (status CANCELADO).
   // Columnas PROPIAS a propósito: reutilizar `confirmedAt`/`confirmedById` haría
   // imposible distinguir después un descarte de una confirmación, que es el
   // error que ya obligó a revertir "OK gerencia".
-  discardedAt   DateTime?
+  discardedAt          DateTime?
   // `onDelete: Restrict` is what the database has enforced since this column
   // shipped, and it is the behaviour we want: the actor of a discard must not
   // disappear from the audit trail. Declaring it keeps the datamodel and the
   // database identical instead of reporting drift on every future migration.
-  discardedBy   User?    @relation("MissingItemDiscardedBy", fields: [discardedById], references: [id], onDelete: Restrict)
-  discardedById String?
-  discardReason String?
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
+  discardedBy          User?                 @relation("MissingItemDiscardedBy", fields: [discardedById], references: [id], onDelete: Restrict)
+  discardedById        String?
+  discardReason        String?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
   inventoryAllocations InventoryAllocation[]
 
   @@index([status])
@@ -644,17 +642,17 @@ model MissingItem {
 // --------------------------------------------------------------------------
 
 model InventoryEntry {
-  id          String   @id @default(cuid())
-  product     Product  @relation(fields: [productId], references: [id])
-  productId   String
-  quantity    Int
-  idempotencyKey String @unique @default(uuid())
+  id                 String                @id @default(cuid())
+  product            Product               @relation(fields: [productId], references: [id])
+  productId          String
+  quantity           Int
+  idempotencyKey     String                @unique @default(uuid())
   requestFingerprint String
-  note        String?
-  createdBy   User?    @relation(fields: [createdById], references: [id])
-  createdById String?
-  createdAt   DateTime @default(now())
-  allocations InventoryAllocation[]
+  note               String?
+  createdBy          User?                 @relation(fields: [createdById], references: [id])
+  createdById        String?
+  createdAt          DateTime              @default(now())
+  allocations        InventoryAllocation[]
 
   @@index([productId])
   @@index([createdAt])
@@ -666,15 +664,15 @@ model InventoryEntry {
 // faltante concreto. El service la crea FIFO bajo locks; por eso una unidad no
 // puede ser asignada dos veces ni un retry duplicar el ledger.
 model InventoryAllocation {
-  id String @id @default(cuid())
-  inventoryEntry InventoryEntry @relation(fields: [inventoryEntryId], references: [id], onDelete: Restrict)
+  id               String         @id @default(cuid())
+  inventoryEntry   InventoryEntry @relation(fields: [inventoryEntryId], references: [id], onDelete: Restrict)
   inventoryEntryId String
-  missingItem MissingItem @relation(fields: [missingItemId], references: [id], onDelete: Restrict)
-  missingItemId String
-  pending Pending? @relation(fields: [pendingId], references: [id], onDelete: SetNull)
-  pendingId String?
-  quantity Int
-  createdAt DateTime @default(now())
+  missingItem      MissingItem    @relation(fields: [missingItemId], references: [id], onDelete: Restrict)
+  missingItemId    String
+  pending          Pending?       @relation(fields: [pendingId], references: [id], onDelete: SetNull)
+  pendingId        String?
+  quantity         Int
+  createdAt        DateTime       @default(now())
 
   @@unique([inventoryEntryId, missingItemId])
   @@index([missingItemId])
@@ -685,13 +683,13 @@ model InventoryAllocation {
 // Saldo reservado por pendiente y lote. Es el ledger que permite devolver solo
 // unidades no entregadas al lote físico exacto cuando un pedido se cancela.
 model PendingInventoryReservation {
-  id String @id @default(cuid())
-  pending Pending @relation(fields: [pendingId], references: [id], onDelete: Restrict)
+  id        String       @id @default(cuid())
+  pending   Pending      @relation(fields: [pendingId], references: [id], onDelete: Restrict)
   pendingId String
-  batch ProductBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
-  batchId String
-  quantity Int
-  createdAt DateTime @default(now())
+  batch     ProductBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  batchId   String
+  quantity  Int
+  createdAt DateTime     @default(now())
 
   @@unique([pendingId, batchId])
   @@index([pendingId])
@@ -742,15 +740,15 @@ model AuditLog {
 // Deliberadamente sin cantidad, proveedor, foto ni vínculo a catálogo: esos ejes
 // llegan en fases posteriores, cada una con su migración aditiva.
 model MissingReport {
-  id             String              @id @default(cuid())
-  rawName        String
-  normalizedName String
+  id                  String              @id @default(cuid())
+  rawName             String
+  normalizedName      String
   // Código operativo opcional informado por el vendedor. No es una relación: la
   // identidad del reportante sigue siendo `reporterId`.
-  sellerCode     String?
-  reporter       User                @relation("MissingReportReportedBy", fields: [reporterId], references: [id])
-  reporterId     String
-  status         MissingReportStatus @default(PENDING_REVIEW)
+  sellerCode          String?
+  reporter            User                @relation("MissingReportReportedBy", fields: [reporterId], references: [id])
+  reporterId          String
+  status              MissingReportStatus @default(PENDING_REVIEW)
   // Resultado de la revisión: a qué producto del catálogo se vinculó y qué
   // faltante canónico se generó. Null mientras el reporte sigue pendiente.
   // Columnas planas (no relaciones): el reporte es un rastro histórico y no debe
@@ -761,14 +759,14 @@ model MissingReport {
   // La cola la trabajan dos personas a la vez: sin esto había que preguntar por
   // teléfono quién había marcado qué. Null mientras sigue pendiente, y también
   // en los reportes que se resolvieron vinculándolos al catálogo.
-  resolvedBy     User?               @relation("MissingReportResolvedBy", fields: [resolvedById], references: [id])
-  resolvedById   String?
-  resolvedAt     DateTime?
-  arrivedBy      User?               @relation("MissingReportArrivedBy", fields: [arrivedById], references: [id])
-  arrivedById    String?
-  arrivedAt      DateTime?
-  createdAt      DateTime            @default(now())
-  updatedAt      DateTime            @updatedAt
+  resolvedBy          User?               @relation("MissingReportResolvedBy", fields: [resolvedById], references: [id])
+  resolvedById        String?
+  resolvedAt          DateTime?
+  arrivedBy           User?               @relation("MissingReportArrivedBy", fields: [arrivedById], references: [id])
+  arrivedById         String?
+  arrivedAt           DateTime?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
 
   // La cola de revisión filtra por `status` y agrupa/consulta por
   // `normalizedName` (groupBy de pendientes + findMany por nombre). Este índice
