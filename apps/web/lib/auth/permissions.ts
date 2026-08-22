@@ -155,6 +155,10 @@ export const CAPABILITIES = [
   // crear ni editar productos. Colapsarlas para conseguir lo primero regalaría
   // lo segundo.
   "canFixProductIdentity",
+  // Vincular el código de Orion MIENTRAS se captura. Eje propio: más ancho que
+  // acuñar —quien captura pega el código que está leyendo— y más angosto que
+  // `canManageProducts`, que abre el alta y la edición del catálogo entero.
+  "canLinkProductIdentity",
   "canCreatePendientes",
   "canCreateEntries",
   // Reporting a name that is missing from stock is an operational observation,
@@ -259,6 +263,7 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     "canViewEntradas",
     // Corrige identidad SIN gestionar catálogo: ver `canFixProductIdentity`.
     "canFixProductIdentity",
+    "canLinkProductIdentity",
     "canCreatePendientes",
     "canSubmitMissingReports",
     "canConfirmMissingItems",
@@ -291,6 +296,7 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     "canViewDashboard",
     "canViewPendientes",
     "canViewFaltantes",
+    "canLinkProductIdentity",
     "canCreatePendientes",
     "canSubmitMissingReports",
     "canContactOwnPendings",
@@ -323,6 +329,7 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     "canManageProducts",
     "canFixProductIdentity",
     "canCreateEntries",
+    "canLinkProductIdentity",
     "canCreatePendientes",
     "canSubmitMissingReports",
     "canContactOwnPendings",

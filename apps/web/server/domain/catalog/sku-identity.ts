@@ -81,6 +81,29 @@ export function assertCanFixSkuIdentity(role: SessionRole): void {
   if (!canFixSkuIdentity(role)) throw new SkuIdentityError("FORBIDDEN_ACTOR");
 }
 
+/**
+ * Quién VINCULA mientras captura: los cinco roles, porque los cinco capturan y
+ * el que tiene el cliente enfrente es el que está leyendo Orion.
+ *
+ * Es LINK y nada más. Acuñar desde el catálogo, mudar un código y corregir uno
+ * puesto siguen en sus propias autoridades; la captura no recibe ninguna.
+ */
+export const SKU_CAPTURE_LINK_ROLES: readonly SessionRole[] = [
+  "SUPERADMIN",
+  "ADMIN",
+  "SUPERVISOR",
+  "OPERADOR",
+  "BODEGA",
+];
+
+export function canLinkAtCapture(role: SessionRole): boolean {
+  return SKU_CAPTURE_LINK_ROLES.includes(role);
+}
+
+export function assertCanLinkAtCapture(role: SessionRole): void {
+  if (!canLinkAtCapture(role)) throw new SkuIdentityError("FORBIDDEN_ACTOR");
+}
+
 export function canOnboardSku(role: SessionRole): boolean {
   return SKU_ONBOARDING_ROLES.includes(role);
 }
@@ -158,11 +181,21 @@ export function assertAttemptWithinBudget(attempt: number): void {
 // Identidad exacta.
 // --------------------------------------------------------------------------
 
+/**
+ * Tope de longitud, en CARACTERES Unicode y no en unidades UTF-16.
+ *
+ * `"𝔸".length` es 2 —un par suplente ocupa dos unidades—, así que medir con
+ * `.length` rechazaría 80 caracteres astrales por creerlos 160. La columna es
+ * `TEXT` en PostgreSQL, que cuenta con `char_length`, o sea caracteres: medir
+ * distinto que la base sería rechazar códigos que la base acepta.
+ */
+export const ORION_CODE_MAX_CHARS = 80;
+
 /** Recorta los extremos y valida; NO cambia mayúsculas: la identidad es exacta. */
 export function normalizeOrionCode(raw: string): string {
   const code = raw.trim();
 
-  if (code === "" || /\s/.test(code)) {
+  if (code === "" || /\s/.test(code) || [...code].length > ORION_CODE_MAX_CHARS) {
     throw new SkuIdentityError("MISSING_EXACT_IDENTITY");
   }
 

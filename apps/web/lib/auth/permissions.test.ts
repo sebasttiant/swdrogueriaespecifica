@@ -563,3 +563,20 @@ describe("canFixProductIdentity", () => {
     expect(can("SUPERVISOR", "canManageProducts")).toBe(false);
   });
 });
+
+// Vincular al capturar es un eje propio: lo tienen los mismos cinco que crean
+// pendientes, y NO implica gestionar el catálogo.
+describe("canLinkProductIdentity", () => {
+  it("la tienen exactamente los cinco roles que crean pendientes", () => {
+    expect(rolesWithCapability("canLinkProductIdentity")).toEqual(
+      rolesWithCapability("canCreatePendientes"),
+    );
+  });
+
+  it("no arrastra la gestión de catálogo", () => {
+    expect(can("OPERADOR", "canLinkProductIdentity")).toBe(true);
+    expect(can("OPERADOR", "canManageProducts")).toBe(false);
+    expect(can("SUPERVISOR", "canLinkProductIdentity")).toBe(true);
+    expect(can("SUPERVISOR", "canManageProducts")).toBe(false);
+  });
+});
