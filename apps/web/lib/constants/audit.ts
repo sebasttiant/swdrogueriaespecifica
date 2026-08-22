@@ -43,6 +43,7 @@ export const AUDIT_ACTIONS = {
   SKU_ORION_FIX: "sku.orion.fix",
   // Pendientes
   PENDING_CREATE: "pending.create",
+  PENDING_IDENTITY_DEFERRED: "pending.identity.deferred",
   PENDING_STATUS_CHANGE: "pending.status.change",
   PENDING_DELIVERED: "pending.delivered",
   PENDING_CANCELLED: "pending.cancelled",

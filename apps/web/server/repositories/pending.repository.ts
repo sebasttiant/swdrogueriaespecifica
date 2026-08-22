@@ -14,6 +14,7 @@ import {
 import type {
   PendingAvailabilityStatus,
   PendingCustomerStatus,
+  PendingIdentityDeferral,
   PendingPurchaseStatus,
   PendingStatus,
   Prisma,
@@ -95,6 +96,8 @@ export type CreatePendingData = {
   // una segunda fila.
   idempotencyKey: string;
   requestFingerprint: string;
+  identitySkippedReason?: PendingIdentityDeferral;
+  identitySkippedNote?: string;
 };
 
 const LIST_SELECT = {
@@ -392,6 +395,8 @@ export async function createPending(
       createdById: data.createdById ?? null,
       idempotencyKey: data.idempotencyKey,
       requestFingerprint: data.requestFingerprint,
+      identitySkippedReason: data.identitySkippedReason ?? null,
+      identitySkippedNote: data.identitySkippedNote ?? null,
       inventoryReadyQuantity: data.inventoryReadyQuantity ?? 0,
       reservedInventoryQuantity: data.reservedInventoryQuantity ?? 0,
       availabilityStatus: (data.inventoryReadyQuantity ?? 0) === 0
