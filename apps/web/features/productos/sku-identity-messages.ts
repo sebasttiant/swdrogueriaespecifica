@@ -17,7 +17,7 @@ export const SKU_IDENTITY_MESSAGES: Record<SkuIdentityCode, string> = {
     "Llegaron dos formas de identificar el producto a la vez y no se puede elegir por vos. Volvé a entrar desde el producto.",
   FORBIDDEN_ACTOR: "Tu perfil no puede asignar la identidad de un producto.",
   MISSING_EXACT_IDENTITY:
-    "El código de Orion no es válido: no puede estar vacío ni llevar espacios.",
+    "El código de Orion no es válido: máximo 80 caracteres, no vacío y sin espacios.",
   UNKNOWN_SKU:
     "Ese producto ya no está en el catálogo. Refrescá la pantalla y volvé a intentar.",
   ID_SKU_MISMATCH:

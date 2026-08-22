@@ -50,6 +50,10 @@ describe("SKU identity messages", () => {
     );
   });
 
+  it("reports the 80-character maximum for an overlong Orion code", () => {
+    expect(SKU_IDENTITY_MESSAGES.MISSING_EXACT_IDENTITY).toContain("80 caracteres");
+  });
+
   it("resolves a known error to its message", () => {
     expect(messageForIdentityError("ORION_CONFLICT")).toBe(
       SKU_IDENTITY_MESSAGES.ORION_CONFLICT,

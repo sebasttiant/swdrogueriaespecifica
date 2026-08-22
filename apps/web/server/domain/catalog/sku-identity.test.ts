@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 import {
   assertAttemptWithinBudget,
   assertCanFixSkuIdentity,
+  assertCanLinkAtCapture,
   assertCanOnboardSku,
   assertIdentityMatches,
   canFixSkuIdentity,
+  canLinkAtCapture,
   canOnboardSku,
   generateUlid,
   isProvisionalSku,
@@ -14,8 +16,10 @@ import {
   PROVISIONAL_SKU_PREFIX,
   provisionalSkuFor,
   resolveIdentityMode,
+  SKU_CAPTURE_LINK_ROLES,
   SKU_COLLISION_MAX_ATTEMPTS,
   SKU_FIX_ROLES,
+  SKU_ONBOARDING_ROLES,
   SkuIdentityError,
   type SkuIdentityCode,
 } from "./sku-identity";
@@ -425,5 +429,66 @@ describe("canFixSkuIdentity", () => {
   it("deja afuera al vendedor", () => {
     expect(canFixSkuIdentity("OPERADOR")).toBe(false);
     expect(codeOf(() => { assertCanFixSkuIdentity("OPERADOR"); })).toBe("FORBIDDEN_ACTOR");
+  });
+});
+
+// Vincular AL CAPTURAR: cerradura más ancha que acuñar —el vendedor captura, y
+// el que tiene el cliente enfrente es el que lee Orion— y estrictamente LINK.
+describe("canLinkAtCapture", () => {
+  it("habilita a los cinco roles que capturan", () => {
+    for (const role of ["SUPERADMIN", "ADMIN", "SUPERVISOR", "OPERADOR", "BODEGA"] as const) {
+      expect(canLinkAtCapture(role)).toBe(true);
+    }
+    expect([...SKU_CAPTURE_LINK_ROLES].sort()).toEqual(
+      ["ADMIN", "BODEGA", "OPERADOR", "SUPERADMIN", "SUPERVISOR"].sort(),
+    );
+  });
+
+  // Ampliarla le daría al vendedor el alta de catálogo, que es justo lo que la
+  // capacidad angosta evita.
+  it("no toca la autoridad de acuñación", () => {
+    expect([...SKU_ONBOARDING_ROLES].sort()).toEqual(["ADMIN", "BODEGA", "SUPERADMIN"].sort());
+  });
+
+  // Los cinco roles reales capturan, así que el rechazo solo se ejercita con uno
+  // inventado: es la línea que decide si un rol futuro escribe sin revisión.
+  it("rechaza a un rol que no captura", () => {
+    expect(codeOf(() => { assertCanLinkAtCapture("AUDITOR" as never); })).toBe("FORBIDDEN_ACTOR");
+  });
+});
+
+describe("normalizeOrionCode · forma del código", () => {
+  it("recorta los extremos y conserva las mayúsculas exactas", () => {
+    expect(normalizeOrionCode("  7702-Ab  ")).toBe("7702-Ab");
+  });
+
+  it("rechaza whitespace interno Unicode y BOM", () => {
+    for (const raw of [
+      "7702 001",
+      "7702\t001",
+      "7702\n001",
+      "7702\u0085001",
+      "7702\u00A0001",
+      "7702\uFEFF001",
+    ]) {
+      expect(codeOf(() => normalizeOrionCode(raw))).toBe("MISSING_EXACT_IDENTITY");
+    }
+  });
+
+  it("acepta 80 y rechaza 81 en ASCII", () => {
+    expect(normalizeOrionCode("7".repeat(80))).toHaveLength(80);
+    expect(codeOf(() => normalizeOrionCode("7".repeat(81)))).toBe("MISSING_EXACT_IDENTITY");
+  });
+
+  // El límite cuenta CARACTERES Unicode, no unidades UTF-16. Un par suplente
+  // ocupa dos unidades: con `.length` estos 80 caracteres medirían 160 y se
+  // rechazarían, y `char_length` de PostgreSQL —que es lo que acota la columna—
+  // diría 80. Medir distinto que la base es rechazar códigos que la base acepta.
+  it("cuenta caracteres, no unidades: 80 astrales entran, 81 no", () => {
+    const astral = "𝔸";
+    expect(astral).toHaveLength(2);
+
+    expect([...normalizeOrionCode(astral.repeat(80))]).toHaveLength(80);
+    expect(codeOf(() => normalizeOrionCode(astral.repeat(81)))).toBe("MISSING_EXACT_IDENTITY");
   });
 });

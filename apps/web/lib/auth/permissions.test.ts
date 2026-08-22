@@ -13,6 +13,7 @@ import {
   seesAllPendings,
   USER_ROLES,
 } from "./permissions";
+import { SKU_CAPTURE_LINK_ROLES } from "@/server/domain/catalog/sku-identity";
 
 describe("assignableRolesFor", () => {
   it("SUPERADMIN puede asignar todos los roles", () => {
@@ -560,6 +561,27 @@ describe("canFixProductIdentity", () => {
   // `canManageProducts`, esta afirmación falla y explica por qué no se hace.
   it("SUPERVISOR corrige identidad pero sigue sin poder gestionar productos", () => {
     expect(can("SUPERVISOR", "canFixProductIdentity")).toBe(true);
+    expect(can("SUPERVISOR", "canManageProducts")).toBe(false);
+  });
+});
+
+// Vincular al capturar es un eje propio: lo tienen los mismos cinco que crean
+// pendientes, y NO implica gestionar el catálogo.
+describe("canLinkProductIdentity", () => {
+  it("matches the capture domain authority exactly", () => {
+    expect(rolesWithCapability("canLinkProductIdentity")).toEqual(SKU_CAPTURE_LINK_ROLES);
+  });
+
+  it("la tienen exactamente los cinco roles que crean pendientes", () => {
+    expect(rolesWithCapability("canLinkProductIdentity")).toEqual(
+      rolesWithCapability("canCreatePendientes"),
+    );
+  });
+
+  it("no arrastra la gestión de catálogo", () => {
+    expect(can("OPERADOR", "canLinkProductIdentity")).toBe(true);
+    expect(can("OPERADOR", "canManageProducts")).toBe(false);
+    expect(can("SUPERVISOR", "canLinkProductIdentity")).toBe(true);
     expect(can("SUPERVISOR", "canManageProducts")).toBe(false);
   });
 });
