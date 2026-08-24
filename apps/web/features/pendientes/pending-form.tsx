@@ -137,6 +137,7 @@ function PendingFormFields({
   // El eco del intento anterior cuando falló; ausente tras un éxito o al entrar.
   const previous: Partial<PendingSubmittedValues> = state.values ?? {};
 
+  const conflict = state.orionConflict;
   const canSelectExisting = products.length > 0;
   // Modo manual: producto que no está en el catálogo. Si no hay catálogo cargado,
   // el manual es la única vía, así que arranca activo y sin opción de togglear.
@@ -173,6 +174,10 @@ function PendingFormFields({
   const [identitySkippedNote, setIdentitySkippedNote] = useState(
     previous.identitySkippedNote ?? "",
   );
+  const [showConflictRecovery, setShowConflictRecovery] = useState(conflict != null);
+  const conflictHolder = conflict
+    ? products.find((product) => product.id === conflict.holder.productId)
+    : undefined;
 
   // El manual SIEMPRE pide identidad: todavía no existe, así que no puede
   // traer un código de antes.
@@ -189,6 +194,7 @@ function PendingFormFields({
     setDeferred(false);
     setIdentitySkippedReason("");
     setIdentitySkippedNote("");
+    setShowConflictRecovery(false);
   };
 
   const changeManualMode = (nextManual: boolean) => {
@@ -201,6 +207,21 @@ function PendingFormFields({
     if (nextProductId === productId) return;
     clearIdentityDraft();
     setProductId(nextProductId);
+  };
+
+  const selectConflictHolder = () => {
+    if (!conflictHolder) return;
+    clearIdentityDraft();
+    setManual(false);
+    setProductId(conflictHolder.id);
+  };
+
+  const deferConflict = () => {
+    setOrionCode("");
+    setDeferred(true);
+    setIdentitySkippedReason("CODE_ALREADY_ASSIGNED");
+    setIdentitySkippedNote("");
+    setShowConflictRecovery(false);
   };
 
   // Cómo se envió: Enter o clic. Solo para el diagnóstico del servidor; no
@@ -367,7 +388,10 @@ function PendingFormFields({
                   maxLength={ORION_CODE_MAX_CHARS}
                   placeholder="Ej: 100234"
                   value={orionCode}
-                  onChange={(event) => setOrionCode(event.target.value)}
+                  onChange={(event) => {
+                    setOrionCode(event.target.value);
+                    setShowConflictRecovery(false);
+                  }}
                 />
               </Field>
             )}
@@ -383,9 +407,10 @@ function PendingFormFields({
                 id={deferToggleId}
                 type="checkbox"
                 checked={deferred}
-                onChange={(event) => {
-                  const nextDeferred = event.target.checked;
-                  setDeferred(nextDeferred);
+                  onChange={(event) => {
+                    const nextDeferred = event.target.checked;
+                    setShowConflictRecovery(false);
+                    setDeferred(nextDeferred);
                   if (nextDeferred) {
                     setOrionCode("");
                   } else {
@@ -406,7 +431,10 @@ function PendingFormFields({
                     name="identitySkippedReason"
                     required
                     value={identitySkippedReason}
-                    onChange={(event) => setIdentitySkippedReason(event.target.value)}
+                    onChange={(event) => {
+                      setIdentitySkippedReason(event.target.value);
+                      setShowConflictRecovery(false);
+                    }}
                   >
                     <option value="">Elegí un motivo…</option>
                     {PENDING_IDENTITY_DEFERRAL_REASONS.map((reason) => (
@@ -426,7 +454,10 @@ function PendingFormFields({
                     rows={2}
                     maxLength={MAX_IDENTITY_DEFERRAL_NOTE_LENGTH}
                     value={identitySkippedNote}
-                    onChange={(event) => setIdentitySkippedNote(event.target.value)}
+                    onChange={(event) => {
+                      setIdentitySkippedNote(event.target.value);
+                      setShowConflictRecovery(false);
+                    }}
                     className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text"
                   />
                 </Field>
@@ -643,6 +674,28 @@ function PendingFormFields({
             Los datos siguen cargados. Podés volver a intentar sin escribirlos de
             nuevo.
           </p>
+          {showConflictRecovery && conflict ? (
+            <div className="flex flex-wrap gap-2">
+              {conflictHolder ? (
+                <Button type="button" onClick={selectConflictHolder}>
+                  Usar {conflict.holder.productName}
+                </Button>
+              ) : (
+                <p className="w-full text-sm text-muted-foreground">
+                  El producto dueño no está disponible en esta lista. Recargá antes de
+                  seleccionarlo.
+                </p>
+              )}
+              <Button type="button" variant="secondary" onClick={deferConflict}>
+                Mantener este producto y aplazar
+              </Button>
+              {!conflictHolder ? (
+                <Button type="button" variant="ghost" onClick={() => window.location.reload()}>
+                  Recargar productos
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
           {state.supportCode ? <SupportCode code={state.supportCode} /> : null}
         </div>
       ) : null}
