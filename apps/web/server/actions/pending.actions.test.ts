@@ -12,6 +12,14 @@ const mocks = vi.hoisted(() => ({
   requireCapability: vi.fn(),
   checkCapability: vi.fn(),
   revalidatePath: vi.fn(),
+  linkOrionCodeAtCapture: vi.fn(),
+  findProductById: vi.fn(),
+  ManualProductIdentityConflictError: class ManualProductIdentityConflictError extends Error {
+    constructor(readonly holder: { id: string; name: string }) {
+      super("orion code already belongs to another product");
+      this.name = "ManualProductIdentityConflictError";
+    }
+  },
   PendingIdempotencyPayloadConflictError: class PendingIdempotencyPayloadConflictError extends Error {
     constructor() {
       super("idempotency key was already used for a different pending payload");
@@ -34,8 +42,15 @@ vi.mock("@/server/services/pending.service", () => ({
   deliverPending: mocks.deliverPending,
   invoicePending: mocks.invoicePending,
   PendingIdempotencyPayloadConflictError: mocks.PendingIdempotencyPayloadConflictError,
+  ManualProductIdentityConflictError: mocks.ManualProductIdentityConflictError,
   registerPending: mocks.registerPending,
   setPendingManagementStatus: mocks.setPendingManagementStatus,
+}));
+vi.mock("@/server/services/sku-onboarding.service", () => ({
+  linkOrionCodeAtCapture: mocks.linkOrionCodeAtCapture,
+}));
+vi.mock("@/server/repositories/product.repository", () => ({
+  findProductById: mocks.findProductById,
 }));
 
 import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
@@ -158,6 +173,156 @@ describe("createPendingAction", () => {
         manual: { name: "Ibuprofeno jarabe", unit: "frasco" },
       }),
     );
+  });
+
+  // ------------------------------------------------------------------------
+  // S2b · 1e-B — la acción HONRA la identidad cuando viene.
+  //
+  // Todavía no la EXIGE: exigirla antes de que la pantalla pueda satisfacerla
+  // rechazaría capturas que hoy funcionan. Eso llega con el formulario.
+  // ------------------------------------------------------------------------
+  describe("identidad Orion", () => {
+    beforeEach(() => {
+      mocks.findProductById.mockResolvedValue({
+        id: "prod-1",
+        name: "Eucerin tono claro",
+        orionCode: null,
+        identityVersion: 3,
+      });
+      mocks.linkOrionCodeAtCapture.mockResolvedValue({
+        status: "LINKED",
+        product: { id: "prod-1", orionCode: "ORN-1001", identityVersion: 4 },
+      });
+    });
+
+    it("vincula el código al producto del catálogo declarando la versión observada", async () => {
+      await createPendingAction(PREV, createCatalogFormData({ orionCode: "ORN-1001" }));
+
+      expect(mocks.linkOrionCodeAtCapture).toHaveBeenCalledWith(
+        expect.objectContaining({
+          identity: { productId: "prod-1" },
+          orionCode: "ORN-1001",
+          // La versión que se leyó es el compare-and-set: sin declararla, dos
+          // capturas simultáneas se pisarían la identidad sin enterarse.
+          expectedVersion: 3,
+          actor: expect.objectContaining({ id: "op-1", role: "OPERADOR" }),
+        }),
+      );
+      expect(mocks.registerPending).toHaveBeenCalled();
+    });
+
+    it("el conflicto NOMBRA al producto dueño y no registra nada", async () => {
+      mocks.linkOrionCodeAtCapture.mockResolvedValue({
+        status: "ORION_CONFLICT",
+        holder: { id: "prod-9", name: "Eucerin tono medio" },
+      });
+
+      const result = await createPendingAction(
+        PREV,
+        createCatalogFormData({ orionCode: "ORN-1001" }),
+      );
+
+      expect(result.ok).toBe(false);
+      // Sin el nombre, al operador solo le queda adivinar cuál producto tiene
+      // el código: el nombre es lo que convierte el rechazo en una salida.
+      expect(result.error).toContain("Eucerin tono medio");
+      expect(mocks.registerPending).not.toHaveBeenCalled();
+      // Y lo tipeado vuelve: corregir la identidad no puede costar volver a
+      // cargar el pedido entero.
+      expect(result.values?.orionCode).toBe("ORN-1001");
+    });
+
+    it("un aplazamiento llega al service como motivo y nota, sin tocar el producto", async () => {
+      await createPendingAction(
+        PREV,
+        createCatalogFormData({
+          identitySkippedReason: "ORION_UNAVAILABLE",
+          identitySkippedNote: "Orion no responde",
+        }),
+      );
+
+      expect(mocks.linkOrionCodeAtCapture).not.toHaveBeenCalled();
+      expect(mocks.registerPending).toHaveBeenCalledWith(
+        expect.objectContaining({
+          identitySkippedReason: "ORION_UNAVAILABLE",
+          identitySkippedNote: "Orion no responde",
+        }),
+      );
+    });
+
+    it("el producto manual lleva el código en su alta, no por una vinculación aparte", async () => {
+      await createPendingAction(PREV, createManualFormData({ orionCode: "ORN-2002" }));
+
+      expect(mocks.linkOrionCodeAtCapture).not.toHaveBeenCalled();
+      expect(mocks.registerPending).toHaveBeenCalledWith(
+        expect.objectContaining({
+          manual: { name: "Ibuprofeno jarabe", unit: "frasco", orionCode: "ORN-2002" },
+        }),
+      );
+    });
+
+    it("un rol sin autoridad para vincular se rechaza ANTES de cualquier escritura", async () => {
+      mocks.checkCapability.mockImplementation(async (capability: string) =>
+        capability === "canLinkProductIdentity"
+          ? { ok: false, reason: "FORBIDDEN" }
+          : { ok: true, session: { user: { id: "op-1", role: "OPERADOR", email: "op1@drogueria.test" } } },
+      );
+
+      const result = await createPendingAction(
+        PREV,
+        createCatalogFormData({ orionCode: "ORN-1001" }),
+      );
+
+      expect(result.ok).toBe(false);
+      expect(mocks.linkOrionCodeAtCapture).not.toHaveBeenCalled();
+      expect(mocks.registerPending).not.toHaveBeenCalled();
+      expect(result.values?.orionCode).toBe("ORN-1001");
+    });
+
+    it("aplazar NO exige autoridad de vinculación: no escribe identidad de nadie", async () => {
+      mocks.checkCapability.mockImplementation(async (capability: string) =>
+        capability === "canLinkProductIdentity"
+          ? { ok: false, reason: "FORBIDDEN" }
+          : { ok: true, session: { user: { id: "op-1", role: "OPERADOR", email: "op1@drogueria.test" } } },
+      );
+
+      const result = await createPendingAction(
+        PREV,
+        createCatalogFormData({ identitySkippedReason: "CODE_NOT_FOUND" }),
+      );
+
+      expectSuccess(result);
+      expect(mocks.registerPending).toHaveBeenCalled();
+    });
+
+    it("el conflicto del producto manual también nombra al dueño", async () => {
+      mocks.registerPending.mockRejectedValue(
+        new mocks.ManualProductIdentityConflictError({ id: "prod-9", name: "Eucerin tono medio" }),
+      );
+
+      const result = await createPendingAction(
+        PREV,
+        createManualFormData({ orionCode: "ORN-2002" }),
+      );
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("Eucerin tono medio");
+    });
+
+    it("la unión de identidad NO viaja al service: el contrato son los campos planos", async () => {
+      await createPendingAction(PREV, createCatalogFormData({ orionCode: "ORN-1001" }));
+
+      const [input] = mocks.registerPending.mock.calls[0] as [Record<string, unknown>];
+      expect(input).not.toHaveProperty("identity");
+      expect(input).not.toHaveProperty("orionCode");
+    });
+
+    it("sigue registrando sin identidad: todavía no se exige", async () => {
+      const result = await createPendingAction(PREV, createCatalogFormData());
+
+      expectSuccess(result);
+      expect(mocks.linkOrionCodeAtCapture).not.toHaveBeenCalled();
+    });
   });
 
   it("lleva zona canonizada y montos en pesos enteros hasta el service", async () => {

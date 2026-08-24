@@ -26,10 +26,13 @@ import {
   deliverPending,
   contactPending,
   invoicePending,
+  ManualProductIdentityConflictError,
   PendingIdempotencyPayloadConflictError,
   registerPending,
   setPendingManagementStatus,
 } from "@/server/services/pending.service";
+import { linkOrionCodeAtCapture } from "@/server/services/sku-onboarding.service";
+import { findProductById } from "@/server/repositories/product.repository";
 import type { Prisma } from "@/lib/generated/prisma/client";
 import type { DeliveryRejection } from "@/features/pendientes/delivery-rules";
 import {
@@ -109,6 +112,11 @@ export type PendingSubmittedValues = {
   totalAmount: string;
   paidAmount: string;
   idempotencyKey: string;
+  // Identidad Orion: vuelven con el resto. Corregir un conflicto de código no
+  // puede costar volver a cargar el pedido entero.
+  orionCode: string;
+  identitySkippedReason: string;
+  identitySkippedNote: string;
 };
 
 const SUBMITTED_FIELDS = [
@@ -126,6 +134,9 @@ const SUBMITTED_FIELDS = [
   "totalAmount",
   "paidAmount",
   "idempotencyKey",
+  "orionCode",
+  "identitySkippedReason",
+  "identitySkippedNote",
 ] as const satisfies readonly (keyof PendingSubmittedValues)[];
 
 /** Lee un campo como texto. `null`/`File` se normalizan a cadena vacía. */
@@ -218,6 +229,20 @@ const FORBIDDEN_MESSAGE =
   "Tu usuario no tiene permiso para registrar pendientes. Pedile a un administrador que lo habilite.";
 const IDEMPOTENCY_CONFLICT_MESSAGE =
   "Este intento ya fue usado con datos distintos. Recargá el formulario antes de registrar otro pendiente.";
+const LINK_FORBIDDEN_MESSAGE =
+  "Tu usuario no puede cargar códigos de Orion. Seguí sin el código indicando el motivo, o pedile a un administrador que te habilite.";
+
+/**
+ * El código ya es de otro producto.
+ *
+ * Se NOMBRA al dueño porque eso es lo único que convierte el rechazo en una
+ * salida: si el producto correcto era ese, se lo elige y listo; si no, se
+ * sigue sin el código. Sin el nombre solo queda adivinar. El código nunca se
+ * mueve de un producto a otro por esta vía.
+ */
+function conflictMessage(holderName: string): string {
+  return `Ese código de Orion ya es de "${holderName}". Elegí ese producto, o seguí sin el código indicando el motivo.`;
+}
 
 export async function createPendingAction(
   _prev: PendingFormState,
@@ -327,6 +352,12 @@ export async function createPendingAction(
     zone: formData.get("zone") ?? undefined,
     totalAmount: formData.get("totalAmount") ?? undefined,
     paidAmount: formData.get("paidAmount") ?? undefined,
+    // Identidad Orion (S2b): el schema resuelve el XOR entre el código y el
+    // aplazamiento. Qué se hace con el resultado se decide más abajo, contra
+    // la base, que es la única que sabe qué identidad tiene hoy el producto.
+    orionCode: formData.get("orionCode") ?? undefined,
+    identitySkippedReason: formData.get("identitySkippedReason") ?? undefined,
+    identitySkippedNote: formData.get("identitySkippedNote") ?? undefined,
   });
 
   if (!parsed.success) {
@@ -361,6 +392,65 @@ export async function createPendingAction(
     transaction: "not_started",
   });
 
+  // ------------------------------------------------------------------------
+  // Identidad Orion (S2b).
+  //
+  // Un CÓDIGO escribe la identidad de un producto, así que exige autoridad
+  // propia. Un APLAZAMIENTO no toca ningún producto —solo deja constancia en
+  // este pendiente— y por eso no la exige: pedirla sería negarle la salida a
+  // quien justamente no pudo conseguir el código.
+  // ------------------------------------------------------------------------
+  const { identity, ...capture } = parsed.data;
+
+  if (identity?.kind === "CODE") {
+    const linkAuth = await checkCapability("canLinkProductIdentity");
+    if (!linkAuth.ok) {
+      return failure(LINK_FORBIDDEN_MESSAGE, {
+        ...actor,
+        authState: "valid",
+        outcome: "rejected",
+        errorCode: "FORBIDDEN_LINK",
+        transaction: "not_started",
+      });
+    }
+  }
+
+  // Producto del CATÁLOGO con código: se vincula ANTES de registrar y en su
+  // propia transacción. Meterlo en la del pendiente le agregaría un lock de
+  // producto a la transacción que ya toma locks de lotes, y ese orden nuevo es
+  // exactamente cómo se fabrica un deadlock (ver el orden global de locks).
+  if (identity?.kind === "CODE" && capture.productId) {
+    const product = await findProductById(capture.productId);
+    if (!product) {
+      return failure("El producto elegido ya no está disponible. Recargá la pantalla.", {
+        ...actor,
+        authState: "valid",
+        outcome: "rejected",
+        errorCode: "UNKNOWN_PRODUCT",
+        transaction: "not_started",
+      });
+    }
+
+    const linked = await linkOrionCodeAtCapture({
+      actor: { id: session.user.id, role: session.user.role },
+      identity: { productId: product.id },
+      orionCode: identity.orionCode,
+      // La versión que se acaba de leer es el compare-and-set: quien escribe
+      // declara la versión que observó y PIERDE si otro llegó antes.
+      expectedVersion: product.identityVersion,
+    });
+
+    if (linked.status === "ORION_CONFLICT") {
+      return failure(conflictMessage(linked.holder.name), {
+        ...actor,
+        authState: "valid",
+        outcome: "rejected",
+        errorCode: "ORION_CONFLICT",
+        transaction: "not_started",
+      });
+    }
+  }
+
   logPendingEvent({
     correlationId,
     stage: PENDING_STAGES.TRANSACTION_STARTED,
@@ -373,11 +463,29 @@ export async function createPendingAction(
   let result: Awaited<ReturnType<typeof registerPending>>;
   try {
     result = await registerPending({
-      ...parsed.data,
+      ...capture,
+      // El producto MANUAL recibe el código en su alta, no por una vinculación
+      // aparte: nace con su identidad y nunca existe sin ella.
+      manual:
+        capture.manual && identity?.kind === "CODE"
+          ? { ...capture.manual, orionCode: identity.orionCode }
+          : capture.manual,
+      identitySkippedReason: identity?.kind === "DEFERRED" ? identity.reason : undefined,
+      identitySkippedNote: identity?.kind === "DEFERRED" ? identity.note : undefined,
       createdById: session.user.id,
       idempotencyKey,
     });
   } catch (error) {
+    if (error instanceof ManualProductIdentityConflictError) {
+      logPendingError(correlationId, error);
+      return failure(conflictMessage(error.holder.name), {
+        ...actor,
+        authState: "valid",
+        outcome: "rejected",
+        errorCode: "ORION_CONFLICT",
+        transaction: "rolled_back",
+      });
+    }
     // Solo `registerPending` decide si hubo commit: su transacción revierte ante
     // error. Por eso este es el ÚNICO punto que puede informar fallo de alta y
     // habilitar un reintento seguro.
