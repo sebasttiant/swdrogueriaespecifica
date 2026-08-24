@@ -13,12 +13,19 @@
 // pantalla para pintar el selector, igual que `management-status.ts`.
 // --------------------------------------------------------------------------
 
+import type { PendingIdentityDeferral } from "@/lib/generated/prisma/client";
+
+// El `satisfies` ata esta lista al enum de la base en tiempo de COMPILACIÓN.
+// Un comentario que dice "coinciden" no impide que dejen de coincidir; esto
+// sí: agregar un motivo en Prisma y olvidarlo acá —o al revés— rompe el
+// typecheck. El import es de tipo, así que se borra al compilar y no arrastra
+// nada de Prisma a este módulo puro.
 export const PENDING_IDENTITY_DEFERRAL_REASONS = [
   "ORION_UNAVAILABLE",
   "CODE_NOT_FOUND",
   "CODE_ALREADY_ASSIGNED",
   "OTHER",
-] as const;
+] as const satisfies readonly PendingIdentityDeferral[];
 
 export type PendingIdentityDeferralReason =
   (typeof PENDING_IDENTITY_DEFERRAL_REASONS)[number];
@@ -38,11 +45,15 @@ export const PENDING_IDENTITY_DEFERRAL_LABELS: Record<
 /** Longitud máxima de la nota; la columna es TEXT, esto frena un pegado entero. */
 export const MAX_IDENTITY_DEFERRAL_NOTE_LENGTH = 280;
 
-export function isPendingIdentityDeferralReason(
-  value: unknown,
-): value is PendingIdentityDeferralReason {
-  return (
-    typeof value === "string" &&
-    (PENDING_IDENTITY_DEFERRAL_REASONS as readonly string[]).includes(value)
-  );
-}
+// El `satisfies` de arriba impide que SOBRE un motivo; esto impide que FALTE.
+//
+// Sin las dos direcciones, agregar un valor al enum de la base y olvidarlo acá
+// compilaría igual, y el motivo nuevo sería invisible para el validador y para
+// el selector: quedaría guardado en filas que la pantalla no sabe nombrar.
+//
+// La restricción `T extends never` es lo que hace fallar el typecheck. Un
+// alias condicional NO sirve: resolvería a un tipo cualquiera sin quejarse.
+type AssertNever<T extends never> = T;
+type _EveryDatabaseReasonIsListed = AssertNever<
+  Exclude<PendingIdentityDeferral, PendingIdentityDeferralReason>
+>;

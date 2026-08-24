@@ -219,12 +219,30 @@ export const pendingCreateSchema = z
           return z.NEVER;
         }
       }),
-    identitySkippedReason: z
-      .enum(PENDING_IDENTITY_DEFERRAL_REASONS, {
-        error: "Elegí un motivo de la lista para seguir sin el código.",
+    // El desplegable que nadie tocó postea "", no ausencia. Sin este
+    // preprocess el vacío no es "no vino" sino un valor inválido del enum, y
+    // TODO envío con el desplegable intacto se rechazaría pidiéndole al
+    // operador un motivo que justamente NO quiso elegir.
+    identitySkippedReason: z.preprocess(
+      (value) =>
+        typeof value === "string" && value.trim() === "" ? undefined : value,
+      z
+        .enum(PENDING_IDENTITY_DEFERRAL_REASONS, {
+          error: "Elegí un motivo de la lista para seguir sin el código.",
+        })
+        .optional(),
+    ),
+    // No usa `optionalText` porque necesita mensaje propio: el genérico de Zod
+    // llega al mostrador como "Too big: expected string to have <=280
+    // characters" y deja al operador sin saber qué campo recortar.
+    identitySkippedNote: z
+      .string()
+      .trim()
+      .max(MAX_IDENTITY_DEFERRAL_NOTE_LENGTH, {
+        error: "La nota del aplazamiento es demasiado larga.",
       })
-      .optional(),
-    identitySkippedNote: optionalText(MAX_IDENTITY_DEFERRAL_NOTE_LENGTH),
+      .optional()
+      .transform((value) => (value && value.length > 0 ? value : undefined)),
   })
   .superRefine((data, ctx) => {
     const hasCatalog = Boolean(data.productId);
@@ -279,18 +297,16 @@ export const pendingCreateSchema = z
       });
     }
 
-    // Rama MANUAL: el producto todavía no existe, así que no puede tener
-    // código ya cargado. Uno de los dos es obligatorio y eso se sabe acá sin
-    // consultar nada. En la rama CATÁLOGO no se puede exigir: el producto
-    // elegido puede tener código, y eso solo lo sabe la acción contra la base.
-    if (hasManual && !hasCode && !hasDeferral) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["orionCode"],
-        message:
-          "Cargá el código de Orion del producto nuevo o indicá por qué seguís sin él.",
-      });
-    }
+    // Acá NO se exige que la identidad venga, ni siquiera en la rama manual.
+    //
+    // Exigirla es el requisito, pero la regla y el cableado que la alimenta
+    // son inseparables: mientras la acción no reenvíe estos campos, un
+    // `required` rechazaría TODA carga manual —el formulario no manda nada que
+    // pueda satisfacerlo— y rompería la captura en producción. La exigencia
+    // viaja junto con el cableado y la pantalla, no antes.
+    //
+    // Lo que se valida acá es la FORMA de lo que llegue: qué es un código
+    // válido, qué motivos existen, y que código y aplazamiento no vengan juntos.
   })
   .transform((data) => {
     const base = {
