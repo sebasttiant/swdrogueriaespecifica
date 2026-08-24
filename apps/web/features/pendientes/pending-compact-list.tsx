@@ -12,6 +12,7 @@ import type { PendingListItem } from "@/server/repositories/pending.repository";
 import { computeDeadlineStatus } from "./deadline-status";
 import { derivePaymentState } from "./payment-state";
 import { fulfillmentNotice, isTerminal, outstanding } from "./fulfillment-notice";
+import { identityWarning } from "./identity-warning";
 import {
   isManagementStatus,
   MANAGEMENT_STATUS_LABELS,
@@ -305,6 +306,7 @@ export function PendingCompactList({
             computeDeadlineStatus(pending.promisedAt, pending.status, now)
           ];
           const notice = fulfillmentNotice(pending);
+          const identityNotice = identityWarning(pending);
           const lifecycle = lifecycleLabel(pending);
           const purchase = purchaseNote(pending);
           const decision = partialDecisionLabel(pending);
@@ -322,6 +324,12 @@ export function PendingCompactList({
                   <p className="break-words font-medium text-text">
                     {pending.product.name}
                   </p>
+                  {/* Va pegado al producto porque es del producto de lo que
+                      habla: le falta el código de Orion. Se deriva del estado
+                      actual, así que se apaga solo cuando alguien lo carga. */}
+                  {identityNotice ? (
+                    <Badge tone="warning">{identityNotice}</Badge>
+                  ) : null}
                   <p className="break-words text-xs text-muted-foreground">
                     {pending.createdBy?.name ?? "Sin vendedor"}
                     {" · "}
@@ -403,6 +411,7 @@ export function PendingCompactList({
                 computeDeadlineStatus(pending.promisedAt, pending.status, now)
               ];
               const notice = fulfillmentNotice(pending);
+              const identityNotice = identityWarning(pending);
               const lifecycle = lifecycleLabel(pending);
               const purchase = purchaseNote(pending);
               const decision = partialDecisionLabel(pending);
@@ -417,6 +426,11 @@ export function PendingCompactList({
                 <tr key={pending.id} className="border-b border-border last:border-0">
                   <td className="px-3 py-2 font-medium text-text">
                     {pending.product.name}
+                    {identityNotice ? (
+                      <Badge tone="warning" className="ml-2">
+                        {identityNotice}
+                      </Badge>
+                    ) : null}
                     {canFollowUp ? <FollowUpLine item={pending} /> : null}
                   </td>
                   <td className="px-3 py-2 tabular-nums text-muted-foreground">

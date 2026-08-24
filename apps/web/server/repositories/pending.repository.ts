@@ -68,7 +68,15 @@ export type PendingListItem = {
     deliveredAt: Date;
     deliveredBy: { id: string; name: string } | null;
   }>;
-  product: { id: string; name: string; code: string; unit: string };
+  // Motivo por el que ESTE pendiente se capturó sin identidad de Orion, y
+  // `null` cuando no se aplazó nada. Junto con `product.orionCode` es lo que
+  // deriva el aviso de identidad pendiente; ver `identity-warning.ts`. Se lee,
+  // nunca se limpia: es historia operativa permanente (D9).
+  identitySkippedReason: PendingIdentityDeferral | null;
+  // `orionCode` viaja en el listado porque el aviso se deriva del estado ACTUAL
+  // del producto. Sin él habría que guardar un booleano "ya sanó" en la fila, y
+  // ese es justamente el flag que después queda desactualizado.
+  product: { id: string; name: string; code: string; unit: string; orionCode: string | null };
   // Quién anotó el pendiente. Gerencia lo necesita para saber a nombre de quién
   // va la venta y quién factura. Se lee de la RELACIÓN, nunca de un texto
   // duplicado en la fila: si el usuario se renombra, esto sigue siendo cierto.
@@ -124,7 +132,8 @@ const LIST_SELECT = {
   createdAt: true,
   deliveredQuantity: true,
   cancelledQuantity: true,
-  product: { select: { id: true, name: true, code: true, unit: true } },
+  identitySkippedReason: true,
+  product: { select: { id: true, name: true, code: true, unit: true, orionCode: true } },
   createdBy: { select: { id: true, name: true } },
 } as const;
 

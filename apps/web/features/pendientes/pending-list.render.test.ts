@@ -52,7 +52,17 @@ function pending(overrides: Partial<PendingListItem> = {}): PendingListItem {
     createdAt: new Date("2026-07-09T10:00:00.000Z"),
     deliveredQuantity: 4,
     cancelledQuantity: 0,
-    product: { id: "prod-1", name: "Paracetamol", code: "P-001", unit: "unidad" },
+    // Por defecto: un pendiente que nunca aplazó identidad, sobre un producto
+    // legado sin código. Es el estado de la mayoría de las filas de hoy, y no
+    // avisa nada — un producto sin código no es un aplazamiento.
+    identitySkippedReason: null,
+    product: {
+      id: "prod-1",
+      name: "Paracetamol",
+      code: "P-001",
+      unit: "unidad",
+      orionCode: null,
+    },
     ...overrides,
   };
 }
@@ -517,5 +527,58 @@ describe("PendingList · aviso de llegada", () => {
     });
 
     expect(html).not.toContain("Cargado");
+  });
+});
+
+// --------------------------------------------------------------------------
+// S2b · 1e-E — el aviso de identidad pendiente en la vista detallada.
+//
+// El aviso es DERIVADO del estado actual del producto: no hay columna que
+// diga "avisar", no hay booleano que alguien tenga que apagar. Por eso no
+// puede quedar encendido sobre un producto ya identificado.
+// --------------------------------------------------------------------------
+describe("PendingList · identidad pendiente", () => {
+  it("avisa cuando se aplazó la identidad y el producto sigue sin código", () => {
+    const html = renderList({
+      items: [pending({ identitySkippedReason: "ORION_UNAVAILABLE" })],
+    });
+
+    expect(html).toContain("Identidad pendiente");
+  });
+
+  it("no avisa una vez que el producto recibió su código", () => {
+    const html = renderList({
+      items: [
+        pending({
+          identitySkippedReason: "ORION_UNAVAILABLE",
+          product: {
+            id: "prod-1",
+            name: "Paracetamol",
+            code: "P-001",
+            unit: "unidad",
+            orionCode: "ORN-500",
+          },
+        }),
+      ],
+    });
+
+    expect(html).not.toContain("Identidad pendiente");
+  });
+
+  it("no avisa por un producto sin código que nadie aplazó", () => {
+    const html = renderList({ items: [pending()] });
+
+    expect(html).not.toContain("Identidad pendiente");
+  });
+
+  // El aviso tiene que LEERSE, no adivinarse por el color. Estas filas se
+  // miran en un celular al sol y las lee gente que puede no distinguir tonos.
+  it("dice el aviso con texto, no solo con un color", () => {
+    const html = renderList({
+      items: [pending({ identitySkippedReason: "CODE_NOT_FOUND" })],
+    });
+
+    // El texto viaja en el DOM, así que un lector de pantalla lo anuncia.
+    expect(html).toContain(">Identidad pendiente<");
   });
 });
