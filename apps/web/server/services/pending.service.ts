@@ -39,6 +39,7 @@ import {
   type PendingForEdit,
 } from "@/server/repositories/pending.repository";
 import { createProduct } from "@/server/repositories/product.repository";
+import { normalizeOrionCode } from "@/server/domain/catalog/sku-identity";
 import { createMissingItem } from "@/server/repositories/missing-item.repository";
 import {
   claimableStockForPending,
@@ -266,6 +267,7 @@ export async function registerPending(
   if (data.identitySkippedNote?.trim() && !data.identitySkippedReason) {
     throw new Error("identitySkippedNote requires identitySkippedReason");
   }
+  data = withNormalizedIdentity(data);
   const fingerprint = requestFingerprint(data);
   // Camino barato: el intento ya tiene su pendiente. Ni transacción ni lock.
   const existing = await findPendingByIdempotencyKey(data.idempotencyKey);
@@ -281,13 +283,15 @@ export async function registerPending(
       const winner = await findPendingByIdempotencyKey(data.idempotencyKey);
       if (winner) return replayRegistration(winner, fingerprint);
 
-      // P2002 sin ganador por esta clave: el único otro único que esta
-      // transacción puede violar es el `orionCode` del producto manual.
+      // P2002 sin ganador por esta clave. NO se asume cuál índice fue: esta
+      // transacción puede violar varios únicos —el `code` del producto manual
+      // también lo es, y se genera acá con un sufijo aleatorio que puede
+      // colisionar—, así que deducirlo por descarte sería frágil.
       //
-      // No se mira `meta.target` para decidirlo: en Prisma 7 no es de fiar y
-      // el resto del repositorio ya detecta P2002 por estructura. Se resuelve
-      // preguntándole a la base quién tiene ese código, que además es el dato
-      // que hace falta para ofrecer la salida.
+      // Tampoco se mira `meta.target`: en Prisma 7 no es de fiar y el resto
+      // del repositorio ya detecta P2002 por estructura. Se resuelve
+      // preguntándole a la base quién tiene ese código. Si nadie lo tiene, el
+      // conflicto fue de otro índice y el error sigue de largo sin disfrazarse.
       const holder = await holderOfManualOrionCode(data);
       if (holder) throw new ManualProductIdentityConflictError(holder);
     }
@@ -295,10 +299,51 @@ export async function registerPending(
   }
 }
 
+/**
+ * Deja la identidad del alta manual en su forma canónica, o falla.
+ *
+ * Este service se exporta y se llama directo, así que no puede confiar en que
+ * alguien más ya validó: valida su propia entrada, igual que hace con la nota
+ * huérfana unas líneas más arriba.
+ *
+ * El vacío es AUSENCIA, no un código. Guardarlo sería peor que rechazarlo: la
+ * cadena vacía ocuparía la ranura del índice único y toda alta manual sin
+ * código posterior chocaría contra un P2002 sin dueño a quien señalar —un
+ * fallo genérico, irrecuperable, para siempre—.
+ */
+function withNormalizedIdentity(data: RegisterPendingInput): RegisterPendingInput {
+  if (!data.manual) return data;
+
+  const raw = data.manual.orionCode?.trim();
+  // Sin código: no hay nada que canonizar y el aplazamiento decide solo.
+  if (!raw) {
+    return { ...data, manual: { ...data.manual, orionCode: undefined } };
+  }
+
+  if (data.identitySkippedReason) {
+    // Un aplazamiento afirma que NO se pudo conseguir el código. Junto a un
+    // código que sí vino, esa afirmación es falsa —y queda guardada como
+    // historia permanente del pendiente, contradiciendo al producto para
+    // siempre. Es una contradicción, no una preferencia a resolver.
+    throw new Error("manual.orionCode and identitySkippedReason are exclusive");
+  }
+
+  // Tira `SkuIdentityError` ante espacios internos o exceso de longitud. Se
+  // usa la regla del DOMINIO y no una copia: dos definiciones de qué es un
+  // código válido terminan aceptando lo que la base rechaza.
+  return { ...data, manual: { ...data.manual, orionCode: normalizeOrionCode(raw) } };
+}
+
 /** El producto que hoy tiene el código que el alta manual quiso usar, si hay. */
 async function holderOfManualOrionCode(
   data: RegisterPendingInput,
 ): Promise<{ id: string; name: string } | null> {
+  // Rama catálogo: esta transacción NO escribió ningún `orionCode`, así que
+  // un P2002 de acá nunca es un conflicto de identidad por más que el llamador
+  // haya adjuntado un `manual` que no se usó. Sin esta guarda, la exhaustividad
+  // dependería de que nadie mande las dos cosas a la vez.
+  if (data.productId) return null;
+
   const orionCode = data.manual?.orionCode;
   if (!orionCode) return null;
   // Después del rollback, nunca dentro de la transacción abortada: ahí
@@ -418,10 +463,36 @@ function createPendingRegistration(
           // Tener código de Orion NO lo vuelve un producto curado: sigue
           // marcado para revisión como cualquier alta manual.
           orionCode: data.manual.orionCode ?? null,
+          // Un producto CON código y sin estado sería un tercer estado que ni
+          // PROVISIONAL_REVIEW ni CONFIRMED cubren, y la cola de revisión de
+          // identidad se lee justamente por este campo.
+          ...(data.manual.orionCode ? { skuStatus: "CONFIRMED" as const } : {}),
         },
         tx,
       );
       productId = createdProduct.id;
+
+      if (data.manual.orionCode) {
+        // Quién ató este código, cuándo y por qué camino. El mismo código
+        // entrando por `linkOrionCodeAtCapture` deja este rastro; entrando por
+        // el alta manual no dejaba ninguno, y el día que resulte equivocado no
+        // habría a quién preguntarle. Va en la MISMA transacción: un vínculo
+        // sin asiento no es un vínculo a medias, es un vínculo sin testigo.
+        await writeAudit(tx, {
+          action: AUDIT_ACTIONS.SKU_ORION_LINK,
+          module: AUDIT_MODULES.PRODUCTOS,
+          entity: "Product",
+          entityId: createdProduct.id,
+          // El producto NACE con el código: no hubo un estado anterior que
+          // registrar, y por eso `before` va nulo en vez de inventado.
+          before: { orionCode: null, identityVersion: null },
+          after: {
+            orionCode: createdProduct.orionCode,
+            identityVersion: createdProduct.identityVersion,
+          },
+          context: { userId: data.createdById ?? null },
+        });
+      }
     }
     if (!productId) throw new Error("registerPending: producto no resuelto");
 

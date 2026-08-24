@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
+import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
 import { prisma } from "@/lib/db/prisma";
 import {
   ManualProductIdentityConflictError,
@@ -34,6 +35,21 @@ afterEach(async () => {
   });
   const ids = products.map((product) => product.id);
   await prisma.missingItem.deleteMany({ where: { productId: { in: ids } } });
+  const pendings = await prisma.pending.findMany({
+    where: { productId: { in: ids } },
+    select: { id: true },
+  });
+  // Las filas de auditoría también: este archivo escribe DOS clases —el
+  // vínculo del producto y el aplazamiento del pendiente— y dejarlas atrás
+  // ensucia las cuentas absolutas que otros archivos hacen sobre `audit_logs`.
+  await prisma.auditLog.deleteMany({
+    where: {
+      OR: [
+        { entity: "Product", entityId: { in: ids } },
+        { entity: "Pending", entityId: { in: pendings.map((p) => p.id) } },
+      ],
+    },
+  });
   await prisma.pending.deleteMany({ where: { productId: { in: ids } } });
   await prisma.product.deleteMany({ where: { id: { in: ids } } });
   createdNames.length = 0;
@@ -134,6 +150,113 @@ describe("registerPending · identidad del producto manual", () => {
       id: owner.id,
       name: ownerName,
     });
+  });
+
+  it("deja el producto CONFIRMADO y el vínculo auditado, como cualquier otra escritura de identidad", async () => {
+    const name = manualName("audited");
+    const orionCode = `ORN-MAN-${stamp}-5`;
+
+    const result = await registerPending(manualCapture({ name, orionCode }));
+
+    const product = await prisma.product.findUniqueOrThrow({
+      where: { id: result.pending.productId },
+    });
+    // Un producto con código y sin estado sería un tercer estado que ni
+    // PROVISIONAL_REVIEW ni CONFIRMED cubren, y la cola de revisión se lee
+    // justamente por este campo.
+    expect(product.skuStatus).toBe("CONFIRMED");
+
+    // Quién ató ese código, cuándo y por qué camino. El mismo código entrando
+    // por `linkOrionCodeAtCapture` deja rastro; entrando por acá no dejaba
+    // ninguno, y el día que el código resulte equivocado no habría a quién
+    // preguntarle.
+    const audit = await prisma.auditLog.findFirstOrThrow({
+      where: {
+        action: AUDIT_ACTIONS.SKU_ORION_LINK,
+        entity: "Product",
+        entityId: product.id,
+      },
+    });
+    expect(audit).toMatchObject({
+      module: AUDIT_MODULES.PRODUCTOS,
+      userId: actorId,
+      after: { orionCode, identityVersion: 0 },
+    });
+  });
+
+  it("rechaza código y aplazamiento juntos: el aplazamiento diría que no se pudo obtener el que sí vino", async () => {
+    const name = manualName("contradictory");
+
+    await expect(
+      registerPending({
+        ...manualCapture({ name, orionCode: `ORN-MAN-${stamp}-6` }),
+        identitySkippedReason: "ORION_UNAVAILABLE" as const,
+      }),
+    ).rejects.toThrow();
+
+    expect(await prisma.product.count({ where: { name } })).toBe(0);
+  });
+
+  it("un código en blanco es ausencia, no un código: jamás ocupa el índice único", async () => {
+    const first = manualName("blank one");
+    const second = manualName("blank two");
+
+    const a = await registerPending(manualCapture({ name: first, orionCode: "   " }));
+    const b = await registerPending(manualCapture({ name: second, orionCode: "" }));
+
+    // Si el vacío se guardara, el primero ocuparía la ranura del índice y el
+    // segundo chocaría contra un P2002 sin dueño que reportar: un fallo
+    // genérico irrecuperable, para siempre.
+    for (const created of [a, b]) {
+      const product = await prisma.product.findUniqueOrThrow({
+        where: { id: created.pending.productId },
+      });
+      expect(product.orionCode).toBeNull();
+      expect(product.skuStatus).toBeNull();
+    }
+  });
+
+  it("rechaza un código con espacios internos en vez de guardarlo tal cual", async () => {
+    const name = manualName("spaced");
+
+    await expect(
+      registerPending(manualCapture({ name, orionCode: "ORN 123" })),
+    ).rejects.toThrow();
+
+    expect(await prisma.product.count({ where: { name } })).toBe(0);
+  });
+
+  it("el conflicto tampoco deja el pendiente a medio crear", async () => {
+    const orionCode = `ORN-MAN-${stamp}-7`;
+    await prisma.product.create({
+      data: { code: `OWN3-${stamp}`, name: manualName("owner3"), unit: "unidad", orionCode },
+    });
+
+    const input = manualCapture({ name: manualName("half"), orionCode });
+    await expect(registerPending(input)).rejects.toBeInstanceOf(
+      ManualProductIdentityConflictError,
+    );
+
+    expect(
+      await prisma.pending.count({ where: { idempotencyKey: input.idempotencyKey } }),
+    ).toBe(0);
+  });
+
+  it("un reintento que solo difiere en espacios sobrantes sigue siendo el mismo intento", async () => {
+    const name = manualName("padded retry");
+    const input = manualCapture({ name, orionCode: `ORN-MAN-${stamp}-8` });
+
+    const first = await registerPending(input);
+    const second = await registerPending({
+      ...input,
+      manual: { ...input.manual, orionCode: `  ${input.manual.orionCode}  ` },
+    });
+
+    // El código canónico es el mismo, así que esto es el MISMO intento. Tratar
+    // un espacio pegado de más como "otros datos" le negaría el reintento a
+    // quien solo volvió a pegar el código.
+    expect(second.pending.id).toBe(first.pending.id);
+    expect(second.replayed).toBe(true);
   });
 
   it("un reintento exacto no crea un segundo producto ni un segundo pendiente", async () => {
