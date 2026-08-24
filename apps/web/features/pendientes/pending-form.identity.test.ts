@@ -178,6 +178,44 @@ describe("PendingForm · identidad Orion", () => {
     expect(orionInput()).not.toBeNull();
   });
 
+  // ------------------------------------------------------------------------
+  // S2b · 1e-D — pedirlo no alcanza: la pantalla tiene que EXIGIRLO.
+  //
+  // Un campo que se ve pero se puede dejar vacío enseña que se puede dejar
+  // vacío. La exigencia real vive en la acción, pero descubrirla recién
+  // después de enviar el pedido entero es la peor forma de enterarse.
+  // ------------------------------------------------------------------------
+  it("exige el código mientras no se elija la salida", async () => {
+    const user = userEvent.setup();
+    renderForm();
+
+    await user.selectOptions(productSelect(), "p2");
+
+    expect(orionInput()?.required).toBe(true);
+  });
+
+  it("al aplazar, la exigencia se muda del código al motivo", async () => {
+    const user = userEvent.setup();
+    renderForm();
+    await user.selectOptions(productSelect(), "p2");
+
+    await user.click(screen.getByRole("checkbox", { name: /sin el código/i }));
+
+    // El campo obligatorio desaparece con su exigencia: si quedara montado y
+    // vacío, el navegador frenaría el envío pidiendo algo que ya no se pide.
+    expect(orionInput()).toBeNull();
+    expect(reasonSelect()?.required).toBe(true);
+  });
+
+  it("al producto MANUAL le exige el código igual que a uno del catálogo", async () => {
+    const user = userEvent.setup();
+    renderForm();
+
+    await user.click(screen.getByRole("checkbox", { name: /no está en el catálogo/i }));
+
+    expect(orionInput()?.required).toBe(true);
+  });
+
   it("ofrece una salida explícita: seguir sin el código indicando el motivo", async () => {
     const user = userEvent.setup();
     renderForm();

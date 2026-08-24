@@ -249,6 +249,16 @@ const LINK_FORBIDDEN_MESSAGE =
 // de identidad, una decisión explícita y auditada que la captura no toma.
 const LINK_REJECTED_MESSAGE =
   "Ese producto ya tiene otro código de Orion cargado. Corregirlo se hace desde la ficha del producto; acá podés seguir sin el código indicando el motivo.";
+// Ni código ni aplazamiento. El mensaje nombra las DOS salidas porque decir
+// solo "falta el código" a alguien que justamente no lo tiene es un callejón:
+// la exigencia siempre viene con su puerta.
+const IDENTITY_REQUIRED_MESSAGE =
+  "Falta el código de Orion de este producto. Cargalo, o seguí sin él indicando el motivo.";
+// Aplazamiento sobre un producto que YA tiene código. No se pide corregir
+// nada: el pendiente ya se puede registrar tal cual, solo hay que recargar
+// para que la pantalla muestre la identidad que el producto tiene ahora.
+const DEFERRAL_NOT_APPLICABLE_MESSAGE =
+  "Ese producto ya tiene su código de Orion cargado, así que no hace falta aplazar nada. Recargá la pantalla y volvé a enviar el pendiente.";
 
 /**
  * El código ya es de otro producto.
@@ -448,22 +458,77 @@ export async function createPendingAction(
     linkActor = { id: linkAuth.session.user.id, role: linkAuth.session.user.role };
   }
 
+  // El producto del catálogo se relee acá, UNA vez, antes de decidir nada:
+  // la identidad que decide es la que tiene HOY en la base, no la que la
+  // pantalla creyó ver al pintarse. Entre las dos, otro pudo haberle
+  // vinculado el código —o haberlo borrado del catálogo.
+  const product = capture.productId ? await findProductById(capture.productId) : null;
+  if (capture.productId && !product) {
+    return failure("El producto elegido ya no está disponible. Recargá la pantalla.", {
+      ...actor,
+      authState: "valid",
+      outcome: "rejected",
+      errorCode: "UNKNOWN_PRODUCT",
+      transaction: "not_started",
+    });
+  }
+
+  // ------------------------------------------------------------------------
+  // La exigencia (S2b · 1e-D).
+  //
+  // Sin código y sin aplazamiento, el pendiente NO entra. La única excepción
+  // es el producto que ya tiene el suyo: a ese no se le pregunta de nuevo ni
+  // se le vincula nada, porque ya está identificado.
+  //
+  // Esta comprobación NO confía en la pantalla. El formulario ya marca el
+  // campo como obligatorio, pero un `required` de HTML lo saltea cualquiera
+  // que arme el FormData a mano, y un envío viejo puede llegar con una
+  // identidad que dejó de ser cierta. Por eso se decide contra la base.
+  //
+  // El producto MANUAL cae acá por construcción: todavía no existe, así que
+  // no tiene código, y su alta tiene que traer una de las dos salidas.
+  // ------------------------------------------------------------------------
+  if (identity === undefined && !product?.orionCode) {
+    return failure(IDENTITY_REQUIRED_MESSAGE, {
+      ...actor,
+      authState: "valid",
+      outcome: "rejected",
+      errorCode: "IDENTITY_REQUIRED",
+      transaction: "not_started",
+    });
+  }
+
+  // ------------------------------------------------------------------------
+  // Y el otro lado de la misma regla: sobre un producto YA identificado, un
+  // aplazamiento no es una salida sino una contradicción.
+  //
+  // El aplazamiento significa "no pude conseguir el código". Guardarlo contra
+  // un producto que lo tiene deja en el historial —de forma permanente, por
+  // D9— un motivo que contradice la realidad de la fila de al lado. Y nadie
+  // puede corregirlo después: el aviso se apaga solo por estado derivado,
+  // pero el motivo queda escrito para siempre.
+  //
+  // La pantalla no ofrece este control cuando el producto tiene código, así
+  // que esto llega de un FormData armado a mano, o de un envío que quedó
+  // atrás: entre que se pintó el formulario y llegó este envío, otro pudo
+  // haber vinculado ese código. Por eso se decide contra la base y no contra
+  // lo que la pantalla creyó ver.
+  // ------------------------------------------------------------------------
+  if (identity?.kind === "DEFERRED" && product?.orionCode) {
+    return failure(DEFERRAL_NOT_APPLICABLE_MESSAGE, {
+      ...actor,
+      authState: "valid",
+      outcome: "rejected",
+      errorCode: "DEFERRAL_NOT_APPLICABLE",
+      transaction: "not_started",
+    });
+  }
+
   // Producto del CATÁLOGO con código: se vincula ANTES de registrar y en su
   // propia transacción. Meterlo en la del pendiente le agregaría un lock de
   // producto a la transacción que ya toma locks de lotes, y ese orden nuevo es
   // exactamente cómo se fabrica un deadlock (ver el orden global de locks).
-  if (identity?.kind === "CODE" && capture.productId) {
-    const product = await findProductById(capture.productId);
-    if (!product) {
-      return failure("El producto elegido ya no está disponible. Recargá la pantalla.", {
-        ...actor,
-        authState: "valid",
-        outcome: "rejected",
-        errorCode: "UNKNOWN_PRODUCT",
-        transaction: "not_started",
-      });
-    }
-
+  if (identity?.kind === "CODE" && product) {
     // `linkOrionCodeAtCapture` DEVUELVE el conflicto de dueño, pero TIRA en
     // los otros dos rechazos: perder el compare-and-set, y el producto que ya
     // tiene OTRO código —mover ese código sería RELINK, que la captura no

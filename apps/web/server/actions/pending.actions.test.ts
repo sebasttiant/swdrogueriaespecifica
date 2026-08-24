@@ -109,6 +109,16 @@ beforeEach(() => {
   mocks.revalidatePath.mockReset();
   mocks.recordAudit.mockResolvedValue({ ok: true });
   mocks.auditContextFromHeaders.mockResolvedValue({ userId: "user-1", channel: "web" });
+  // Producto del catálogo por defecto: YA identificado. Es el caso al que la
+  // exigencia de identidad no le pide nada, así que los tests que no vienen a
+  // hablar de identidad siguen probando lo suyo sin arrastrarla. Los que sí
+  // vienen a hablar de identidad lo reemplazan por uno sin código.
+  mocks.findProductById.mockResolvedValue({
+    id: "prod-1",
+    name: "Acetaminofén 500mg",
+    orionCode: "ORN-9000",
+    identityVersion: 1,
+  });
 });
 
 // El formulario tiene dos modos EXCLUYENTES y cada uno postea campos distintos:
@@ -184,7 +194,12 @@ describe("createPendingAction", () => {
       replayed: false,
     });
 
-    const result = await createPendingAction(PREV, createManualFormData());
+    // El producto manual nace sin identidad, así que este alta tiene que
+    // resolverla: acá se aplaza, que es la otra salida válida.
+    const result = await createPendingAction(
+      PREV,
+      createManualFormData({ identitySkippedReason: "CODE_NOT_FOUND" }),
+    );
 
     expectSuccess(result);
     expect(mocks.registerPending).toHaveBeenCalledWith(
@@ -493,10 +508,121 @@ describe("createPendingAction", () => {
       expect(result.error).toMatch(/sesión/i);
     });
 
-    it("sigue registrando sin identidad: todavía no se exige", async () => {
+    // ----------------------------------------------------------------------
+    // S2b · 1e-D — la exigencia se ACTIVA, y se decide contra la base.
+    //
+    // La pantalla ya pide el código, pero una pantalla no es una regla: el
+    // FormData lo arma cualquiera y `fetch` no ve validaciones de React. Lo
+    // único que decide acá es la identidad que el producto tiene HOY en la
+    // base, releída en esta misma acción.
+    // ----------------------------------------------------------------------
+    it("el producto sin código no entra sin código ni aplazamiento", async () => {
+      const result = await createPendingAction(PREV, createCatalogFormData());
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/código de Orion/i);
+      expect(mocks.registerPending).not.toHaveBeenCalled();
+      expect(mocks.linkOrionCodeAtCapture).not.toHaveBeenCalled();
+      // La salida es elegir una de las dos, no volver a cargar el pedido.
+      expect(result.values?.customerName).toBe("Ana Pérez");
+    });
+
+    it("un envío directo no puede saltear lo que la pantalla exige", async () => {
+      // Espacios en el código y motivo vacío: exactamente lo que llega cuando
+      // alguien arma el FormData a mano para esquivar el campo obligatorio.
+      const result = await createPendingAction(
+        PREV,
+        createCatalogFormData({ orionCode: "   ", identitySkippedReason: "" }),
+      );
+
+      expect(result.ok).toBe(false);
+      expect(mocks.registerPending).not.toHaveBeenCalled();
+      expect(mocks.linkOrionCodeAtCapture).not.toHaveBeenCalled();
+    });
+
+    it("el producto que YA tiene código entra sin volver a vincular nada", async () => {
+      mocks.findProductById.mockResolvedValue({
+        id: "prod-1",
+        name: "Eucerin tono claro",
+        orionCode: "ORN-777",
+        identityVersion: 5,
+      });
+
       const result = await createPendingAction(PREV, createCatalogFormData());
 
       expectSuccess(result);
+      expect(mocks.linkOrionCodeAtCapture).not.toHaveBeenCalled();
+    });
+
+    it("el producto que YA tiene código no admite un aplazamiento fabricado", async () => {
+      // El aplazamiento es la salida de quien NO tiene el código. Sobre un
+      // producto ya identificado no es una salida: es un "seguimos sin
+      // identificarlo" guardado para siempre encima de algo que sí lo está.
+      // La pantalla no ofrece el control acá, así que esto solo llega de un
+      // FormData armado a mano o de un envío viejo que quedó atrás.
+      mocks.findProductById.mockResolvedValue({
+        id: "prod-1",
+        name: "Eucerin tono claro",
+        orionCode: "ORN-777",
+        identityVersion: 5,
+      });
+
+      const result = await createPendingAction(
+        PREV,
+        createCatalogFormData({
+          identitySkippedReason: "ORION_UNAVAILABLE",
+          identitySkippedNote: "Orion caído desde las 10",
+        }),
+      );
+
+      expect(result.ok).toBe(false);
+      // Vuelve EXACTO lo enviado: resolver la contradicción no puede costar
+      // volver a cargar el pedido entero.
+      expect(result.values?.identitySkippedReason).toBe("ORION_UNAVAILABLE");
+      expect(result.values?.identitySkippedNote).toBe("Orion caído desde las 10");
+      expect(mocks.registerPending).not.toHaveBeenCalled();
+      expect(mocks.linkOrionCodeAtCapture).not.toHaveBeenCalled();
+      expect(mocks.recordAudit).not.toHaveBeenCalled();
+    });
+
+    it("el producto manual exige lo mismo: no existe, no puede tener código", async () => {
+      const result = await createPendingAction(PREV, createManualFormData());
+
+      expect(result.ok).toBe(false);
+      expect(mocks.registerPending).not.toHaveBeenCalled();
+      expect(result.values?.manualName).toBe("Ibuprofeno jarabe");
+    });
+
+    it("el manual aplazado entra y persiste el motivo y la nota exactos", async () => {
+      const result = await createPendingAction(
+        PREV,
+        createManualFormData({
+          identitySkippedReason: "ORION_UNAVAILABLE",
+          identitySkippedNote: "Orion sin conexión desde las 9",
+        }),
+      );
+
+      expectSuccess(result);
+      expect(mocks.registerPending).toHaveBeenCalledWith(
+        expect.objectContaining({
+          identitySkippedReason: "ORION_UNAVAILABLE",
+          identitySkippedNote: "Orion sin conexión desde las 9",
+        }),
+      );
+      expect(mocks.linkOrionCodeAtCapture).not.toHaveBeenCalled();
+    });
+
+    it("el código Y el aplazamiento juntos se rechazan sin escribir nada", async () => {
+      const result = await createPendingAction(
+        PREV,
+        createCatalogFormData({
+          orionCode: "ORN-1001",
+          identitySkippedReason: "CODE_NOT_FOUND",
+        }),
+      );
+
+      expect(result.ok).toBe(false);
+      expect(mocks.registerPending).not.toHaveBeenCalled();
       expect(mocks.linkOrionCodeAtCapture).not.toHaveBeenCalled();
     });
   });

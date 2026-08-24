@@ -297,16 +297,18 @@ export const pendingCreateSchema = z
       });
     }
 
-    // Acá NO se exige que la identidad venga, ni siquiera en la rama manual.
+    // Acá NO se exige que la identidad venga, y no es un olvido.
     //
-    // Exigirla es el requisito, pero la regla y el cableado que la alimenta
-    // son inseparables: mientras la acción no reenvíe estos campos, un
-    // `required` rechazaría TODA carga manual —el formulario no manda nada que
-    // pueda satisfacerlo— y rompería la captura en producción. La exigencia
-    // viaja junto con el cableado y la pantalla, no antes.
+    // Que este envío pueda venir sin identidad depende de un dato que este
+    // módulo no tiene: si el producto elegido YA tiene su código de Orion. Eso
+    // solo lo sabe la base, y solo en el momento del envío. Un `required` acá
+    // rechazaría toda captura de un producto ya identificado —la mayoría— por
+    // no repetir un dato que el sistema ya sabe.
     //
-    // Lo que se valida acá es la FORMA de lo que llegue: qué es un código
-    // válido, qué motivos existen, y que código y aplazamiento no vengan juntos.
+    // La exigencia existe y es obligatoria; vive en `createPendingAction`, que
+    // relee el producto y decide contra su identidad de hoy. Lo que se valida
+    // acá es la FORMA de lo que llegue: qué es un código válido, qué motivos
+    // existen, y que código y aplazamiento no vengan juntos.
   })
   .transform((data) => {
     const base = {

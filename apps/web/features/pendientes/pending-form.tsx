@@ -385,6 +385,14 @@ function PendingFormFields({
                 <Input
                   id="orionCode"
                   name="orionCode"
+                  // Obligatorio, y esa es toda la novedad de esta rebanada: el
+                  // campo ya se veía, pero se podía dejar vacío. La exigencia
+                  // de verdad vive en la acción —esto se saltea armando el
+                  // FormData a mano—; acá está para que se descubra ANTES de
+                  // mandar el pedido entero, no después. La salida sigue a un
+                  // clic: al tildar "seguir sin el código" este campo se va, y
+                  // con él su obligatoriedad.
+                  required
                   maxLength={ORION_CODE_MAX_CHARS}
                   placeholder="Ej: 100234"
                   value={orionCode}
