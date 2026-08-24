@@ -102,6 +102,9 @@ function createManualFormData(overrides: Record<string, string> = {}) {
   data.set("customerName", "Ana Pérez");
   data.set("customerPhone", "3001234567");
   data.set("idempotencyKey", ATTEMPT_UUID);
+  // Desde S2b un producto manual llega SIEMPRE con identidad resuelta: no
+  // existe todavía en el catálogo, así que no puede tener código de antes.
+  data.set("orionCode", "ORN-2002");
   for (const [key, value] of Object.entries(overrides)) data.set(key, value);
   return data;
 }

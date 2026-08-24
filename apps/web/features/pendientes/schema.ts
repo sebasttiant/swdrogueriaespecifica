@@ -12,6 +12,16 @@ import {
   MAX_PHONE_INPUT_LENGTH,
   normalizePhone,
 } from "@/features/pendientes/phone";
+import {
+  MAX_IDENTITY_DEFERRAL_NOTE_LENGTH,
+  PENDING_IDENTITY_DEFERRAL_REASONS,
+  type PendingIdentityDeferralReason,
+} from "@/features/pendientes/identity-deferral";
+// Se importa el normalizador del DOMINIO en vez de reescribir la regla acá.
+// Es una función pura (no toca Prisma) y tener dos definiciones de qué es un
+// código válido es exactamente cómo nace un validador que acepta lo que la
+// base rechaza: el incidente de `totalAmount` de agosto de 2026, otra vez.
+import { normalizeOrionCode } from "@/server/domain/catalog/sku-identity";
 
 // Texto opcional que llega desde FormData: se normaliza vacío/espacios a
 // `undefined` para no persistir cadenas vacías como si fueran datos.
@@ -86,6 +96,36 @@ const optionalPaidAmount = optionalAmount({
   belowMin: "El abono no puede ser negativo.",
 });
 
+// --------------------------------------------------------------------------
+// Identidad Orion resuelta de un envío de captura.
+//
+// Es una unión DISCRIMINADA, no tres campos opcionales: quien la consume tiene
+// que decidir explícitamente qué rama atiende, y el compilador no lo deja leer
+// un código de un aplazamiento. `undefined` significa "este envío no trajo
+// identidad", caso legítimo cuando el producto del catálogo ya tiene la suya.
+// --------------------------------------------------------------------------
+export type PendingCaptureIdentity =
+  | { kind: "CODE"; orionCode: string }
+  | { kind: "DEFERRED"; reason: PendingIdentityDeferralReason; note?: string };
+
+function identityOf(data: {
+  orionCode?: string;
+  identitySkippedReason?: PendingIdentityDeferralReason;
+  identitySkippedNote?: string;
+}): PendingCaptureIdentity | undefined {
+  if (data.orionCode !== undefined) {
+    return { kind: "CODE", orionCode: data.orionCode };
+  }
+  if (data.identitySkippedReason !== undefined) {
+    return {
+      kind: "DEFERRED",
+      reason: data.identitySkippedReason,
+      note: data.identitySkippedNote,
+    };
+  }
+  return undefined;
+}
+
 // Validación del alta de un pendiente (solicitud de cliente). La cantidad llega
 // como string desde el FormData, por eso se coerciona. El producto puede venir
 // de dos formas EXCLUYENTES:
@@ -153,6 +193,38 @@ export const pendingCreateSchema = z
     zone: optionalText(MAX_ZONE_LENGTH),
     totalAmount: optionalTotalAmount,
     paidAmount: optionalPaidAmount,
+    // ----------------------------------------------------------------------
+    // Identidad Orion del producto (S2b). Llegan EXCLUYENTES: o el código, o
+    // el motivo por el que se aplaza. Ver el superRefine de abajo.
+    // ----------------------------------------------------------------------
+    //
+    // El campo vacío NO es un error: el formulario lo manda siempre, y cuando
+    // el producto elegido ya tiene código nadie escribe nada acá. Vacío
+    // significa "no vino identidad", y quién puede permitirse eso lo decide la
+    // acción contra la base, que es la única que sabe si el producto ya la tiene.
+    orionCode: z
+      .string()
+      .optional()
+      .transform((value, ctx) => {
+        const raw = value?.trim();
+        if (!raw) return undefined;
+        try {
+          return normalizeOrionCode(raw);
+        } catch {
+          ctx.addIssue({
+            code: "custom",
+            message:
+              "El código de Orion no puede llevar espacios y va hasta 80 caracteres.",
+          });
+          return z.NEVER;
+        }
+      }),
+    identitySkippedReason: z
+      .enum(PENDING_IDENTITY_DEFERRAL_REASONS, {
+        error: "Elegí un motivo de la lista para seguir sin el código.",
+      })
+      .optional(),
+    identitySkippedNote: optionalText(MAX_IDENTITY_DEFERRAL_NOTE_LENGTH),
   })
   .superRefine((data, ctx) => {
     const hasCatalog = Boolean(data.productId);
@@ -180,6 +252,45 @@ export const pendingCreateSchema = z
         message: "El abono no puede superar el valor total.",
       });
     }
+
+    // ----------------------------------------------------------------------
+    // Identidad Orion: XOR entre el código y el aplazamiento.
+    // ----------------------------------------------------------------------
+    const hasCode = data.orionCode !== undefined;
+    const hasDeferral = data.identitySkippedReason !== undefined;
+
+    if (hasCode && hasDeferral) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["orionCode"],
+        message:
+          "O cargás el código de Orion o seguís sin él, no las dos cosas.",
+      });
+    }
+
+    // La nota EXPLICA un aplazamiento. Sin motivo no hay nada que explicar, y
+    // guardarla igual dejaría una nota que nadie sabe a qué se refiere.
+    if (data.identitySkippedNote !== undefined && !hasDeferral) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["identitySkippedNote"],
+        message:
+          "La nota acompaña un motivo; elegí primero por qué seguís sin el código.",
+      });
+    }
+
+    // Rama MANUAL: el producto todavía no existe, así que no puede tener
+    // código ya cargado. Uno de los dos es obligatorio y eso se sabe acá sin
+    // consultar nada. En la rama CATÁLOGO no se puede exigir: el producto
+    // elegido puede tener código, y eso solo lo sabe la acción contra la base.
+    if (hasManual && !hasCode && !hasDeferral) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["orionCode"],
+        message:
+          "Cargá el código de Orion del producto nuevo o indicá por qué seguís sin él.",
+      });
+    }
   })
   .transform((data) => {
     const base = {
@@ -194,6 +305,11 @@ export const pendingCreateSchema = z
       totalAmount: data.totalAmount,
       // Sin abono es cero, no "desconocido": el cliente no dejó plata.
       paidAmount: data.paidAmount ?? 0,
+      // La identidad sale ya resuelta como UN valor y no como tres campos
+      // sueltos: así ningún consumidor puede leer el código y olvidarse del
+      // aplazamiento, ni al revés. `undefined` = no vino identidad en este
+      // envío, que en la rama catálogo es legítimo.
+      identity: identityOf(data),
     };
     // Rama catálogo: referimos al producto existente, sin producto manual.
     if (data.productId) {

@@ -327,6 +327,12 @@ export async function createPendingAction(
     zone: formData.get("zone") ?? undefined,
     totalAmount: formData.get("totalAmount") ?? undefined,
     paidAmount: formData.get("paidAmount") ?? undefined,
+    // Identidad Orion (S2b): el schema resuelve el XOR entre el código y el
+    // aplazamiento estructurado. Qué se hace con el resultado —vincular el
+    // producto, crearlo con el código, o aplazar— se decide contra la base.
+    orionCode: formData.get("orionCode") ?? undefined,
+    identitySkippedReason: formData.get("identitySkippedReason") ?? undefined,
+    identitySkippedNote: formData.get("identitySkippedNote") ?? undefined,
   });
 
   if (!parsed.success) {
