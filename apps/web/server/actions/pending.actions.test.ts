@@ -12,6 +12,21 @@ const mocks = vi.hoisted(() => ({
   requireCapability: vi.fn(),
   checkCapability: vi.fn(),
   revalidatePath: vi.fn(),
+  linkOrionCodeAtCapture: vi.fn(),
+  findProductById: vi.fn(),
+  logPendingEvent: vi.fn(),
+  SkuConcurrencyError: class SkuConcurrencyError extends Error {
+    constructor() {
+      super("sku identity changed under us");
+      this.name = "SkuConcurrencyError";
+    }
+  },
+  ManualProductIdentityConflictError: class ManualProductIdentityConflictError extends Error {
+    constructor(readonly holder: { id: string; name: string }) {
+      super("orion code already belongs to another product");
+      this.name = "ManualProductIdentityConflictError";
+    }
+  },
   PendingIdempotencyPayloadConflictError: class PendingIdempotencyPayloadConflictError extends Error {
     constructor() {
       super("idempotency key was already used for a different pending payload");
@@ -34,11 +49,31 @@ vi.mock("@/server/services/pending.service", () => ({
   deliverPending: mocks.deliverPending,
   invoicePending: mocks.invoicePending,
   PendingIdempotencyPayloadConflictError: mocks.PendingIdempotencyPayloadConflictError,
+  ManualProductIdentityConflictError: mocks.ManualProductIdentityConflictError,
   registerPending: mocks.registerPending,
   setPendingManagementStatus: mocks.setPendingManagementStatus,
 }));
+vi.mock("@/server/services/sku-onboarding.service", () => ({
+  linkOrionCodeAtCapture: mocks.linkOrionCodeAtCapture,
+}));
+vi.mock("@/server/repositories/product.repository", () => ({
+  findProductById: mocks.findProductById,
+}));
+vi.mock("@/server/repositories/sku-review.repository", () => ({
+  SkuConcurrencyError: mocks.SkuConcurrencyError,
+}));
+// Se conservan las constantes reales y se espía SOLO la emisión: comprobar el
+// log contra sus propios nombres canónicos, no contra cadenas copiadas acá.
+vi.mock("@/lib/observability/pending-log", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/observability/pending-log")>();
+  return { ...actual, logPendingEvent: mocks.logPendingEvent };
+});
 
 import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
+// El error del DOMINIO es puro (no toca Prisma), así que se usa el real: un
+// doble haría pasar el `instanceof` de la acción sin probar que coincide.
+import { SkuIdentityError } from "@/server/domain/catalog/sku-identity";
+import { PENDING_STAGES } from "@/lib/observability/pending-log";
 import {
   cancelPendingAction,
   contactPendingAction,
@@ -158,6 +193,254 @@ describe("createPendingAction", () => {
         manual: { name: "Ibuprofeno jarabe", unit: "frasco" },
       }),
     );
+  });
+
+  // ------------------------------------------------------------------------
+  // S2b · 1e-B — la acción HONRA la identidad cuando viene.
+  //
+  // Todavía no la EXIGE: exigirla antes de que la pantalla pueda satisfacerla
+  // rechazaría capturas que hoy funcionan. Eso llega con el formulario.
+  // ------------------------------------------------------------------------
+  describe("identidad Orion", () => {
+    beforeEach(() => {
+      mocks.findProductById.mockResolvedValue({
+        id: "prod-1",
+        name: "Eucerin tono claro",
+        orionCode: null,
+        identityVersion: 3,
+      });
+      mocks.linkOrionCodeAtCapture.mockResolvedValue({
+        status: "LINKED",
+        product: { id: "prod-1", orionCode: "ORN-1001", identityVersion: 4 },
+      });
+    });
+
+    it("vincula el código al producto del catálogo declarando la versión observada", async () => {
+      await createPendingAction(PREV, createCatalogFormData({ orionCode: "ORN-1001" }));
+
+      expect(mocks.linkOrionCodeAtCapture).toHaveBeenCalledWith(
+        expect.objectContaining({
+          identity: { productId: "prod-1" },
+          orionCode: "ORN-1001",
+          // La versión que se leyó es el compare-and-set: sin declararla, dos
+          // capturas simultáneas se pisarían la identidad sin enterarse.
+          expectedVersion: 3,
+          actor: expect.objectContaining({ id: "op-1", role: "OPERADOR" }),
+        }),
+      );
+      expect(mocks.registerPending).toHaveBeenCalled();
+    });
+
+    it("el conflicto NOMBRA al producto dueño y no registra nada", async () => {
+      mocks.linkOrionCodeAtCapture.mockResolvedValue({
+        status: "ORION_CONFLICT",
+        holder: { id: "prod-9", name: "Eucerin tono medio" },
+      });
+
+      const result = await createPendingAction(
+        PREV,
+        createCatalogFormData({ orionCode: "ORN-1001" }),
+      );
+
+      expect(result.ok).toBe(false);
+      // Sin el nombre, al operador solo le queda adivinar cuál producto tiene
+      // el código: el nombre es lo que convierte el rechazo en una salida.
+      expect(result.error).toContain("Eucerin tono medio");
+      expect(mocks.registerPending).not.toHaveBeenCalled();
+      // Y lo tipeado vuelve: corregir la identidad no puede costar volver a
+      // cargar el pedido entero.
+      expect(result.values?.orionCode).toBe("ORN-1001");
+    });
+
+    it("un aplazamiento llega al service como motivo y nota, sin tocar el producto", async () => {
+      await createPendingAction(
+        PREV,
+        createCatalogFormData({
+          identitySkippedReason: "ORION_UNAVAILABLE",
+          identitySkippedNote: "Orion no responde",
+        }),
+      );
+
+      expect(mocks.linkOrionCodeAtCapture).not.toHaveBeenCalled();
+      expect(mocks.registerPending).toHaveBeenCalledWith(
+        expect.objectContaining({
+          identitySkippedReason: "ORION_UNAVAILABLE",
+          identitySkippedNote: "Orion no responde",
+        }),
+      );
+    });
+
+    it("el producto manual lleva el código en su alta, no por una vinculación aparte", async () => {
+      await createPendingAction(PREV, createManualFormData({ orionCode: "ORN-2002" }));
+
+      expect(mocks.linkOrionCodeAtCapture).not.toHaveBeenCalled();
+      expect(mocks.registerPending).toHaveBeenCalledWith(
+        expect.objectContaining({
+          manual: { name: "Ibuprofeno jarabe", unit: "frasco", orionCode: "ORN-2002" },
+        }),
+      );
+    });
+
+    it("un rol sin autoridad para vincular se rechaza ANTES de cualquier escritura", async () => {
+      mocks.checkCapability.mockImplementation(async (capability: string) =>
+        capability === "canLinkProductIdentity"
+          ? { ok: false, reason: "FORBIDDEN" }
+          : { ok: true, session: { user: { id: "op-1", role: "OPERADOR", email: "op1@drogueria.test" } } },
+      );
+
+      const result = await createPendingAction(
+        PREV,
+        createCatalogFormData({ orionCode: "ORN-1001" }),
+      );
+
+      expect(result.ok).toBe(false);
+      expect(mocks.linkOrionCodeAtCapture).not.toHaveBeenCalled();
+      expect(mocks.registerPending).not.toHaveBeenCalled();
+      expect(result.values?.orionCode).toBe("ORN-1001");
+    });
+
+    it("aplazar NO exige autoridad de vinculación: no escribe identidad de nadie", async () => {
+      mocks.checkCapability.mockImplementation(async (capability: string) =>
+        capability === "canLinkProductIdentity"
+          ? { ok: false, reason: "FORBIDDEN" }
+          : { ok: true, session: { user: { id: "op-1", role: "OPERADOR", email: "op1@drogueria.test" } } },
+      );
+
+      const result = await createPendingAction(
+        PREV,
+        createCatalogFormData({ identitySkippedReason: "CODE_NOT_FOUND" }),
+      );
+
+      expectSuccess(result);
+      expect(mocks.registerPending).toHaveBeenCalled();
+    });
+
+    it("el conflicto del producto manual también nombra al dueño", async () => {
+      mocks.registerPending.mockRejectedValue(
+        new mocks.ManualProductIdentityConflictError({ id: "prod-9", name: "Eucerin tono medio" }),
+      );
+
+      const result = await createPendingAction(
+        PREV,
+        createManualFormData({ orionCode: "ORN-2002" }),
+      );
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("Eucerin tono medio");
+    });
+
+    it("la unión de identidad NO viaja al service: el contrato son los campos planos", async () => {
+      await createPendingAction(PREV, createCatalogFormData({ orionCode: "ORN-1001" }));
+
+      const [input] = mocks.registerPending.mock.calls[0] as [Record<string, unknown>];
+      expect(input).not.toHaveProperty("identity");
+      expect(input).not.toHaveProperty("orionCode");
+    });
+
+    // Estos tres casos NO devuelven: TIRAN. Una excepción que escapa de una
+    // Server Action se lleva puesto el eco de los valores, que es exactamente
+    // el incidente de julio/agosto de 2026 que este archivo existe para
+    // impedir. Devolver un estado accionable no es cortesía: es el contrato.
+    it("el producto que ya tiene OTRO código no revienta la acción", async () => {
+      mocks.linkOrionCodeAtCapture.mockRejectedValue(
+        new SkuIdentityError("ORION_CONFLICT"),
+      );
+
+      const result = await createPendingAction(
+        PREV,
+        createCatalogFormData({ orionCode: "ORN-1001" }),
+      );
+
+      expect(result.ok).toBe(false);
+      expect(result.values?.orionCode).toBe("ORN-1001");
+      expect(mocks.registerPending).not.toHaveBeenCalled();
+    });
+
+    it("perder el compare-and-set se informa como tal, no como un fallo genérico", async () => {
+      mocks.linkOrionCodeAtCapture.mockRejectedValue(new mocks.SkuConcurrencyError());
+
+      const result = await createPendingAction(
+        PREV,
+        createCatalogFormData({ orionCode: "ORN-1001" }),
+      );
+
+      expect(result.ok).toBe(false);
+      // "Volvé a intentar en unos segundos" sería mentira: reintentar sin
+      // mirar qué quedó puesto vuelve a perder. Hay que refrescar.
+      expect(result.error).toMatch(/refresc|recarg/i);
+      expect(result.values?.orionCode).toBe("ORN-1001");
+    });
+
+    it("el producto que ya no existe se informa sin perder lo tipeado", async () => {
+      mocks.findProductById.mockResolvedValue(null);
+
+      const result = await createPendingAction(
+        PREV,
+        createCatalogFormData({ orionCode: "ORN-1001" }),
+      );
+
+      expect(result.ok).toBe(false);
+      expect(result.values?.orionCode).toBe("ORN-1001");
+      expect(mocks.registerPending).not.toHaveBeenCalled();
+    });
+
+    it("el vínculo ya existente (NOOP) sigue de largo y registra", async () => {
+      mocks.linkOrionCodeAtCapture.mockResolvedValue({
+        status: "NOOP",
+        product: { id: "prod-1", orionCode: "ORN-1001", identityVersion: 3 },
+      });
+
+      const result = await createPendingAction(
+        PREV,
+        createCatalogFormData({ orionCode: "ORN-1001" }),
+      );
+
+      expectSuccess(result);
+      expect(mocks.registerPending).toHaveBeenCalled();
+    });
+
+    it("si el registro falla DESPUÉS de vincular, el vínculo queda registrado en el log", async () => {
+      mocks.registerPending.mockRejectedValue(new Error("boom"));
+
+      const result = await createPendingAction(
+        PREV,
+        createCatalogFormData({ orionCode: "ORN-1001" }),
+      );
+
+      expect(result.ok).toBe(false);
+      // El código YA quedó puesto en el producto y el pendiente no existe. Si
+      // el log no lo dice, soporte no puede responder "¿se aplicó el código?"
+      // con el código de soporte en la mano, que es para lo único que sirve.
+      const stages = mocks.logPendingEvent.mock.calls.map(
+        ([event]) => (event as { stage?: string }).stage,
+      );
+      expect(stages).toContain(PENDING_STAGES.IDENTITY_LINKED);
+    });
+
+    it("una sesión vencida al vincular NO se disfraza de falta de permiso", async () => {
+      mocks.checkCapability.mockImplementation(async (capability: string) =>
+        capability === "canLinkProductIdentity"
+          ? { ok: false, reason: "NO_SESSION" }
+          : { ok: true, session: { user: { id: "op-1", role: "OPERADOR", email: "op1@drogueria.test" } } },
+      );
+
+      const result = await createPendingAction(
+        PREV,
+        createCatalogFormData({ orionCode: "ORN-1001" }),
+      );
+
+      expect(result.ok).toBe(false);
+      // Decirle "pedile permiso a un administrador" a quien solo se le venció
+      // la sesión lo manda a perseguir un permiso que ya tiene.
+      expect(result.error).toMatch(/sesión/i);
+    });
+
+    it("sigue registrando sin identidad: todavía no se exige", async () => {
+      const result = await createPendingAction(PREV, createCatalogFormData());
+
+      expectSuccess(result);
+      expect(mocks.linkOrionCodeAtCapture).not.toHaveBeenCalled();
+    });
   });
 
   it("lleva zona canonizada y montos en pesos enteros hasta el service", async () => {
