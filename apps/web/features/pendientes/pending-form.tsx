@@ -15,6 +15,12 @@ import {
   derivePaymentState,
   remainingAmount,
 } from "@/features/pendientes/payment-state";
+import {
+  MAX_IDENTITY_DEFERRAL_NOTE_LENGTH,
+  PENDING_IDENTITY_DEFERRAL_LABELS,
+  PENDING_IDENTITY_DEFERRAL_REASONS,
+} from "@/features/pendientes/identity-deferral";
+import { ORION_CODE_MAX_CHARS } from "@/server/domain/catalog/sku-identity";
 import { MAX_ZONE_LENGTH } from "@/features/pendientes/zone";
 import { MAX_PHONE_INPUT_LENGTH } from "@/features/pendientes/phone";
 import { formatCop, parseCopInput } from "@/lib/format/currency";
@@ -145,6 +151,58 @@ function PendingFormFields({
   // porque el remonte descarta este estado junto con los campos.
   const [attemptKey] = useState(() => previous.idempotencyKey || newAttemptKey());
 
+  // --------------------------------------------------------------------------
+  // Identidad Orion (S2b).
+  //
+  // El selector pasa a ser CONTROLADO porque la pantalla tiene que reaccionar a
+  // qué producto se eligió: al que ya tiene código se le muestra el suyo y NO
+  // se le vuelve a preguntar. Preguntar de nuevo por un dato que el sistema ya
+  // sabe es cómo se entrena a la gente a tipear cualquier cosa para sacarse el
+  // campo de encima, y un código inventado es peor que ninguno.
+  // --------------------------------------------------------------------------
+  const [productId, setProductId] = useState(previous.productId ?? "");
+  const selectedProduct = products.find((product) => product.id === productId);
+
+  // Este draft es controlado porque su identidad de producto puede cambiar sin
+  // que el bloque se desmonte. Un `defaultValue` conservaría datos del producto
+  // anterior y terminaría posteándolos para el siguiente.
+  const [orionCode, setOrionCode] = useState(previous.orionCode ?? "");
+  const [identitySkippedReason, setIdentitySkippedReason] = useState(
+    previous.identitySkippedReason ?? "",
+  );
+  const [identitySkippedNote, setIdentitySkippedNote] = useState(
+    previous.identitySkippedNote ?? "",
+  );
+
+  // El manual SIEMPRE pide identidad: todavía no existe, así que no puede
+  // traer un código de antes.
+  const asksIdentity = manual || (selectedProduct != null && !selectedProduct.orionCode);
+
+  // La salida por aplazamiento. Vuelve ABIERTA tras un fallo si ya se había
+  // elegido un motivo: obligar a tildarla de nuevo para ver lo elegido haría
+  // que el eco no sirviera de nada.
+  const [deferred, setDeferred] = useState(Boolean(previous.identitySkippedReason));
+  const deferToggleId = useId();
+
+  const clearIdentityDraft = () => {
+    setOrionCode("");
+    setDeferred(false);
+    setIdentitySkippedReason("");
+    setIdentitySkippedNote("");
+  };
+
+  const changeManualMode = (nextManual: boolean) => {
+    if (nextManual === manual) return;
+    clearIdentityDraft();
+    setManual(nextManual);
+  };
+
+  const changeProduct = (nextProductId: string) => {
+    if (nextProductId === productId) return;
+    clearIdentityDraft();
+    setProductId(nextProductId);
+  };
+
   // Cómo se envió: Enter o clic. Solo para el diagnóstico del servidor; no
   // cambia ninguna decisión de negocio.
   const submitMethodRef = useRef<HTMLInputElement>(null);
@@ -222,7 +280,7 @@ function PendingFormFields({
             id={manualToggleId}
             type="checkbox"
             checked={manual}
-            onChange={(event) => setManual(event.target.checked)}
+            onChange={(event) => changeManualMode(event.target.checked)}
             className="h-4 w-4 rounded border-border accent-primary"
           />
           El producto no está en el catálogo (cargarlo manual)
@@ -272,7 +330,8 @@ function PendingFormFields({
               id="productId"
               name="productId"
               required
-              defaultValue={previous.productId ?? ""}
+              value={productId}
+              onChange={(event) => changeProduct(event.target.value)}
             >
               <option value="">Elegí un producto…</option>
               {products.map((product) => (
@@ -283,6 +342,98 @@ function PendingFormFields({
             </Select>
           </Field>
         )}
+
+        {/* Identidad Orion. Tres estados EXCLUYENTES: el producto ya la tiene
+            (se muestra), hace falta (se pide), o se sigue sin ella (se explica
+            por qué). Nunca dos a la vez. */}
+        {!manual && selectedProduct?.orionCode ? (
+          <div className="sm:col-span-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
+            <span className="text-muted-foreground">Código de Orion: </span>
+            <span className="font-medium text-text">{selectedProduct.orionCode}</span>
+          </div>
+        ) : null}
+
+        {asksIdentity ? (
+          <div className="sm:col-span-2 grid gap-3">
+            {deferred ? null : (
+              <Field
+                label="Código de Orion"
+                htmlFor="orionCode"
+                hint="El que ves en la pantalla de Orion para este producto."
+              >
+                <Input
+                  id="orionCode"
+                  name="orionCode"
+                  maxLength={ORION_CODE_MAX_CHARS}
+                  placeholder="Ej: 100234"
+                  value={orionCode}
+                  onChange={(event) => setOrionCode(event.target.value)}
+                />
+              </Field>
+            )}
+
+            {/* La salida existe porque el mostrador NO puede depender del ERP:
+                hay un cliente enfrente y el pendiente tiene que poder cargarse
+                igual. Lo que no puede es cargarse sin decir por qué. */}
+            <label
+              htmlFor={deferToggleId}
+              className="flex items-center gap-2 text-sm font-medium text-text"
+            >
+              <input
+                id={deferToggleId}
+                type="checkbox"
+                checked={deferred}
+                onChange={(event) => {
+                  const nextDeferred = event.target.checked;
+                  setDeferred(nextDeferred);
+                  if (nextDeferred) {
+                    setOrionCode("");
+                  } else {
+                    setIdentitySkippedReason("");
+                    setIdentitySkippedNote("");
+                  }
+                }}
+                className="h-4 w-4 rounded border-border accent-primary"
+              />
+              Seguir sin el código de Orion
+            </label>
+
+            {deferred ? (
+              <>
+                <Field label="¿Por qué seguís sin el código?" htmlFor="identitySkippedReason">
+                  <Select
+                    id="identitySkippedReason"
+                    name="identitySkippedReason"
+                    required
+                    value={identitySkippedReason}
+                    onChange={(event) => setIdentitySkippedReason(event.target.value)}
+                  >
+                    <option value="">Elegí un motivo…</option>
+                    {PENDING_IDENTITY_DEFERRAL_REASONS.map((reason) => (
+                      <option key={reason} value={reason}>
+                        {PENDING_IDENTITY_DEFERRAL_LABELS[reason]}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <Field
+                  label="Nota del aplazamiento (opcional)"
+                  htmlFor="identitySkippedNote"
+                >
+                  <textarea
+                    id="identitySkippedNote"
+                    name="identitySkippedNote"
+                    rows={2}
+                    maxLength={MAX_IDENTITY_DEFERRAL_NOTE_LENGTH}
+                    value={identitySkippedNote}
+                    onChange={(event) => setIdentitySkippedNote(event.target.value)}
+                    className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text"
+                  />
+                </Field>
+              </>
+            ) : null}
+          </div>
+        ) : null}
 
         <Field label="Cantidad" htmlFor="quantity">
           <Input
