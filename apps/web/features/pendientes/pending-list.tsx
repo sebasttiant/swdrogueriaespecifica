@@ -19,6 +19,7 @@ import { formatPhone } from "./phone";
 import { deliverySummary, remainingQuantity } from "./delivery-rules";
 import { canSetManagementStatus } from "./management-status";
 import { fulfillmentNotice } from "./fulfillment-notice";
+import { identityWarning } from "./identity-warning";
 import {
   derivePaymentState,
   remainingAmount,
@@ -158,6 +159,7 @@ export function PendingList({
         // El aviso de que la mercancía llegó. Es la razón por la que alguien
         // abre esta pantalla: saber sobre cuáles ya se puede actuar.
         const notice = fulfillmentNotice(pending);
+        const identityNotice = identityWarning(pending);
 
         return (
           <Card key={pending.id} className="space-y-3">
@@ -252,6 +254,10 @@ export function PendingList({
                 <Badge tone={deadline.tone}>{deadline.label}</Badge>
                 <Badge tone={status.tone}>{status.label}</Badge>
                 {payment ? <Badge tone={payment.tone}>{payment.label}</Badge> : null}
+                {/* Se apaga solo el día que alguien le cargue el código al
+                    producto: la condición se deriva del estado actual, no de
+                    un flag guardado en esta fila. */}
+                {identityNotice ? <Badge tone="warning">{identityNotice}</Badge> : null}
               </div>
             </div>
 

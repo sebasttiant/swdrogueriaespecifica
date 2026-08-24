@@ -38,7 +38,16 @@ function pending(overrides: Partial<PendingListItem> = {}): PendingListItem {
     createdAt: new Date("2026-07-09T10:00:00.000Z"),
     deliveredQuantity: 0,
     cancelledQuantity: 0,
-    product: { id: "prod-1", name: "Paracetamol", code: "P-001", unit: "unidad" },
+    // Ver la nota del mismo fixture en `pending-list.render.test.ts`: sin
+    // motivo de aplazamiento no hay aviso, tenga o no código el producto.
+    identitySkippedReason: null,
+    product: {
+      id: "prod-1",
+      name: "Paracetamol",
+      code: "P-001",
+      unit: "unidad",
+      orionCode: null,
+    },
     ...overrides,
   };
 }
@@ -462,5 +471,52 @@ describe("PendingCompactList · el nombre no se corta en el celular", () => {
     const html = render([pending()]);
 
     expect(html).not.toContain("truncate");
+  });
+});
+
+// --------------------------------------------------------------------------
+// S2b · 1e-E — el aviso de identidad pendiente en la vista compacta.
+//
+// Esta vista pinta la MISMA fila dos veces: tarjeta en el celular y renglón en
+// la tabla del escritorio. El aviso tiene que estar en las dos, o gerencia lo
+// ve en el escritorio y el vendedor no lo ve en el mostrador —que es
+// exactamente donde se puede hacer algo al respecto.
+// --------------------------------------------------------------------------
+describe("PendingCompactList · identidad pendiente", () => {
+  it("avisa en la tarjeta Y en la tabla cuando el producto sigue sin código", () => {
+    const html = render([pending({ identitySkippedReason: "ORION_UNAVAILABLE" })]);
+
+    // Dos veces: móvil + tabla. Una sola aparición significaría que una de las
+    // dos vistas se quedó sin el aviso.
+    expect(countOccurrences(html, "Identidad pendiente")).toBe(2);
+  });
+
+  it("no avisa en ninguna de las dos vistas si el producto ya tiene código", () => {
+    const html = render([
+      pending({
+        identitySkippedReason: "ORION_UNAVAILABLE",
+        product: {
+          id: "prod-1",
+          name: "Paracetamol",
+          code: "P-001",
+          unit: "unidad",
+          orionCode: "ORN-500",
+        },
+      }),
+    ]);
+
+    expect(html).not.toContain("Identidad pendiente");
+  });
+
+  it("no avisa por un producto sin código que nadie aplazó", () => {
+    const html = render([pending()]);
+
+    expect(html).not.toContain("Identidad pendiente");
+  });
+
+  it("dice el aviso con texto, no solo con un color", () => {
+    const html = render([pending({ identitySkippedReason: "CODE_NOT_FOUND" })]);
+
+    expect(html).toContain(">Identidad pendiente<");
   });
 });
