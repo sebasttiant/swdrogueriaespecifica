@@ -29,8 +29,14 @@ import { PendingForm, type ProductOption } from "./pending-form";
 // navegador y el incidente se reportó sobre Enter.
 // --------------------------------------------------------------------------
 
+// El producto que estos tests cargan YA tiene su código de Orion, y eso es
+// deliberado: desde que la identidad es obligatoria, un producto sin código
+// frena el envío hasta resolverla, y este archivo no viene a hablar de eso
+// sino del eco de los valores tras un fallo. Con uno ya identificado la
+// pantalla no pide nada y el contrato que estos tests fijan queda a la vista.
+// La captura CON identidad vive en `pending-form.identity.test.ts`.
 const PRODUCTS: ProductOption[] = [
-  { id: "p1", name: "Acetaminofén", code: "ACE-1", orionCode: null },
+  { id: "p1", name: "Acetaminofén", code: "ACE-1", orionCode: "ORN-4100" },
   { id: "p2", name: "Ibuprofeno", code: "IBU-1", orionCode: null },
 ];
 
@@ -207,6 +213,9 @@ describe("PendingForm · un fallo NUNCA borra lo cargado", () => {
     );
     await user.type(screen.getByLabelText("Producto (manual)"), "ILANA CREMA VAGINAL X 40 GR");
     await user.type(screen.getByLabelText("Unidad (opcional)"), "tubo");
+    // Un producto manual no existe todavía, así que nunca tiene código: su
+    // identidad es obligatoria y sin ella el envío ni sale.
+    await user.type(screen.getByLabelText("Código de Orion"), "ORN-7788");
     await user.type(screen.getByLabelText("Cliente"), CARGA.customerName);
     await user.type(screen.getByLabelText("Teléfono"), CARGA.customerPhone);
     await submitWithEnter(user);
