@@ -41,6 +41,10 @@ export type CreateProductData = {
   // Producto creado al vuelo desde un pendiente manual: queda marcado para que
   // un ADMIN lo revise. Ausente/false para las altas normales del catálogo.
   needsReview?: boolean;
+  // Código de Orion en el INSERT, no en un update posterior. Un producto que
+  // nace con su identidad nunca existe —ni por un instante— sin ella, así que
+  // no hay ventana en la que otro proceso lo vea sin código y se lo asigne.
+  orionCode?: string | null;
 };
 
 // Include the batch with the earliest expiry (quantity > 0) per product.

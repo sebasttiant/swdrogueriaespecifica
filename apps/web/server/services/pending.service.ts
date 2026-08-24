@@ -63,7 +63,14 @@ import {
 } from "@/features/pendientes/management-status";
 
 // Producto manual: no está en el catálogo, se crea al vuelo desde el pendiente.
-export type ManualProductInput = { name: string; unit: string };
+//
+// `orionCode` viaja en el ALTA del producto, no en un update posterior: un
+// producto que nace con su identidad nunca existe sin ella, ni por un instante.
+export type ManualProductInput = {
+  name: string;
+  unit: string;
+  orionCode?: string;
+};
 
 // Entrada del caso de uso "registrar pendiente". El producto viene de UNA de dos
 // formas excluyentes: `productId` (catálogo) o `manual` (se crea al vuelo).
@@ -87,6 +94,20 @@ export type RegisterPendingInput = {
   // siguen nullable únicamente por compatibilidad de datos.
   idempotencyKey: string;
 };
+
+/**
+ * El código de Orion del producto manual ya es de OTRO producto.
+ *
+ * Lleva al dueño porque nombrarlo es lo único que convierte el rechazo en una
+ * salida: sin el nombre, al operador solo le queda adivinar. El código NUNCA
+ * se mueve —eso sería RELINK, una decisión explícita que la captura no tiene.
+ */
+export class ManualProductIdentityConflictError extends Error {
+  constructor(readonly holder: { id: string; name: string }) {
+    super(`orion code already belongs to product ${holder.id}`);
+    this.name = "ManualProductIdentityConflictError";
+  }
+}
 
 export class PendingIdempotencyPayloadConflictError extends Error {
   constructor() {
@@ -259,9 +280,33 @@ export async function registerPending(
     if (isIdempotencyConflict(error)) {
       const winner = await findPendingByIdempotencyKey(data.idempotencyKey);
       if (winner) return replayRegistration(winner, fingerprint);
+
+      // P2002 sin ganador por esta clave: el único otro único que esta
+      // transacción puede violar es el `orionCode` del producto manual.
+      //
+      // No se mira `meta.target` para decidirlo: en Prisma 7 no es de fiar y
+      // el resto del repositorio ya detecta P2002 por estructura. Se resuelve
+      // preguntándole a la base quién tiene ese código, que además es el dato
+      // que hace falta para ofrecer la salida.
+      const holder = await holderOfManualOrionCode(data);
+      if (holder) throw new ManualProductIdentityConflictError(holder);
     }
     throw error;
   }
+}
+
+/** El producto que hoy tiene el código que el alta manual quiso usar, si hay. */
+async function holderOfManualOrionCode(
+  data: RegisterPendingInput,
+): Promise<{ id: string; name: string } | null> {
+  const orionCode = data.manual?.orionCode;
+  if (!orionCode) return null;
+  // Después del rollback, nunca dentro de la transacción abortada: ahí
+  // PostgreSQL responde 25P02 y taparía el conflicto real.
+  return prisma.product.findUnique({
+    where: { orionCode },
+    select: { id: true, name: true },
+  });
 }
 
 /**
@@ -282,7 +327,20 @@ function requestFingerprint(data: RegisterPendingInput): string {
   return JSON.stringify({
     productId: data.productId ?? null,
     manual: data.manual
-      ? { name: data.manual.name.trim(), unit: data.manual.unit.trim() }
+      ? {
+          name: data.manual.name.trim(),
+          unit: data.manual.unit.trim(),
+          // El código forma parte de QUÉ se pidió crear: sin él, reintentar la
+          // misma alta con OTRO código pasaría por réplica del intento anterior
+          // y devolvería el producto viejo como si nada hubiera cambiado.
+          //
+          // Se agrega SOLO cuando viene, igual que los campos de aplazamiento
+          // en 1c. Emitirlo siempre —aunque fuera `null`— cambiaría la huella
+          // de todo pendiente manual ya guardado, y el primer reintento de uno
+          // de ellos se leería como "misma clave, otros datos": un conflicto
+          // inventado sobre un alta que nadie modificó.
+          ...(data.manual.orionCode ? { orionCode: data.manual.orionCode } : {}),
+        }
       : null,
     quantity: data.quantity,
     promisedAt: data.promisedAt.toISOString(),
@@ -357,6 +415,9 @@ function createPendingRegistration(
           minStock: 0,
           reorderQty: 0,
           needsReview: true,
+          // Tener código de Orion NO lo vuelve un producto curado: sigue
+          // marcado para revisión como cualquier alta manual.
+          orionCode: data.manual.orionCode ?? null,
         },
         tx,
       );
