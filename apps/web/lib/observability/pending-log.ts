@@ -25,6 +25,12 @@ export const PENDING_STAGES = {
   SUBMIT_STARTED: "pending.submit.started",
   AUTH_VALIDATED: "pending.auth.validated",
   VALIDATION_COMPLETED: "pending.validation.completed",
+  // El código de Orion QUEDÓ escrito en el producto, en su propia transacción
+  // y antes de que exista el pendiente. Es la única etapa que registra un
+  // efecto durable fuera de la transacción del pendiente: sin ella, ante un
+  // fallo posterior nadie puede responder "¿se aplicó el código?" con el
+  // código de soporte en la mano, que es para lo único que sirve este log.
+  IDENTITY_LINKED: "pending.identity.linked",
   TRANSACTION_STARTED: "pending.transaction.started",
   TRANSACTION_COMMITTED: "pending.transaction.committed",
   POST_COMMIT_STARTED: "pending.post_commit.started",

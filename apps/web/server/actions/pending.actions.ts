@@ -33,6 +33,9 @@ import {
 } from "@/server/services/pending.service";
 import { linkOrionCodeAtCapture } from "@/server/services/sku-onboarding.service";
 import { findProductById } from "@/server/repositories/product.repository";
+import { SkuConcurrencyError } from "@/server/repositories/sku-review.repository";
+import { SkuIdentityError } from "@/server/domain/catalog/sku-identity";
+import { SKU_IDENTITY_CONCURRENCY_MESSAGE } from "@/features/productos/sku-identity-messages";
 import type { Prisma } from "@/lib/generated/prisma/client";
 import type { DeliveryRejection } from "@/features/pendientes/delivery-rules";
 import {
@@ -231,6 +234,10 @@ const IDEMPOTENCY_CONFLICT_MESSAGE =
   "Este intento ya fue usado con datos distintos. Recargá el formulario antes de registrar otro pendiente.";
 const LINK_FORBIDDEN_MESSAGE =
   "Tu usuario no puede cargar códigos de Orion. Seguí sin el código indicando el motivo, o pedile a un administrador que te habilite.";
+// El producto elegido ya tiene OTRO código. Cambiárselo sería una corrección
+// de identidad, una decisión explícita y auditada que la captura no toma.
+const LINK_REJECTED_MESSAGE =
+  "Ese producto ya tiene otro código de Orion cargado. Corregirlo se hace desde la ficha del producto; acá podés seguir sin el código indicando el motivo.";
 
 /**
  * El código ya es de otro producto.
@@ -310,6 +317,9 @@ export async function createPendingAction(
     userHash: hashEmail(session.user.email),
     role: session.user.role,
   };
+  // Quién escribe identidad, en la forma que espera el servicio de SKU. El
+  // `actor` de arriba es el del LOG y lleva el hash del mail; no es lo mismo.
+  const actorIdentity = { id: session.user.id, role: session.user.role };
 
   if (idempotencyKey === null) {
     return failure("El intento de registro venció. Recargá el formulario y volvé a enviarlo.", {
@@ -402,17 +412,27 @@ export async function createPendingAction(
   // ------------------------------------------------------------------------
   const { identity, ...capture } = parsed.data;
 
+  // La autoridad se relee de la base, así que su motivo puede diferir del de
+  // la primera lectura: entre las dos, a alguien pueden haberlo desactivado.
+  // Confundir "se te venció la sesión" con "no tenés permiso" lo manda a
+  // perseguir un permiso que ya tiene.
+  let linkActor = actorIdentity;
   if (identity?.kind === "CODE") {
     const linkAuth = await checkCapability("canLinkProductIdentity");
     if (!linkAuth.ok) {
-      return failure(LINK_FORBIDDEN_MESSAGE, {
+      const expired = linkAuth.reason !== "FORBIDDEN";
+      return failure(expired ? SESSION_EXPIRED_MESSAGE : LINK_FORBIDDEN_MESSAGE, {
         ...actor,
-        authState: "valid",
+        authState: expired ? "expired" : "forbidden",
         outcome: "rejected",
-        errorCode: "FORBIDDEN_LINK",
+        errorCode: expired ? linkAuth.reason : "FORBIDDEN_LINK",
         transaction: "not_started",
       });
     }
+    // La autoridad se validó contra ESTA lectura, así que es esta la que viaja
+    // al servicio: mandar la otra dejaría el permiso comprobado sobre un rol y
+    // la escritura hecha con otro.
+    linkActor = { id: linkAuth.session.user.id, role: linkAuth.session.user.role };
   }
 
   // Producto del CATÁLOGO con código: se vincula ANTES de registrar y en su
@@ -431,14 +451,39 @@ export async function createPendingAction(
       });
     }
 
-    const linked = await linkOrionCodeAtCapture({
-      actor: { id: session.user.id, role: session.user.role },
-      identity: { productId: product.id },
-      orionCode: identity.orionCode,
-      // La versión que se acaba de leer es el compare-and-set: quien escribe
-      // declara la versión que observó y PIERDE si otro llegó antes.
-      expectedVersion: product.identityVersion,
-    });
+    // `linkOrionCodeAtCapture` DEVUELVE el conflicto de dueño, pero TIRA en
+    // los otros dos rechazos: perder el compare-and-set, y el producto que ya
+    // tiene OTRO código —mover ese código sería RELINK, que la captura no
+    // puede hacer—. Una excepción que escapa de una Server Action se lleva
+    // puesto el eco de los valores: es el incidente de julio/agosto de 2026,
+    // el mismo que estas pantallas existen para no repetir.
+    let linked: Awaited<ReturnType<typeof linkOrionCodeAtCapture>>;
+    try {
+      linked = await linkOrionCodeAtCapture({
+        actor: linkActor,
+        identity: { productId: product.id },
+        orionCode: identity.orionCode,
+        // La versión que se acaba de leer es el compare-and-set: quien escribe
+        // declara la versión que observó y PIERDE si otro llegó antes.
+        expectedVersion: product.identityVersion,
+      });
+    } catch (error) {
+      logPendingError(correlationId, error);
+      const { errorClass, errorCode } = describeError(error);
+      // Perder la carrera NO invita a reintentar a ciegas: reintentar sin
+      // mirar qué identidad quedó puesta vuelve a perder, o peor, pisa la
+      // decisión de otro. Hay que refrescar y mirar.
+      const lost = error instanceof SkuConcurrencyError;
+      if (!lost && !(error instanceof SkuIdentityError)) throw error;
+      return failure(lost ? SKU_IDENTITY_CONCURRENCY_MESSAGE : LINK_REJECTED_MESSAGE, {
+        ...actor,
+        authState: "valid",
+        outcome: "rejected",
+        errorClass,
+        errorCode,
+        transaction: "not_started",
+      });
+    }
 
     if (linked.status === "ORION_CONFLICT") {
       return failure(conflictMessage(linked.holder.name), {
@@ -447,6 +492,20 @@ export async function createPendingAction(
         outcome: "rejected",
         errorCode: "ORION_CONFLICT",
         transaction: "not_started",
+      });
+    }
+
+    // Punto de no retorno de la identidad: si el vínculo se escribió, quedó
+    // escrito aunque el pendiente falle después. Sin esta línea, ese efecto
+    // durable no aparece en ningún lado del log.
+    if (linked.status === "LINKED") {
+      logPendingEvent({
+        correlationId,
+        stage: PENDING_STAGES.IDENTITY_LINKED,
+        ...actor,
+        submitMethod,
+        durationMs: elapsed(),
+        transaction: "committed",
       });
     }
   }

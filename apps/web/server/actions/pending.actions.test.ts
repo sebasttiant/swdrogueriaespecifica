@@ -14,6 +14,13 @@ const mocks = vi.hoisted(() => ({
   revalidatePath: vi.fn(),
   linkOrionCodeAtCapture: vi.fn(),
   findProductById: vi.fn(),
+  logPendingEvent: vi.fn(),
+  SkuConcurrencyError: class SkuConcurrencyError extends Error {
+    constructor() {
+      super("sku identity changed under us");
+      this.name = "SkuConcurrencyError";
+    }
+  },
   ManualProductIdentityConflictError: class ManualProductIdentityConflictError extends Error {
     constructor(readonly holder: { id: string; name: string }) {
       super("orion code already belongs to another product");
@@ -52,8 +59,21 @@ vi.mock("@/server/services/sku-onboarding.service", () => ({
 vi.mock("@/server/repositories/product.repository", () => ({
   findProductById: mocks.findProductById,
 }));
+vi.mock("@/server/repositories/sku-review.repository", () => ({
+  SkuConcurrencyError: mocks.SkuConcurrencyError,
+}));
+// Se conservan las constantes reales y se espía SOLO la emisión: comprobar el
+// log contra sus propios nombres canónicos, no contra cadenas copiadas acá.
+vi.mock("@/lib/observability/pending-log", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/observability/pending-log")>();
+  return { ...actual, logPendingEvent: mocks.logPendingEvent };
+});
 
 import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
+// El error del DOMINIO es puro (no toca Prisma), así que se usa el real: un
+// doble haría pasar el `instanceof` de la acción sin probar que coincide.
+import { SkuIdentityError } from "@/server/domain/catalog/sku-identity";
+import { PENDING_STAGES } from "@/lib/observability/pending-log";
 import {
   cancelPendingAction,
   contactPendingAction,
@@ -315,6 +335,104 @@ describe("createPendingAction", () => {
       const [input] = mocks.registerPending.mock.calls[0] as [Record<string, unknown>];
       expect(input).not.toHaveProperty("identity");
       expect(input).not.toHaveProperty("orionCode");
+    });
+
+    // Estos tres casos NO devuelven: TIRAN. Una excepción que escapa de una
+    // Server Action se lleva puesto el eco de los valores, que es exactamente
+    // el incidente de julio/agosto de 2026 que este archivo existe para
+    // impedir. Devolver un estado accionable no es cortesía: es el contrato.
+    it("el producto que ya tiene OTRO código no revienta la acción", async () => {
+      mocks.linkOrionCodeAtCapture.mockRejectedValue(
+        new SkuIdentityError("ORION_CONFLICT"),
+      );
+
+      const result = await createPendingAction(
+        PREV,
+        createCatalogFormData({ orionCode: "ORN-1001" }),
+      );
+
+      expect(result.ok).toBe(false);
+      expect(result.values?.orionCode).toBe("ORN-1001");
+      expect(mocks.registerPending).not.toHaveBeenCalled();
+    });
+
+    it("perder el compare-and-set se informa como tal, no como un fallo genérico", async () => {
+      mocks.linkOrionCodeAtCapture.mockRejectedValue(new mocks.SkuConcurrencyError());
+
+      const result = await createPendingAction(
+        PREV,
+        createCatalogFormData({ orionCode: "ORN-1001" }),
+      );
+
+      expect(result.ok).toBe(false);
+      // "Volvé a intentar en unos segundos" sería mentira: reintentar sin
+      // mirar qué quedó puesto vuelve a perder. Hay que refrescar.
+      expect(result.error).toMatch(/refresc|recarg/i);
+      expect(result.values?.orionCode).toBe("ORN-1001");
+    });
+
+    it("el producto que ya no existe se informa sin perder lo tipeado", async () => {
+      mocks.findProductById.mockResolvedValue(null);
+
+      const result = await createPendingAction(
+        PREV,
+        createCatalogFormData({ orionCode: "ORN-1001" }),
+      );
+
+      expect(result.ok).toBe(false);
+      expect(result.values?.orionCode).toBe("ORN-1001");
+      expect(mocks.registerPending).not.toHaveBeenCalled();
+    });
+
+    it("el vínculo ya existente (NOOP) sigue de largo y registra", async () => {
+      mocks.linkOrionCodeAtCapture.mockResolvedValue({
+        status: "NOOP",
+        product: { id: "prod-1", orionCode: "ORN-1001", identityVersion: 3 },
+      });
+
+      const result = await createPendingAction(
+        PREV,
+        createCatalogFormData({ orionCode: "ORN-1001" }),
+      );
+
+      expectSuccess(result);
+      expect(mocks.registerPending).toHaveBeenCalled();
+    });
+
+    it("si el registro falla DESPUÉS de vincular, el vínculo queda registrado en el log", async () => {
+      mocks.registerPending.mockRejectedValue(new Error("boom"));
+
+      const result = await createPendingAction(
+        PREV,
+        createCatalogFormData({ orionCode: "ORN-1001" }),
+      );
+
+      expect(result.ok).toBe(false);
+      // El código YA quedó puesto en el producto y el pendiente no existe. Si
+      // el log no lo dice, soporte no puede responder "¿se aplicó el código?"
+      // con el código de soporte en la mano, que es para lo único que sirve.
+      const stages = mocks.logPendingEvent.mock.calls.map(
+        ([event]) => (event as { stage?: string }).stage,
+      );
+      expect(stages).toContain(PENDING_STAGES.IDENTITY_LINKED);
+    });
+
+    it("una sesión vencida al vincular NO se disfraza de falta de permiso", async () => {
+      mocks.checkCapability.mockImplementation(async (capability: string) =>
+        capability === "canLinkProductIdentity"
+          ? { ok: false, reason: "NO_SESSION" }
+          : { ok: true, session: { user: { id: "op-1", role: "OPERADOR", email: "op1@drogueria.test" } } },
+      );
+
+      const result = await createPendingAction(
+        PREV,
+        createCatalogFormData({ orionCode: "ORN-1001" }),
+      );
+
+      expect(result.ok).toBe(false);
+      // Decirle "pedile permiso a un administrador" a quien solo se le venció
+      // la sesión lo manda a perseguir un permiso que ya tiene.
+      expect(result.error).toMatch(/sesión/i);
     });
 
     it("sigue registrando sin identidad: todavía no se exige", async () => {
