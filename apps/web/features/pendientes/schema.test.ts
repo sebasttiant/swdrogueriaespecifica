@@ -6,6 +6,7 @@ import {
   pendingDeliverSchema,
   pendingManagementStatusSchema,
 } from "./schema";
+import { PENDING_IDENTITY_DEFERRAL_REASONS } from "./identity-deferral";
 
 // Base válida reutilizable; cada test sobreescribe lo que necesita probar.
 const validInput = {
@@ -388,5 +389,264 @@ describe("pendingManagementStatusSchema · estado observado", () => {
     });
 
     expect(parsed.success).toBe(false);
+  });
+});
+
+// --------------------------------------------------------------------------
+// S2b · 1d — identidad Orion al capturar.
+//
+// Regla XOR: llega EXACTAMENTE uno de un código Orion o un aplazamiento
+// estructurado. El schema no puede exigir "al menos uno" en la rama catálogo
+// porque el producto elegido puede tener código ya; ese caso lo decide la
+// acción contra la base. En la rama MANUAL sí lo exige: el producto todavía
+// no existe, así que nunca tiene código.
+// --------------------------------------------------------------------------
+
+describe("pendingCreateSchema · identidad Orion", () => {
+  it("acepta un código Orion y lo normaliza recortando los extremos", () => {
+    const parsed = pendingCreateSchema.safeParse({
+      ...validInput,
+      orionCode: "  ORN-1001  ",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.identity).toEqual({ kind: "CODE", orionCode: "ORN-1001" });
+    }
+  });
+
+  it("conserva las mayúsculas exactas del código: la identidad no se normaliza de caja", () => {
+    const parsed = pendingCreateSchema.safeParse({
+      ...validInput,
+      orionCode: "oRn-Ab",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.identity).toEqual({ kind: "CODE", orionCode: "oRn-Ab" });
+    }
+  });
+
+  it("rechaza un código con espacios internos", () => {
+    const parsed = pendingCreateSchema.safeParse({
+      ...validInput,
+      orionCode: "ORN 1001",
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it("rechaza un código que supera el máximo de la base", () => {
+    const parsed = pendingCreateSchema.safeParse({
+      ...validInput,
+      orionCode: "A".repeat(81),
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it("trata el campo vacío como identidad ausente, no como error", () => {
+    const parsed = pendingCreateSchema.safeParse({
+      ...validInput,
+      orionCode: "   ",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.identity).toBeUndefined();
+  });
+
+  it("acepta un aplazamiento con motivo de la lista cerrada", () => {
+    const parsed = pendingCreateSchema.safeParse({
+      ...validInput,
+      identitySkippedReason: "ORION_UNAVAILABLE",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.identity).toEqual({
+        kind: "DEFERRED",
+        reason: "ORION_UNAVAILABLE",
+        note: undefined,
+      });
+    }
+  });
+
+  it("acepta los cuatro motivos de la lista cerrada y ninguno más", () => {
+    for (const reason of PENDING_IDENTITY_DEFERRAL_REASONS) {
+      const parsed = pendingCreateSchema.safeParse({
+        ...validInput,
+        identitySkippedReason: reason,
+      });
+      expect(parsed.success).toBe(true);
+    }
+
+    const invalid = pendingCreateSchema.safeParse({
+      ...validInput,
+      identitySkippedReason: "ORION_CAIDO",
+    });
+    expect(invalid.success).toBe(false);
+  });
+
+  it("acepta una nota junto al aplazamiento", () => {
+    const parsed = pendingCreateSchema.safeParse({
+      ...validInput,
+      identitySkippedReason: "OTHER",
+      identitySkippedNote: "  Lo trae el proveedor el jueves  ",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.identity).toEqual({
+        kind: "DEFERRED",
+        reason: "OTHER",
+        note: "Lo trae el proveedor el jueves",
+      });
+    }
+  });
+
+  it("rechaza una nota huérfana: sin aplazamiento no hay qué anotar", () => {
+    const parsed = pendingCreateSchema.safeParse({
+      ...validInput,
+      identitySkippedNote: "Sin motivo",
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it("rechaza una nota junto a un código: la nota solo explica un aplazamiento", () => {
+    const parsed = pendingCreateSchema.safeParse({
+      ...validInput,
+      orionCode: "ORN-1001",
+      identitySkippedNote: "Sin motivo",
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it("rechaza código y aplazamiento a la vez: son EXCLUYENTES", () => {
+    const parsed = pendingCreateSchema.safeParse({
+      ...validInput,
+      orionCode: "ORN-1001",
+      identitySkippedReason: "CODE_NOT_FOUND",
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it("en la rama catálogo admite que no venga ninguno: el producto puede tener código", () => {
+    const parsed = pendingCreateSchema.safeParse(validInput);
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.identity).toBeUndefined();
+  });
+
+  // LÍMITE DE ESTA UNIDAD: valida la FORMA de la identidad, no exige que
+  // venga. La exigencia necesita que la acción reenvíe estos campos; sin ese
+  // cableado un `required` acá rechazaría toda carga manual. Viajan juntos.
+  it("todavía NO exige identidad en la rama manual: eso llega con el cableado", () => {
+    const parsed = pendingCreateSchema.safeParse({
+      ...validInput,
+      productId: undefined,
+      manualName: "Crema nueva",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.identity).toBeUndefined();
+  });
+
+  it("acepta un producto manual con código", () => {
+    const parsed = pendingCreateSchema.safeParse({
+      ...validInput,
+      productId: undefined,
+      manualName: "Crema nueva",
+      orionCode: "ORN-777",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.manual?.name).toBe("Crema nueva");
+      expect(parsed.data.identity).toEqual({ kind: "CODE", orionCode: "ORN-777" });
+    }
+  });
+
+  // Un <select> que nadie tocó postea "", no ausencia. Si el vacío no se
+  // trata como "no vino", TODO envío con el desplegable intacto se rechaza
+  // pidiendo un motivo que el operador justamente no quiso elegir.
+  it("trata el motivo vacío como aplazamiento ausente, no como error", () => {
+    const parsed = pendingCreateSchema.safeParse({
+      ...validInput,
+      orionCode: "ORN-1001",
+      identitySkippedReason: "",
+      identitySkippedNote: "",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.identity).toEqual({ kind: "CODE", orionCode: "ORN-1001" });
+    }
+  });
+
+  it("acepta el catálogo sin identidad aunque el formulario postee los campos vacíos", () => {
+    const parsed = pendingCreateSchema.safeParse({
+      ...validInput,
+      orionCode: "",
+      identitySkippedReason: "",
+      identitySkippedNote: "",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.identity).toBeUndefined();
+  });
+
+  it("rechaza una nota demasiado larga con un mensaje en castellano", () => {
+    const parsed = pendingCreateSchema.safeParse({
+      ...validInput,
+      identitySkippedReason: "OTHER",
+      identitySkippedNote: "x".repeat(281),
+    });
+
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      // El mensaje va al mostrador tal cual: un "Too big: expected string…"
+      // deja al operador sin saber qué corregir.
+      const [first] = parsed.error.issues;
+      expect(first?.message).toMatch(/nota/i);
+      expect(first?.message).not.toMatch(/Too big/);
+    }
+  });
+
+  it("un código en blanco junto a un aplazamiento no rompe el XOR", () => {
+    const parsed = pendingCreateSchema.safeParse({
+      ...validInput,
+      orionCode: "   ",
+      identitySkippedReason: "CODE_NOT_FOUND",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.identity).toEqual({
+        kind: "DEFERRED",
+        reason: "CODE_NOT_FOUND",
+        note: undefined,
+      });
+    }
+  });
+
+  it("acepta un producto manual aplazado", () => {
+    const parsed = pendingCreateSchema.safeParse({
+      ...validInput,
+      productId: undefined,
+      manualName: "Crema nueva",
+      identitySkippedReason: "CODE_NOT_FOUND",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.identity).toEqual({
+        kind: "DEFERRED",
+        reason: "CODE_NOT_FOUND",
+        note: undefined,
+      });
+    }
   });
 });
