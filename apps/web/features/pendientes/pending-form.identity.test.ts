@@ -47,6 +47,12 @@ const CODELESS: ProductOption = {
   code: "IBU-1",
   orionCode: null,
 };
+const CODELESS_B: ProductOption = {
+  id: "p3",
+  name: "Acetaminofén gotas",
+  code: "ACE-1",
+  orionCode: null,
+};
 
 function bogotaNow(wall: string): Date {
   const parsed = parseBogotaWallTime(wall);
@@ -58,7 +64,7 @@ function renderForm(state: PendingFormState = { error: null, ok: false }) {
   mocks.useActionState.mockReturnValue([state, vi.fn(), false]);
   return render(
     createElement(PendingForm, {
-      products: [CODED, CODELESS],
+      products: [CODED, CODELESS, CODELESS_B],
       now: bogotaNow("2026-08-24T10:00"),
       defaultCustom: false,
     }),
@@ -86,6 +92,22 @@ function reasonSelect(): HTMLSelectElement | null {
 
 function noteInput(): HTMLElement | null {
   return document.querySelector('[name="identitySkippedNote"]');
+}
+
+async function enterDeferral(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("checkbox", { name: /sin el código/i }));
+  await user.selectOptions(reasonSelect() as HTMLSelectElement, "CODE_NOT_FOUND");
+  await user.type(noteInput() as HTMLTextAreaElement, "Identidad anterior");
+}
+
+function expectFreshIdentityDraft() {
+  expect(orionInput()?.value).toBe("");
+  expect(
+    (screen.getByRole("checkbox", { name: /sin el código/i }) as HTMLInputElement)
+      .checked,
+  ).toBe(false);
+  expect(reasonSelect()).toBeNull();
+  expect(noteInput()).toBeNull();
 }
 
 beforeEach(() => {
@@ -182,6 +204,83 @@ describe("PendingForm · identidad Orion", () => {
     await user.click(screen.getByRole("checkbox", { name: /no está en el catálogo/i }));
 
     expect(orionInput()).not.toBeNull();
+  });
+
+  it("limpia código y aplazamiento al cambiar entre dos productos sin código", async () => {
+    const user = userEvent.setup();
+    renderForm();
+    await user.selectOptions(productSelect(), "p2");
+    await user.type(orionInput() as HTMLInputElement, "ORN-A");
+
+    await user.selectOptions(productSelect(), "p3");
+    expectFreshIdentityDraft();
+
+    await enterDeferral(user);
+    await user.selectOptions(productSelect(), "p2");
+    expectFreshIdentityDraft();
+  });
+
+  it("limpia código y aplazamiento al pasar de catálogo a carga manual", async () => {
+    const user = userEvent.setup();
+    renderForm();
+    await user.selectOptions(productSelect(), "p2");
+    await user.type(orionInput() as HTMLInputElement, "ORN-CATALOGO");
+
+    await user.click(screen.getByRole("checkbox", { name: /no está en el catálogo/i }));
+    expectFreshIdentityDraft();
+
+    await user.click(screen.getByRole("checkbox", { name: /no está en el catálogo/i }));
+    await enterDeferral(user);
+    await user.click(screen.getByRole("checkbox", { name: /no está en el catálogo/i }));
+    expectFreshIdentityDraft();
+  });
+
+  it("no muestra el código del producto catalogado mientras está en modo manual", async () => {
+    const user = userEvent.setup();
+    renderForm();
+    await user.selectOptions(productSelect(), "p1");
+    await user.click(screen.getByRole("checkbox", { name: /no está en el catálogo/i }));
+
+    const shownOutsideOptions = Array.from(document.querySelectorAll("body *")).filter(
+      (element) =>
+        element.tagName !== "OPTION" &&
+        element.tagName !== "SELECT" &&
+        element.children.length === 0 &&
+        element.textContent?.includes("ORN-500"),
+    );
+    expect(shownOutsideOptions).toHaveLength(0);
+  });
+
+  it("limpia código y aplazamiento al pasar de carga manual a catálogo", async () => {
+    const user = userEvent.setup();
+    renderForm();
+    await user.selectOptions(productSelect(), "p2");
+    await user.click(screen.getByRole("checkbox", { name: /no está en el catálogo/i }));
+    await user.type(orionInput() as HTMLInputElement, "ORN-MANUAL");
+
+    await user.click(screen.getByRole("checkbox", { name: /no está en el catálogo/i }));
+    expectFreshIdentityDraft();
+
+    await user.click(screen.getByRole("checkbox", { name: /no está en el catálogo/i }));
+    await enterDeferral(user);
+    await user.click(screen.getByRole("checkbox", { name: /no está en el catálogo/i }));
+    expectFreshIdentityDraft();
+  });
+
+  it("distingue accesiblemente la nota del aplazamiento de la nota general", async () => {
+    const user = userEvent.setup();
+    renderForm();
+    await user.selectOptions(productSelect(), "p2");
+    await user.click(screen.getByRole("checkbox", { name: /sin el código/i }));
+
+    expect(
+      screen
+        .getByRole("textbox", { name: "Nota del aplazamiento (opcional)" })
+        .getAttribute("name"),
+    ).toBe("identitySkippedNote");
+    expect(
+      screen.getByRole("textbox", { name: "Nota (opcional)" }).getAttribute("name"),
+    ).toBe("note");
   });
 
   it("tras un fallo vuelve el código tipeado, no un campo en blanco", async () => {
