@@ -231,7 +231,7 @@ describe("createPendingAction", () => {
       expect(mocks.registerPending).toHaveBeenCalled();
     });
 
-    it("el conflicto NOMBRA al producto dueño y no registra nada", async () => {
+    it("devuelve el dueño estructurado y preserva todo el pedido ante conflicto de catálogo", async () => {
       mocks.linkOrionCodeAtCapture.mockResolvedValue({
         status: "ORION_CONFLICT",
         holder: { id: "prod-9", name: "Eucerin tono medio" },
@@ -239,17 +239,45 @@ describe("createPendingAction", () => {
 
       const result = await createPendingAction(
         PREV,
-        createCatalogFormData({ orionCode: "ORN-1001" }),
+        createCatalogFormData({
+          orionCode: "ORN-1001",
+          customerAddress: "Calle 10 #20-30",
+          note: "Entregar en portería",
+          zone: "Centro",
+          totalAmount: "45.000",
+          paidAmount: "20.000",
+        }),
       );
 
       expect(result.ok).toBe(false);
       // Sin el nombre, al operador solo le queda adivinar cuál producto tiene
       // el código: el nombre es lo que convierte el rechazo en una salida.
       expect(result.error).toContain("Eucerin tono medio");
+      expect(result.orionConflict).toEqual({
+        holder: { productId: "prod-9", productName: "Eucerin tono medio" },
+      });
       expect(mocks.registerPending).not.toHaveBeenCalled();
       // Y lo tipeado vuelve: corregir la identidad no puede costar volver a
       // cargar el pedido entero.
-      expect(result.values?.orionCode).toBe("ORN-1001");
+      expect(result.values).toEqual({
+        productId: "prod-1",
+        manualName: "",
+        manualUnit: "",
+        manualMode: "",
+        quantity: "2",
+        promisedAt: "2099-01-02T12:00",
+        customerName: "Ana Pérez",
+        customerPhone: "3001234567",
+        customerAddress: "Calle 10 #20-30",
+        note: "Entregar en portería",
+        zone: "Centro",
+        totalAmount: "45.000",
+        paidAmount: "20.000",
+        idempotencyKey: ATTEMPT_UUID,
+        orionCode: "ORN-1001",
+        identitySkippedReason: "",
+        identitySkippedNote: "",
+      });
     });
 
     it("un aplazamiento llega al service como motivo y nota, sin tocar el producto", async () => {
@@ -315,18 +343,48 @@ describe("createPendingAction", () => {
       expect(mocks.registerPending).toHaveBeenCalled();
     });
 
-    it("el conflicto del producto manual también nombra al dueño", async () => {
+    it("devuelve el dueño estructurado y preserva todo el pedido manual en conflicto", async () => {
       mocks.registerPending.mockRejectedValue(
         new mocks.ManualProductIdentityConflictError({ id: "prod-9", name: "Eucerin tono medio" }),
       );
 
       const result = await createPendingAction(
         PREV,
-        createManualFormData({ orionCode: "ORN-2002" }),
+        createManualFormData({
+          manualMode: "on",
+          orionCode: "ORN-2002",
+          customerAddress: "Carrera 5 #6-70",
+          note: "Llamar antes",
+          zone: "Norte",
+          totalAmount: "60.000",
+          paidAmount: "10.000",
+        }),
       );
 
       expect(result.ok).toBe(false);
       expect(result.error).toContain("Eucerin tono medio");
+      expect(result.orionConflict).toEqual({
+        holder: { productId: "prod-9", productName: "Eucerin tono medio" },
+      });
+      expect(result.values).toEqual({
+        productId: "",
+        manualName: "Ibuprofeno jarabe",
+        manualUnit: "frasco",
+        manualMode: "on",
+        quantity: "2",
+        promisedAt: "2099-01-02T12:00",
+        customerName: "Ana Pérez",
+        customerPhone: "3001234567",
+        customerAddress: "Carrera 5 #6-70",
+        note: "Llamar antes",
+        zone: "Norte",
+        totalAmount: "60.000",
+        paidAmount: "10.000",
+        idempotencyKey: ATTEMPT_UUID,
+        orionCode: "ORN-2002",
+        identitySkippedReason: "",
+        identitySkippedNote: "",
+      });
     });
 
     it("la unión de identidad NO viaja al service: el contrato son los campos planos", async () => {

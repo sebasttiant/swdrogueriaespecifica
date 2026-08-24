@@ -56,6 +56,15 @@ import {
 // cada efecto de forma best-effort.
 // --------------------------------------------------------------------------
 
+export interface PendingOrionConflictHolder {
+  productId: string;
+  productName: string;
+}
+
+export interface PendingOrionConflict {
+  holder: PendingOrionConflictHolder;
+}
+
 export type PendingFormState = {
   error: string | null;
   ok: boolean;
@@ -90,6 +99,8 @@ export type PendingFormState = {
    * forma de saber quién tiene razón.
    */
   savedWithoutTotalAmount?: boolean;
+  /** Recuperación accionable cuando el código ya pertenece a otro producto. */
+  orionConflict?: PendingOrionConflict | null;
 };
 
 /**
@@ -269,6 +280,7 @@ export async function createPendingAction(
   const failure = (
     message: string,
     log: Omit<PendingLogEvent, "correlationId" | "stage">,
+    orionConflict?: PendingOrionConflict,
   ): PendingFormState => {
     logPendingEvent({
       correlationId,
@@ -284,6 +296,7 @@ export async function createPendingAction(
       supportCode: correlationId,
       values: submitted,
       submissionId: correlationId,
+      orionConflict,
     };
   };
 
@@ -486,13 +499,22 @@ export async function createPendingAction(
     }
 
     if (linked.status === "ORION_CONFLICT") {
-      return failure(conflictMessage(linked.holder.name), {
-        ...actor,
-        authState: "valid",
-        outcome: "rejected",
-        errorCode: "ORION_CONFLICT",
-        transaction: "not_started",
-      });
+      return failure(
+        conflictMessage(linked.holder.name),
+        {
+          ...actor,
+          authState: "valid",
+          outcome: "rejected",
+          errorCode: "ORION_CONFLICT",
+          transaction: "not_started",
+        },
+        {
+          holder: {
+            productId: linked.holder.id,
+            productName: linked.holder.name,
+          },
+        },
+      );
     }
 
     // Punto de no retorno de la identidad: si el vínculo se escribió, quedó
@@ -537,13 +559,22 @@ export async function createPendingAction(
   } catch (error) {
     if (error instanceof ManualProductIdentityConflictError) {
       logPendingError(correlationId, error);
-      return failure(conflictMessage(error.holder.name), {
-        ...actor,
-        authState: "valid",
-        outcome: "rejected",
-        errorCode: "ORION_CONFLICT",
-        transaction: "rolled_back",
-      });
+      return failure(
+        conflictMessage(error.holder.name),
+        {
+          ...actor,
+          authState: "valid",
+          outcome: "rejected",
+          errorCode: "ORION_CONFLICT",
+          transaction: "rolled_back",
+        },
+        {
+          holder: {
+            productId: error.holder.id,
+            productName: error.holder.name,
+          },
+        },
+      );
     }
     // Solo `registerPending` decide si hubo commit: su transacción revierte ante
     // error. Por eso este es el ÚNICO punto que puede informar fallo de alta y

@@ -60,11 +60,14 @@ function bogotaNow(wall: string): Date {
   return parsed;
 }
 
-function renderForm(state: PendingFormState = { error: null, ok: false }) {
+function renderForm(
+  state: PendingFormState = { error: null, ok: false },
+  products: ProductOption[] = [CODED, CODELESS, CODELESS_B],
+) {
   mocks.useActionState.mockReturnValue([state, vi.fn(), false]);
   return render(
     createElement(PendingForm, {
-      products: [CODED, CODELESS, CODELESS_B],
+      products,
       now: bogotaNow("2026-08-24T10:00"),
       defaultCustom: false,
     }),
@@ -108,6 +111,33 @@ function expectFreshIdentityDraft() {
   ).toBe(false);
   expect(reasonSelect()).toBeNull();
   expect(noteInput()).toBeNull();
+}
+
+function conflictState(holder: { productId: string; productName: string }): PendingFormState {
+  return {
+    error: `Ese código de Orion ya es de "${holder.productName}".`,
+    ok: false,
+    orionConflict: { holder },
+    values: {
+      productId: "p2",
+      manualName: "",
+      manualUnit: "",
+      manualMode: "off",
+      quantity: "7",
+      promisedAt: "2026-08-25T12:00",
+      customerName: "Ana Pérez",
+      customerPhone: "3001234567",
+      customerAddress: "Calle 10 #20-30",
+      note: "Entregar en portería",
+      zone: "Centro",
+      totalAmount: "45.000",
+      paidAmount: "20.000",
+      idempotencyKey: "00000000-0000-4000-8000-000000000001",
+      orionCode: "ORN-500",
+      identitySkippedReason: "",
+      identitySkippedNote: "",
+    },
+  };
 }
 
 beforeEach(() => {
@@ -340,5 +370,78 @@ describe("PendingForm · identidad Orion", () => {
     // para ver lo que ya había elegido, el eco no serviría de nada.
     expect((reasonSelect() as HTMLSelectElement).value).toBe("CODE_NOT_FOUND");
     expect((noteInput() as HTMLTextAreaElement).value).toBe("No aparece en Orion");
+  });
+
+  it("recupera el conflicto en un clic seleccionando al dueño presente y conserva el pedido", async () => {
+    const user = userEvent.setup();
+    renderForm(conflictState({ productId: "p1", productName: CODED.name }));
+
+    await user.click(screen.getByRole("button", { name: /usar eucerin tono claro/i }));
+
+    expect(productSelect().value).toBe("p1");
+    expect(orionInput()).toBeNull();
+    expect((screen.getByRole("spinbutton", { name: "Cantidad" }) as HTMLInputElement).value).toBe("7");
+    expect((screen.getByRole("textbox", { name: "Cliente" }) as HTMLInputElement).value).toBe(
+      "Ana Pérez",
+    );
+    expect(
+      (screen.getByRole("textbox", { name: "Nota (opcional)" }) as HTMLInputElement).value,
+    ).toBe("Entregar en portería");
+  });
+
+  it("no materializa ni envía al dueño ausente y ofrece aplazar o recargar", async () => {
+    const user = userEvent.setup();
+    renderForm(
+      conflictState({ productId: "p9", productName: "Eucerin tono medio" }),
+      [CODELESS, CODELESS_B],
+    );
+
+    expect(document.querySelector('option[value="p9"]')).toBeNull();
+    expect(screen.queryByRole("button", { name: /usar eucerin tono medio/i })).toBeNull();
+    expect(screen.getByText(/no está disponible en esta lista/i)).not.toBeNull();
+    expect(screen.getByRole("button", { name: /recargar productos/i })).not.toBeNull();
+
+    await user.click(screen.getByRole("button", { name: /mantener este producto y aplazar/i }));
+
+    const form = document.querySelector("form");
+    if (!form) throw new Error("no hay formulario");
+    const submitted = new FormData(form);
+    expect(submitted.get("productId")).toBe("p2");
+    expect(Array.from(submitted.values())).not.toContain("p9");
+  });
+
+  it.each(["producto", "modo manual", "draft de identidad"] as const)(
+    "invalida ambas recuperaciones si cambia el %s",
+    async (change) => {
+      const user = userEvent.setup();
+      renderForm(conflictState({ productId: "p1", productName: CODED.name }));
+
+      if (change === "producto") await user.selectOptions(productSelect(), "p3");
+      if (change === "modo manual") {
+        await user.click(screen.getByRole("checkbox", { name: /no está en el catálogo/i }));
+      }
+      if (change === "draft de identidad") {
+        await user.type(orionInput() as HTMLInputElement, "-corregido");
+      }
+
+      expect(screen.queryByRole("button", { name: /usar eucerin tono claro/i })).toBeNull();
+      expect(
+        screen.queryByRole("button", { name: /mantener este producto y aplazar/i }),
+      ).toBeNull();
+    },
+  );
+
+  it("permite mantener el producto actual y aplazar con el motivo de conflicto", async () => {
+    const user = userEvent.setup();
+    renderForm(conflictState({ productId: "p1", productName: CODED.name }));
+
+    await user.click(screen.getByRole("button", { name: /mantener este producto y aplazar/i }));
+
+    expect(productSelect().value).toBe("p2");
+    expect((reasonSelect() as HTMLSelectElement).value).toBe("CODE_ALREADY_ASSIGNED");
+    expect(orionInput()).toBeNull();
+    expect((screen.getByRole("textbox", { name: "Teléfono" }) as HTMLInputElement).value).toBe(
+      "3001234567",
+    );
   });
 });
