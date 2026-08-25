@@ -54,6 +54,7 @@ const { repo } = vi.hoisted(() => ({
     countOverduePendings: vi.fn(),
     countUpcomingPendings: vi.fn(),
     listPendings: vi.fn(),
+    listPendingIdentityQueue: vi.fn(),
     listUrgentPendings: vi.fn(),
     updatePendingManagementStatus: vi.fn(),
   },
@@ -71,6 +72,8 @@ import {
   deliverPending,
   getPendingDashboard,
   getPendings,
+  getPendingIdentityQueue,
+  PendingIdentityQueueForbiddenError,
   invoicePending,
   resolvePartialPending,
   updatePending,
@@ -78,6 +81,8 @@ import {
   setPendingManagementStatus,
 } from "./pending.service";
 import type { PendingListItem } from "@/server/repositories/pending.repository";
+import type { SessionRole } from "@/lib/auth/session";
+import { USER_ROLES } from "@/lib/auth/permissions";
 
 // `promisedAt` va como instante UTC EXPLÍCITO (con la Z). Sin ella, JavaScript
 // interpreta el literal como hora LOCAL, y el `toISOString()` con el que se arma
@@ -1241,5 +1246,142 @@ describe("updatePending", () => {
       where: { originId: "pend-1", status: { in: ["FALTANTE", "PEDIDO", "EN_BODEGA"] } },
       data: { status: "CANCELADO" },
     });
+  });
+});
+
+// --------------------------------------------------------------------------
+// S2b · 2-A — la cola de identidad pendiente: quién ve qué.
+//
+// La política de rol vive en `permissions.ts` y se RESUELVE acá; el
+// repositorio recibe un alcance ya decidido y no vuelve a opinar. Un segundo
+// lugar que decida quién ve qué es exactamente cómo una de las dos copias
+// termina filtrando, y filtrando en silencio.
+// --------------------------------------------------------------------------
+describe("getPendingIdentityQueue · alcance por rol", () => {
+  const EMPTY = { items: [], nextCursor: null };
+
+  beforeEach(() => {
+    repo.listPendingIdentityQueue.mockResolvedValue(EMPTY);
+  });
+
+  // Gerencia: ve la cola entera, así que el filtro por dueño NO viaja.
+  it.each(["SUPERADMIN", "ADMIN", "SUPERVISOR"] as const)(
+    "%s consulta la cola global, sin filtro de dueño",
+    async (role) => {
+      await getPendingIdentityQueue({ role, userId: "u-1" });
+
+      expect(repo.listPendingIdentityQueue).toHaveBeenCalledWith(
+        expect.objectContaining({ ownerId: undefined }),
+      );
+    },
+  );
+
+  // Quien no ve toda la cola recibe SOLO lo suyo. El filtro viaja al
+  // repositorio, que es donde entra en el WHERE: si se aplicara después de
+  // contar, el conteo seguiría siendo el global y la fuga sería el número.
+  it("BODEGA consulta solo lo que cargó esa persona", async () => {
+    await getPendingIdentityQueue({ role: "BODEGA", userId: "u-7" });
+
+    expect(repo.listPendingIdentityQueue).toHaveBeenCalledWith(
+      expect.objectContaining({ ownerId: "u-7" }),
+    );
+  });
+
+  // OPERADOR captura pendientes, pero no tiene `canFixProductIdentity`: no
+  // puede resolver una sola fila de esta cola. Se lo rechaza en el borde en
+  // vez de mostrarle trabajo sin acciones disponibles.
+  it("rechaza a OPERADOR, que no puede resolver ninguna fila", async () => {
+    await expect(
+      getPendingIdentityQueue({ role: "OPERADOR", userId: "u-7" }),
+    ).rejects.toBeInstanceOf(PendingIdentityQueueForbiddenError);
+
+    expect(repo.listPendingIdentityQueue).not.toHaveBeenCalled();
+  });
+
+  // Los tres grupos tienen que PARTIR el conjunto de roles. Si mañana se
+  // agrega uno, este test lo obliga a elegir bando en vez de heredar la cola
+  // —o el rechazo— por omisión y sin que nadie lo note.
+  it("clasifica a todos los roles del sistema, sin huérfanos", () => {
+    const clasificados = ["SUPERADMIN", "ADMIN", "SUPERVISOR", "BODEGA", "OPERADOR"];
+
+    expect([...clasificados].sort()).toEqual([...USER_ROLES].sort());
+  });
+
+  it("propaga cursor y take sin reinterpretarlos", async () => {
+    await getPendingIdentityQueue({
+      role: "ADMIN",
+      userId: "u-1",
+      cursor: "cursor-op",
+      take: 5,
+    });
+
+    expect(repo.listPendingIdentityQueue).toHaveBeenCalledWith(
+      expect.objectContaining({ cursor: "cursor-op", take: 5 }),
+    );
+  });
+
+  // La autoridad se comprueba ANTES de consultar. Hoy los cinco roles pueden,
+  // así que este caso no lo alcanza ninguno: existe para el día que se agregue
+  // un rol nuevo, que es justamente cuando un permiso implícito se convierte
+  // en una fuga que nadie escribió.
+  it("rechaza un rol sin autoridad ANTES de tocar el repositorio", async () => {
+    const intruder = "AUDITOR_EXTERNO" as unknown as SessionRole;
+
+    await expect(
+      getPendingIdentityQueue({ role: intruder, userId: "u-9" }),
+    ).rejects.toBeInstanceOf(PendingIdentityQueueForbiddenError);
+
+    expect(repo.listPendingIdentityQueue).not.toHaveBeenCalled();
+  });
+
+  // Ningún otro test mira el valor devuelto: sin esto, mutar el cuerpo para
+  // devolver una página fabricada pasa la suite entera.
+  it("devuelve la página del repositorio tal cual", async () => {
+    const page = {
+      items: [{ productId: "p-1", productName: "Dipirona", productCode: "C1", pendingCount: 2 }],
+      nextCursor: "cursor-siguiente",
+    };
+    repo.listPendingIdentityQueue.mockResolvedValue(page);
+
+    await expect(getPendingIdentityQueue({ role: "ADMIN", userId: "u-1" })).resolves.toBe(page);
+  });
+
+  // El repositorio lee `ownerId: undefined` como cola GLOBAL, así que un
+  // `userId` vacío en un rol acotado tiene que fallar, NUNCA ensanchar.
+  it("falla en vez de ensanchar el alcance cuando falta el userId", async () => {
+    await expect(getPendingIdentityQueue({ role: "BODEGA", userId: "" })).rejects.toThrow(
+      /userId/,
+    );
+
+    expect(repo.listPendingIdentityQueue).not.toHaveBeenCalled();
+  });
+
+  // Los defaults son del repositorio (`clampTake`, `decodeQueueCursor`). El
+  // servicio no puede adelantarse a fijarlos, ni agregar campos al llamado.
+  it("no inventa defaults ni campos extra", async () => {
+    await getPendingIdentityQueue({ role: "ADMIN", userId: "u-1" });
+
+    expect(repo.listPendingIdentityQueue).toHaveBeenCalledWith({
+      ownerId: undefined,
+      cursor: undefined,
+      take: undefined,
+    });
+    expect(repo.listPendingIdentityQueue).toHaveBeenCalledTimes(1);
+  });
+
+  // Es una LECTURA. Ninguna rama puede escribir, ni la autorizada ni la
+  // rechazada: la cola se deriva del estado actual y no marca nada.
+  it("no escribe nada: ni la consulta autorizada ni el rechazo", async () => {
+    await getPendingIdentityQueue({ role: "BODEGA", userId: "u-7" });
+    await expect(
+      getPendingIdentityQueue({
+        role: "AUDITOR_EXTERNO" as unknown as SessionRole,
+        userId: "u-9",
+      }),
+    ).rejects.toBeInstanceOf(PendingIdentityQueueForbiddenError);
+
+    expect(prismaMock.pending.update).not.toHaveBeenCalled();
+    expect(prismaMock.pending.updateMany).not.toHaveBeenCalled();
+    expect(prismaMock.$transaction).not.toHaveBeenCalled();
   });
 });
