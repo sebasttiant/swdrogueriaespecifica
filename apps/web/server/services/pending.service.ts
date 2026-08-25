@@ -27,11 +27,13 @@ import {
   findPendingByIdempotencyKey,
   lockPendingForUpdate,
   listPendings,
+  listPendingIdentityQueue,
   listUrgentPendings,
   listUsedZones,
   updatePendingAfterDelivery,
   updatePendingManagementStatus,
   type PendingAxisFilters,
+  type PendingIdentityQueueRow,
   type PendingListItem,
   type PendingScope,
   lockPendingForEdit,
@@ -53,6 +55,8 @@ import {
   type TransactionalAuditWriter,
 } from "@/server/services/transactional-audit.service";
 import type { Paginated } from "@/lib/pagination";
+import { can, seesAllPendings, USER_ROLES } from "@/lib/auth/permissions";
+import type { SessionRole } from "@/lib/auth/session";
 import {
   nextPendingStatus,
   validateCancellation,
@@ -1106,4 +1110,73 @@ export async function getPendingForEdit(params: {
   if (!pending) return null;
   if (!params.canManageAll && pending.createdById !== params.actorId) return null;
   return pending;
+}
+
+// --------------------------------------------------------------------------
+// Cola de identidad pendiente (S2b · 2-A) — el borde autorizado.
+//
+// Acá se decide QUIÉN ve QUÉ, una sola vez, leyendo la política de
+// `permissions.ts`. El repositorio recibe el alcance ya resuelto y no vuelve a
+// opinar: dos lugares decidiendo lo mismo es cómo una de las dos copias
+// termina filtrando, y filtrando en silencio.
+// --------------------------------------------------------------------------
+
+/** Un rol sin autoridad para leer la cola. Se lanza ANTES de consultar. */
+export class PendingIdentityQueueForbiddenError extends Error {
+  constructor(readonly role: SessionRole) {
+    super(`El rol ${role} no puede leer la cola de identidad pendiente.`);
+    this.name = "PendingIdentityQueueForbiddenError";
+  }
+}
+
+/**
+ * La cola de productos que todavía esperan su código de Orion.
+ *
+ * Alcance (D8), derivado de `seesAllPendings` y no de una lista nueva de
+ * roles: gerencia —SUPERADMIN, ADMIN, SUPERVISOR— ve la cola entera; quien
+ * captura y no la ve entera —OPERADOR, BODEGA— ve solo lo que cargó.
+ *
+ * La lee QUIEN PUEDE RESOLVERLA. Completar una fila es asignarle el código a
+ * un producto YA catalogado, y eso exige `canFixProductIdentity`: la tienen
+ * SUPERADMIN, ADMIN, SUPERVISOR y BODEGA. OPERADOR no, así que se lo rechaza
+ * en el borde en vez de mostrarle una lista sobre la que no puede actuar. Su
+ * `canLinkProductIdentity` cubre otro flujo —pegar el código mientras captura
+ * un pendiente nuevo—, no esta cola.
+ *
+ * Es de LECTURA: no marca, no limpia y no toca el historial del aplazamiento.
+ */
+export async function getPendingIdentityQueue(params: {
+  role: SessionRole;
+  userId: string;
+  cursor?: string | null;
+  take?: number;
+}): Promise<Paginated<PendingIdentityQueueRow>> {
+  // La capacidad que decide es la de RESOLVER, no la de ver el módulo:
+  // `canViewPendientes` la tienen los cinco roles, así que como guarda no
+  // decidiría nada y taparía la pregunta de para quién es esta cola.
+  //
+  // El rol se coteja contra `USER_ROLES` ANTES de preguntarle a `can`, porque
+  // `can` indexa el mapa de capacidades sin defenderse: con un rol que no
+  // existe revienta con un TypeError en vez de responder que no. Un permiso
+  // tiene que resolverse en una DECISIÓN, no en un choque —y un choque, si
+  // alguien lo atrapa, no se distingue de un fallo de infraestructura.
+  const known = (USER_ROLES as readonly string[]).includes(params.role);
+  if (!known || !can(params.role, "canFixProductIdentity")) {
+    throw new PendingIdentityQueueForbiddenError(params.role);
+  }
+
+  // El repositorio lee `ownerId: undefined` como COLA ENTERA. Si un llamador
+  // olvida el `userId` de un rol acotado, el descuido se convertiría en una
+  // fuga silenciosa: más filas, sin error y sin rastro. Falla fuerte, igual
+  // que `getPendingDashboard` con su alcance de dueño.
+  const seesAll = seesAllPendings(params.role);
+  if (!seesAll && !params.userId) {
+    throw new Error("getPendingIdentityQueue: el alcance propio exige userId");
+  }
+
+  return listPendingIdentityQueue({
+    ownerId: seesAll ? undefined : params.userId,
+    cursor: params.cursor,
+    take: params.take,
+  });
 }
