@@ -667,3 +667,142 @@ export async function lockPendingForEdit(
   `;
   return rows[0] ?? null;
 }
+
+// --------------------------------------------------------------------------
+// Cola de identidad pendiente (S2b · 2-A).
+//
+// Una fila por PRODUCTO que todavía espera su código de Orion, con cuántas
+// ventas VIVAS se capturaron a ciegas contra él. El trabajo es "escribí este
+// código una vez y resolvés estas seis", así que la unidad es el producto, no
+// el pendiente —y las seis tienen que ser seis de verdad: los terminales
+// conservan su razón (D9) pero ya no son trabajo, y rankear un producto muerto
+// por ventas canceladas es enseñarle a la pantalla a mentir.
+//
+// La membresía se DERIVA del estado de hoy —motivo de aplazamiento presente y
+// producto todavía sin código—. No hay columna de cola ni booleano "ya sanó":
+// en cuanto alguien vincula el código, el producto deja de aparecer en la
+// consulta siguiente, sin backfill, sin job y sin flag que apagar.
+// --------------------------------------------------------------------------
+
+/**
+ * Lo mínimo que la cola necesita mostrar. Deliberadamente SIN datos del
+ * cliente: acá se viene a conseguir un código, no a mirar a quién se le
+ * prometió qué. Nombre y teléfono no entran ni de paso.
+ */
+export type PendingIdentityQueueRow = {
+  productId: string;
+  productName: string;
+  productCode: string;
+  pendingCount: number;
+};
+
+/**
+ * Cursor keyset de la cola: `(cantidad DESC, productId ASC)`.
+ *
+ * Lleva las DOS claves del orden porque la primera no es única —varios
+ * productos empatan en cantidad—, y un cursor que solo llevara el conteo
+ * saltearía o repetiría a todos los empatados. Viaja opaco, con el mismo
+ * codificador que el resto del proyecto.
+ */
+type PendingIdentityQueueCursor = { count: number; productId: string };
+
+function encodeQueueCursor(row: PendingIdentityQueueRow): string {
+  return encodeCursor(`${row.pendingCount}:${row.productId}`);
+}
+
+/** Techo de `int4`. El `::int` del HAVING aborta con 22003 más allá de esto. */
+const MAX_QUEUE_CURSOR_COUNT = 2147483647;
+
+/**
+ * Un cursor MAL FORMADO se descarta y se sirve la primera página. Dice mal
+ * formado y no "que no emitimos nosotros": `decodeCursor` prueba el round-trip
+ * base64, no la autoría —no hay firma—, así que uno forjado pero bien formado
+ * se honra como posición. Es benigno: a lo sumo alguien se esconde filas a sí
+ * mismo, no revela ni inyecta nada.
+ *
+ * Se EXPORTA porque el borde exacto del rango no es observable desde la
+ * consulta: ningún grupo real tiene 2147483647 filas, así que honrar el cursor
+ * y descartarlo devuelven lo mismo. La regla se prueba donde vive.
+ *
+ * El conteo tiene que ser entero, no negativo y DENTRO DEL RANGO DE `int4`:
+ * `Number.isInteger` acepta `4000000000` y `1e21`, que el `::int` rechaza
+ * abortando la consulta en vez de paginar. El id, por su lado, no puede venir
+ * vacío ni traer un NUL. Ambas partes viajan como parámetros.
+ */
+export function decodeQueueCursor(
+  cursor: string | null | undefined,
+): PendingIdentityQueueCursor | null {
+  if (!cursor) return null;
+  const raw = decodeCursor(cursor);
+  if (raw === null) return null;
+  // El NUL es el único byte hostil que llega hasta acá: sobrevive el round-trip
+  // base64 y PostgreSQL lo rechaza (22021) al recibirlo como texto. Cualquier
+  // otra secuencia inválida se vuelve U+FFFD al decodificar y ya no re-codifica
+  // igual, así que muere en `decodeCursor`.
+  if (raw.includes("\u0000")) return null;
+  const separator = raw.indexOf(":");
+  if (separator <= 0) return null;
+  const count = Number(raw.slice(0, separator));
+  const productId = raw.slice(separator + 1);
+  if (!Number.isInteger(count) || count < 0 || count > MAX_QUEUE_CURSOR_COUNT) return null;
+  if (productId.length === 0) return null;
+  return { count, productId };
+}
+
+/**
+ * La cola, ya acotada por alcance.
+ *
+ * `ownerId` llega RESUELTO: este repositorio no decide quién ve qué —esa regla
+ * vive en `permissions.ts` y la aplica el servicio—. Acá solo se traduce a un
+ * predicado, y entra en el WHERE, ANTES del `GROUP BY`: si el recorte se
+ * aplicara después de contar, el operador vería el conteo global de un
+ * producto del que solo le pertenece una fila, y la fuga sería el número.
+ *
+ * Una sola consulta: agrupa, cuenta, ordena y pagina en el mismo viaje. No hay
+ * segunda vuelta por producto para traer el nombre.
+ */
+export async function listPendingIdentityQueue(params: {
+  /** `undefined` = cola global. Con valor, solo lo que cargó esa persona. */
+  ownerId?: string;
+  cursor?: string | null;
+  take?: number;
+}): Promise<Paginated<PendingIdentityQueueRow>> {
+  const take = clampTake(params.take);
+  const cursor = decodeQueueCursor(params.cursor);
+  // Se materializan como `null` para que el mismo SQL sirva a los cuatro casos
+  // (global/propio × con cursor/sin cursor). Una sola forma de consulta se lee
+  // mejor y le deja a PostgreSQL un plan estable.
+  const ownerId = params.ownerId ?? null;
+  const cursorCount = cursor?.count ?? null;
+  const cursorProductId = cursor?.productId ?? null;
+
+  // Se pide una fila de más para saber si hay página siguiente sin contar el
+  // total, que sobre un agregado costaría una segunda pasada completa.
+  const rows = await prisma.$queryRaw<PendingIdentityQueueRow[]>`
+    SELECT
+      p."id"   AS "productId",
+      p."name" AS "productName",
+      p."code" AS "productCode",
+      COUNT(*)::int AS "pendingCount"
+    FROM "pendings" pe
+    JOIN "products" p ON p."id" = pe."productId"
+    WHERE pe."identitySkippedReason" IS NOT NULL
+      AND p."orionCode" IS NULL
+      AND pe."status"::text = ANY(${OPEN_STATUSES}::text[])
+      AND (${ownerId}::text IS NULL OR pe."createdById" = ${ownerId}::text)
+    GROUP BY p."id", p."name", p."code"
+    HAVING
+      ${cursorCount}::int IS NULL
+      OR COUNT(*) < ${cursorCount}::int
+      OR (COUNT(*) = ${cursorCount}::int AND p."id" > ${cursorProductId}::text)
+    ORDER BY COUNT(*) DESC, p."id" ASC
+    LIMIT ${take + 1}
+  `;
+
+  const items = rows.slice(0, take);
+  const last = items.at(-1);
+  return {
+    items,
+    nextCursor: rows.length > take && last ? encodeQueueCursor(last) : null,
+  };
+}

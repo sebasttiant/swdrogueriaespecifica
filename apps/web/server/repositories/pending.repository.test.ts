@@ -18,6 +18,7 @@ vi.mock("@/lib/db/prisma", () => ({ prisma: prismaMock }));
 import { encodeCursor } from "@/lib/pagination";
 import {
   cancelPending,
+  decodeQueueCursor,
   countOverduePendings,
   countUpcomingPendings,
   listPendings,
@@ -507,5 +508,29 @@ describe("updatePendingManagementStatus", () => {
     });
 
     expect(written).toBe(0);
+  });
+});
+
+// El borde del techo de int4 NO es observable a través de la consulta: ningún
+// grupo real tiene 2147483647 filas, así que honrar el cursor y descartarlo
+// devuelven exactamente las mismas filas. Se prueba sobre el decodificador,
+// que es donde la regla existe de verdad.
+describe("decodeQueueCursor · borde del rango de int4", () => {
+  it("HONRA el conteo máximo exacto", () => {
+    expect(decodeQueueCursor(encodeCursor("2147483647:abc"))).toEqual({
+      count: 2147483647,
+      productId: "abc",
+    });
+  });
+
+  it("descarta el primer conteo fuera de rango", () => {
+    expect(decodeQueueCursor(encodeCursor("2147483648:abc"))).toBeNull();
+  });
+
+  // Un NUL sobrevive el round-trip base64 y PostgreSQL lo rechaza (22021).
+  it("descarta un NUL en cualquier posición", () => {
+    const nul = String.fromCharCode(0);
+    expect(decodeQueueCursor(encodeCursor(`5:${nul}x`))).toBeNull();
+    expect(decodeQueueCursor(encodeCursor(`5${nul}:x`))).toBeNull();
   });
 });
