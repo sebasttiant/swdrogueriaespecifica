@@ -694,6 +694,8 @@ export type PendingIdentityQueueRow = {
   productName: string;
   productCode: string;
   pendingCount: number;
+  /** Versión de identidad para CAS: el formulario la necesita para no pisar lo que otro vinculó. */
+  identityVersion: number;
 };
 
 /**
@@ -783,14 +785,15 @@ export async function listPendingIdentityQueue(params: {
       p."id"   AS "productId",
       p."name" AS "productName",
       p."code" AS "productCode",
-      COUNT(*)::int AS "pendingCount"
+      COUNT(*)::int AS "pendingCount",
+      p."identityVersion" AS "identityVersion"
     FROM "pendings" pe
     JOIN "products" p ON p."id" = pe."productId"
     WHERE pe."identitySkippedReason" IS NOT NULL
       AND p."orionCode" IS NULL
       AND pe."status"::text = ANY(${OPEN_STATUSES}::text[])
       AND (${ownerId}::text IS NULL OR pe."createdById" = ${ownerId}::text)
-    GROUP BY p."id", p."name", p."code"
+    GROUP BY p."id", p."name", p."code", p."identityVersion"
     HAVING
       ${cursorCount}::int IS NULL
       OR COUNT(*) < ${cursorCount}::int

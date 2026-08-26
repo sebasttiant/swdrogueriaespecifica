@@ -13,6 +13,7 @@ function row(overrides: Partial<PendingIdentityQueueRow> = {}): PendingIdentityQ
     productName: "Acetaminofén 500mg",
     productCode: "ACE-500",
     pendingCount: 3,
+    identityVersion: 0,
     ...overrides,
   };
 }
@@ -117,7 +118,7 @@ describe("PendingIdentityQueue · estado vacío y accesibilidad", () => {
   it("declara encabezados de columna y un resumen para lector de pantalla", () => {
     const html = render({ items: [row()], nextCursor: null, pageHref });
 
-    expect(html.match(/scope="col"/g)).toHaveLength(3);
+    expect(html.match(/scope="col"/g)).toHaveLength(4);
     expect(html).toContain("<caption");
   });
 });

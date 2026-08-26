@@ -28,6 +28,7 @@ const ROW = {
   productName: "Acetaminofén 500mg",
   productCode: "ACE-500",
   pendingCount: 4,
+  identityVersion: 2,
 };
 
 beforeEach(() => {
