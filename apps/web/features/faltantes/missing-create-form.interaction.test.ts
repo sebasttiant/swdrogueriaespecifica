@@ -80,4 +80,16 @@ describe("MissingCreateForm · catalog selection", () => {
     expect((container.querySelector('input[name="productId"]') as HTMLInputElement).value).toBe("");
     expect(mocks.createMissingItemAction).not.toHaveBeenCalled();
   });
+
+  it("prevents form submission via Enter when no product is selected", async () => {
+    const user = userEvent.setup();
+    render(createElement(MissingCreateForm, { defaultOpen: true }));
+
+    // Escribimos en el campo de nota (no en el de búsqueda) y presionamos Enter.
+    // Sin la corrección, esto enviaría el formulario vacío.
+    await user.type(screen.getByPlaceholderText("Detalle operativo"), "test note{Enter}");
+
+    // La acción NO debió ser llamada: no hay producto seleccionado.
+    expect(mocks.createMissingItemAction).not.toHaveBeenCalled();
+  });
 });

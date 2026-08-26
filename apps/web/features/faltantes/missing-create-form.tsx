@@ -87,7 +87,16 @@ export function MissingCreateForm({ defaultOpen = false }: MissingCreateFormProp
   const canRetrySearch = hasFailed && search.items.length === 0;
 
   return (
-    <form action={formAction} className="space-y-3 rounded-xl border border-border bg-muted/20 p-3">
+    <form
+      action={formAction}
+      onSubmit={(event) => {
+        if (!selectedProduct) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }}
+      className="space-y-3 rounded-xl border border-border bg-muted/20 p-3"
+    >
       <Field label="Producto" htmlFor={productId}>
         <input type="hidden" name="productId" value={selectedProduct} />
         <div className="space-y-2">

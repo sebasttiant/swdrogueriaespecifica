@@ -37,6 +37,11 @@ const INITIAL_STATE: PendingFormState = { error: null, ok: false };
 // que reintente —y un reintento a ciegas es como nacen los duplicados.
 const SLOW_SUBMIT_MS = 15_000;
 
+// Timeout de recuperación: si la acción no resuelve después de este tiempo, el
+// formulario se resetea para que el operador pueda reintentar. Es seguro porque
+// el idempotencyKey garantiza que un segundo envío no duplica el pendiente.
+const STUCK_TIMEOUT_MS = 60_000;
+
 export type ProductOption = {
   id: string;
   name: string;
@@ -269,6 +274,18 @@ function PendingFormFields({
     // No hace falta apagar el aviso al terminar: cuando llega una respuesta
     // cambia `submissionId`, este componente se remonta entero y `slow` nace de
     // nuevo en false. Apagarlo a mano acá sería un render en cascada redundante.
+  }, [isPending]);
+
+  // Timeout de recuperación: si la acción lleva más de STUCK_TIMEOUT_MS sin
+  // resolver, el operador puede forzar un re-intento. Es seguro porque el
+  // idempotencyKey garantiza que un segundo envío no duplica el pendiente.
+  // No hace falta apagar el aviso al terminar: al resolverse la acción cambia
+  // submissionId y este componente se remonta entero, reseteando stuck a false.
+  const [stuck, setStuck] = useState(false);
+  useEffect(() => {
+    if (!isPending) return;
+    const timer = setTimeout(() => setStuck(true), STUCK_TIMEOUT_MS);
+    return () => clearTimeout(timer);
   }, [isPending]);
 
   return (
@@ -728,6 +745,26 @@ function PendingFormFields({
           pendiente ya quedó guardado, volver a enviarlo NO lo duplica, pero
           conviene esperar la respuesta antes de reintentar.
         </p>
+      ) : null}
+      {stuck ? (
+        <div role="alert" className="space-y-2 rounded-md border border-danger/40 p-3">
+          <p className="text-sm font-medium text-danger">
+            La conexión se cortó o el servidor no respondió. El pendiente pudo
+            haber quedado guardado.
+          </p>
+          <p className="text-sm text-muted-foreground">
+            Si cargás el mismo pendiente de nuevo, el sistema lo detecta y no lo
+            duplica.
+          </p>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => window.location.reload()}
+            className="min-h-11"
+          >
+            Recargar y volver a intentar
+          </Button>
+        </div>
       ) : null}
 
       <Button
