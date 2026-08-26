@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   checkCapability: vi.fn(),
   revalidatePath: vi.fn(),
   linkOrionCodeAtCapture: vi.fn(),
+  linkOrionCode: vi.fn(),
   findProductById: vi.fn(),
   logPendingEvent: vi.fn(),
   SkuConcurrencyError: class SkuConcurrencyError extends Error {
@@ -55,6 +56,7 @@ vi.mock("@/server/services/pending.service", () => ({
 }));
 vi.mock("@/server/services/sku-onboarding.service", () => ({
   linkOrionCodeAtCapture: mocks.linkOrionCodeAtCapture,
+  linkOrionCode: mocks.linkOrionCode,
 }));
 vi.mock("@/server/repositories/product.repository", () => ({
   findProductById: mocks.findProductById,
@@ -80,6 +82,7 @@ import {
   createPendingAction,
   deliverPendingAction,
   invoicePendingAction,
+  resolvePendingIdentityAction,
   updatePendingManagementStatusAction,
 } from "./pending.actions";
 
@@ -1448,5 +1451,135 @@ describe("contactPendingAction / invoicePendingAction", () => {
       expect(result.ok).toBe(false);
     }
     expect(mocks.invoicePending).not.toHaveBeenCalled();
+  });
+});
+
+// --------------------------------------------------------------------------
+// resolvePendingIdentityAction (S2b · 2-B2)
+// --------------------------------------------------------------------------
+
+function resolveFormData(overrides: Record<string, string> = {}) {
+  const data = new FormData();
+  data.set("productId", "prod-1");
+  data.set("expectedVersion", "2");
+  data.set("orionCode", "ORN-1001");
+  for (const [key, value] of Object.entries(overrides)) {
+    data.set(key, value);
+  }
+  return data;
+}
+
+const SESSION = { user: { id: "admin-1", role: "ADMIN" } };
+
+describe("resolvePendingIdentityAction · guard", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.checkCapability.mockResolvedValue({ ok: true, session: SESSION });
+    mocks.linkOrionCode.mockResolvedValue({ id: "prod-1", orionCode: "ORN-1001", identityVersion: 3 });
+  });
+
+  it("pasa por checkCapability('canFixProductIdentity')", async () => {
+    await resolvePendingIdentityAction(PREV, resolveFormData());
+
+    expect(mocks.checkCapability).toHaveBeenCalledWith("canFixProductIdentity");
+  });
+
+  it("rechaza si el guard dice NO_SESSION", async () => {
+    mocks.checkCapability.mockResolvedValue({ ok: false, reason: "NO_SESSION" });
+
+    const result = await resolvePendingIdentityAction(PREV, resolveFormData());
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("sesión");
+    expect(mocks.linkOrionCode).not.toHaveBeenCalled();
+  });
+
+  it("rechaza si el guard dice FORBIDDEN", async () => {
+    mocks.checkCapability.mockResolvedValue({ ok: false, reason: "FORBIDDEN" });
+
+    const result = await resolvePendingIdentityAction(PREV, resolveFormData());
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("permiso");
+    expect(mocks.linkOrionCode).not.toHaveBeenCalled();
+  });
+});
+
+describe("resolvePendingIdentityAction · validación", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.checkCapability.mockResolvedValue({ ok: true, session: SESSION });
+    mocks.linkOrionCode.mockResolvedValue({ id: "prod-1", orionCode: "ORN-1001", identityVersion: 3 });
+  });
+
+  it("rechaza un código de Orion con espacios", async () => {
+    const result = await resolvePendingIdentityAction(PREV, resolveFormData({ orionCode: "ORN 1001" }));
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("espacios");
+    expect(mocks.linkOrionCode).not.toHaveBeenCalled();
+  });
+
+  it("rechaza un productId vacío", async () => {
+    const result = await resolvePendingIdentityAction(PREV, resolveFormData({ productId: "" }));
+    expect(result.ok).toBe(false);
+    expect(mocks.linkOrionCode).not.toHaveBeenCalled();
+  });
+
+  it("rechaza un expectedVersion no numérico", async () => {
+    const result = await resolvePendingIdentityAction(PREV, resolveFormData({ expectedVersion: "abc" }));
+    expect(result.ok).toBe(false);
+    expect(mocks.linkOrionCode).not.toHaveBeenCalled();
+  });
+});
+
+describe("resolvePendingIdentityAction · escritura", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.checkCapability.mockResolvedValue({ ok: true, session: SESSION });
+    mocks.linkOrionCode.mockResolvedValue({ id: "prod-1", orionCode: "ORN-1001", identityVersion: 3 });
+  });
+
+  it("llama a linkOrionCode con LINK intent y la identidad correcta", async () => {
+    await resolvePendingIdentityAction(PREV, resolveFormData());
+
+    expect(mocks.linkOrionCode).toHaveBeenCalledWith({
+      actor: { id: "admin-1", role: "ADMIN" },
+      context: expect.anything(),
+      expectedVersion: 2,
+      identity: { productId: "prod-1" },
+      intent: "LINK",
+      orionCode: "ORN-1001",
+    });
+  });
+
+  it("devuelve ok:true y revalida las rutas correctas", async () => {
+    const result = await resolvePendingIdentityAction(PREV, resolveFormData());
+
+    expect(result).toEqual({ error: null, ok: true });
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/productos/prod-1");
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/productos");
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/revision-identidad-pendientes");
+  });
+
+  it("maneja SkuConcurrencyError devolviendo el mensaje de concurrencia", async () => {
+    mocks.linkOrionCode.mockRejectedValue(new mocks.SkuConcurrencyError());
+
+    const result = await resolvePendingIdentityAction(PREV, resolveFormData());
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("cambió");
+  });
+
+  it("maneja SkuIdentityError devolviendo el mensaje del código", async () => {
+    mocks.linkOrionCode.mockRejectedValue(new SkuIdentityError("ORION_CONFLICT"));
+
+    const result = await resolvePendingIdentityAction(PREV, resolveFormData());
+    expect(result.ok).toBe(false);
+    expect(result.error).toBeTruthy();
+  });
+
+  it("maneja errores inesperados con mensaje genérico", async () => {
+    mocks.linkOrionCode.mockRejectedValue(new Error("unexpected"));
+
+    const result = await resolvePendingIdentityAction(PREV, resolveFormData());
+    expect(result.ok).toBe(false);
+    expect(result.error).toBeTruthy();
   });
 });

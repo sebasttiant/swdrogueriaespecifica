@@ -18,6 +18,7 @@ import {
 // operador en pantalla: si otro vinculó mientras tanto, este pierde.
 
 const BODEGA = { id: "", role: "BODEGA" as const };
+const OPERADOR = { id: "", role: "OPERADOR" as const };
 const SUPERVISOR = { id: "", role: "SUPERVISOR" as const };
 
 let seq = 0;
@@ -115,7 +116,7 @@ describe("linkOrionCode", () => {
     const product = await newProduct("Dipirona");
 
     const failure = await linkOrionCode({
-      actor: SUPERVISOR,
+      actor: OPERADOR,
       identity: { internalSku: product.internalSku },
       orionCode: nextOrionCode(),
       intent: "LINK",
@@ -665,11 +666,11 @@ describe("corrección del código Orion", () => {
 // `plan.action`.
 // --------------------------------------------------------------------------
 describe("la autoridad sigue a la acción resuelta", () => {
-  it("no deja que supervisión acuñe un código pidiéndolo como corrección", async () => {
+  it("no deja que un actor sin autoridad de acuñación acuñe un código pidiéndolo como corrección", async () => {
     const product = await newProduct("Clonazepam 0.5mg");
 
     const failure = await linkOrionCode({
-      actor: SUPERVISOR,
+      actor: OPERADOR,
       identity: { productId: product.id },
       orionCode: nextOrionCode(),
       intent: "FIX",

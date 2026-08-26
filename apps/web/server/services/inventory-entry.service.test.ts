@@ -7,7 +7,7 @@ const { prismaMock, tx } = vi.hoisted(() => {
     inventoryEntry: { create: vi.fn() },
     inventoryAllocation: { create: vi.fn() },
     missingItem: { update: vi.fn() },
-    pending: { findUniqueOrThrow: vi.fn(), update: vi.fn() },
+    pending: { findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn() },
     $queryRaw: vi.fn(),
   };
   const prismaMock = {
@@ -36,6 +36,9 @@ vi.mock("@/server/repositories/missing-item.repository", () => ({
 }));
 vi.mock("@/server/repositories/missing-report.repository", () => ({
   markReportsReceivedByMissingItemIds: vi.fn(),
+}));
+vi.mock("@/server/services/notification-outbox.service", () => ({
+  enqueuePendingAvailabilityNotification: vi.fn().mockResolvedValue({ id: "outbox-1" }),
 }));
 
 import {
@@ -75,6 +78,8 @@ beforeEach(() => {
   vi.mocked(closeMissingItemsByEntry).mockResolvedValue(["m1", "m2"]);
   vi.mocked(markReportsReceivedByMissingItemIds).mockResolvedValue(2);
   tx.$queryRaw.mockResolvedValue([]);
+  // enqueuePendingAvailabilityNotification reads the pending to find its owner.
+  tx.pending.findUnique.mockResolvedValue({ id: "pending-1", createdById: "user_1" });
 });
 
 describe("registerInventoryEntry", () => {
@@ -268,6 +273,32 @@ describe("registerInventoryEntry", () => {
 
     expect(reserveReceivedBatchQuantity).toHaveBeenCalledWith(tx, "batch_1", 10);
     expect(tx.inventoryAllocation.create).toHaveBeenCalledTimes(2);
+  });
+
+  it("enqueues a notification when a pending becomes DISPONIBLE_COMPLETO", async () => {
+    const { enqueuePendingAvailabilityNotification } = await import("@/server/services/notification-outbox.service");
+    tx.$queryRaw.mockResolvedValue([{ id: "missing-1", quantity: 10, receivedQuantity: 0, originId: "pending-1" }]);
+    tx.pending.findUniqueOrThrow.mockResolvedValue({ quantity: 10, inventoryReadyQuantity: 4, reservedInventoryQuantity: 4 });
+
+    await registerInventoryEntry({ ...BASE_INPUT, quantity: 6, idempotencyKey: "notify-full" });
+
+    expect(enqueuePendingAvailabilityNotification).toHaveBeenCalledWith(
+      { pendingId: "pending-1", availabilityStatus: "DISPONIBLE_COMPLETO" },
+      tx,
+    );
+  });
+
+  it("enqueues DISPONIBLE_PARCIAL when the pending is not yet fully available", async () => {
+    const { enqueuePendingAvailabilityNotification } = await import("@/server/services/notification-outbox.service");
+    tx.$queryRaw.mockResolvedValue([{ id: "missing-1", quantity: 10, receivedQuantity: 0, originId: "pending-1" }]);
+    tx.pending.findUniqueOrThrow.mockResolvedValue({ quantity: 10, inventoryReadyQuantity: 0, reservedInventoryQuantity: 0 });
+
+    await registerInventoryEntry({ ...BASE_INPUT, quantity: 3, idempotencyKey: "notify-partial" });
+
+    expect(enqueuePendingAvailabilityNotification).toHaveBeenCalledWith(
+      { pendingId: "pending-1", availabilityStatus: "DISPONIBLE_PARCIAL" },
+      tx,
+    );
   });
 });
 

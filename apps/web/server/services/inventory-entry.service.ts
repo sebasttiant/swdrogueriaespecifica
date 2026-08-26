@@ -29,6 +29,10 @@ import {
   listInventoryEntries,
   type InventoryEntryListItem,
 } from "@/server/repositories/inventory-entry.repository";
+import {
+  enqueuePendingAvailabilityNotification,
+  type AvailabilityStatus,
+} from "@/server/services/notification-outbox.service";
 
 export type RegisterInventoryEntryInput = {
   productId: string;
@@ -144,11 +148,19 @@ export async function registerInventoryEntry(
       if (item.originId) {
         const pending = await tx.pending.findUniqueOrThrow({ where: { id: item.originId }, select: { quantity: true, inventoryReadyQuantity: true, reservedInventoryQuantity: true } });
         const inventoryReadyQuantity = Math.min(pending.quantity, pending.inventoryReadyQuantity + allocated);
+        const availabilityStatus: AvailabilityStatus =
+          inventoryReadyQuantity === pending.quantity ? "DISPONIBLE_COMPLETO" : "DISPONIBLE_PARCIAL";
         await tx.pending.update({ where: { id: item.originId }, data: {
           inventoryReadyQuantity,
           reservedInventoryQuantity: pending.reservedInventoryQuantity + allocated,
-          availabilityStatus: inventoryReadyQuantity === pending.quantity ? "DISPONIBLE_COMPLETO" : "DISPONIBLE_PARCIAL",
+          availabilityStatus,
         }});
+        // Avisa al vendedor que su pendiente ya tiene stock disponible. DENTRO
+        // de la transacción: si el batch se revierte, la notificación también.
+        await enqueuePendingAvailabilityNotification(
+          { pendingId: item.originId, availabilityStatus },
+          tx,
+        );
         await reserveBatchForPending(tx, item.originId, batch.id, allocated);
       }
       remaining -= allocated;

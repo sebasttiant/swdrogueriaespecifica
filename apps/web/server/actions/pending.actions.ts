@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
-import { checkCapability, requireCapability } from "@/lib/auth/require-role";
+import { checkCapability, requireCapability, type CapabilityDenial } from "@/lib/auth/require-role";
 import { can } from "@/lib/auth/permissions";
 import { hashEmail, maskPhone, describeText } from "@/lib/observability/redaction";
 import { newSupportCode } from "@/lib/observability/support-code";
@@ -31,11 +31,12 @@ import {
   registerPending,
   setPendingManagementStatus,
 } from "@/server/services/pending.service";
-import { linkOrionCodeAtCapture } from "@/server/services/sku-onboarding.service";
+import { linkOrionCodeAtCapture, linkOrionCode } from "@/server/services/sku-onboarding.service";
 import { findProductById } from "@/server/repositories/product.repository";
 import { SkuConcurrencyError } from "@/server/repositories/sku-review.repository";
 import { SkuIdentityError } from "@/server/domain/catalog/sku-identity";
-import { SKU_IDENTITY_CONCURRENCY_MESSAGE } from "@/features/productos/sku-identity-messages";
+import { SKU_IDENTITY_CONCURRENCY_MESSAGE, messageForIdentityError } from "@/features/productos/sku-identity-messages";
+import { orionLinkSchema } from "@/features/productos/schema";
 import type { Prisma } from "@/lib/generated/prisma/client";
 import type { DeliveryRejection } from "@/features/pendientes/delivery-rules";
 import {
@@ -55,6 +56,16 @@ import {
 // La regla de déficit (genera faltante) vive en el service; acá solo auditamos
 // cada efecto de forma best-effort.
 // --------------------------------------------------------------------------
+
+function pendingAuthorizationMessage(reason: CapabilityDenial): string {
+  if (reason === "NO_SESSION") {
+    return "Tu sesión venció. Abrí el ingreso en otra pestaña, iniciá sesión de nuevo y volvé acá.";
+  }
+  if (reason === "INACTIVE") {
+    return "Tu usuario está inactivo. Pedile a un administrador que lo reactive.";
+  }
+  return "Tu usuario no tiene permiso para realizar esta acción. Pedile a un administrador que lo habilite.";
+}
 
 export interface PendingOrionConflictHolder {
   productId: string;
@@ -1393,4 +1404,70 @@ export async function updatePendingAction(
   // volver al listado. Quedarse en el formulario en blanco no le decía a nadie
   // si había guardado. `redirect` lanza: nada después de esta línea corre.
   redirect("/pendientes");
+}
+
+// --------------------------------------------------------------------------
+// Resolver un producto de la cola de identidad pendiente (S2b · 2-B2).
+//
+// Vincula el código de Orion de un producto que quedó sin identidad porque
+// alguien usó la salida con motivo al capturar. Es la misma operación que el
+// vínculo del catálogo, pero con otra autoridad: `canFixProductIdentity` en
+// vez de `canManageProducts`. SUPERVISOR entra; OPERADOR no.
+//
+// Revalida tanto la página del producto como la cola, porque el producto sale
+// de la cola al recibir su código.
+// --------------------------------------------------------------------------
+export type ResolvePendingIdentityState = { error: string | null; ok: boolean };
+
+export async function resolvePendingIdentityAction(
+  _prev: ResolvePendingIdentityState,
+  formData: FormData,
+): Promise<ResolvePendingIdentityState> {
+  const authorization = await checkCapability("canFixProductIdentity");
+  if (!authorization.ok) {
+    return { error: pendingAuthorizationMessage(authorization.reason), ok: false };
+  }
+  const session = authorization.session;
+
+  const parsed = orionLinkSchema.safeParse({
+    expectedVersion: formData.get("expectedVersion"),
+    orionCode: formData.get("orionCode"),
+    productId: formData.get("productId"),
+  });
+
+  if (!parsed.success) {
+    return {
+      error: parsed.error.issues[0]?.message ?? "Revisá los datos del vínculo.",
+      ok: false,
+    };
+  }
+
+  try {
+    await linkOrionCode({
+      actor: { id: session.user.id, role: session.user.role },
+      context: await auditContextFromHeaders(session.user.id),
+      expectedVersion: parsed.data.expectedVersion,
+      identity: { productId: parsed.data.productId },
+      intent: "LINK",
+      orionCode: parsed.data.orionCode,
+    });
+  } catch (error) {
+    if (error instanceof SkuConcurrencyError) {
+      return { error: SKU_IDENTITY_CONCURRENCY_MESSAGE, ok: false };
+    }
+    if (error instanceof SkuIdentityError) {
+      return { error: messageForIdentityError(error.code), ok: false };
+    }
+    return { error: messageForIdentityError(undefined), ok: false };
+  }
+
+  try {
+    revalidatePath(`/productos/${parsed.data.productId}`);
+    revalidatePath("/productos");
+    revalidatePath("/revision-identidad-pendientes");
+  } catch (error) {
+    console.error(`[pendientes] resolveIdentity escrita, pero falló el refresco:`, error);
+  }
+
+  return { error: null, ok: true };
 }

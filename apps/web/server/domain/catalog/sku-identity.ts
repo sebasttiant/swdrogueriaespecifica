@@ -47,13 +47,16 @@ export class SkuIdentityError extends Error {
 // Quién puede acuñar identidad.
 //
 // BODEGA entra porque recibe mercadería que todavía no está en el catálogo y
-// necesita darla de alta para poder registrarla. Supervisión y vendedores NO:
-// ven el catálogo, pero crear identidad canónica es otra cosa.
+// necesita darla de alta para poder registrarla. SUPERVISOR entra porque puede
+// resolver la cola de identidad pendiente (S2b · 2-B2): si ve la cola, tiene
+// que poder actuar. OPERADOR no: su única corrección va por su propio
+// pendiente, con el límite de una sola vez que ya rige ahí.
 // --------------------------------------------------------------------------
 
 export const SKU_ONBOARDING_ROLES: readonly SessionRole[] = [
   "SUPERADMIN",
   "ADMIN",
+  "SUPERVISOR",
   "BODEGA",
 ];
 

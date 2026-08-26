@@ -42,19 +42,19 @@ const RANDOMNESS = new Uint8Array([
 ]);
 
 describe("canOnboardSku", () => {
-  it("autoriza a quienes reciben mercadería y a la administración", () => {
-    for (const role of ["SUPERADMIN", "ADMIN", "BODEGA"] as const) {
+  // SUPERVISOR entra porque resuelve la cola de identidad pendiente (S2b · 2-B2):
+  // si ve la cola, tiene que poder vincular el código de Orion.
+  it("autoriza a administración, bodega y supervisión", () => {
+    for (const role of ["SUPERADMIN", "ADMIN", "SUPERVISOR", "BODEGA"] as const) {
       expect(canOnboardSku(role)).toBe(true);
     }
   });
 
-  // Acuñar identidad canónica no es supervisar ni vender: quien no está en la
-  // lista no crea SKU, aunque vea el catálogo.
-  it("niega a supervisión y a los vendedores", () => {
-    for (const role of ["SUPERVISOR", "OPERADOR"] as const) {
-      expect(canOnboardSku(role)).toBe(false);
-      expect(codeOf(() => assertCanOnboardSku(role))).toBe("FORBIDDEN_ACTOR");
-    }
+  // OPERADOR no: su única corrección va por su propio pendiente, con el límite
+  // de una sola vez que ya rige ahí.
+  it("niega a OPERADOR", () => {
+    expect(canOnboardSku("OPERADOR")).toBe(false);
+    expect(codeOf(() => assertCanOnboardSku("OPERADOR"))).toBe("FORBIDDEN_ACTOR");
   });
 
   it("deja pasar al actor autorizado sin lanzar", () => {
@@ -444,10 +444,13 @@ describe("canLinkAtCapture", () => {
     );
   });
 
-  // Ampliarla le daría al vendedor el alta de catálogo, que es justo lo que la
-  // capacidad angosta evita.
-  it("no toca la autoridad de acuñación", () => {
-    expect([...SKU_ONBOARDING_ROLES].sort()).toEqual(["ADMIN", "BODEGA", "SUPERADMIN"].sort());
+  // SUPERVISOR entra porque resuelve la cola de identidad pendiente (S2b · 2-B2):
+  // si ve la cola, tiene que poder actuar. OPERADOR no: su única corrección va
+  // por su propio pendiente.
+  it("incluye SUPERVISOR (resuelve la cola) y excluye OPERADOR", () => {
+    expect([...SKU_ONBOARDING_ROLES].sort()).toEqual(
+      ["ADMIN", "BODEGA", "SUPERADMIN", "SUPERVISOR"].sort(),
+    );
   });
 
   // Los cinco roles reales capturan, así que el rechazo solo se ejercita con uno
