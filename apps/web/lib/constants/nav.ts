@@ -9,6 +9,7 @@ import {
   ShieldCheck,
   Users,
   Inbox,
+  ScanBarcode,
   type LucideIcon,
 } from "lucide-react";
 
@@ -39,6 +40,12 @@ export const NAV_ITEMS: readonly NavItem[] = [
   // tampoco ocupa lugar en la barra móvil. La diferencia con el de arriba es a
   // quién alcanza: esta la ve también el vendedor, acotada a sus propias filas.
   { label: "Revisión de pendientes", href: "/revision-pendientes", icon: ClipboardCheck, capability: "canReviewPendings" },
+  // Va con las otras dos superficies de revisión y tampoco ocupa lugar en la
+  // barra móvil. Se gatea con `canFixProductIdentity` —la MISMA capacidad que
+  // exige `getPendingIdentityQueue`— porque la cola la lee quien puede
+  // resolverla. Una capacidad propia acá sería una segunda matriz de permisos,
+  // y el día que se separen el menú mostraría un link que termina en redirect.
+  { label: "Revisión de identidad", href: "/revision-identidad-pendientes", icon: ScanBarcode, capability: "canFixProductIdentity" },
   { label: "Entradas", href: "/entradas", icon: PackagePlus, primaryMobile: true, capability: "canViewEntradas" },
   { label: "Productos", href: "/productos", icon: Package, capability: "canViewProductos" },
   { label: "Reportes", href: "/reportes", icon: BarChart3, capability: "canViewReports" },

@@ -56,6 +56,8 @@ describe("visibleNavItems", () => {
       "Faltantes",
       // Agregado por T4.2b·A. No se quitó ninguno de los anteriores.
       "Revisión de pendientes",
+      // Agregado por S2b·2-B1: SUPERVISOR tiene `canFixProductIdentity`.
+      "Revisión de identidad",
       "Entradas",
       "Productos",
     ]);
@@ -119,6 +121,40 @@ describe("visibleNavItems · revisión de pendientes", () => {
   it("no ocupa un lugar en la barra inferior móvil", () => {
     const item = visibleNavItems("ADMIN").find(
       (navItem) => navItem.href === "/revision-pendientes",
+    );
+    expect(item).toBeDefined();
+    expect(item?.primaryMobile).toBeUndefined();
+  });
+});
+
+// --------------------------------------------------------------------------
+// Revisión de identidad (S2b · 2-B1).
+//
+// Se gatea con la MISMA capacidad que el servicio de la cola: la lee quien
+// puede resolverla. Un item de nav con su propia capacidad sería una segunda
+// matriz de permisos, y el día que una cambie la otra queda mostrando un link
+// que lleva a un redirect.
+// --------------------------------------------------------------------------
+describe("Revisión de identidad", () => {
+  it("la ven los roles que pueden corregir la identidad de un producto", () => {
+    for (const role of ["SUPERADMIN", "ADMIN", "SUPERVISOR", "BODEGA"] as const) {
+      expect(labels(role)).toContain("Revisión de identidad");
+    }
+  });
+
+  // OPERADOR queda afuera en el borde del servicio: no puede resolver una sola
+  // fila. Mostrarle el link sería mandarlo a un redirect.
+  it("OPERADOR no la ve", () => {
+    expect(labels("OPERADOR")).not.toContain("Revisión de identidad");
+  });
+
+  it("sin sesión no aparece", () => {
+    expect(labels(null)).not.toContain("Revisión de identidad");
+  });
+
+  it("no ocupa un lugar en la barra inferior móvil", () => {
+    const item = visibleNavItems("ADMIN").find(
+      (navItem) => navItem.href === "/revision-identidad-pendientes",
     );
     expect(item).toBeDefined();
     expect(item?.primaryMobile).toBeUndefined();
