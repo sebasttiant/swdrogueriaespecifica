@@ -5,6 +5,7 @@ import { useActionState } from "react";
 import { Button } from "@/app/_components/ui/button";
 import { Field } from "@/app/_components/ui/field";
 import { Input } from "@/app/_components/ui/input";
+import { Select } from "@/app/_components/ui/select";
 import {
   createProductAction,
   type ProductFormState,
@@ -12,8 +13,10 @@ import {
 
 const INITIAL_STATE: ProductFormState = { error: null, ok: false };
 
+type Laboratory = { id: string; name: string };
+
 // Alta de producto. Solo se monta para SUPERADMIN/ADMIN (la página decide).
-export function ProductForm() {
+export function ProductForm({ laboratories = [] }: { laboratories?: Laboratory[] }) {
   const [state, formAction, isPending] = useActionState(
     createProductAction,
     INITIAL_STATE,
@@ -54,6 +57,18 @@ export function ProductForm() {
             defaultValue={0}
           />
         </Field>
+        {laboratories.length > 0 ? (
+          <Field label="Laboratorio" htmlFor="laboratoryId">
+            <Select id="laboratoryId" name="laboratoryId" defaultValue="">
+              <option value="">Sin laboratorio</option>
+              {laboratories.map((lab) => (
+                <option key={lab.id} value={lab.id}>
+                  {lab.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        ) : null}
       </div>
 
       {state.error ? (

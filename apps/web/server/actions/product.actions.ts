@@ -53,6 +53,7 @@ export async function createProductAction(
     unit: formData.get("unit"),
     minStock: formData.get("minStock"),
     reorderQty: formData.get("reorderQty"),
+    laboratoryId: formData.get("laboratoryId") || undefined,
   });
 
   if (!parsed.success) {

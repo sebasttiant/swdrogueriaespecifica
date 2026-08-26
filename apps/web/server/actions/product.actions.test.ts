@@ -58,6 +58,23 @@ describe("createProductAction · guard DB-authoritative", () => {
     expect(requireCapability).toHaveBeenCalledWith("canManageProducts");
   });
 
+  it("pasa laboratoryId al servicio cuando se provee", async () => {
+    requireCapability.mockResolvedValue(session);
+    safeParse.mockReturnValue({
+      success: true,
+      data: { code: "P2", name: "Prod2", unit: "u", minStock: 0, reorderQty: 0, laboratoryId: "lab-1" },
+    });
+    addProduct.mockResolvedValue({ id: "p2" });
+
+    const fd = new FormData();
+    fd.set("laboratoryId", "lab-1");
+    await createProductAction(PREV, fd);
+
+    expect(addProduct).toHaveBeenCalledWith(
+      expect.objectContaining({ laboratoryId: "lab-1" }),
+    );
+  });
+
   it("un usuario degradado/desactivado (guard redirige) NO llega a mutar", async () => {
     // requireCapability detecta el estado real en la base y corta con redirect
     // (que en Next lanza). El JWT stale no alcanza para crear productos.
