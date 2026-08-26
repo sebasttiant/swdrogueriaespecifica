@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { createElement } from "react";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -433,5 +433,62 @@ describe("PendingForm · diagnóstico del envío", () => {
     await submitWithClick(user2);
     await waitFor(() => expect(mocks.createPendingAction).toHaveBeenCalledTimes(1));
     expect(lastFormData().get("submitMethod")).toBe("click");
+  });
+});
+
+describe("PendingForm · timeout de acción colgada", () => {
+  const STUCK_MS = 30_000;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("muestra aviso de timeout después de 30s cuando la acción no responde", async () => {
+    // La acción nunca resuelve: simula un servidor colgado.
+    mocks.createPendingAction.mockImplementation(
+      () => new Promise<PendingFormState>(() => {}),
+    );
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderForm();
+
+    await fillForm(user);
+    await submitWithClick(user);
+
+    // Inmediatamente después del envío: el botón dice "Guardando…".
+    expect(screen.getByText("Guardando…")).toBeTruthy();
+    expect(screen.queryByText(/tardando/i)).toBeNull();
+
+    // Avanzamos el timer 30s: el aviso de timeout debe aparecer.
+    vi.advanceTimersByTime(STUCK_MS);
+
+    await waitFor(() => {
+      expect(screen.getByText(/tardando más de lo normal/i)).toBeTruthy();
+    });
+  });
+
+  it("el botón permanece deshabilitado mientras la acción está en vuelo", async () => {
+    mocks.createPendingAction.mockImplementation(
+      () => new Promise<PendingFormState>(() => {}),
+    );
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderForm();
+
+    await fillForm(user);
+    await submitWithClick(user);
+
+    const button = screen.getByRole("button", { name: /guardando/i });
+    expect(button.hasAttribute("disabled")).toBe(true);
+
+    vi.advanceTimersByTime(STUCK_MS);
+    await waitFor(() => {
+      expect(screen.getByText(/tardando más de lo normal/i)).toBeTruthy();
+    });
+
+    // El botón sigue deshabilitado: no se puede reenviar sin resolver.
+    expect(button.hasAttribute("disabled")).toBe(true);
   });
 });
