@@ -45,6 +45,8 @@ export type CreateProductData = {
   // nace con su identidad nunca existe —ni por un instante— sin ella, así que
   // no hay ventana en la que otro proceso lo vea sin código y se lo asigne.
   orionCode?: string | null;
+  // Laboratorio asociado al producto (opcional).
+  laboratoryId?: string | null;
 };
 
 // Include the batch with the earliest expiry (quantity > 0) per product.

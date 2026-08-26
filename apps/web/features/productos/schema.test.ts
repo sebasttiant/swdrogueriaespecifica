@@ -39,6 +39,44 @@ describe("productCreateSchema", () => {
       expect(result.data.reorderQty).toBe(0);
     }
   });
+
+  it("acepta laboratoryId como string válido", () => {
+    const result = productCreateSchema.safeParse({
+      code: "SKU-012",
+      name: "Ibuprofeno",
+      unit: "caja",
+      laboratoryId: "lab-1",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.laboratoryId).toBe("lab-1");
+    }
+  });
+
+  it("acepta laboratoryId ausente (opcional)", () => {
+    const result = productCreateSchema.safeParse({
+      code: "SKU-013",
+      name: "Paracetamol",
+      unit: "caja",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.laboratoryId).toBeUndefined();
+    }
+  });
+
+  it("trimea laboratoryId con espacios", () => {
+    const result = productCreateSchema.safeParse({
+      code: "SKU-014",
+      name: "Amoxicilina",
+      unit: "caja",
+      laboratoryId: "  lab-2  ",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.laboratoryId).toBe("lab-2");
+    }
+  });
 });
 
 

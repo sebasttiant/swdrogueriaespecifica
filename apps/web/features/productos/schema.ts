@@ -8,6 +8,7 @@ export const productCreateSchema = z.object({
   unit: z.string().trim().min(1, "La unidad es obligatoria").max(20),
   minStock: z.coerce.number().int().min(0).default(0),
   reorderQty: z.coerce.number().int().min(0).default(0),
+  laboratoryId: z.string().trim().optional(),
 });
 
 export type ProductCreateInput = z.infer<typeof productCreateSchema>;
