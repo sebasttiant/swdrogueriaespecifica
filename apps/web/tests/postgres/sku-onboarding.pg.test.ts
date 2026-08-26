@@ -21,6 +21,7 @@ function nextCommandKey(): string {
 }
 
 const BODEGA = { id: "", role: "BODEGA" as const };
+const OPERADOR = { id: "", role: "OPERADOR" as const };
 const SUPERVISOR = { id: "", role: "SUPERVISOR" as const };
 
 beforeAll(async () => {
@@ -92,7 +93,7 @@ describe("onboardProvisionalSku", () => {
     const before = await prisma.product.count();
 
     const failure = await onboardProvisionalSku({
-      actor: SUPERVISOR,
+      actor: OPERADOR,
       name: "Dipirona",
       unit: "unidad",
       commandKey: nextCommandKey(),

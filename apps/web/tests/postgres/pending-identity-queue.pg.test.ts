@@ -175,6 +175,7 @@ describe("listPendingIdentityQueue", () => {
     );
 
     expect(Object.keys(row ?? {}).sort()).toEqual([
+      "identityVersion",
       "pendingCount",
       "productCode",
       "productId",
