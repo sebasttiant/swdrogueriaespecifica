@@ -126,7 +126,6 @@ export function LaboratorySearch({
             <Button
               type="button"
               variant="ghost"
-              size="sm"
               onClick={handleClear}
               className="absolute right-1 top-1/2 -translate-y-1/2 h-7 px-2 text-xs"
             >
