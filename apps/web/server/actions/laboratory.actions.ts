@@ -10,7 +10,7 @@
 
 "use server";
 
-import { auth } from "@/lib/auth/auth";
+import { getCurrentSession } from "@/lib/auth/index.node";
 import { normalizeLaboratoryName } from "@/server/domain/laboratory/identity";
 import {
   findOrCreateLaboratory,
@@ -82,7 +82,7 @@ export async function createLaboratoryAction(
   name: string,
 ): Promise<CreateLaboratoryResult> {
   try {
-    const session = await auth();
+    const session = await getCurrentSession();
     const user = session?.user;
 
     if (!user) {

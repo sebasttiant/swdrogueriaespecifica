@@ -5,6 +5,7 @@ import { useActionState, useEffect, useId, useRef, useState } from "react";
 import { Button } from "@/app/_components/ui/button";
 import { Field } from "@/app/_components/ui/field";
 import { Input } from "@/app/_components/ui/input";
+import { LaboratorySearch } from "@/features/productos/laboratory-search";
 import { Select } from "@/app/_components/ui/select";
 import { newAttemptKey } from "@/features/pendientes/attempt-key";
 import {
@@ -613,6 +614,17 @@ function PendingFormFields({
             defaultValue={previous.customerAddress ?? ""}
           />
         </Field>
+        {/* T3: Laboratorio solicitado por el cliente. Requerido en captura nueva.
+            Autocomplete con búsqueda normalizada (T2). */}
+        <div className="sm:col-span-2">
+          <LaboratorySearch
+            name="requestedLaboratoryId"
+            nameForLabel="requestedLaboratoryName"
+            defaultSelectedId={previous.requestedLaboratoryId}
+            defaultSelectedName={previous.requestedLaboratoryName}
+            required
+          />
+        </div>
         {/* Pago: dos montos y NADA más. El "pagado totalmente" no es un campo,
             es el resultado de que el abono cubra el total — se muestra abajo. */}
         <div className="space-y-3 sm:col-span-2">

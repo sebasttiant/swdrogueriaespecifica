@@ -547,6 +547,7 @@ describe("createMissingItem", () => {
         createdById: "admin-1",
         note: "Prioridad mostrador",
         sellerCode: "VEN-12",
+        requestedLaboratoryId: "lab-1",
       }),
     ).resolves.toEqual({ id: "missing-manual" });
 
@@ -558,6 +559,7 @@ describe("createMissingItem", () => {
         createdById: "admin-1",
         note: "Prioridad mostrador",
         sellerCode: "VEN-12",
+        requestedLaboratoryId: "lab-1",
       },
     });
   });
@@ -570,6 +572,7 @@ describe("createMissingItem", () => {
     const args = prismaMock.missingItem.create.mock.calls[0]![0];
     expect(args.data.note).toBeNull();
     expect(args.data.sellerCode).toBeNull();
+    expect(args.data.requestedLaboratoryId).toBeNull();
     expect(args.data.confirmationNote).toBeUndefined();
   });
 });

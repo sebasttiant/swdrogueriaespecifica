@@ -17,6 +17,8 @@ const validInput = {
   // no es válido, así que forman parte de la base reutilizable.
   customerName: "Ana Pérez",
   customerPhone: "300 123 4567",
+  // T3: laboratorio solicitado.
+  requestedLaboratoryId: "lab-1",
 };
 
 describe("pendingCreateSchema", () => {

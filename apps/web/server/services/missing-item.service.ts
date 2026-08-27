@@ -89,6 +89,8 @@ export type CreateManualMissingItemInput = {
   createdById?: string | null;
   note?: string;
   sellerCode?: string | null;
+  // T3: laboratorio solicitado por el cliente.
+  requestedLaboratoryId?: string;
 };
 
 // `MissingItem.quantity` remains mandatory because automatic shortages retain
@@ -181,6 +183,7 @@ export async function createManualMissingItem(input: CreateManualMissingItemInpu
     createdById: input.createdById ?? null,
     note: input.note,
     sellerCode: input.sellerCode ?? null,
+    requestedLaboratoryId: input.requestedLaboratoryId ?? null,
   });
 }
 

@@ -142,6 +142,9 @@ export type PendingSubmittedValues = {
   orionCode: string;
   identitySkippedReason: string;
   identitySkippedNote: string;
+  // T3: laboratorio solicitado por el cliente.
+  requestedLaboratoryId: string;
+  requestedLaboratoryName: string;
 };
 
 const SUBMITTED_FIELDS = [
@@ -162,6 +165,8 @@ const SUBMITTED_FIELDS = [
   "orionCode",
   "identitySkippedReason",
   "identitySkippedNote",
+  "requestedLaboratoryId",
+  "requestedLaboratoryName",
 ] as const satisfies readonly (keyof PendingSubmittedValues)[];
 
 /** Lee un campo como texto. `null`/`File` se normalizan a cadena vacía. */

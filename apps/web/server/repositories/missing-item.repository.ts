@@ -88,6 +88,8 @@ export type CreateMissingItemData = {
   status?: MissingItemStatus;
   orderedAt?: Date;
   orderedById?: string;
+  // T3: laboratorio solicitado por el cliente.
+  requestedLaboratoryId?: string | null;
 };
 
 // Vistas de la cola operativa. Cada una responde una pregunta distinta del
@@ -441,6 +443,8 @@ export async function createMissingItem(
       orderedAt: data.orderedAt,
       orderedById: data.orderedById,
       orderedQuantity: data.orderedQuantity,
+      // T3: laboratorio solicitado por el cliente.
+      requestedLaboratoryId: data.requestedLaboratoryId ?? null,
     },
   });
 }

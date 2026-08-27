@@ -6,6 +6,7 @@ import { useActionState, useId, useRef, useState } from "react";
 import { Button } from "@/app/_components/ui/button";
 import { Field } from "@/app/_components/ui/field";
 import { Input } from "@/app/_components/ui/input";
+import { LaboratorySearch } from "@/features/productos/laboratory-search";
 import {
   INITIAL_PRODUCT_SEARCH_STATE,
   productSelected,
@@ -185,6 +186,12 @@ export function MissingCreateForm({ defaultOpen = false }: MissingCreateFormProp
           placeholder="Ej: V001, VEN-12"
         />
       </Field>
+
+      <LaboratorySearch
+        name="requestedLaboratoryId"
+        label="Laboratorio (opcional)"
+        placeholder="Buscá por nombre del laboratorio"
+      />
 
       <Field label="Nota (opcional)" htmlFor={noteId}>
         <Input id={noteId} name="note" maxLength={300} placeholder="Detalle operativo" />

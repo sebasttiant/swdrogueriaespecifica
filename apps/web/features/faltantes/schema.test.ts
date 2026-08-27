@@ -206,6 +206,7 @@ describe("manualMissingItemCreateSchema", () => {
       productId: "  prod-1  ",
       sellerCode: "  VEN-12  ",
       note: "  Prioridad mostrador  ",
+      requestedLaboratoryId: "lab-1",
     });
 
     expect(result.success).toBe(true);
@@ -214,6 +215,7 @@ describe("manualMissingItemCreateSchema", () => {
         productId: "prod-1",
         sellerCode: "VEN-12",
         note: "Prioridad mostrador",
+        requestedLaboratoryId: "lab-1",
       });
     }
   });
@@ -223,6 +225,7 @@ describe("manualMissingItemCreateSchema", () => {
       productId: "prod-1",
       sellerCode: "   ",
       note: "   ",
+      requestedLaboratoryId: "lab-1",
     });
 
     expect(result.success).toBe(true);
@@ -234,10 +237,10 @@ describe("manualMissingItemCreateSchema", () => {
 
   it("rejects a missing productId and seller codes longer than 40 characters", () => {
     expect(
-      manualMissingItemCreateSchema.safeParse({ productId: "" }).success,
+      manualMissingItemCreateSchema.safeParse({ productId: "", requestedLaboratoryId: "lab-1" }).success,
     ).toBe(false);
     expect(
-      manualMissingItemCreateSchema.safeParse({ productId: "prod-1", sellerCode: "x".repeat(41) }).success,
+      manualMissingItemCreateSchema.safeParse({ productId: "prod-1", sellerCode: "x".repeat(41), requestedLaboratoryId: "lab-1" }).success,
     ).toBe(false);
   });
 });

@@ -56,6 +56,7 @@ export async function createMissingItemAction(
     productId: formData.get("productId"),
     sellerCode: formData.get("sellerCode") ?? undefined,
     note: formData.get("note") ?? undefined,
+    requestedLaboratoryId: formData.get("requestedLaboratoryId") ?? undefined,
   });
 
   if (!parsed.success) {

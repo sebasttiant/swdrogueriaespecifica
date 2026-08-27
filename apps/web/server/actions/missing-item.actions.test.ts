@@ -64,6 +64,7 @@ function manualMissingFormData() {
   data.set("productId", "prod-1");
   data.set("sellerCode", "VEN-12");
   data.set("note", "Prioridad mostrador");
+  data.set("requestedLaboratoryId", "lab-1");
   return data;
 }
 

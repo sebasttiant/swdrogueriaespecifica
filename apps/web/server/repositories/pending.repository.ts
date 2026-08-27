@@ -106,6 +106,8 @@ export type CreatePendingData = {
   requestFingerprint: string;
   identitySkippedReason?: PendingIdentityDeferral;
   identitySkippedNote?: string;
+  // T3: laboratorio solicitado por el cliente.
+  requestedLaboratoryId?: string;
 };
 
 const LIST_SELECT = {
@@ -413,6 +415,9 @@ export async function createPending(
         : (data.inventoryReadyQuantity ?? 0) === data.quantity
           ? "DISPONIBLE_COMPLETO"
           : "DISPONIBLE_PARCIAL",
+      // T3: laboratorio solicitado por el cliente.
+      requestedLaboratoryId: data.requestedLaboratoryId ?? null,
+      laboratoryChangeSource: data.requestedLaboratoryId ? "CAPTURED" : null,
     },
   });
 }

@@ -91,6 +91,11 @@ export const manualMissingItemCreateSchema = z.object({
   productId: z.string().trim().min(1, { error: "Elegí un producto." }),
   sellerCode: z.string().trim().max(40).optional().transform((value) => (value && value.length > 0 ? value : undefined)),
   note: optionalText(300),
+  // T3: laboratorio solicitado. Requerido en alta manual.
+  requestedLaboratoryId: z
+    .string({ error: "Elegí un laboratorio." })
+    .trim()
+    .min(1, { error: "Elegí un laboratorio." }),
 });
 
 export type ManualMissingItemCreateInput = z.infer<

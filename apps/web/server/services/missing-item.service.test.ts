@@ -395,6 +395,7 @@ describe("createManualMissingItem", () => {
       note: "Prioridad mostrador",
       sellerCode: "VEN-12",
       createdById: "admin-1",
+      requestedLaboratoryId: "lab-1",
     });
 
     expect(result).toEqual(
@@ -412,6 +413,7 @@ describe("createManualMissingItem", () => {
       createdById: "admin-1",
       note: "Prioridad mostrador",
       sellerCode: "VEN-12",
+      requestedLaboratoryId: "lab-1",
     });
   });
 

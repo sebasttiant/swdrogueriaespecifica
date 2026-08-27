@@ -243,6 +243,14 @@ export const pendingCreateSchema = z
       })
       .optional()
       .transform((value) => (value && value.length > 0 ? value : undefined)),
+    // ------------------------------------------------------------------
+    // Trazabilidad de laboratorio (T3): laboratorio solicitado por el cliente.
+    // Requerido en captura nueva. NULL en registros históricos.
+    // ------------------------------------------------------------------
+    requestedLaboratoryId: z
+      .string({ error: "Elegí un laboratorio." })
+      .trim()
+      .min(1, { error: "Elegí un laboratorio." }),
   })
   .superRefine((data, ctx) => {
     const hasCatalog = Boolean(data.productId);
@@ -328,6 +336,8 @@ export const pendingCreateSchema = z
       // aplazamiento, ni al revés. `undefined` = no vino identidad en este
       // envío, que en la rama catálogo es legítimo.
       identity: identityOf(data),
+      // T3: laboratorio solicitado por el cliente.
+      requestedLaboratoryId: data.requestedLaboratoryId,
     };
     // Rama catálogo: referimos al producto existente, sin producto manual.
     if (data.productId) {

@@ -98,6 +98,8 @@ export type RegisterPendingInput = {
   // Clave del INTENTO. Obligatoria para toda alta nueva; las filas históricas
   // siguen nullable únicamente por compatibilidad de datos.
   idempotencyKey: string;
+  // T3: laboratorio solicitado por el cliente. Requerido en captura nueva.
+  requestedLaboratoryId?: string;
 };
 
 /**
@@ -513,6 +515,7 @@ function createPendingRegistration(
         requestFingerprint: fingerprint,
         identitySkippedReason: data.identitySkippedReason,
         identitySkippedNote: data.identitySkippedNote,
+        requestedLaboratoryId: data.requestedLaboratoryId,
       }, tx,
     );
     if (data.identitySkippedReason) {
