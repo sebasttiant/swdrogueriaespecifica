@@ -32,21 +32,27 @@ export async function searchLaboratories(
   const normalized = normalizeLaboratoryName(query);
   if (normalized.length === 0) return [];
 
-  // Buscar por searchKey (preciso) y por name ILIKE (fuzzy).
-  // El OR cubre ambos casos: searchKey para los que ya lo tienen, ILIKE para
-  // los que todavía no (pre-T2 o needsReview).
-  const rows = await client.$queryRawUnsafe<LaboratoryCandidate[]>(
-    `SELECT id, name, "searchKey", "needsReview"
-       FROM laboratories
-      WHERE "searchKey" = ${normalized}
-         OR name ILIKE ${`%${normalized}%`}
-      ORDER BY
-        CASE WHEN "searchKey" = ${normalized} THEN 0 ELSE 1 END,
-        name
-      LIMIT ${SEARCH_LIMIT}`,
-  );
+  try {
+    // Buscar por searchKey (preciso) y por name ILIKE (fuzzy).
+    // El OR cubre ambos casos: searchKey para los que ya lo tienen, ILIKE para
+    // los que todavía no (pre-T2 o needsReview).
+    const rows = await client.$queryRawUnsafe<LaboratoryCandidate[]>(
+      `SELECT id, name, "searchKey", "needsReview"
+         FROM laboratories
+        WHERE "searchKey" = ${normalized}
+           OR name ILIKE ${`%${normalized}%`}
+        ORDER BY
+          CASE WHEN "searchKey" = ${normalized} THEN 0 ELSE 1 END,
+          name
+        LIMIT ${SEARCH_LIMIT}`,
+    );
 
-  return rows;
+    return rows;
+  } catch {
+    // Si la tabla no existe aún o la query falla, devolver vacío.
+    // El componente mostrará "Crear" para que el usuario lo cree.
+    return [];
+  }
 }
 
 // --------------------------------------------------------------------------

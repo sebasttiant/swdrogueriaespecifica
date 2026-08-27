@@ -5,7 +5,10 @@ import { useId, useRef, useState } from "react";
 import { Button } from "@/app/_components/ui/button";
 import { Field } from "@/app/_components/ui/field";
 import { Input } from "@/app/_components/ui/input";
-import { searchLaboratoriesAction } from "@/server/actions/laboratory.actions";
+import {
+  searchLaboratoriesAction,
+  createLaboratoryAction,
+} from "@/server/actions/laboratory.actions";
 
 type LaboratoryOption = {
   id: string;
@@ -15,7 +18,7 @@ type LaboratoryOption = {
 type LaboratorySearchProps = {
   /** Nombre del campo en FormData para el ID. */
   name: string;
-  /** Nombre del campo en FormData para el nombre legible. Si se provee, emite un segundo hidden input. */
+  /** Nombre del campo en FormData para el nombre legible. */
   nameForLabel?: string;
   /** ID del laboratorio pre-seleccionado (para recuperación tras fallo). */
   defaultSelectedId?: string;
@@ -30,9 +33,9 @@ type LaboratorySearchProps = {
 };
 
 /**
- * Autocomplete de laboratorio reutilizable. Busca por nombre normalizado,
- * muestra hasta 8 resultados con prefijos primero. El value seleccionado
- * viaja como hidden input en FormData.
+ * Autocomplete de laboratorio con creación inline.
+ * Busca por nombre normalizado. Si no encuentra, muestra botón "Crear".
+ * El value seleccionado viaja como hidden input en FormData.
  */
 export function LaboratorySearch({
   name,
@@ -41,7 +44,7 @@ export function LaboratorySearch({
   defaultSelectedName,
   label = "Laboratorio",
   required = false,
-  placeholder = "Buscá por nombre",
+  placeholder = "Buscá o creá un laboratorio",
 }: LaboratorySearchProps) {
   const inputId = useId();
   const resultsId = useId();
@@ -55,26 +58,33 @@ export function LaboratorySearch({
   );
   const [options, setOptions] = useState<LaboratoryOption[]>([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
   const [hasFailed, setHasFailed] = useState(false);
+  const [searchDone, setSearchDone] = useState(false);
 
   async function search(q: string) {
     if (!q.trim()) {
       setOptions([]);
+      setSearchDone(false);
       return;
     }
 
     setIsSearching(true);
     setHasFailed(false);
+    setSearchDone(false);
 
     try {
       const result = await searchLaboratoriesAction(q);
       if (result.ok) {
         setOptions(result.laboratories);
+        setSearchDone(true);
       } else {
         setHasFailed(true);
+        setSearchDone(true);
       }
     } catch {
       setHasFailed(true);
+      setSearchDone(true);
     } finally {
       setIsSearching(false);
     }
@@ -82,9 +92,11 @@ export function LaboratorySearch({
 
   function handleQueryChange(raw: string) {
     setQuery(raw);
-    // Si el usuario borra el texto, limpiar la selección
+    setHasFailed(false);
     if (!raw.trim()) {
       setSelected(null);
+      setOptions([]);
+      setSearchDone(false);
     }
 
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -101,7 +113,44 @@ export function LaboratorySearch({
     setSelected(null);
     setQuery("");
     setOptions([]);
+    setSearchDone(false);
   }
+
+  async function handleCreate() {
+    const nameToCreate = query.trim();
+    if (!nameToCreate) return;
+
+    setIsCreating(true);
+    setHasFailed(false);
+
+    try {
+      const result = await createLaboratoryAction(nameToCreate);
+      if (result.ok) {
+        const lab: LaboratoryOption = {
+          id: result.laboratory.id,
+          name: result.laboratory.name,
+        };
+        setSelected(lab);
+        setQuery(lab.name);
+        setOptions([]);
+      } else {
+        setHasFailed(true);
+      }
+    } catch {
+      setHasFailed(true);
+    } finally {
+      setIsCreating(false);
+    }
+  }
+
+  const queryTrimmed = query.trim();
+  const showCreateButton =
+    searchDone &&
+    !isSearching &&
+    !hasFailed &&
+    queryTrimmed.length >= 2 &&
+    options.length === 0 &&
+    !selected;
 
   return (
     <Field label={label} htmlFor={inputId}>
@@ -142,7 +191,9 @@ export function LaboratorySearch({
 
         {hasFailed ? (
           <p role="alert" className="text-sm font-medium text-danger">
-            No se pudo buscar laboratorios. Reintentá.
+            {isCreating
+              ? "No se pudo crear el laboratorio. Reintentá."
+              : "No se pudo buscar laboratorios. Reintentá."}
           </p>
         ) : null}
 
@@ -169,14 +220,20 @@ export function LaboratorySearch({
           </div>
         ) : null}
 
-        {isSearching ? (
-          <p className="text-xs text-muted-foreground">Buscando…</p>
+        {showCreateButton ? (
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={handleCreate}
+            disabled={isCreating}
+            className="w-full text-sm"
+          >
+            {isCreating ? "Creando…" : `Crear "${queryTrimmed}"`}
+          </Button>
         ) : null}
 
-        {!isSearching && !hasFailed && query.trim().length >= 2 && options.length === 0 && !selected ? (
-          <p className="text-xs text-muted-foreground">
-            No se encontró ningún laboratorio con ese nombre.
-          </p>
+        {isSearching ? (
+          <p className="text-xs text-muted-foreground">Buscando…</p>
         ) : null}
       </div>
     </Field>

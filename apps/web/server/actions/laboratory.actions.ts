@@ -89,16 +89,13 @@ export async function createLaboratoryAction(
       return { ok: false, error: "No autenticado" };
     }
 
-    // Solo ADMIN, SUPERVISOR y SUPERADMIN pueden crear laboratorios
-    if (!["ADMIN", "SUPERVISOR", "SUPERADMIN"].includes(user.role)) {
-      return {
-        ok: false,
-        error: "No tienes permiso para crear laboratorios",
-        code: "FORBIDDEN_ACTOR",
-      };
-    }
+    // Todos los usuarios autenticados pueden crear laboratorios desde forms.
+    // La trazabilidad queda en el createdById del laboratorio.
 
-    const result = await findOrCreateLaboratory({ name });
+    const result = await findOrCreateLaboratory({
+      name,
+      commandKey: `manual:${user.id}`,
+    });
 
     return {
       ok: true,
