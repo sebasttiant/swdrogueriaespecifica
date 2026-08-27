@@ -144,6 +144,35 @@ enum BatchStatus {
 }
 
 // --------------------------------------------------------------------------
+// Trazabilidad de laboratorios
+// --------------------------------------------------------------------------
+
+// Evidencia de laboratorio observada al recibir un lote físico. UNKNOWN es el
+// valor por defecto para lotes pre-existentes: sin evidencia de laboratorio en
+// el momento de la entrada, la asignación estricta de prohibe.
+enum LaboratoryEvidence {
+  CATALOG_ONLY
+  OBSERVED
+  UNKNOWN
+}
+
+// Base de compatibilidad entre solicitud y lote físico, calculada en el sitio
+// de asignación (A, B o C). La historia se preserva como fue.
+enum CompatibilityBasis {
+  LABORATORY_MATCH
+  REQUEST_CATALOG
+  FALLBACK_UNKNOWN
+}
+
+// Fuente de cambio de laboratorio en un pendiente o faltante. Capturado =
+// solicitud original con laboratorio conocido. Corregido = el cliente o
+// gerencia cambió el laboratorio después de la creación.
+enum LaboratoryChangeSource {
+  CAPTURED
+  CORRECTED
+}
+
+// --------------------------------------------------------------------------
 // Usuarios
 // --------------------------------------------------------------------------
 
@@ -382,7 +411,21 @@ model Laboratory {
   name     String    @unique
   phone    String?
   email    String?
-  products Product[]
+  // Clave de búsqueda normalizada (nombre en minúsculas sin espacios extras).
+  // Única: la misma clave = mismo laboratorio, idempotente bajo concurrencia.
+  searchKey String?   @unique
+  // Marca de laboratorio que necesita revisión manual. Análoga a
+  // Product.needsReview: true = alguien lo creó al vuelo y un ADMIN debe
+  // confirmar/aprobar.
+  needsReview Boolean @default(false)
+  // Clave de idempotencia del intento de creación (mismo patrón que Product).
+  createCommandKey         String?   @unique
+  createCommandFingerprint String?
+  products                  Product[]
+  // Relaciones inversas de trazabilidad
+  pendingRequests          Pending[]
+  missingItemRequests      MissingItem[]
+  receivedBatches          ProductBatch[]
 
   @@map("laboratories")
 }
@@ -427,10 +470,28 @@ model ProductBatch {
   expiresAt           DateTime // vencimiento de ESTE lote
   quantity            Int // stock físico de ESTE lote
   location            String? // ubicación física (estante, depósito)
+  // --------------------------------------------------------------------
+  // Trazabilidad de laboratorio (T1)
+  //
+  // `receivedLaboratoryId` es el laboratorio observado al recibir el lote
+  // físico. NULL = sin evidencia de laboratorio (histórico o no
+  // especificado). ON DELETE SET NULL: si el laboratorio se borra, la
+  // evidencia de recepción se preserva como NULL, no se pierde la fila.
+  //
+  // `laboratoryEvidence` clasifica la evidencia: OBSERVED = observado en
+  // el almacén, CATALOG_ONLY = solo en catálogo, UNKNOWN = sin datos.
+  // Default UNKNOWN para lotes pre-existentes sin migración de datos.
+  // --------------------------------------------------------------------
+  receivedLaboratoryId String?
+  receivedLaboratory   Laboratory? @relation(fields: [receivedLaboratoryId], references: [id], onDelete: SetNull)
+  laboratoryEvidence   LaboratoryEvidence? @default(UNKNOWN)
   status              BatchStatus                   @default(DISPONIBLE)
   createdAt           DateTime                      @default(now())
   updatedAt           DateTime                      @updatedAt
   pendingReservations PendingInventoryReservation[]
+  // Relaciones inversas de trazabilidad (T1)
+  allocations          InventoryAllocation[]
+  inventoryEntries     InventoryEntry[]
 
   @@unique([productId, batchCode])
   @@index([expiresAt]) // alertas de vencimiento globales (futuro)
@@ -537,6 +598,25 @@ model Pending {
   // Canonical representation of the actor and semantic create payload. It is
   // nullable only for rows that predate idempotent Pending creation.
   requestFingerprint        String?
+  // --------------------------------------------------------------------
+  // Trazabilidad de laboratorio (T1)
+  //
+  // `requestedLaboratoryId` es el laboratorio que el cliente pidió al momento
+  // de hacer el pedido. NULL = desconocido (histórico) o no especificado.
+  // Nullable porque no toda solicitud incluye laboratorio.
+  //
+  // `laboratoryChangeSource` registra si el laboratorio fue CAPTURED (original)
+  // o CORRECTED (el cliente o gerencia lo cambió después). La corrección se
+  // audita por separado (D10).
+  //
+  // `laboratoryPolicyVersion` es el hash de la política de trazabilidad
+  // aplicada cuando se creó o corrigió el pendiente. Permite detectar si la
+  // política cambió y el pendiente necesita re-evaluación.
+  // --------------------------------------------------------------------
+  requestedLaboratoryId     String?
+  requestedLaboratory       Laboratory? @relation(fields: [requestedLaboratoryId], references: [id], onDelete: SetNull)
+  laboratoryChangeSource    LaboratoryChangeSource?
+  laboratoryPolicyVersion   String?
   createdAt                 DateTime                  @default(now())
   updatedAt                 DateTime                  @updatedAt
 
@@ -616,6 +696,16 @@ model MissingItem {
   createdById          String?
   // Código del vendedor que reportó/registró el faltante (opcional, para trazabilidad operativa).
   sellerCode           String?
+  // --------------------------------------------------------------------
+  // Trazabilidad de laboratorio (T1)
+  //
+  // Mismo patrón que Pending: el laboratorio solicitado y la versión de
+  // política se preservan como history snapshot. NULL = desconocido
+  // (histórico) o no especificado.
+  // --------------------------------------------------------------------
+  requestedLaboratoryId   String?
+  requestedLaboratory     Laboratory? @relation(fields: [requestedLaboratoryId], references: [id], onDelete: SetNull)
+  laboratoryPolicyVersion String?
   confirmedAt          DateTime?
   confirmedBy          User?                 @relation("MissingItemConfirmedBy", fields: [confirmedById], references: [id])
   confirmedById        String?
@@ -664,6 +754,15 @@ model InventoryEntry {
   quantity           Int
   idempotencyKey     String                @unique @default(uuid())
   requestFingerprint String
+  // --------------------------------------------------------------------
+  // Trazabilidad de laboratorio (T1)
+  //
+  // `productBatchId` vincula la entrada al lote físico creado en la misma
+  // transacción. NULL en entradas pre-existentes (D14). Se setea en
+  // registerInventoryEntry() y se lee en Close (-S21, F8).
+  // --------------------------------------------------------------------
+  productBatchId    String?
+  productBatch      ProductBatch? @relation(fields: [productBatchId], references: [id], onDelete: SetNull)
   note               String?
   createdBy          User?                 @relation(fields: [createdById], references: [id])
   createdById        String?
@@ -687,6 +786,20 @@ model InventoryAllocation {
   missingItemId    String
   pending          Pending?       @relation(fields: [pendingId], references: [id], onDelete: SetNull)
   pendingId        String?
+  // --------------------------------------------------------------------
+  // Trazabilidad de laboratorio (T1)
+  //
+  // `productBatchId` es el lote físico con el que se comparó la solicitud.
+  // NULL en asignaciones pre-existentes (D14: no hay lote conocido). Se
+  // setea en Assign Sites A/B/C y se lee en ProductSearch (-S20, F6).
+  //
+  // `compatibilityBasis` registra qué tipo de match produjo la asignación:
+  // LABORATORY_MATCH = match estricto, REQUEST_CATALOG = fallback de
+  // catálogo, FALLBACK_UNKNOWN = sin datos. NULL en pre-existentes.
+  // --------------------------------------------------------------------
+  productBatchId    String?
+  productBatch      ProductBatch? @relation(fields: [productBatchId], references: [id], onDelete: SetNull)
+  compatibilityBasis CompatibilityBasis?
   quantity         Int
   createdAt        DateTime       @default(now())
 

@@ -89,6 +89,7 @@ describe("esquema del ledger de movimientos", () => {
         WHERE table_name = 'product_batches'`,
     );
 
-    expect(Number(rows[0]?.count)).toBe(9);
+    // 9 originales + receivedLaboratoryId + laboratoryEvidence = 11
+    expect(Number(rows[0]?.count)).toBe(11);
   });
 });
