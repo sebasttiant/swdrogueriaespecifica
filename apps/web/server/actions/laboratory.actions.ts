@@ -11,7 +11,10 @@
 "use server";
 
 import { getCurrentSession } from "@/lib/auth/index.node";
-import { normalizeLaboratoryName } from "@/server/domain/laboratory/identity";
+import {
+  laboratoryCreateCommandKey,
+  normalizeLaboratoryName,
+} from "@/server/domain/laboratory/identity";
 import {
   findOrCreateLaboratory,
   searchLaboratories,
@@ -94,7 +97,7 @@ export async function createLaboratoryAction(
 
     const result = await findOrCreateLaboratory({
       name,
-      commandKey: `manual:${user.id}`,
+      commandKey: laboratoryCreateCommandKey("manual", user.id, name),
     });
 
     return {

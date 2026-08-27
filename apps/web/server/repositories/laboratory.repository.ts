@@ -75,13 +75,41 @@ export type LaboratoryRecord =
   | { status: "exact_name_exists"; laboratory: Laboratory };
 
 /**
- * Resolve-or-create: si ya existe un laboratorio con el mismo searchKey,
- * retorna el existente. Si no, lo crea. Idempotente bajo concurrencia:
- * el UNIQUE en searchKey evita duplicados.
+ * El conflicto esperado no resolvió a ninguna fila.
  *
- * Si existe un laboratorio con el mismo nombre normalizado pero distinto
- * commandKey, retorna `exact_name_exists` — el llamador decide qué hacer
- * (mostrar warning, merger, etc.).
+ * No ocurre por vía natural: un choque contra `searchKey` siempre lo encuentra
+ * la búsqueda por `searchKey`, y lo mismo con `createCommandKey`. Llegar acá
+ * significa que la fila se borró entre el INSERT y la lectura, o que chocó un
+ * índice que este código no contempla. Se nombra en vez de devolver `undefined`
+ * y romper más adelante, lejos de la causa.
+ */
+export class LaboratoryResolutionInvariantError extends Error {
+  constructor(searchKey: string) {
+    super(`laboratory insert conflicted but resolved to no row (searchKey=${searchKey})`);
+  }
+}
+
+/**
+ * Resolve-or-create idempotente.
+ *
+ * El INSERT usa `ON CONFLICT DO NOTHING` SIN target —vía `skipDuplicates`— a
+ * propósito: la tabla tiene DOS índices únicos parciales, `searchKey` y
+ * `createCommandKey`, y acotar el target a uno dejaría que el otro lanzara un
+ * error. Eso importa más de lo que parece, porque en PostgreSQL un error aborta
+ * la transacción ENTERA: cualquier consulta posterior falla con 25P02. Un
+ * conflicto que se espera no puede viajar como excepción si esta función va a
+ * poder usarse dentro de una transacción más grande.
+ *
+ * Los tres resultados:
+ *
+ * - `created`: el INSERT devolvió fila, nadie compitió.
+ * - `exists`: no insertó y el nombre normalizado ya estaba. Cubre tanto "ya
+ *   existía" como "otro proceso ganó la carrera", que para el llamador son lo
+ *   mismo: el laboratorio que pidió, ya está.
+ * - `exact_name_exists`: no insertó, el nombre NO está, y quien ocupaba el
+ *   lugar es el mismo `commandKey` con OTRO nombre. Es un intento que cambió de
+ *   idea, no una carrera. Se nombra para que el llamador decida: devolver el
+ *   laboratorio viejo en silencio sería sustituir lo que la persona pidió.
  *
  * La transacción es corta: solo laboratorio, sin tocar inventario.
  */
@@ -91,48 +119,52 @@ export async function findOrCreateLaboratory(
 ): Promise<LaboratoryRecord> {
   const searchKey = normalizeLaboratoryName(data.name);
 
-  // 1. Buscar existente por searchKey
-  const existing = await client.laboratory.findUnique({
-    where: { searchKey },
+  // 1. Camino feliz y carrera perdida, en una sola sentencia.
+  //
+  // `skipDuplicates` es lo que Prisma traduce a `ON CONFLICT DO NOTHING`, y
+  // `createManyAndReturn` es lo que agrega el `RETURNING`: si insertó, vuelve
+  // la fila; si chocó, vuelve vacío y ningún error. El id lo genera el
+  // `@default(cuid())` del modelo, igual que en cualquier otro create.
+  //
+  // Además espera: si otra transacción tiene un INSERT sin commitear del mismo
+  // searchKey, esta se queda esperando su desenlace en vez de adivinarlo.
+  const inserted = await client.laboratory.createManyAndReturn({
+    data: [{
+      name: data.name.trim(),
+      searchKey,
+      needsReview: data.needsReview ?? false,
+      ...(data.commandKey ? { createCommandKey: data.commandKey } : {}),
+      ...(data.commandFingerprint
+        ? { createCommandFingerprint: data.commandFingerprint }
+        : {}),
+    }],
+    skipDuplicates: true,
   });
 
-  if (existing) {
-    return { status: "exists", laboratory: existing };
+  if (inserted[0]) {
+    return { status: "created", laboratory: inserted[0] };
   }
 
-  // 2. Crear — el UNIQUE en searchKey protege contra concurrencia
-  try {
-    const laboratory = await client.laboratory.create({
-      data: {
-        name: data.name.trim(),
-        searchKey,
-        needsReview: data.needsReview ?? false,
-        ...(data.commandKey
-          ? { createCommandKey: data.commandKey }
-          : {}),
-        ...(data.commandFingerprint
-          ? { createCommandFingerprint: data.commandFingerprint }
-          : {}),
-      },
-    });
-    return { status: "created", laboratory };
-  } catch (error) {
-    // Unique violation = otro proceso creó el mismo searchKey entre nuestro
-    // SELECT y nuestro INSERT. Re-leer y retornar el existente.
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      (error as { code?: unknown }).code === "P2002"
-    ) {
-      const raceWinner = await client.laboratory.findUnique({
-        where: { searchKey },
-      });
-      if (raceWinner) {
-        return { status: "exists", laboratory: raceWinner };
-      }
-    }
-    throw error;
+  // 2. No insertó. El nombre normalizado es lo que el llamador pidió, así que
+  //    se busca por ahí primero.
+  const bySearchKey = await client.laboratory.findUnique({ where: { searchKey } });
+  if (bySearchKey) {
+    return { status: "exists", laboratory: bySearchKey };
   }
+
+  // 3. El nombre no está: entonces quien bloqueó el INSERT fue el commandKey.
+  //    Mismo comando, otro laboratorio.
+  if (data.commandKey) {
+    const byCommandKey = await client.laboratory.findUnique({
+      where: { createCommandKey: data.commandKey },
+    });
+    if (byCommandKey) {
+      return { status: "exact_name_exists", laboratory: byCommandKey };
+    }
+  }
+
+  // 4. Chocó contra algo y no resolvió a nada. Ver la nota del error.
+  throw new LaboratoryResolutionInvariantError(searchKey);
 }
 
 /**

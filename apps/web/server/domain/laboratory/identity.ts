@@ -50,6 +50,30 @@ export function normalizeLaboratoryName(raw: string): string {
 }
 
 // --------------------------------------------------------------------------
+// Clave de idempotencia de la CREACIÓN.
+//
+// Identifica un comando: "esta persona, por esta vía, quiso crear ESTE
+// laboratorio". Por eso incluye el nombre normalizado y no solo el usuario.
+//
+// Sin el nombre la clave era constante por persona, y como `createCommandKey`
+// tiene índice único, el SEGUNDO laboratorio que alguien creaba chocaba contra
+// el de su propio laboratorio anterior. La clave decía "un comando por usuario"
+// cuando lo que se quería decir era "un comando por usuario y laboratorio".
+//
+// La recepción de mercadería NO usa esta función: su clave sale de la
+// `idempotencyKey` de la entrada, que ya identifica un intento concreto.
+// --------------------------------------------------------------------------
+export type LaboratoryCreateSource = "auto" | "manual";
+
+export function laboratoryCreateCommandKey(
+  source: LaboratoryCreateSource,
+  userId: string,
+  name: string,
+): string {
+  return `${source}:${userId}:${normalizeLaboratoryName(name)}`;
+}
+
+// --------------------------------------------------------------------------
 // Validación de entrada.
 // --------------------------------------------------------------------------
 
