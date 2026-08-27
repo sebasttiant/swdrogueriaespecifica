@@ -136,6 +136,8 @@ function conflictState(holder: { productId: string; productName: string }): Pend
       orionCode: "ORN-500",
       identitySkippedReason: "",
       identitySkippedNote: "",
+      requestedLaboratoryId: "",
+      requestedLaboratoryName: "",
     },
   };
 }
@@ -373,6 +375,8 @@ describe("PendingForm · identidad Orion", () => {
         orionCode: "ORN-999",
         identitySkippedReason: "",
         identitySkippedNote: "",
+        requestedLaboratoryId: "",
+        requestedLaboratoryName: "",
       },
     });
 
@@ -401,6 +405,8 @@ describe("PendingForm · identidad Orion", () => {
         orionCode: "",
         identitySkippedReason: "CODE_NOT_FOUND",
         identitySkippedNote: "No aparece en Orion",
+        requestedLaboratoryId: "",
+        requestedLaboratoryName: "",
       },
     });
 
