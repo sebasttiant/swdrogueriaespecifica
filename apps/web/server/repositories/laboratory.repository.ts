@@ -21,9 +21,20 @@ import {
 const SEARCH_LIMIT = 8;
 
 /**
+ * Escapa caracteres especiales de LIKE con el prefijo de escape '!'
+ * para que %, _ y ! del input del usuario se traten como literales.
+ */
+function escapeLike(input: string): string {
+  return input.replace(/[%_!]/g, "!$&");
+}
+
+/**
  * Busca laboratorios por nombre normalizado. Devuelve máximo 8 resultados
- * con prefijos primero. NO mergea: candidatos similares se muestran como
- * opciones separadas.
+ * con coincidencia exacta primero, prefijos después, y el resto alfabéticamente.
+ * NO mergea: candidatos similares se muestran como opciones separadas.
+ *
+ * Usa $queryRaw con parámetros atados (no interpolación) para prevenir
+ * inyección SQL. El LIKE usa ESCAPE '!' para tratar metacaracteres como literales.
  */
 export async function searchLaboratories(
   query: string,
@@ -32,26 +43,37 @@ export async function searchLaboratories(
   const normalized = normalizeLaboratoryName(query);
   if (normalized.length === 0) return [];
 
+  const escapedQuery = escapeLike(normalized);
+
   try {
-    // Buscar por searchKey (preciso) y por name ILIKE (fuzzy).
-    // El OR cubre ambos casos: searchKey para los que ya lo tienen, ILIKE para
-    // los que todavía no (pre-T2 o needsReview).
-    const rows = await client.$queryRawUnsafe<LaboratoryCandidate[]>(
-      `SELECT id, name, "searchKey", "needsReview"
-         FROM laboratories
-        WHERE "searchKey" = ${normalized}
-           OR name ILIKE ${`%${normalized}%`}
-        ORDER BY
-          CASE WHEN "searchKey" = ${normalized} THEN 0 ELSE 1 END,
-          name
-        LIMIT ${SEARCH_LIMIT}`,
-    );
+    // Búsqueda segura: parámetros atados via Prisma $queryRaw.
+    // LIKE con ESCAPE '!' trata %, _, e ! del input como literales.
+    // Orden: exacto (0) > prefijo (1) > contiene (2) > alfabético.
+    const rows = await client.$queryRaw<LaboratoryCandidate[]>`
+      SELECT id, name, "searchKey", "needsReview"
+        FROM laboratories
+       WHERE "searchKey" = ${normalized}
+          OR name ILIKE ${`%${escapedQuery}%`} ESCAPE '!'
+       ORDER BY
+         CASE WHEN "searchKey" = ${normalized} THEN 0
+              WHEN name ILIKE ${`${escapedQuery}%`} ESCAPE '!' THEN 1
+              ELSE 2 END,
+         name
+       LIMIT ${SEARCH_LIMIT}
+    `;
 
     return rows;
-  } catch {
-    // Si la tabla no existe aún o la query falla, devolver vacío.
-    // El componente mostrará "Crear" para que el usuario lo cree.
-    return [];
+  } catch (error) {
+    // La tabla no existe (pre-migración 20260826190000): devolver vacío.
+    // Esto cubre el caso de deploy donde las migraciones aún no corrieron.
+    // Cualquier otro error se propaga — NO se confunde con "sin resultados".
+    const code =
+      typeof error === "object" && error !== null
+        ? (error as { code?: string; meta?: { code?: string } }).meta?.code ??
+          (error as { code?: string }).code
+        : undefined;
+    if (code === "42P01") return [];
+    throw error;
   }
 }
 
