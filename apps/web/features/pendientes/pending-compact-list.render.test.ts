@@ -41,6 +41,7 @@ function pending(overrides: Partial<PendingListItem> = {}): PendingListItem {
     // Ver la nota del mismo fixture en `pending-list.render.test.ts`: sin
     // motivo de aplazamiento no hay aviso, tenga o no código el producto.
     identitySkippedReason: null,
+    requestedLaboratory: null,
     product: {
       id: "prod-1",
       name: "Paracetamol",

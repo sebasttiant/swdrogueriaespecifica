@@ -73,6 +73,11 @@ export type PendingListItem = {
   // deriva el aviso de identidad pendiente; ver `identity-warning.ts`. Se lee,
   // nunca se limpia: es historia operativa permanente (D9).
   identitySkippedReason: PendingIdentityDeferral | null;
+  // El laboratorio que el cliente pidió al capturar el pendiente. Viaja en el
+  // listado porque es lo que decide QUÉ presentación comprar: sin él, quien
+  // pide al proveedor tiene que abrir el detalle fila por fila. `null` en los
+  // pendientes que no pidieron marca y en los anteriores a la columna.
+  requestedLaboratory: { id: string; name: string } | null;
   // `orionCode` viaja en el listado porque el aviso se deriva del estado ACTUAL
   // del producto. Sin él habría que guardar un booleano "ya sanó" en la fila, y
   // ese es justamente el flag que después queda desactualizado.
@@ -135,6 +140,7 @@ const LIST_SELECT = {
   deliveredQuantity: true,
   cancelledQuantity: true,
   identitySkippedReason: true,
+  requestedLaboratory: { select: { id: true, name: true } },
   product: { select: { id: true, name: true, code: true, unit: true, orionCode: true } },
   createdBy: { select: { id: true, name: true } },
 } as const;
