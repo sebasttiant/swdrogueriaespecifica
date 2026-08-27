@@ -377,6 +377,7 @@ describe("createMissingItemAction", () => {
       note: "Prioridad mostrador",
       sellerCode: "VEN-12",
       createdById: "admin-1",
+      requestedLaboratoryId: "lab-1",
     });
     expect(mocks.recordAudit).toHaveBeenCalledWith(
       expect.objectContaining({

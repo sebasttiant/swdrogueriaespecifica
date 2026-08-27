@@ -34,7 +34,7 @@ describe("MissingCreateForm · catalog selection", () => {
     const user = userEvent.setup();
     const { container } = render(createElement(MissingCreateForm, { defaultOpen: true }));
 
-    await user.type(screen.getByRole("searchbox"), "amoxi");
+    await user.type(screen.getByPlaceholderText("Buscá por nombre o código"), "amoxi");
     await user.click(screen.getByRole("button", { name: "Buscar producto" }));
 
     const option = await screen.findByRole("option", { name: "Amoxicilina (AMO-1)" });
@@ -66,7 +66,7 @@ describe("MissingCreateForm · catalog selection", () => {
     const user = userEvent.setup();
     const { container } = render(createElement(MissingCreateForm, { defaultOpen: true }));
 
-    await user.type(screen.getByRole("searchbox"), "producto inexistente");
+    await user.type(screen.getByPlaceholderText("Buscá por nombre o código"), "producto inexistente");
     await user.click(screen.getByRole("button", { name: "Buscar producto" }));
 
     const catalogMiss = await screen.findByText(

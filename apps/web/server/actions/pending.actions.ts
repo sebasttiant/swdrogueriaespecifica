@@ -33,6 +33,7 @@ import {
 } from "@/server/services/pending.service";
 import { linkOrionCodeAtCapture, linkOrionCode } from "@/server/services/sku-onboarding.service";
 import { findProductById } from "@/server/repositories/product.repository";
+import { findOrCreateLaboratory } from "@/server/repositories/laboratory.repository";
 import { SkuConcurrencyError } from "@/server/repositories/sku-review.repository";
 import { SkuIdentityError } from "@/server/domain/catalog/sku-identity";
 import { SKU_IDENTITY_CONCURRENCY_MESSAGE, messageForIdentityError } from "@/features/productos/sku-identity-messages";
@@ -407,6 +408,8 @@ export async function createPendingAction(
     orionCode: formData.get("orionCode") ?? undefined,
     identitySkippedReason: formData.get("identitySkippedReason") ?? undefined,
     identitySkippedNote: formData.get("identitySkippedNote") ?? undefined,
+    // T3: laboratorio solicitado — nombre para resolver cuando no hay ID.
+    requestedLaboratoryName: formData.get("requestedLaboratoryName") ?? undefined,
   });
 
   if (!parsed.success) {
@@ -622,10 +625,39 @@ export async function createPendingAction(
     transaction: "started",
   });
 
+  // ──────────────────────────────────────────────────────────────────────
+  // T3: Resolución de laboratorio.
+  //
+  // El usuario escribe un nombre y envía. Si no clickeó "Crear", el ID
+  // viene vacío pero el nombre viene en `requestedLaboratoryName`.
+  // Acá lo resolvemos: buscamos por nombre, creamos si no existe.
+  // Así el vendedor solo escribe y listo — sin pasos extra.
+  // ──────────────────────────────────────────────────────────────────────
+  let resolvedLabId = capture.requestedLaboratoryId;
+  if (!resolvedLabId && capture.requestedLaboratoryName) {
+    try {
+      const lab = await findOrCreateLaboratory({
+        name: capture.requestedLaboratoryName,
+        commandKey: `auto:${session.user.id}`,
+      });
+      resolvedLabId = lab.laboratory.id;
+    } catch (error) {
+      logPendingError(correlationId, error);
+      return failure("No se pudo resolver el laboratorio. Reintentá.", {
+        ...actor,
+        authState: "valid",
+        outcome: "rejected",
+        errorCode: "LABORATORY_RESOLVE_FAILED",
+        transaction: "not_started",
+      });
+    }
+  }
+
   let result: Awaited<ReturnType<typeof registerPending>>;
   try {
     result = await registerPending({
       ...capture,
+      requestedLaboratoryId: resolvedLabId,
       // El producto MANUAL recibe el código en su alta, no por una vinculación
       // aparte: nace con su identidad y nunca existe sin ella.
       manual:

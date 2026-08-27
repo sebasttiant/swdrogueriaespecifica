@@ -19,6 +19,7 @@ const validInput = {
   customerPhone: "300 123 4567",
   // T3: laboratorio solicitado.
   requestedLaboratoryId: "lab-1",
+  requestedLaboratoryName: "Lab Test",
 };
 
 describe("pendingCreateSchema", () => {

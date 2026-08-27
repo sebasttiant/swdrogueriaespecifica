@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   linkOrionCodeAtCapture: vi.fn(),
   linkOrionCode: vi.fn(),
   findProductById: vi.fn(),
+  findOrCreateLaboratory: vi.fn(),
   logPendingEvent: vi.fn(),
   SkuConcurrencyError: class SkuConcurrencyError extends Error {
     constructor() {
@@ -60,6 +61,9 @@ vi.mock("@/server/services/sku-onboarding.service", () => ({
 }));
 vi.mock("@/server/repositories/product.repository", () => ({
   findProductById: mocks.findProductById,
+}));
+vi.mock("@/server/repositories/laboratory.repository", () => ({
+  findOrCreateLaboratory: mocks.findOrCreateLaboratory,
 }));
 vi.mock("@/server/repositories/sku-review.repository", () => ({
   SkuConcurrencyError: mocks.SkuConcurrencyError,
@@ -121,6 +125,11 @@ beforeEach(() => {
     name: "Acetaminofén 500mg",
     orionCode: "ORN-9000",
     identityVersion: 1,
+  });
+  // Laboratorio por defecto: existe y se resuelve directo.
+  mocks.findOrCreateLaboratory.mockResolvedValue({
+    status: "exists",
+    laboratory: { id: "lab-1", name: "Lab Test", searchKey: "lab test" },
   });
 });
 
@@ -299,6 +308,8 @@ describe("createPendingAction", () => {
         orionCode: "ORN-1001",
         identitySkippedReason: "",
         identitySkippedNote: "",
+        requestedLaboratoryId: "lab-1",
+        requestedLaboratoryName: "LabTest",
       });
     });
 
@@ -406,6 +417,8 @@ describe("createPendingAction", () => {
         orionCode: "ORN-2002",
         identitySkippedReason: "",
         identitySkippedNote: "",
+        requestedLaboratoryId: "lab-1",
+        requestedLaboratoryName: "LabTest",
       });
     });
 

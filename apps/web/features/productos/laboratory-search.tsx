@@ -166,7 +166,6 @@ export function LaboratorySearch({
             value={query}
             onChange={(e) => handleQueryChange(e.target.value)}
             placeholder={placeholder}
-            required={required && !selected}
             aria-controls={resultsId}
             aria-autocomplete="list"
             aria-expanded={options.length > 0}

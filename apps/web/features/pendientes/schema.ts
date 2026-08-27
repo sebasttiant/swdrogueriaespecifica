@@ -246,11 +246,19 @@ export const pendingCreateSchema = z
     // ------------------------------------------------------------------
     // Trazabilidad de laboratorio (T3): laboratorio solicitado por el cliente.
     // Requerido en captura nueva. NULL en registros históricos.
+    //
+    // El ID viene vacío cuando el usuario escribió un nombre pero no clickeó
+    // "Crear". El action lo resuelve solo: busca por nombre, crea si no existe.
     // ------------------------------------------------------------------
     requestedLaboratoryId: z
-      .string({ error: "Elegí un laboratorio." })
+      .string()
       .trim()
-      .min(1, { error: "Elegí un laboratorio." }),
+      .optional()
+      .transform((value) => (value && value.length > 0 ? value : undefined)),
+    requestedLaboratoryName: z
+      .string({ error: "Escribí el nombre del laboratorio." })
+      .trim()
+      .min(1, { error: "Escribí el nombre del laboratorio." }),
   })
   .superRefine((data, ctx) => {
     const hasCatalog = Boolean(data.productId);
@@ -337,7 +345,10 @@ export const pendingCreateSchema = z
       // envío, que en la rama catálogo es legítimo.
       identity: identityOf(data),
       // T3: laboratorio solicitado por el cliente.
+      // El ID puede venir vacío si el usuario escribió nombre y no clickeó "Crear".
+      // El action lo resuelve: busca por nombre, crea si no existe.
       requestedLaboratoryId: data.requestedLaboratoryId,
+      requestedLaboratoryName: data.requestedLaboratoryName,
     };
     // Rama catálogo: referimos al producto existente, sin producto manual.
     if (data.productId) {
