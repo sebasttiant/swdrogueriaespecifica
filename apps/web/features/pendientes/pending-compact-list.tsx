@@ -128,6 +128,19 @@ function partialDecisionLabel(item: PendingListItem): string | null {
   return PARTIAL_DECISION_LABELS[item.partialDecision];
 }
 
+// El laboratorio pedido. Va pegado al producto —y NO dentro de la línea de
+// seguimiento— porque es un dato del producto, no del cliente: dice qué
+// presentación comprar. Metido en el seguimiento desaparecería para quien no
+// tiene `canFollowUp`, que es justamente quien pide al proveedor.
+function LaboratoryLine({ item }: { item: PendingListItem }) {
+  if (!item.requestedLaboratory) return null;
+  return (
+    <p className="break-words text-xs text-muted-foreground">
+      Lab: {item.requestedLaboratory.name}
+    </p>
+  );
+}
+
 // --------------------------------------------------------------------------
 // La línea de SEGUIMIENTO.
 //
@@ -330,6 +343,7 @@ export function PendingCompactList({
                   {identityNotice ? (
                     <Badge tone="warning">{identityNotice}</Badge>
                   ) : null}
+                  <LaboratoryLine item={pending} />
                   <p className="break-words text-xs text-muted-foreground">
                     {pending.createdBy?.name ?? "Sin vendedor"}
                     {" · "}
@@ -431,6 +445,7 @@ export function PendingCompactList({
                         {identityNotice}
                       </Badge>
                     ) : null}
+                    <LaboratoryLine item={pending} />
                     {canFollowUp ? <FollowUpLine item={pending} /> : null}
                   </td>
                   <td className="px-3 py-2 tabular-nums text-muted-foreground">

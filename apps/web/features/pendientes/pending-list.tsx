@@ -172,6 +172,14 @@ export function PendingList({
                   {pending.quantity} {pending.product.unit} · {pending.product.code}
                   {pending.customerName ? ` · ${pending.customerName}` : ""}
                 </p>
+                {/* El laboratorio pedido va con el PRODUCTO, no con el
+                    cliente: es lo que decide qué presentación comprar. Los
+                    pendientes sin marca pedida no muestran la línea. */}
+                {pending.requestedLaboratory ? (
+                  <p className="text-sm text-muted-foreground">
+                    Lab: {pending.requestedLaboratory.name}
+                  </p>
+                ) : null}
                 {/* Teléfono: es el dato con el que se avisa que llegó, así que
                     va en la tarjeta y no escondido. Los pendientes anteriores a
                     que fuera obligatorio no lo tienen. */}

@@ -129,6 +129,7 @@ function pendingRow(overrides: Partial<PendingListItem> = {}): PendingListItem {
     deliveredQuantity: 0,
     cancelledQuantity: 0,
     identitySkippedReason: null,
+    requestedLaboratory: null,
     product: {
       id: "prod-1",
       name: "Paracetamol",

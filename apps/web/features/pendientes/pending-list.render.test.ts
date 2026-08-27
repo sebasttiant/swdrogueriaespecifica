@@ -56,6 +56,7 @@ function pending(overrides: Partial<PendingListItem> = {}): PendingListItem {
     // legado sin código. Es el estado de la mayoría de las filas de hoy, y no
     // avisa nada — un producto sin código no es un aplazamiento.
     identitySkippedReason: null,
+    requestedLaboratory: null,
     product: {
       id: "prod-1",
       name: "Paracetamol",
