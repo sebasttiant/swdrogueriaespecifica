@@ -24,6 +24,7 @@ vi.mock("@/server/repositories/product-batch.repository", () => ({
   reserveReceivedBatchQuantity: vi.fn(),
   reserveBatchForPending: vi.fn(),
   upsertBatchQuantity: vi.fn(),
+  lockBatchLaboratoryEvidence: vi.fn(),
 }));
 vi.mock("@/server/repositories/inventory-entry.repository", () => ({
   createInventoryEntry: vi.fn(),
@@ -42,6 +43,7 @@ vi.mock("@/server/services/notification-outbox.service", () => ({
 }));
 
 import {
+  lockBatchLaboratoryEvidence,
   reserveReceivedBatchQuantity,
   upsertBatchQuantity,
 } from "@/server/repositories/product-batch.repository";
@@ -54,6 +56,7 @@ import { closeMissingItemsByEntry } from "@/server/repositories/missing-item.rep
 import { markReportsReceivedByMissingItemIds } from "@/server/repositories/missing-report.repository";
 import {
   IdempotencyPayloadConflictError,
+  LaboratoryEvidenceConflictError,
   registerInventoryEntry,
   getInventoryEntries,
 } from "./inventory-entry.service";
@@ -73,6 +76,8 @@ beforeEach(() => {
     (fn: (client: typeof tx) => unknown) => fn(tx),
   );
   vi.mocked(upsertBatchQuantity).mockResolvedValue({ id: "batch_1" } as never);
+  // Por defecto el lote no existe todavía: la entrada lo crea.
+  vi.mocked(lockBatchLaboratoryEvidence).mockResolvedValue(null);
   vi.mocked(createInventoryEntry).mockResolvedValue({ id: "entry_1" } as never);
   vi.mocked(findInventoryEntryByIdempotencyKey).mockResolvedValue(null);
   vi.mocked(closeMissingItemsByEntry).mockResolvedValue(["m1", "m2"]);
@@ -299,6 +304,207 @@ describe("registerInventoryEntry", () => {
       { pendingId: "pending-1", availabilityStatus: "DISPONIBLE_PARCIAL" },
       tx,
     );
+  });
+});
+
+// --------------------------------------------------------------------------
+// Laboratorio RECIBIDO (evidencia física observada al recibir el lote).
+//
+// La regla es de una pieza: la evidencia observada no se pisa ni se preserva en
+// silencio. NULL no es un valor en conflicto, es AUSENCIA de evidencia — por eso
+// un lote histórico sin laboratorio acepta la primera observación que llegue.
+// Dos valores distintos y no nulos SÍ son un conflicto, y ahí la entrada entera
+// se rechaza: es más barato que alguien corrija una carga que descubrir meses
+// después que el lote dice un laboratorio que nadie recibió.
+// --------------------------------------------------------------------------
+describe("registerInventoryEntry · laboratorio recibido", () => {
+  it("escribe el laboratorio observado cuando el lote todavía no existe", async () => {
+    await registerInventoryEntry({
+      ...BASE_INPUT,
+      idempotencyKey: "lab-nuevo",
+      receivedLaboratoryId: "lab_mk",
+    });
+
+    expect(upsertBatchQuantity).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({ receivedLaboratoryId: "lab_mk" }),
+    );
+  });
+
+  it("acepta la primera evidencia sobre un lote histórico sin laboratorio", async () => {
+    vi.mocked(lockBatchLaboratoryEvidence).mockResolvedValue({
+      id: "batch_1",
+      receivedLaboratoryId: null,
+      receivedLaboratoryName: null,
+    });
+
+    await registerInventoryEntry({
+      ...BASE_INPUT,
+      idempotencyKey: "lab-legacy",
+      receivedLaboratoryId: "lab_mk",
+    });
+
+    expect(upsertBatchQuantity).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({ receivedLaboratoryId: "lab_mk" }),
+    );
+  });
+
+  it("acepta una recepción repetida del MISMO laboratorio", async () => {
+    vi.mocked(lockBatchLaboratoryEvidence).mockResolvedValue({
+      id: "batch_1",
+      receivedLaboratoryId: "lab_mk",
+      receivedLaboratoryName: "MK",
+    });
+
+    await expect(registerInventoryEntry({
+      ...BASE_INPUT,
+      idempotencyKey: "lab-mismo",
+      receivedLaboratoryId: "lab_mk",
+    })).resolves.toEqual(expect.objectContaining({ idempotent: false }));
+
+    expect(upsertBatchQuantity).toHaveBeenCalledTimes(1);
+  });
+
+  it("RECHAZA la entrada cuando el lote ya fue recibido con otro laboratorio", async () => {
+    vi.mocked(lockBatchLaboratoryEvidence).mockResolvedValue({
+      id: "batch_1",
+      receivedLaboratoryId: "lab_mk",
+      receivedLaboratoryName: "MK",
+    });
+
+    await expect(registerInventoryEntry({
+      ...BASE_INPUT,
+      idempotencyKey: "lab-conflicto",
+      receivedLaboratoryId: "lab_genfar",
+    })).rejects.toBeInstanceOf(LaboratoryEvidenceConflictError);
+  });
+
+  it("no escribe NADA cuando rechaza el conflicto", async () => {
+    vi.mocked(lockBatchLaboratoryEvidence).mockResolvedValue({
+      id: "batch_1",
+      receivedLaboratoryId: "lab_mk",
+      receivedLaboratoryName: "MK",
+    });
+
+    await expect(registerInventoryEntry({
+      ...BASE_INPUT,
+      idempotencyKey: "lab-conflicto-sin-escritura",
+      receivedLaboratoryId: "lab_genfar",
+    })).rejects.toBeInstanceOf(LaboratoryEvidenceConflictError);
+
+    expect(upsertBatchQuantity).not.toHaveBeenCalled();
+    expect(createInventoryEntry).not.toHaveBeenCalled();
+  });
+
+  it("expone el NOMBRE del laboratorio en conflicto, nunca su id", async () => {
+    vi.mocked(lockBatchLaboratoryEvidence).mockResolvedValue({
+      id: "batch_1",
+      receivedLaboratoryId: "lab_mk",
+      receivedLaboratoryName: "MK",
+    });
+
+    let error: unknown;
+    try {
+      await registerInventoryEntry({
+        ...BASE_INPUT,
+        idempotencyKey: "lab-conflicto-nombre",
+        receivedLaboratoryId: "lab_genfar",
+      });
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(LaboratoryEvidenceConflictError);
+    // El narrowing es del test, no un cast: si el error no fuera del tipo
+    // esperado, la afirmación de arriba ya habría fallado.
+    const conflict = error as LaboratoryEvidenceConflictError;
+    expect(conflict.existingLaboratoryName).toBe("MK");
+    expect(conflict.batchCode).toBe(BASE_INPUT.batchCode);
+    expect(`${conflict.message} ${conflict.batchCode} ${conflict.existingLaboratoryName}`)
+      .not.toContain("lab_mk");
+  });
+
+  it("una entrada SIN laboratorio no toca la evidencia ya observada del lote", async () => {
+    vi.mocked(lockBatchLaboratoryEvidence).mockResolvedValue({
+      id: "batch_1",
+      receivedLaboratoryId: "lab_mk",
+      receivedLaboratoryName: "MK",
+    });
+
+    await registerInventoryEntry({ ...BASE_INPUT, idempotencyKey: "lab-ausente" });
+
+    expect(upsertBatchQuantity).toHaveBeenCalledWith(
+      tx,
+      expect.not.objectContaining({ receivedLaboratoryId: expect.anything() }),
+    );
+  });
+
+  // ------------------------------------------------------------------------
+  // Compatibilidad del fingerprint.
+  //
+  // El fingerprint se compara contra el que quedó GUARDADO cuando la entrada se
+  // creó. Si el campo nuevo entrara siempre al JSON, un reintento que cruce el
+  // despliegue compararía contra un fingerprint viejo y fallaría por conflicto
+  // de payload sin que nadie haya cambiado nada. Por eso la clave se omite
+  // cuando no hay laboratorio: la huella de esas entradas no se mueve.
+  // ------------------------------------------------------------------------
+  it("no cambia el fingerprint de una entrada sin laboratorio", async () => {
+    await registerInventoryEntry({ ...BASE_INPUT, idempotencyKey: "fp-sin-lab" });
+    const fingerprint = vi.mocked(createInventoryEntry).mock.calls[0]![1].requestFingerprint;
+
+    expect(fingerprint).not.toContain("receivedLaboratoryId");
+    expect(fingerprint).toBe(JSON.stringify({
+      productId: BASE_INPUT.productId,
+      quantity: BASE_INPUT.quantity,
+      batchCode: BASE_INPUT.batchCode,
+      expiresAt: BASE_INPUT.expiresAt.toISOString(),
+      note: BASE_INPUT.note,
+      createdById: BASE_INPUT.createdById,
+    }));
+  });
+
+  it("distingue en el fingerprint dos entradas con laboratorios distintos", async () => {
+    await registerInventoryEntry({
+      ...BASE_INPUT,
+      idempotencyKey: "fp-lab-a",
+      receivedLaboratoryId: "lab_mk",
+    });
+    const first = vi.mocked(createInventoryEntry).mock.calls[0]![1].requestFingerprint;
+
+    vi.mocked(findInventoryEntryByIdempotencyKey).mockResolvedValue({
+      id: "entry_existing",
+      requestFingerprint: first,
+    } as never);
+
+    await expect(registerInventoryEntry({
+      ...BASE_INPUT,
+      idempotencyKey: "fp-lab-a",
+      receivedLaboratoryId: "lab_genfar",
+    })).rejects.toBeInstanceOf(IdempotencyPayloadConflictError);
+  });
+
+  it("un reintento idéntico con laboratorio devuelve la entrada ya creada", async () => {
+    await registerInventoryEntry({
+      ...BASE_INPUT,
+      idempotencyKey: "fp-retry",
+      receivedLaboratoryId: "lab_mk",
+    });
+    const fingerprint = vi.mocked(createInventoryEntry).mock.calls[0]![1].requestFingerprint;
+
+    vi.mocked(findInventoryEntryByIdempotencyKey).mockResolvedValue({
+      id: "entry_existing",
+      requestFingerprint: fingerprint,
+    } as never);
+
+    await expect(registerInventoryEntry({
+      ...BASE_INPUT,
+      idempotencyKey: "fp-retry",
+      receivedLaboratoryId: "lab_mk",
+    })).resolves.toEqual(expect.objectContaining({
+      entry: { id: "entry_existing", requestFingerprint: fingerprint },
+      idempotent: true,
+    }));
   });
 });
 

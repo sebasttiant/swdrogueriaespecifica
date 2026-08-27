@@ -162,7 +162,67 @@ export type UpsertBatchQuantityParams = {
   batchCode: string;
   expiresAt: Date;
   quantity: number;
+  /**
+   * Laboratorio OBSERVADO al recibir el lote físico. Ausente cuando la
+   * recepción no lo informa: en ese caso el lote conserva la evidencia que ya
+   * tuviera, porque no informar no es lo mismo que informar "ninguno".
+   */
+  receivedLaboratoryId?: string | null;
 };
+
+/**
+ * Evidencia de laboratorio del lote, con la fila BLOQUEADA (FOR UPDATE).
+ *
+ * DEBE llamarse dentro de una transacción y ANTES del upsert. Sin el lock, dos
+ * recepciones simultáneas del mismo lote leerían ambas la misma evidencia
+ * previa —`null`, típicamente— y las dos se creerían la primera: la última en
+ * escribir pisaría a la otra en silencio, que es exactamente lo que la regla de
+ * conflicto existe para impedir. Con FOR UPDATE la segunda espera y ve lo que
+ * la primera dejó.
+ *
+ * Devuelve `null` cuando el lote todavía no existe: no hay nada que bloquear ni
+ * evidencia previa que contradecir, y el upsert lo creará.
+ *
+ * El nombre viaja junto al id porque el mensaje de conflicto se le muestra a
+ * una persona, y una persona no puede hacer nada con un cuid.
+ */
+export type LockedBatchLaboratoryEvidence = {
+  id: string;
+  receivedLaboratoryId: string | null;
+  receivedLaboratoryName: string | null;
+};
+
+export async function lockBatchLaboratoryEvidence(
+  client: Prisma.TransactionClient,
+  params: { productId: string; batchCode: string },
+): Promise<LockedBatchLaboratoryEvidence | null> {
+  // `FOR UPDATE OF pb` es obligatorio con el LEFT JOIN: sin el `OF`, Postgres
+  // intentaría bloquear también `laboratories`, que no se está modificando.
+  const rows = await client.$queryRaw<LockedBatchLaboratoryEvidence[]>`
+    SELECT pb.id,
+           pb."receivedLaboratoryId",
+           l.name AS "receivedLaboratoryName"
+    FROM product_batches pb
+    LEFT JOIN laboratories l ON l.id = pb."receivedLaboratoryId"
+    WHERE pb."productId" = ${params.productId}
+      AND pb."batchCode" = ${params.batchCode}
+    FOR UPDATE OF pb
+  `;
+  return rows[0] ?? null;
+}
+
+/**
+ * Campos de evidencia que se escriben SOLO cuando la recepción informó un
+ * laboratorio. Sin laboratorio no se escribe nada —ni siquiera
+ * `laboratoryEvidence`— para no degradar a UNKNOWN una evidencia ya observada.
+ */
+function laboratoryEvidenceOf(params: UpsertBatchQuantityParams) {
+  if (!params.receivedLaboratoryId) return {};
+  return {
+    receivedLaboratoryId: params.receivedLaboratoryId,
+    laboratoryEvidence: "OBSERVED" as const,
+  };
+}
 
 export async function upsertBatchQuantity(
   client: Prisma.TransactionClient,
@@ -181,9 +241,14 @@ export async function upsertBatchQuantity(
       expiresAt: params.expiresAt,
       quantity: params.quantity,
       status: "DISPONIBLE",
+      ...laboratoryEvidenceOf(params),
     },
     update: {
       quantity: { increment: params.quantity },
+      // Solo se llega acá con evidencia compatible: el service ya rechazó el
+      // conflicto. Escribir sobre un lote sin evidencia previa es registrar la
+      // PRIMERA observación, no sobrescribir una anterior.
+      ...laboratoryEvidenceOf(params),
     },
   });
 }
