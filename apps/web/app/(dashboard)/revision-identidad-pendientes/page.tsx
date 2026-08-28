@@ -51,7 +51,7 @@ export default async function RevisionIdentidadPendientesPage({
     <div className="space-y-4">
       <PageHeader
         title="Revisión de identidad"
-        description="Productos con pendientes abiertos que todavía no tienen su código de Orion. Sin ese código no se puede cuadrar el inventario."
+        description="Productos con pendientes abiertos que todavía no tienen su SKU (código de Orion). Sin ese código no se puede cuadrar el inventario."
       />
 
       <PendingIdentityQueue
