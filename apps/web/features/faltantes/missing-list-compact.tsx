@@ -62,6 +62,26 @@ export function MissingListCompact({
   // antes de este cambio.
   const hasAttribution = items.some((item) => missingAttribution(item) !== null);
 
+  // ¿Alguna fila de ESTA página va a ofrecer botones? La columna "Acciones"
+  // dependía solo de la capacidad, y los botones dependen además de que la fila
+  // no esté ya atribuida. En "Ya pedidos" todas lo están, así que el encabezado
+  // aparecía sobre una columna vacía: la pantalla prometía una acción que no
+  // existía y el operador se quedaba buscándola.
+  const hasActions =
+    canAct && items.some((item) => missingAttribution(item) === null);
+
+  // Lo que ya se pidió no se cierra desde acá, y eso hay que DECIRLO. Un
+  // faltante se salda cuando bodega registra la entrada con su lote y su
+  // vencimiento: un botón "ya llegó" que no registre el lote inventaría stock y
+  // rompería el FEFO, que es lo que decide qué se despacha primero.
+  //
+  // El aviso va una vez arriba de la tabla y no por fila: es la misma
+  // instrucción para todas, y repetirla en cada renglón compite justo con los
+  // datos que la vista compacta existe para mostrar.
+  const showsOrderedHint = items.every(
+    (item) => missingAttribution(item) !== null,
+  );
+
   if (items.length === 0) {
     return (
       <Card>
@@ -121,6 +141,20 @@ export function MissingListCompact({
         })}
       </div>
 
+      {showsOrderedHint ? (
+        <p className="text-sm text-muted-foreground">
+          Estos ya se pidieron. Se cierran solos cuando bodega registra la
+          entrada de la mercadería:{" "}
+          <Link
+            href="/entradas"
+            className="font-semibold text-text underline underline-offset-2"
+          >
+            ir a Entradas
+          </Link>
+          .
+        </p>
+      ) : null}
+
       {/* Desktop: tabla simple con scroll horizontal si no entra. */}
       <Card className="hidden overflow-x-auto p-0 lg:block">
         <table className="w-full min-w-[40rem] text-left text-sm">
@@ -137,7 +171,9 @@ export function MissingListCompact({
               {hasAttribution ? (
                 <th className="px-3 py-2 font-medium">Pedido por</th>
               ) : null}
-              {canAct ? <th className="px-3 py-2 font-medium">Acciones</th> : null}
+              {hasActions ? (
+                <th className="px-3 py-2 font-medium">Acciones</th>
+              ) : null}
             </tr>
           </thead>
           <tbody>
@@ -164,7 +200,7 @@ export function MissingListCompact({
                         : "—"}
                     </td>
                   ) : null}
-                  {canAct ? (
+                  {hasActions ? (
                     <td className="px-3 py-2">
                       {attribution === null ? (
                         <MissingQuickActions

@@ -261,3 +261,70 @@ describe("MissingListCompact · el nombre no se corta en el celular", () => {
     expect(html).not.toContain("truncate");
   });
 });
+
+// --------------------------------------------------------------------------
+// La columna "Acciones" prometía algo que no cumplía.
+//
+// El encabezado dependía SOLO de la capacidad; los botones dependen además de
+// que la fila no esté ya atribuida. En "Ya pedidos" todas lo están, así que la
+// tabla mostraba "ACCIONES" sobre una columna vacía y el operador se quedaba
+// buscando el botón que dijera "ya llegó".
+// --------------------------------------------------------------------------
+describe("MissingListCompact · la columna Acciones no miente", () => {
+  const yaPedido = item({
+    orderedAt: new Date("2026-08-01T00:00:00.000Z"),
+    orderedBy: { name: "Super Admin" },
+  });
+
+  it("no dibuja el encabezado cuando ninguna fila ofrece acciones", () => {
+    const out = render([yaPedido], null, true);
+
+    expect(out).not.toContain("Acciones");
+  });
+
+  it("lo dibuja cuando al menos una fila sí las ofrece", () => {
+    const out = render([item(), yaPedido], null, true);
+
+    expect(out).toContain("Acciones");
+  });
+
+  it("sigue sin dibujarlo para quien no es autoridad de compras", () => {
+    const out = render([item()], null, false);
+
+    expect(out).not.toContain("Acciones");
+  });
+});
+
+// --------------------------------------------------------------------------
+// Cómo se cierra lo que ya se pidió.
+//
+// No hay —ni debe haber— un botón "ya llegó" acá: un faltante se salda cuando
+// bodega registra la entrada con su lote y su vencimiento. Un botón que no
+// registre el lote inventaría stock y rompería el FEFO. Pero si la pantalla no
+// lo dice, la cola parece un pozo donde las cosas entran y no salen.
+// --------------------------------------------------------------------------
+describe("MissingListCompact · dice cómo se cierra lo ya pedido", () => {
+  const yaPedido = item({
+    orderedAt: new Date("2026-08-01T00:00:00.000Z"),
+    orderedBy: { name: "Super Admin" },
+  });
+
+  it("explica que se cierra al registrar la entrada, y enlaza ahí", () => {
+    const out = render([yaPedido], null, true);
+
+    expect(out).toContain("bodega registra la entrada");
+    expect(out).toContain('href="/entradas"');
+  });
+
+  it("no lo dice en la cola de lo que todavía hay que pedir", () => {
+    const out = render([item()], null, true);
+
+    expect(out).not.toContain("bodega registra la entrada");
+  });
+
+  it("tampoco cuando la página mezcla pedidos con pendientes de decisión", () => {
+    const out = render([item(), yaPedido], null, true);
+
+    expect(out).not.toContain("bodega registra la entrada");
+  });
+});
