@@ -61,7 +61,7 @@ export default async function RevisionFaltantesPage({
         className="flex flex-wrap gap-2 text-sm font-semibold"
       >
         {REPORT_QUEUE_SCOPES.map((option) => (
-          <Link
+          <Link prefetch={false}
             key={option}
             href={reportQueueScopeHref(option)}
             aria-current={scope === option ? "page" : undefined}

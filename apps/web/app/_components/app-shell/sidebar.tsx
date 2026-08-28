@@ -32,7 +32,7 @@ export function Sidebar({ role }: SidebarProps) {
           const active = isActive(pathname, item.href);
           const Icon = item.icon;
           return (
-            <Link
+            <Link prefetch={false}
               key={item.href}
               href={item.href}
               aria-current={active ? "page" : undefined}

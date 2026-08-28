@@ -58,7 +58,7 @@ export async function ManagementMissingAlert({
               {alert.exceedsDailyThreshold ? (
                 <>Hoy se generaron {alert.createdToday} faltantes. </>
               ) : null}
-              <Link href="/faltantes" className="font-semibold underline">
+              <Link prefetch={false} href="/faltantes" className="font-semibold underline">
                 Revisar faltantes
               </Link>
             </p>

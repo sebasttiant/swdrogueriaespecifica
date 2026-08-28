@@ -310,10 +310,12 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
   ],
   // Recepción física a nivel vendedor (T4.4): la bodega opera su propio
   // circuito — registra entradas, crea y cumple SUS pendientes, reporta
-  // faltantes y revisa su propia cola. Quedan fuera la PII del cliente
-  // (`canViewCustomerIdentity`), la cola ajena (`canManageAllPendings`) y la
-  // lectura global (`canReadAllPendings`): la bodega no ve ni opera pendientes
-  // de vendedores.
+  // faltantes y revisa su propia cola. LEE la cola completa
+  // (`canReadAllPendings`) porque es quien recibe la mercadería y necesita
+  // saber qué espera cada vendedor para priorizar la descarga. Quedan fuera la
+  // PII del cliente (`canViewCustomerIdentity`) y la cola ajena
+  // (`canManageAllPendings`): bodega ve los pendientes de todos, pero opera
+  // solo los suyos.
   //
   // La bodega TAMBIÉN gestiona catálogo (`canManageProducts`) y registra
   // entradas (`canCreateEntries`): recibe mercadería que no siempre nace de un
@@ -323,6 +325,14 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
   BODEGA: [
     "canViewDashboard",
     "canViewPendientes",
+    // Lectura de la cola COMPLETA. Bodega es quien recibe la mercadería, así
+    // que necesita ver qué está esperando cada vendedor para priorizar qué
+    // descargar primero. Es el eje de LECTURA y solo ese:
+    // `canManageAllPendings` sigue afuera, así que ve todos los pendientes y
+    // sigue pudiendo mutar únicamente los suyos. La identidad del cliente
+    // también sigue afuera (`canViewCustomerIdentity`): para priorizar una
+    // descarga no hace falta saber a quién se le vende.
+    "canReadAllPendings",
     "canViewFaltantes",
     "canViewProductos",
     "canViewEntradas",

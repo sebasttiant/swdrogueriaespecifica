@@ -61,7 +61,12 @@ function missingHref(
 ): string {
   const params = new URLSearchParams();
   if (scope !== "actionable") params.set("scope", scope);
-  if (view === "compact") params.set("view", "compact");
+  // Se escribe el valor NO predeterminado, y el predeterminado es `compact`
+  // —lo fija `resolveMissingView`—. Estaba al revés: el enlace de "Completa"
+  // omitía el parámetro, la URL quedaba sin `view`, y el resolvedor la leía
+  // como compacta. El botón era literalmente imposible de activar: se hacía
+  // clic, la URL cambiaba de scope y la vista seguía siendo la misma.
+  if (view === "full") params.set("view", "full");
   if (cursor) params.set("cursor", cursor);
   const query = params.toString();
   return query ? `/faltantes?${query}` : "/faltantes";

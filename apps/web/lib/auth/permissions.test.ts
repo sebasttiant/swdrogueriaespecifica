@@ -447,11 +447,19 @@ describe("BODEGA (matriz de perfil)", () => {
     }
   });
 
-  it("queda SIN exposición de PII, cola ajena ni lectura global", () => {
+  // Bodega LEE la cola completa: es quien recibe la mercadería y necesita saber
+  // qué espera cada vendedor para priorizar la descarga.
+  it("lee la cola completa", () => {
+    expect(can("BODEGA", "canReadAllPendings")).toBe(true);
+  });
+
+  // Leer no es operar, y ver la cola no es ver al cliente. Los dos ejes siguen
+  // cerrados: bodega ve todos los pendientes y muta solo los suyos, sin acceso
+  // a nombre ni teléfono de nadie.
+  it("queda SIN exposición de PII ni poder sobre la cola ajena", () => {
     for (const capability of [
       "canViewCustomerIdentity",
       "canManageAllPendings",
-      "canReadAllPendings",
     ] as const) {
       expect(can("BODEGA", capability)).toBe(false);
     }
@@ -465,22 +473,25 @@ describe("BODEGA (matriz de perfil)", () => {
 // cumplimiento siguen gateando SOLO con `canManageAllPendings`.
 // --------------------------------------------------------------------------
 describe("canReadAllPendings (lectura global ≠ mutación)", () => {
-  it("la tienen administradores y supervisión, nunca vendedor ni bodega", () => {
+  // Bodega entra a la lista: recibe la mercadería y necesita ver qué espera
+  // cada vendedor para priorizar la descarga. El vendedor sigue afuera.
+  it("la tienen gerencia, supervisión y bodega, nunca el vendedor", () => {
     expect(rolesWithCapability("canReadAllPendings")).toEqual([
       "SUPERADMIN",
       "ADMIN",
       "SUPERVISOR",
+      "BODEGA",
     ]);
     expect(can("OPERADOR", "canReadAllPendings")).toBe(false);
-    expect(can("BODEGA", "canReadAllPendings")).toBe(false);
   });
 
-  it("tener las acciones de vendedor NO otorga lectura global", () => {
-    // BODEGA puede entregar/cancelar/facturar/contactar (lo suyo) pero no lee
-    // la cola ajena: canReadAllPendings es un eje aparte de las acciones.
+  it("leer la cola entera NO otorga poder sobre ella", () => {
+    // Los dos ejes siguen separados, y es el punto: bodega VE todos los
+    // pendientes y solo puede MUTAR los suyos. Sus acciones de cumplimiento
+    // siguen gateadas por `canManageAllPendings`, que no tiene.
+    expect(can("BODEGA", "canReadAllPendings")).toBe(true);
     expect(can("BODEGA", "canDeliverPendings")).toBe(true);
     expect(can("BODEGA", "canCancelPendings")).toBe(true);
-    expect(can("BODEGA", "canReadAllPendings")).toBe(false);
     expect(can("BODEGA", "canManageAllPendings")).toBe(false);
   });
 });
@@ -494,7 +505,7 @@ describe("canReadAllPendings (lectura global ≠ mutación)", () => {
 // fija por rol: una tabla, no una muestra.
 // --------------------------------------------------------------------------
 describe("seesAllPendings (alcance de la cola, en una sola regla)", () => {
-  it("la cola completa es de gerencia y supervisión, nunca del vendedor", () => {
+  it("la cola completa la ven todos menos el vendedor", () => {
     const alcance = USER_ROLES.map((role) => [role, seesAllPendings(role)] as const);
 
     expect(alcance).toEqual([
@@ -502,7 +513,7 @@ describe("seesAllPendings (alcance de la cola, en una sola regla)", () => {
       ["ADMIN", true],
       ["SUPERVISOR", true],
       ["OPERADOR", false],
-      ["BODEGA", false],
+      ["BODEGA", true],
     ]);
   });
 

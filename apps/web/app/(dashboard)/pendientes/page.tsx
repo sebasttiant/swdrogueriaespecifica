@@ -125,7 +125,7 @@ export default async function PendientesPage({
           todavía hay que atender. Cambiar de scope vuelve a la primera página,
           porque el cursor de una vista no es válido en la otra. */}
       <nav aria-label="Vista de pendientes" className="flex gap-2 text-sm font-semibold">
-        <Link
+        <Link prefetch={false}
           href={reviewHref({ scope: "active", view, axes })}
           aria-current={scope === "active" ? "page" : undefined}
           className={cn(
@@ -137,7 +137,7 @@ export default async function PendientesPage({
         >
           Abiertos
         </Link>
-        <Link
+        <Link prefetch={false}
           href={reviewHref({ scope: "history", view, axes })}
           aria-current={scope === "history" ? "page" : undefined}
           className={cn(
@@ -160,7 +160,7 @@ export default async function PendientesPage({
           queda segundo, para cuando hace falta el cliente, el teléfono, la
           dirección o los abonos. */}
       <nav aria-label="Formato de la lista" className="flex gap-2 text-sm font-semibold">
-        <Link
+        <Link prefetch={false}
           href={reviewHref({ scope, view: "lista", axes })}
           aria-current={view === "lista" ? "page" : undefined}
           className={cn(
@@ -172,7 +172,7 @@ export default async function PendientesPage({
         >
           Listado
         </Link>
-        <Link
+        <Link prefetch={false}
           href={reviewHref({ scope, view: "detalle", axes })}
           aria-current={view === "detalle" ? "page" : undefined}
           className={cn(

@@ -243,7 +243,7 @@ export function TopbarSearch() {
               <ul className="space-y-1" aria-label="Resultados de búsqueda">
                 {suggestions.map((product) => (
                   <li key={product.id}>
-                    <Link
+                    <Link prefetch={false}
                       href={`/productos/${product.id}`}
                       onClick={selectSuggestion}
                       className="flex min-h-11 flex-col justify-center rounded-[var(--radius-btn)] px-3 py-2 hover:bg-muted/50"

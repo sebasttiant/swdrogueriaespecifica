@@ -58,7 +58,7 @@ export function ArrivedMissingQueue({ items }: { items: ArrivedMissingItem[] }) 
               </p>
             </div>
 
-            <Link
+            <Link prefetch={false}
               href={loadHref(item)}
               className="inline-flex min-h-11 shrink-0 items-center justify-center rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground hover:opacity-90"
             >

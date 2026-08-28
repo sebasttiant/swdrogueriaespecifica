@@ -149,7 +149,7 @@ export function NavDrawer({ role }: NavDrawerProps) {
                   const Icon = item.icon;
                   return (
                     <li key={item.href}>
-                      <Link
+                      <Link prefetch={false}
                         href={item.href}
                         ref={index === 0 ? firstLinkRef : undefined}
                         aria-current={active ? "page" : undefined}

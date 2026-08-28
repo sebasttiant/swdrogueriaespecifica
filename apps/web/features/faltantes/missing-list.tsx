@@ -395,7 +395,7 @@ export function MissingList({
 
       {nextCursor ? (
         <div className="pt-1 text-center">
-          <Link
+          <Link prefetch={false}
             href={pageHref(nextCursor)}
             className="inline-flex min-h-11 items-center px-4 text-sm font-semibold text-primary hover:underline"
           >

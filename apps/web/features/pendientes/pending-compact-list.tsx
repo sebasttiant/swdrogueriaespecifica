@@ -250,7 +250,7 @@ function customerActions(item: PendingListItem, ctx: CustomerActionsContext) {
   // seguía ahí y lo llevaba a un 404 crudo, que parece un error del sistema y
   // no el límite que es.
   const edit = ctx.canEdit && (ctx.canManageAll || item.sellerEditedAt == null) ? (
-    <Link
+    <Link prefetch={false}
       key="edit"
       href={`/pendientes/${item.id}/editar`}
       className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-border px-3 text-sm font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-text"
@@ -503,7 +503,7 @@ export function PendingCompactList({
 
       {nextCursor ? (
         <div className="pt-1 text-center">
-          <Link
+          <Link prefetch={false}
             href={pageHref(nextCursor)}
             className="inline-flex min-h-11 items-center px-4 text-sm font-semibold text-primary hover:underline"
           >

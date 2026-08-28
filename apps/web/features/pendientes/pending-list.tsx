@@ -325,7 +325,7 @@ export function PendingList({
 
       {nextCursor ? (
         <div className="pt-1 text-center">
-          <Link
+          <Link prefetch={false}
             href={pageHref(nextCursor)}
             className="text-sm font-semibold text-primary hover:underline"
           >

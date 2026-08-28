@@ -190,7 +190,7 @@ export function AdminOverview({ items, showArchived }: AdminOverviewProps) {
           if (!module.href) return <div key={module.title}>{content}</div>;
 
           return (
-            <Link key={module.title} href={module.href} className="block h-full">
+            <Link prefetch={false} key={module.title} href={module.href} className="block h-full">
               {content}
             </Link>
           );

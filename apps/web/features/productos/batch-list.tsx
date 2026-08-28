@@ -71,7 +71,7 @@ export function BatchList({ productId, items, nextCursor }: BatchListProps) {
 
       {nextCursor ? (
         <div className="pt-1 text-center">
-          <Link
+          <Link prefetch={false}
             href={`/productos/${productId}?cursor=${encodeURIComponent(nextCursor)}`}
             className="text-sm font-semibold text-primary hover:underline"
           >

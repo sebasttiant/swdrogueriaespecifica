@@ -124,7 +124,7 @@ function OperationalAlertContent({
         </summary>
         <div className="mt-3 grid gap-2 transition-[height,opacity] duration-200 ease-in-out">
           {chips.map((chip) => (
-            <Link key={chip.label} href={chip.href} className={chipClasses(chip.severity)}>
+            <Link prefetch={false} key={chip.label} href={chip.href} className={chipClasses(chip.severity)}>
               <span>{chip.label}</span>
               <span>{chip.count}</span>
             </Link>
@@ -135,7 +135,7 @@ function OperationalAlertContent({
       <div className="hidden items-center gap-3 sm:flex sm:flex-wrap">
         <span className="mr-1 text-sm font-semibold">{severityLabel}</span>
         {chips.map((chip) => (
-          <Link key={chip.label} href={chip.href} className={chipClasses(chip.severity)}>
+          <Link prefetch={false} key={chip.label} href={chip.href} className={chipClasses(chip.severity)}>
             <span>{chip.label}</span>
             <span>{chip.count}</span>
           </Link>

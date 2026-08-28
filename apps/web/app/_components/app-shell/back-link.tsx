@@ -47,7 +47,7 @@ export function BackLink() {
   const label = SECTION_LABELS[section];
 
   return (
-    <Link
+    <Link prefetch={false}
       href={parent}
       // Altura de dedo: se toca con el pulgar, muchas veces caminando.
       className="mb-4 inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-primary hover:underline print:hidden"

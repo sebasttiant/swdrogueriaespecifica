@@ -23,7 +23,7 @@ export function PeriodFilter({ active }: PeriodFilterProps) {
       {REPORT_PERIODS.map((period) => {
         const isActive = period === active;
         return (
-          <Link
+          <Link prefetch={false}
             key={period}
             href={`/reportes?period=${period}`}
             aria-current={isActive ? "true" : undefined}

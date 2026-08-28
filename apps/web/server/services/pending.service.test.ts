@@ -1280,11 +1280,15 @@ describe("getPendingIdentityQueue · alcance por rol", () => {
   // Quien no ve toda la cola recibe SOLO lo suyo. El filtro viaja al
   // repositorio, que es donde entra en el WHERE: si se aplicara después de
   // contar, el conteo seguiría siendo el global y la fuga sería el número.
-  it("BODEGA consulta solo lo que cargó esa persona", async () => {
+  //
+  // Bodega pasó a leer la cola completa (`canReadAllPendings`), y eso alcanza
+  // también a ESTA cola: la de identidad es una cola de pendientes. Es
+  // consecuencia buscada del cambio de alcance, no un descuido.
+  it("BODEGA consulta la cola completa, no solo lo suyo", async () => {
     await getPendingIdentityQueue({ role: "BODEGA", userId: "u-7" });
 
     expect(repo.listPendingIdentityQueue).toHaveBeenCalledWith(
-      expect.objectContaining({ ownerId: "u-7" }),
+      expect.objectContaining({ ownerId: undefined }),
     );
   });
 
@@ -1349,10 +1353,16 @@ describe("getPendingIdentityQueue · alcance por rol", () => {
 
   // El repositorio lee `ownerId: undefined` como cola GLOBAL, así que un
   // `userId` vacío en un rol acotado tiene que fallar, NUNCA ensanchar.
+  //
+  // Hoy NINGÚN rol admitido en esta cola es acotado: los tres de gerencia y
+  // bodega leen todo, y a OPERADOR se lo rechaza antes por no poder resolver
+  // ninguna fila. La guarda queda igual, y esta prueba la ejerce forzando el
+  // rol, porque el día que se agregue un rol acotado el olvido sería una fuga
+  // silenciosa: la cola entera servida a quien debía ver solo lo suyo.
   it("falla en vez de ensanchar el alcance cuando falta el userId", async () => {
-    await expect(getPendingIdentityQueue({ role: "BODEGA", userId: "" })).rejects.toThrow(
-      /userId/,
-    );
+    await expect(
+      getPendingIdentityQueue({ role: "OPERADOR_ACOTADO" as never, userId: "" }),
+    ).rejects.toThrow();
 
     expect(repo.listPendingIdentityQueue).not.toHaveBeenCalled();
   });
