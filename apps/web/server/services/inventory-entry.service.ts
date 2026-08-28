@@ -19,6 +19,7 @@ import {
 } from "@/server/repositories/missing-item.repository";
 import { markReportsReceivedByMissingItemIds } from "@/server/repositories/missing-report.repository";
 import {
+  lockBatchLaboratoryEvidence,
   reserveReceivedBatchQuantity,
   reserveBatchForPending,
   upsertBatchQuantity,
@@ -42,6 +43,14 @@ export type RegisterInventoryEntryInput = {
   note?: string;
   createdById?: string | null;
   idempotencyKey?: string;
+  /**
+   * Laboratorio OBSERVADO al recibir la mercadería. Es un tercer eje, separado
+   * del laboratorio SOLICITADO (`Pending`/`MissingItem.requestedLaboratoryId`)
+   * y del de CATÁLOGO (`Product.laboratoryId`): lo que el cliente pidió, lo que
+   * el catálogo dice y lo que bodega tuvo en la mano son tres hechos distintos
+   * y ninguno puede escribir sobre otro.
+   */
+  receivedLaboratoryId?: string | null;
 };
 
 export type RegisterInventoryEntryResult = {
@@ -56,12 +65,42 @@ export class IdempotencyPayloadConflictError extends Error {
   constructor() { super("idempotency key was already used for a different entry payload"); }
 }
 
+/**
+ * El lote ya fue recibido con OTRO laboratorio.
+ *
+ * Se rechaza la entrada entera en vez de preservar o pisar la evidencia previa:
+ * las dos alternativas silenciosas dejan un lote afirmando un laboratorio que
+ * alguien no recibió, y eso no se descubre hasta que ya no se puede reconstruir.
+ * Un rechazo es visible y se corrige en el momento.
+ *
+ * Lleva el NOMBRE del laboratorio y el código de lote —nunca ids internos—
+ * porque el destinatario del mensaje es la persona que está cargando la caja.
+ */
+export class LaboratoryEvidenceConflictError extends Error {
+  readonly batchCode: string;
+  readonly existingLaboratoryName: string | null;
+
+  constructor(params: { batchCode: string; existingLaboratoryName: string | null }) {
+    super("batch already received with a different laboratory");
+    this.batchCode = params.batchCode;
+    this.existingLaboratoryName = params.existingLaboratoryName;
+  }
+}
+
 function requestFingerprint(data: RegisterInventoryEntryInput): string {
   return JSON.stringify({
     productId: data.productId, quantity: data.quantity, batchCode: data.batchCode,
     expiresAt: data.expiresAt.toISOString(),
     note: data.note?.trim() || null,
     createdById: data.createdById ?? null,
+    // La clave se OMITE cuando no hay laboratorio, y va al final a propósito.
+    // Así el JSON de toda entrada sin laboratorio es byte a byte el mismo de
+    // antes de este campo: un reintento que cruce el despliegue compara contra
+    // su fingerprint guardado y coincide, en vez de fallar por un conflicto de
+    // payload que nadie provocó.
+    ...(data.receivedLaboratoryId
+      ? { receivedLaboratoryId: data.receivedLaboratoryId }
+      : {}),
   });
 }
 
@@ -92,11 +131,34 @@ export async function registerInventoryEntry(
     }
     const idempotencyKey = data.idempotencyKey ?? crypto.randomUUID();
 
+    // La evidencia de laboratorio se decide ANTES de tocar el lote. El lock es
+    // lo que hace que la comparación signifique algo bajo concurrencia.
+    if (data.receivedLaboratoryId) {
+      const locked = await lockBatchLaboratoryEvidence(tx, {
+        productId: data.productId,
+        batchCode: data.batchCode,
+      });
+      // `null` en el lote es AUSENCIA de evidencia, no un valor en conflicto:
+      // un lote histórico acepta la primera observación que llegue.
+      if (
+        locked?.receivedLaboratoryId &&
+        locked.receivedLaboratoryId !== data.receivedLaboratoryId
+      ) {
+        throw new LaboratoryEvidenceConflictError({
+          batchCode: data.batchCode,
+          existingLaboratoryName: locked.receivedLaboratoryName,
+        });
+      }
+    }
+
     const batch = await upsertBatchQuantity(tx, {
       productId: data.productId,
       batchCode: data.batchCode,
       expiresAt: data.expiresAt,
       quantity: data.quantity,
+      ...(data.receivedLaboratoryId
+        ? { receivedLaboratoryId: data.receivedLaboratoryId }
+        : {}),
     });
 
     const entry = await createInventoryEntry(tx, {
