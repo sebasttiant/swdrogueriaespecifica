@@ -1600,3 +1600,122 @@ describe("resolvePendingIdentityAction · escritura", () => {
     expect(result.error).toBeTruthy();
   });
 });
+
+// --------------------------------------------------------------------------
+// El laboratorio solicitado es OPCIONAL (decisión de negocio).
+//
+// Lo que importa acá NO es solo que deje pasar: es que cuando no hay
+// laboratorio NO se toque el catálogo. Volver opcional el schema sin cortar la
+// resolución convertiría un error visible en una fila basura: un laboratorio
+// con nombre vacío que después nadie puede buscar ni borrar.
+// --------------------------------------------------------------------------
+describe("createPendingAction · laboratorio opcional", () => {
+  // La sesión y el registro los arma el `beforeEach` del describe principal,
+  // que este bloque no hereda por estar al mismo nivel.
+  beforeEach(() => {
+    mocks.checkCapability.mockResolvedValue({
+      ok: true,
+      session: { user: { id: "op-1", role: "OPERADOR", email: "op1@drogueria.test" } },
+    });
+    mocks.registerPending.mockResolvedValue({
+      pending: { id: "pend-1", productId: "prod-1" },
+      missingItem: null,
+      createdProduct: null,
+      replayed: false,
+    });
+  });
+
+  // CASO C — se crea el pendiente.
+  it("crea el pendiente cuando no se informó laboratorio", async () => {
+    const data = createCatalogFormData({
+      requestedLaboratoryId: "",
+      requestedLaboratoryName: "",
+    });
+
+    const result = await createPendingAction(PREV, data);
+
+    expectSuccess(result);
+  });
+
+  // CASO E — no se intenta resolver nada.
+  it("NO invoca findOrCreateLaboratory cuando no hay laboratorio", async () => {
+    const data = createCatalogFormData({
+      requestedLaboratoryId: "",
+      requestedLaboratoryName: "",
+    });
+
+    await createPendingAction(PREV, data);
+
+    expect(mocks.findOrCreateLaboratory).not.toHaveBeenCalled();
+  });
+
+  // CASO D — el pendiente queda sin laboratorio, no con uno inventado.
+  it("registra el pendiente con el laboratorio ausente", async () => {
+    const data = createCatalogFormData({
+      requestedLaboratoryId: "",
+      requestedLaboratoryName: "",
+    });
+
+    await createPendingAction(PREV, data);
+
+    expect(mocks.registerPending).toHaveBeenCalledWith(
+      expect.objectContaining({ requestedLaboratoryId: undefined }),
+    );
+  });
+
+  // CASO 5 — solo espacios es ausencia. Sin esto se crearía un laboratorio con
+  // nombre en blanco.
+  it("un nombre de solo espacios no toca el catálogo", async () => {
+    const data = createCatalogFormData({
+      requestedLaboratoryId: "",
+      requestedLaboratoryName: "   ",
+    });
+
+    const result = await createPendingAction(PREV, data);
+
+    expectSuccess(result);
+    expect(mocks.findOrCreateLaboratory).not.toHaveBeenCalled();
+  });
+
+  // CASO F — el nombre escrito a mano sigue resolviéndose como antes.
+  it("sigue resolviendo el laboratorio escrito a mano", async () => {
+    const data = createCatalogFormData({
+      requestedLaboratoryId: "",
+      requestedLaboratoryName: "Tecnoquimicas",
+    });
+
+    await createPendingAction(PREV, data);
+
+    expect(mocks.findOrCreateLaboratory).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Tecnoquimicas" }),
+    );
+  });
+
+  // CASO G — la sugerencia seleccionada gana y no se vuelve a resolver.
+  it("usa el ID seleccionado sin volver a resolver por nombre", async () => {
+    const data = createCatalogFormData();
+
+    await createPendingAction(PREV, data);
+
+    expect(mocks.findOrCreateLaboratory).not.toHaveBeenCalled();
+    expect(mocks.registerPending).toHaveBeenCalledWith(
+      expect.objectContaining({ requestedLaboratoryId: "lab-1" }),
+    );
+  });
+
+  // El pendiente manual toma el mismo camino: sin laboratorio también entra.
+  // El manual necesita identidad —código o aplazamiento— por la regla del SKU,
+  // que es ajena al laboratorio y no se toca acá.
+  it("acepta un producto manual sin laboratorio", async () => {
+    const data = createManualFormData({
+      identitySkippedReason: "CODE_NOT_FOUND",
+      requestedLaboratoryId: "",
+      requestedLaboratoryName: "",
+    });
+
+    const result = await createPendingAction(PREV, data);
+
+    expectSuccess(result);
+    expect(mocks.findOrCreateLaboratory).not.toHaveBeenCalled();
+  });
+});

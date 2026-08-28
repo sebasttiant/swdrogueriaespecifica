@@ -245,10 +245,24 @@ export const pendingCreateSchema = z
       .transform((value) => (value && value.length > 0 ? value : undefined)),
     // ------------------------------------------------------------------
     // Trazabilidad de laboratorio (T3): laboratorio solicitado por el cliente.
-    // Requerido en captura nueva. NULL en registros históricos.
+    // OPCIONAL, y es una decisión de negocio, no una concesión técnica.
+    //
+    // El vendedor tiene al cliente delante y muchas veces no sabe el
+    // laboratorio. Frenar la venta por un dato que se puede completar después
+    // es peor que guardar el pendiente sin él: el pedido se pierde, y con él
+    // la razón de existir de la pantalla. Cuando SÍ lo informa se conserva
+    // todo el comportamiento seguro —resolución idempotente, identidad
+    // canónica de PostgreSQL—, que es lo que este campo protegía de verdad.
+    //
+    // Los dos campos se normalizan igual: el formulario SIEMPRE manda los dos
+    // hidden, vacíos cuando no hay laboratorio, así que `""` y el texto de
+    // solo espacios tienen que llegar como ausencia. Un nombre en blanco no es
+    // "un laboratorio llamado ''": crearlo dejaría en el catálogo una fila que
+    // después nadie puede buscar ni borrar.
     //
     // El ID viene vacío cuando el usuario escribió un nombre pero no clickeó
-    // "Crear". El action lo resuelve solo: busca por nombre, crea si no existe.
+    // una sugerencia. El action lo resuelve: busca por nombre, crea si no
+    // existe — y NO se ejecuta cuando no hay nombre.
     // ------------------------------------------------------------------
     requestedLaboratoryId: z
       .string()
@@ -256,9 +270,10 @@ export const pendingCreateSchema = z
       .optional()
       .transform((value) => (value && value.length > 0 ? value : undefined)),
     requestedLaboratoryName: z
-      .string({ error: "Escribí el nombre del laboratorio." })
+      .string()
       .trim()
-      .min(1, { error: "Escribí el nombre del laboratorio." }),
+      .optional()
+      .transform((value) => (value && value.length > 0 ? value : undefined)),
   })
   .superRefine((data, ctx) => {
     const hasCatalog = Boolean(data.productId);

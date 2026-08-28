@@ -621,15 +621,19 @@ function PendingFormFields({
             defaultValue={previous.customerAddress ?? ""}
           />
         </Field>
-        {/* T3: Laboratorio solicitado por el cliente. Requerido en captura nueva.
+        {/* T3: Laboratorio solicitado por el cliente. OPCIONAL: el vendedor
+            tiene al cliente delante y muchas veces no lo sabe; frenar la venta
+            por un dato que se completa después pierde el pedido, que es lo
+            único que esta pantalla existe para no perder.
             Autocomplete con búsqueda normalizada (T2). */}
         <div className="sm:col-span-2">
           <LaboratorySearch
             name="requestedLaboratoryId"
             nameForLabel="requestedLaboratoryName"
+            label="Laboratorio solicitado (opcional)"
+            hint="Si no lo conocés, podés dejarlo vacío."
             defaultSelectedId={previous.requestedLaboratoryId}
             defaultSelectedName={previous.requestedLaboratoryName}
-            required
           />
         </div>
         {/* Pago: dos montos y NADA más. El "pagado totalmente" no es un campo,
