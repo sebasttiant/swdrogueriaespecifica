@@ -40,6 +40,39 @@ import { useRouter } from "next/navigation";
 // único que dispara este efecto.
 // --------------------------------------------------------------------------
 
+// --------------------------------------------------------------------------
+// UN refresco por tanda, no uno por formulario.
+//
+// Una fila de la cola de pendientes monta VARIOS formularios —facturar,
+// cancelar, entregar, cambiar estado—, así que una pantalla con doce filas
+// tiene decenas de instancias de este hook. Cada `router.refresh()` vuelve a
+// pedir el árbol ENTERO: si varias responden juntas, o si un refresco remonta
+// formularios que a su vez piden el suyo, se paga el mismo árbol muchas veces.
+//
+// Se agrupan en un microtask. Todas las que caigan en el mismo tick comparten
+// un solo pedido, que es lo correcto: el árbol que devuelve ya trae los datos
+// de todas.
+// --------------------------------------------------------------------------
+
+type Refrescador = { refresh: () => void };
+
+let refrescoPendiente: Refrescador | null = null;
+
+function solicitarRefresco(router: Refrescador): void {
+  // Si ya hay uno agendado, este pedido se suma a ese: el árbol que llegue va a
+  // reflejar las dos respuestas igual.
+  if (refrescoPendiente) {
+    refrescoPendiente = router;
+    return;
+  }
+  refrescoPendiente = router;
+  queueMicrotask(() => {
+    const pendiente = refrescoPendiente;
+    refrescoPendiente = null;
+    pendiente?.refresh();
+  });
+}
+
 export function useActionState<State, Payload>(
   action: (state: Awaited<State>, payload: Payload) => State | Promise<State>,
   initialState: Awaited<State>,
@@ -85,7 +118,7 @@ export function useActionState<State, Payload>(
   useEffect(() => {
     if (Object.is(state, lastSeen.current)) return;
     lastSeen.current = state;
-    router?.refresh();
+    if (router) solicitarRefresco(router);
   }, [state, router]);
 
   return [state, dispatch, isPending];
