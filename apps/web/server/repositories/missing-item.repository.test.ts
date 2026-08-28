@@ -70,8 +70,17 @@ describe("listMissingItems · active confirmation filter", () => {
     });
     // Los datos inválidos tampoco requieren acción: nadie puede "pedir" un
     // faltante que ya recibió más de lo esperado. Salen por cuarentena (D10).
+    //
+    // El predicado va en POSITIVO. `NOT { receivedQuantity: { gt: ... } }`
+    // parecía equivalente y no lo era: con `orderedQuantity` NULA —un faltante
+    // recién creado— la comparación da NULL, `NOT NULL` sigue siendo NULL, y un
+    // WHERE que evalúa NULL descarta la fila. Todo faltante nuevo quedaba
+    // invisible en la cola donde gerencia decide qué comprar.
     expect(where.AND[1]).toEqual({
-      NOT: { receivedQuantity: { gt: "__ref:orderedQuantity" } },
+      OR: [
+        { orderedQuantity: null },
+        { receivedQuantity: { lte: "__ref:orderedQuantity" } },
+      ],
     });
   });
 
@@ -124,7 +133,10 @@ describe("listMissingItems · active confirmation filter", () => {
       ],
     });
     expect(args.where.AND[2]).toEqual({
-      NOT: { receivedQuantity: { gt: "__ref:orderedQuantity" } },
+      OR: [
+        { orderedQuantity: null },
+        { receivedQuantity: { lte: "__ref:orderedQuantity" } },
+      ],
     });
   });
 
