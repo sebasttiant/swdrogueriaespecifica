@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useActionState } from "react";
+import { useActionState } from "@/lib/hooks/use-action-state";
 
 import { Alert } from "@/app/_components/ui/alert";
 import { Button } from "@/app/_components/ui/button";
