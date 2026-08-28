@@ -12,6 +12,7 @@ import {
   PendingForm,
   type ProductOption,
 } from "@/features/pendientes/pending-form";
+import { ArrivalNotices } from "@/features/pendientes/arrival-notices";
 import { PendingCompactList } from "@/features/pendientes/pending-compact-list";
 import { PendingList } from "@/features/pendientes/pending-list";
 import { PendingReviewFilters } from "@/features/pendientes/pending-review-filters";
@@ -21,6 +22,7 @@ import {
   reviewPageHref,
 } from "@/features/pendientes/review-axes";
 import { getProducts } from "@/server/services/product.service";
+import { listArrivalNotices } from "@/server/services/arrival-notice.service";
 import { getPendings, getUsedZones } from "@/server/services/pending.service";
 
 export const metadata: Metadata = { title: "Pendientes" };
@@ -54,6 +56,11 @@ export default async function PendientesPage({
   // Estado de gestión: autoridad de compras (gerencia). Reusa la misma
   // capability que pedir un faltante, no la de cancelar.
   const canManageStatus = can(session.user.role, "canOrderMissingItems");
+
+  // Los avisos de llegada son SIEMPRE los propios: `listArrivalNotices` filtra
+  // por `createdById`, así que ver toda la cola no da derecho a ver los avisos
+  // de otro. Gerencia también carga pendientes, y esos avisos son suyos.
+  const arrivalNotices = await listArrivalNotices(session.user.id);
 
   const { cursor, scope: rawScope, view: rawView, ...rawAxes } = await searchParams;
 
@@ -99,6 +106,14 @@ export default async function PendientesPage({
       <PageHeader
         title="Pendientes"
         description="Solicitudes de clientes. Si no hay stock suficiente, se genera un faltante automático."
+      />
+
+      {/* Arriba del formulario a propósito: lo que ya llegó es acción
+          pendiente sobre un cliente que está esperando, y eso pesa más que
+          cargar un pedido nuevo. */}
+      <ArrivalNotices
+        notices={arrivalNotices}
+        canViewCustomerIdentity={canViewCustomerIdentity}
       />
 
       <Card className="space-y-4">
