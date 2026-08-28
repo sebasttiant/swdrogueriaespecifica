@@ -2,10 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { prisma } from "@/lib/db/prisma";
 import { searchLaboratories } from "@/server/repositories/laboratory.repository";
-import {
-  normalizeLaboratoryName,
-  type LaboratoryCandidate,
-} from "@/server/domain/laboratory/identity";
+import type { LaboratoryCandidate } from "@/server/domain/laboratory/identity";
 
 // Tests de PostgreSQL real para searchLaboratories.
 // El objective: probar que la query parameterizada funciona correctamente,
@@ -18,15 +15,15 @@ function first<T>(arr: T[]): T {
   return item;
 }
 
-// `searchKey` es NOT NULL y la base verifica con un CHECK que derive del
-// nombre, así que por defecto se calcula igual que en la aplicación.
+// `searchKey` no se manda: la deriva un trigger desde el nombre. El segundo
+// parámetro se conserva para no reescribir cada llamada, pero se ignora.
 async function createLab(
   name: string,
-  searchKey: string = normalizeLaboratoryName(name),
+  _searchKeyIgnorado?: string,
   needsReview = false,
 ): Promise<string> {
   const lab = await prisma.laboratory.create({
-    data: { name, searchKey, needsReview },
+    data: { name, needsReview },
   });
   return lab.id;
 }

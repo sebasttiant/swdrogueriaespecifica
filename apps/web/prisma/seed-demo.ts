@@ -15,7 +15,6 @@
 import { PrismaPg } from "@prisma/adapter-pg";
 import { hashPassword } from "../lib/auth/password";
 import { normalizeMissingReportName } from "../features/faltantes/missing-report-name";
-import { normalizeLaboratoryName } from "../server/domain/laboratory/identity";
 import { PrismaClient } from "../lib/generated/prisma/client";
 
 const CONFIRM = process.env.CONFIRM_DEMO;
@@ -61,17 +60,16 @@ async function main(): Promise<void> {
     });
 
     // --- Laboratorios ---
-    // `searchKey` es obligatorio y la base verifica con un CHECK que derive del
-    // nombre, así que se calcula con la misma función que usa la aplicación.
+    // `searchKey` no se manda: la deriva un trigger desde el nombre.
     const genfar = await prisma.laboratory.upsert({
       where: { name: "Genfar" },
       update: {},
-      create: { name: "Genfar", searchKey: normalizeLaboratoryName("Genfar") },
+      create: { name: "Genfar" },
     });
     const bayer = await prisma.laboratory.upsert({
       where: { name: "Bayer" },
       update: {},
-      create: { name: "Bayer", searchKey: normalizeLaboratoryName("Bayer") },
+      create: { name: "Bayer" },
     });
 
     // --- Productos (con laboratorio, para la vista compacta y el export) ---

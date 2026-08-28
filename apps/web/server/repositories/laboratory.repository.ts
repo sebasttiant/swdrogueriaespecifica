@@ -68,10 +68,10 @@ export async function searchLaboratories(
   return client.$queryRaw<LaboratoryCandidate[]>`
     SELECT id, name, "searchKey", "needsReview"
       FROM laboratories
-     WHERE "searchKey" = ${normalized}
+     WHERE "searchKey" = laboratory_canonical_identity(${query})
         OR name ILIKE ${`%${escapedQuery}%`} ESCAPE '!'
      ORDER BY
-       CASE WHEN "searchKey" = ${normalized} THEN 0
+       CASE WHEN "searchKey" = laboratory_canonical_identity(${query}) THEN 0
             WHEN name ILIKE ${`${escapedQuery}%`} ESCAPE '!' THEN 1
             ELSE 2 END,
        name
@@ -109,8 +109,8 @@ export type LaboratoryRecord =
  * y romper más adelante, lejos de la causa.
  */
 export class LaboratoryResolutionInvariantError extends Error {
-  constructor(searchKey: string) {
-    super(`laboratory insert conflicted but resolved to no row (searchKey=${searchKey})`);
+  constructor(name: string) {
+    super(`laboratory insert conflicted but resolved to no row (name=${name})`);
   }
 }
 
@@ -125,16 +125,16 @@ export class LaboratoryResolutionInvariantError extends Error {
  * viajar como excepción si esta función va a poder usarse dentro de una
  * transacción más grande.
  *
- * Quien decide si dos nombres son el mismo laboratorio es
- * `laboratories_canonical_identity_key`, el índice único FUNCIONAL sobre
- * `laboratory_canonical_identity(name)` que agrega
- * `20260828120000_add_laboratory_canonical_identity`. Mide el NOMBRE con la
- * misma regla que `normalizeLaboratoryName`, así que "Bayer" y "bayer" —o
- * "Lab  Doble" y "Lab Doble"— chocan en la base, no en un `if` de acá.
+ * Quien decide si dos nombres son el mismo laboratorio es la base, y SOLO la
+ * base: `laboratory_canonical_identity(text)` es la única definición de la
+ * regla. Un trigger deriva `searchKey` de `name` con esa función en cada
+ * INSERT y UPDATE, y el único de `searchKey` es el que rechaza el duplicado.
  *
- * Por eso la resolución lee por esa misma expresión y no por la columna
- * `searchKey`: la autoridad y la lectura tienen que ser la misma cosa, o
- * vuelve a abrirse la grieta por la que una identidad duplicada se colaba.
+ * Esta función NO calcula la identidad. Manda el nombre crudo y deja que la
+ * base lo normalice de los dos lados de la comparación. El intento anterior
+ * mantenía una función "equivalente" en TypeScript y no podía funcionar: el
+ * plegado de mayúsculas de Unicode difiere entre JavaScript y PostgreSQL
+ * —sigma final griega, I con punto— y depende del ICU del servidor.
  *
  * Los tres resultados:
  *
@@ -153,8 +153,6 @@ export async function findOrCreateLaboratory(
   data: CreateLaboratoryData,
   client: Prisma.TransactionClient = prisma,
 ): Promise<LaboratoryRecord> {
-  const searchKey = normalizeLaboratoryName(data.name);
-
   // 1. Camino feliz y carrera perdida, en una sola sentencia.
   //
   // `skipDuplicates` es lo que Prisma traduce a `ON CONFLICT DO NOTHING`, y
@@ -167,7 +165,6 @@ export async function findOrCreateLaboratory(
   const inserted = await client.laboratory.createManyAndReturn({
     data: [{
       name: data.name.trim(),
-      searchKey,
       needsReview: data.needsReview ?? false,
       ...(data.commandKey ? { createCommandKey: data.commandKey } : {}),
       ...(data.commandFingerprint
@@ -181,12 +178,13 @@ export async function findOrCreateLaboratory(
     return { status: "created", laboratory: inserted[0] };
   }
 
-  // 2. No insertó. Se lee por la MISMA expresión que defiende el índice, no
-  //    por la columna `searchKey`, para que la lectura no pueda discrepar de
-  //    la autoridad. Usa el índice funcional, así que es una búsqueda directa.
+  // 2. No insertó. Se compara la identidad que la base calcula para el nombre
+  //    pedido contra la columna que la base ya derivó: las dos puntas salen de
+  //    la misma función, así que la lectura no puede discrepar de la autoridad.
+  //    Va por el único de `searchKey`, así que es una búsqueda directa.
   const [byIdentity] = await client.$queryRaw<Laboratory[]>`
     SELECT * FROM laboratories
-     WHERE laboratory_canonical_identity(name) = ${searchKey}
+     WHERE "searchKey" = laboratory_canonical_identity(${data.name})
      LIMIT 1
   `;
   if (byIdentity) {
@@ -205,7 +203,7 @@ export async function findOrCreateLaboratory(
   }
 
   // 4. Chocó contra algo y no resolvió a nada. Ver la nota del error.
-  throw new LaboratoryResolutionInvariantError(searchKey);
+  throw new LaboratoryResolutionInvariantError(data.name);
 }
 
 /**

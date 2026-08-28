@@ -3,10 +3,8 @@ import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { prisma } from "@/lib/db/prisma";
-import {
-  laboratoryCreateCommandKey,
-  normalizeLaboratoryName,
-} from "@/server/domain/laboratory/identity";
+import type { Prisma } from "@/lib/generated/prisma/client";
+import { laboratoryCreateCommandKey } from "@/server/domain/laboratory/identity";
 import {
   LaboratoryResolutionInvariantError,
   findOrCreateLaboratory,
@@ -30,6 +28,20 @@ const OTHER_USER = "user-lab-repo-2";
 // primera y probara otra cosa.
 const RUN = randomUUID().slice(0, 8);
 const named = (label: string) => `Lab ${label} ${RUN}`;
+
+// Contar por la identidad que calcula la BASE, no por una normalización de
+// TypeScript: `normalizeLaboratoryName` dejó de ser autoridad, y usarlo acá
+// haría que la prueba midiera con una regla distinta de la que rige.
+async function contarPorIdentidad(
+  name: string,
+  client: typeof prisma | Prisma.TransactionClient = prisma,
+): Promise<number> {
+  const [fila] = await client.$queryRaw<{ n: bigint }[]>`
+    SELECT count(*) AS n FROM laboratories
+     WHERE "searchKey" = laboratory_canonical_identity(${name})
+  `;
+  return Number(fila?.n ?? 0);
+}
 
 afterEach(async () => {
   await prisma.laboratory.deleteMany({
@@ -104,11 +116,7 @@ describe("findOrCreateLaboratory · idempotencia", () => {
     expect(first.status).toBe("created");
     expect(again.status).toBe("exists");
     expect(again.laboratory.id).toBe(first.laboratory.id);
-    expect(
-      await prisma.laboratory.count({
-        where: { searchKey: normalizeLaboratoryName(name) },
-      }),
-    ).toBe(1);
+    expect(await contarPorIdentidad(name)).toBe(1);
   });
 
   it("dos creaciones CONCURRENTES del mismo nombre dejan una sola fila", async () => {
@@ -125,11 +133,7 @@ describe("findOrCreateLaboratory · idempotencia", () => {
     const statuses = [a.status, b.status].sort();
     expect(statuses).toEqual(["created", "exists"]);
     expect(a.laboratory.id).toBe(b.laboratory.id);
-    expect(
-      await prisma.laboratory.count({
-        where: { searchKey: normalizeLaboratoryName(name) },
-      }),
-    ).toBe(1);
+    expect(await contarPorIdentidad(name)).toBe(1);
   });
 
   // El mismo comando pidiendo OTRO nombre no es una carrera: es un intento que
@@ -144,11 +148,7 @@ describe("findOrCreateLaboratory · idempotencia", () => {
     expect(first.status).toBe("created");
     expect(reused.status).toBe("exact_name_exists");
     expect(reused.laboratory.id).toBe(first.laboratory.id);
-    expect(
-      await prisma.laboratory.count({
-        where: { searchKey: normalizeLaboratoryName(named("Cambiado")) },
-      }),
-    ).toBe(0);
+    expect(await contarPorIdentidad(named("Cambiado"))).toBe(0);
   });
 });
 
@@ -168,9 +168,7 @@ describe("findOrCreateLaboratory · dentro de una transacción", () => {
       const conflicted = await findOrCreateLaboratory({ name, commandKey: key }, tx);
       // Si el conflicto hubiera abortado la transacción, esta consulta
       // fallaría con 25P02 en vez de responder.
-      const stillUsable = await tx.laboratory.count({
-        where: { searchKey: normalizeLaboratoryName(name) },
-      });
+      const stillUsable = await contarPorIdentidad(name, tx);
       return { conflicted, stillUsable };
     });
 

@@ -413,12 +413,13 @@ model Laboratory {
   email    String?
   // Clave de búsqueda normalizada (nombre en minúsculas sin espacios extras).
   //
-  // NOT NULL y derivada: `20260828120000_add_laboratory_canonical_identity`
-  // le agrega un CHECK contra `laboratory_canonical_identity(name)`, así que
-  // la base garantiza que no se separe del nombre. Quien defiende la identidad
-  // no es este @unique sino el índice único FUNCIONAL sobre esa expresión, que
-  // mide `name` y no depende de que la aplicación escriba bien esta columna.
-  searchKey String    @unique
+  // La escribe la BASE, no la aplicación. Un trigger la deriva de `name` con
+  // `laboratory_canonical_identity(...)` en cada INSERT y UPDATE, y un CHECK
+  // lo asegura; ver `20260828120000_add_laboratory_canonical_identity`.
+  //
+  // El `@default("")` no es un valor real: existe para que Prisma no exija la
+  // columna al crear, porque el trigger la pisa siempre.
+  searchKey String    @unique @default("")
   // Marca de laboratorio que necesita revisión manual. Análoga a
   // Product.needsReview: true = alguien lo creó al vuelo y un ADMIN debe
   // confirmar/aprobar.

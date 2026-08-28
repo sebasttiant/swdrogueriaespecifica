@@ -5,10 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { prisma } from "@/lib/db/prisma";
-import {
-  laboratoryCreateCommandKey,
-  normalizeLaboratoryName,
-} from "@/server/domain/laboratory/identity";
+import { laboratoryCreateCommandKey } from "@/server/domain/laboratory/identity";
 import { findOrCreateLaboratory } from "@/server/repositories/laboratory.repository";
 
 // --------------------------------------------------------------------------
@@ -141,34 +138,79 @@ describe("identidad canónica · el esquema rechaza solo", () => {
     await resolve(name);
 
     await expect(
-      prisma.laboratory.create({
-        data: {
-          name: name.toUpperCase(),
-          searchKey: normalizeLaboratoryName(name.toUpperCase()),
-        },
-      }),
+      prisma.laboratory.create({ data: { name: name.toUpperCase() } }),
     ).rejects.toThrow();
 
     expect(await countNamed(RUN)).toBe(1);
   });
 
-  it("un searchKey que no deriva del nombre es rechazado por el CHECK", async () => {
-    await expect(
-      prisma.laboratory.create({
-        data: { name: `Torcido ${RUN}`, searchKey: "otra-cosa" },
-      }),
-    ).rejects.toThrow();
+  it("renombrar re-deriva searchKey: el trigger corre también en UPDATE", async () => {
+    const original = `Renombrado ${RUN}`;
+    const creado = await resolve(original);
 
-    expect(await countNamed(RUN)).toBe(0);
+    const nuevo = `RENOMBRADO OTRO ${RUN}`;
+    await prisma.laboratory.update({
+      where: { id: creado.laboratory.id },
+      data: { name: nuevo },
+    });
+
+    const fila = await prisma.laboratory.findUniqueOrThrow({
+      where: { id: creado.laboratory.id },
+    });
+    const [esperado] = await prisma.$queryRaw<{ v: string }[]>`
+      SELECT laboratory_canonical_identity(${nuevo}) AS v
+    `;
+
+    expect(fila.searchKey).toBe(esperado?.v);
   });
 
-  it("el índice funcional y el CHECK existen en el catálogo", async () => {
-    const indices = await prisma.$queryRaw<{ indexname: string }[]>`
-      SELECT indexname FROM pg_indexes
-       WHERE tablename = 'laboratories'
-         AND indexname = 'laboratories_canonical_identity_key'
+  it("tras renombrar, la identidad vieja queda libre para OTRO comando", async () => {
+    const original = `Libera ${RUN}`;
+    const creado = await resolve(original);
+    await prisma.laboratory.update({
+      where: { id: creado.laboratory.id },
+      data: { name: `Libera Movido ${RUN}` },
+    });
+
+    // Otro actor: su commandKey es distinto, así que nada bloquea el INSERT y
+    // el nombre viejo vuelve a estar disponible como identidad nueva.
+    const reusado = await findOrCreateLaboratory({
+      name: original,
+      commandKey: laboratoryCreateCommandKey("auto", "otro-actor", original),
+    });
+
+    expect(reusado.status).toBe("created");
+    expect(reusado.laboratory.id).not.toBe(creado.laboratory.id);
+  });
+
+  // `exact_name_exists` SÍ es alcanzable, y este es el camino: el mismo actor
+  // pide el mismo nombre después de que ese laboratorio fue renombrado. Su
+  // commandKey lleva el nombre viejo, así que bloquea el INSERT, pero la fila
+  // que ocupa esa clave hoy se llama distinto. Devolverla en silencio sería
+  // entregarle a la persona un laboratorio que no pidió.
+  it("el mismo comando, tras un renombrado, devuelve exact_name_exists", async () => {
+    const original = `Reclama ${RUN}`;
+    const creado = await resolve(original);
+    await prisma.laboratory.update({
+      where: { id: creado.laboratory.id },
+      data: { name: `Reclama Movido ${RUN}` },
+    });
+
+    const reintento = await resolve(original);
+
+    expect(reintento.status).toBe("exact_name_exists");
+    expect(reintento.laboratory.id).toBe(creado.laboratory.id);
+    expect(reintento.laboratory.name).not.toBe(original);
+  });
+
+  it("el trigger, el CHECK y el único TOTAL están en el catálogo", async () => {
+    const triggers = await prisma.$queryRaw<{ tgname: string }[]>`
+      SELECT tgname FROM pg_trigger
+       WHERE tgrelid = 'laboratories'::regclass
+         AND tgname = 'laboratories_canonical_identity_sync'
+         AND NOT tgisinternal
     `;
-    expect(indices).toHaveLength(1);
+    expect(triggers).toHaveLength(1);
 
     const checks = await prisma.$queryRaw<{ conname: string }[]>`
       SELECT conname FROM pg_constraint
@@ -176,6 +218,25 @@ describe("identidad canónica · el esquema rechaza solo", () => {
          AND conname = 'laboratories_searchKey_canonical_check'
     `;
     expect(checks).toHaveLength(1);
+
+    // TOTAL, no parcial: con la columna NOT NULL, un `WHERE ... IS NOT NULL`
+    // sería una condición siempre verdadera de la que dependería el plan.
+    const indices = await prisma.$queryRaw<{ indexdef: string }[]>`
+      SELECT indexdef FROM pg_indexes
+       WHERE tablename = 'laboratories'
+         AND indexname = 'laboratories_searchKey_key'
+    `;
+    expect(indices).toHaveLength(1);
+    expect(indices[0]?.indexdef).not.toContain("WHERE");
+
+    // La función es la ÚNICA definición de la regla: tiene que existir y ser
+    // IMMUTABLE, o el índice y el CHECK no podrían apoyarse en ella.
+    const funciones = await prisma.$queryRaw<{ volatilidad: string }[]>`
+      SELECT provolatile::text AS volatilidad FROM pg_proc
+       WHERE proname = 'laboratory_canonical_identity'
+    `;
+    expect(funciones).toHaveLength(1);
+    expect(funciones[0]?.volatilidad).toBe("i");
   });
 
   it("searchKey quedó NOT NULL", async () => {
@@ -188,44 +249,106 @@ describe("identidad canónica · el esquema rechaza solo", () => {
 });
 
 // --------------------------------------------------------------------------
-// El contrato entre las dos implementaciones de la MISMA regla.
+// Unicode: una sola definición, la de la base.
 //
-// `normalizeLaboratoryName` vive en TypeScript y `laboratory_canonical_identity`
-// en PostgreSQL. Si se separan, una identidad duplicada se cuela por la
-// diferencia. La clase de blancos de `\s` en JavaScript es más ancha que la de
-// PostgreSQL, y esa fue exactamente la trampa: la migración le suma a mano los
-// blancos Unicode que le faltaban.
+// Mantener la misma regla en TypeScript y en PostgreSQL resultó imposible.
+// Verificado contra PostgreSQL 18 con lc_ctype en_US.utf8:
+//
+//   "ΟΣ"        JS -> 03bf 03c2 (sigma FINAL)  PG -> 03bf 03c3
+//   "İ"              JS -> 0069 0307 (largo 2)      PG -> 0069 (largo 1)
+//   "AB"            JS conserva U+0085             PG lo colapsa a espacio
+//   "é" / "é"  distintos en AMBOS: ninguno normalizaba a NFC
+//
+// Las dos primeras son reglas de plegado de mayusculas que dependen de la
+// version de Unicode y del ICU del servidor: no son reproducibles desde
+// TypeScript. Por eso la identidad la calcula SOLO la base, y estas pruebas
+// verifican comportamiento observable -crear, reencontrar, no duplicar- en vez
+// de comparar dos implementaciones que no pueden coincidir.
 // --------------------------------------------------------------------------
-describe("identidad canónica · JS y SQL calculan lo mismo", () => {
-  const CASOS = [
-    "Bayer",
-    "  Bayer  ",
-    "BAYER",
-    "Lab  Doble",
-    "Lab\tTab",
-    "Lab\nSalto",
-    "Lab\r\nCRLF",
-    "LabVertical",
-    "Lab\fFormFeed",
-    "Bayer S.A.",
-    "  MK   Pharma  ",
-    "Lab NBSP",
-    "Lab EmSpace",
-    "Lab　Ideografico",
-    "Lab SeparadorLinea",
-    "Lab Matematico",
-    "Lab﻿BOM",
-    " Bayer ",
-    "lab-x_1",
-    "Genfar 100% Natural",
+describe("identidad canonica · Unicode", () => {
+  const RAROS: [string, string][] = [
+    ["sigma final griega", "ΟΣ"],
+    ["I mayuscula con punto", "İstanbul"],
+    ["NEL U+0085", "AB"],
+    ["NBSP", "Lab NBSP"],
+    ["espacio ideografico", "Lab　Ideo"],
+    ["BOM", "Lab﻿Bom"],
+    ["acentos", "Tecnoquímicas"],
   ];
 
-  it.each(CASOS)("coinciden para %j", async (caso) => {
-    const [fila] = await prisma.$queryRaw<{ sql: string }[]>`
-      SELECT laboratory_canonical_identity(${caso}) AS sql
+  it.each(RAROS)("acepta y persiste un nombre con %s", async (_etiqueta, base) => {
+    const name = `${base} ${RUN}`;
+
+    const creado = await resolve(name);
+
+    expect(creado.status).toBe("created");
+    expect(creado.laboratory.name).toBe(name);
+    expect(creado.laboratory.searchKey).not.toBe("");
+  });
+
+  it.each(RAROS)("reencuentra el mismo laboratorio con %s", async (_etiqueta, base) => {
+    const name = `${base} ${RUN}`;
+
+    const primero = await resolve(name);
+    const segundo = await resolve(name);
+
+    expect(segundo.status).toBe("exists");
+    expect(segundo.laboratory.id).toBe(primero.laboratory.id);
+    expect(await countNamed(RUN)).toBe(1);
+  });
+
+  it("la identidad es idempotente: normalizar lo ya normalizado no cambia nada", async () => {
+    for (const [, base] of RAROS) {
+      const [fila] = await prisma.$queryRaw<{ una: string; dos: string }[]>`
+        SELECT laboratory_canonical_identity(${base}) AS una,
+               laboratory_canonical_identity(laboratory_canonical_identity(${base})) AS dos
+      `;
+      expect(fila?.dos).toBe(fila?.una);
+    }
+  });
+
+  // Hueco que ninguna de las dos implementaciones anteriores cubria: "é" en
+  // un solo punto de codigo y "e" + acento combinante son el mismo nombre para
+  // cualquier persona, y eran dos identidades distintas.
+  it("NFC y NFD del mismo nombre son UN laboratorio", async () => {
+    const precompuesto = `Café ${RUN}`;
+    const descompuesto = `Café ${RUN}`;
+
+    const primero = await resolve(precompuesto);
+    const segundo = await resolve(descompuesto);
+
+    expect(segundo.status).toBe("exists");
+    expect(segundo.laboratory.id).toBe(primero.laboratory.id);
+    expect(await countNamed(RUN)).toBe(1);
+  });
+
+  it("mayusculas acentuadas y minusculas son UN laboratorio", async () => {
+    const primero = await resolve(`TECNOQUÍMICAS ${RUN}`);
+    const segundo = await resolve(`Tecnoquímicas ${RUN}`);
+
+    expect(segundo.status).toBe("exists");
+    expect(segundo.laboratory.id).toBe(primero.laboratory.id);
+    expect(await countNamed(RUN)).toBe(1);
+  });
+
+  it("searchKey lo escribe la BASE, no el llamador", async () => {
+    const name = `Impuesto ${RUN}`;
+
+    // El repositorio no manda `searchKey`; aunque alguien lo mandara, el
+    // trigger lo pisa. Se prueba por la via cruda para que no dependa del
+    // repositorio.
+    await prisma.$executeRaw`
+      INSERT INTO laboratories (id, name, "searchKey")
+      VALUES (${`impuesto-${RUN}`}, ${name}, 'basura-que-no-corresponde')
     `;
 
-    expect(fila?.sql).toBe(normalizeLaboratoryName(caso));
+    const fila = await prisma.laboratory.findUniqueOrThrow({ where: { name } });
+    const [esperado] = await prisma.$queryRaw<{ v: string }[]>`
+      SELECT laboratory_canonical_identity(${name}) AS v
+    `;
+
+    expect(fila.searchKey).toBe(esperado?.v);
+    expect(fila.searchKey).not.toBe("basura-que-no-corresponde");
   });
 });
 
@@ -307,6 +430,55 @@ describe("identidad canónica · la migración bloquea en vez de elegir", () => 
   it("varias filas legacy que normalizan igual también bloquean", async () => {
     await conTablaFalsa(["MK", "mk", "  MK  ", "Mk"], async () => {
       await expect(correrGuarda()).rejects.toThrow(/identidades canonicas duplicadas/i);
+    });
+  });
+
+  // El mensaje es lo unico que va a tener enfrente quien resuelva el bloqueo, y
+  // `RAISE` de PL/pgSQL usa `%`, no `%s`: escribir `%s` deja una "s" suelta
+  // pegada a cada valor. Se verifica entero, no por fragmentos.
+  it("el mensaje de bloqueo se arma completo, sin sobras de formato", async () => {
+    await conTablaFalsa(["Bayer", "bayer"], async () => {
+      const error = await correrGuarda().then(
+        () => null,
+        (e: unknown) => e as { message: string; meta?: Record<string, unknown> },
+      );
+
+      expect(error).not.toBeNull();
+      const mensaje = String(error?.message);
+
+      expect(mensaje).toContain(
+        "laboratories: hay identidades canonicas duplicadas, la migracion no continua:",
+      );
+      expect(mensaje).toContain("'bayer' <- 'Bayer', 'bayer'");
+
+      // Las sobras que dejaba el `%s`: nunca una "s" pegada a los dos puntos ni
+      // al valor, y ningun `%` sin sustituir.
+      expect(mensaje).not.toContain("continua:s");
+      expect(mensaje).not.toContain("'bayer's");
+      expect(mensaje).not.toContain("%s");
+      expect(mensaje).not.toMatch(/%[^A-Za-z0-9]/);
+    });
+  });
+
+  it("el bloqueo revierte TODO: ni funcion ni trigger quedan a medias", async () => {
+    // La funcion se crea antes de la guarda. Si la migracion no corriera en una
+    // transaccion, un bloqueo dejaria la base a medio migrar.
+    await conTablaFalsa(["MK", "mk"], async () => {
+      await expect(
+        prisma.$transaction(async (tx) => {
+          await tx.$executeRawUnsafe(`SET LOCAL search_path TO guarda, public`);
+          await tx.$executeRawUnsafe(
+            `CREATE TABLE guarda.marca_de_migracion (id int)`,
+          );
+          await tx.$executeRawUnsafe(guardaDeLaMigracion());
+        }),
+      ).rejects.toThrow(/identidades canonicas duplicadas/i);
+
+      const marcas = await prisma.$queryRaw<{ n: bigint }[]>`
+        SELECT count(*) AS n FROM pg_tables
+         WHERE schemaname = 'guarda' AND tablename = 'marca_de_migracion'
+      `;
+      expect(Number(marcas[0]?.n)).toBe(0);
     });
   });
 
