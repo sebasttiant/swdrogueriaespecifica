@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState } from "@/lib/hooks/use-action-state";
 import { Check, X } from "lucide-react";
 
 import { cn } from "@/lib/utils/cn";
