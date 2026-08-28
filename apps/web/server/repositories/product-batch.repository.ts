@@ -171,17 +171,31 @@ export type UpsertBatchQuantityParams = {
 };
 
 /**
- * Evidencia de laboratorio del lote, con la fila BLOQUEADA (FOR UPDATE).
+ * Evidencia de laboratorio del lote, con la RECEPCIÓN DE ESE LOTE serializada.
  *
- * DEBE llamarse dentro de una transacción y ANTES del upsert. Sin el lock, dos
- * recepciones simultáneas del mismo lote leerían ambas la misma evidencia
- * previa —`null`, típicamente— y las dos se creerían la primera: la última en
- * escribir pisaría a la otra en silencio, que es exactamente lo que la regla de
- * conflicto existe para impedir. Con FOR UPDATE la segunda espera y ve lo que
- * la primera dejó.
+ * DEBE llamarse dentro de una transacción y ANTES del upsert.
  *
- * Devuelve `null` cuando el lote todavía no existe: no hay nada que bloquear ni
- * evidencia previa que contradecir, y el upsert lo creará.
+ * El candado NO cuelga de la fila. `SELECT ... FOR UPDATE` bloquea filas, y la
+ * primera recepción de un lote ocurre justamente cuando la fila todavía no
+ * existe: dos recepciones simultáneas leían ambas `null`, las dos se creían la
+ * primera, y si traían laboratorios distintos la segunda pisaba la evidencia de
+ * la primera en silencio — exactamente lo que la regla de conflicto existe para
+ * impedir. El `FOR UPDATE` es correcto para el lote que YA existe y no dice
+ * nada sobre el hueco anterior.
+ *
+ * Por eso el candado cuelga del PAR que identifica al lote, con un advisory
+ * lock TRANSACCIONAL: existe aunque la fila no exista, y se suelta solo al
+ * cerrar la transacción, sin depender de que nadie lo libere a mano.
+ *
+ * La clave lleva la longitud del `productId` adelante para que la
+ * concatenación sea inyectiva: sin eso, un `batchCode` que empiece con el final
+ * de otro id podría producir la misma cadena que otro par. Una colisión de
+ * `hashtextextended` solo haría que dos lotes distintos se serialicen de más;
+ * nunca que uno se salte el candado.
+ *
+ * Devuelve `null` cuando el lote todavía no existe: no hay evidencia previa que
+ * contradecir, y el upsert lo creará — pero ahora con la garantía de que nadie
+ * más está haciendo lo mismo con el mismo par.
  *
  * El nombre viaja junto al id porque el mensaje de conflicto se le muestra a
  * una persona, y una persona no puede hacer nada con un cuid.
@@ -196,8 +210,22 @@ export async function lockBatchLaboratoryEvidence(
   client: Prisma.TransactionClient,
   params: { productId: string; batchCode: string },
 ): Promise<LockedBatchLaboratoryEvidence | null> {
+  // Primero el candado del par. A partir de acá, ninguna otra transacción
+  // avanza sobre este mismo lote hasta que esta termine.
+  await client.$executeRaw`
+    SELECT pg_advisory_xact_lock(
+      hashtextextended(
+        length(${params.productId})::text || ':' ||
+        ${params.productId} || ':' || ${params.batchCode},
+        0
+      )
+    )
+  `;
+
   // `FOR UPDATE OF pb` es obligatorio con el LEFT JOIN: sin el `OF`, Postgres
   // intentaría bloquear también `laboratories`, que no se está modificando.
+  // Se conserva: para el lote que ya existe sigue siendo el lock correcto, y
+  // cuesta nada teniendo ya el advisory.
   const rows = await client.$queryRaw<LockedBatchLaboratoryEvidence[]>`
     SELECT pb.id,
            pb."receivedLaboratoryId",
