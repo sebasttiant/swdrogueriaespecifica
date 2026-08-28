@@ -36,7 +36,13 @@ const INITIAL_STATE: PendingFormState = { error: null, ok: false };
 // Cuánto puede tardar un registro antes de que valga la pena decirle algo a la
 // persona. Por debajo de esto, avisar sería ruido; por encima, el silencio hace
 // que reintente —y un reintento a ciegas es como nacen los duplicados.
-const SLOW_SUBMIT_MS = 15_000;
+//
+// Estaba en 15 s, calibrado para un proceso de fondo. Esto es un MOSTRADOR: el
+// vendedor tiene al cliente delante y un botón que gira quince segundos sin
+// decir nada no se lee como "está tardando", se lee como "se colgó". A los 3 s
+// ya se percibe la demora y todavía falta muchísimo para el timeout de
+// recuperación, así que el aviso llega cuando sirve y no compite con él.
+const SLOW_SUBMIT_MS = 3_000;
 
 // Timeout de recuperación: si la acción no resuelve después de este tiempo, el
 // formulario se resetea para que el operador pueda reintentar. Es seguro porque
@@ -61,7 +67,7 @@ export type ProductOption = {
 // Cuando falta se dice: un producto sin identidad es trabajo pendiente, no un
 // detalle que convenga tapar.
 export function optionLabel(product: ProductOption): string {
-  return `${product.name} · ${product.orionCode ?? "sin código de Orion"}`;
+  return `${product.name} · ${product.orionCode ?? "sin SKU"}`;
 }
 
 type PendingFormProps = {
@@ -446,12 +452,12 @@ function PendingFormFields({
                 }}
                 className="h-4 w-4 rounded border-border accent-primary"
               />
-              Seguir sin el código de Orion
+              Continuar sin SKU (código de Orion)
             </label>
 
             {deferred ? (
               <>
-                <Field label="¿Por qué seguís sin el código?" htmlFor="identitySkippedReason">
+                <Field label="¿Por qué continuás sin SKU?" htmlFor="identitySkippedReason">
                   <Select
                     id="identitySkippedReason"
                     name="identitySkippedReason"

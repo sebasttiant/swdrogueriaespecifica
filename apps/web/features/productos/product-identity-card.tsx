@@ -63,7 +63,7 @@ export function ProductIdentityCard({
       ) : (
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            Este producto todavía no tiene su código de Orion. Sin él no se
+            Este producto todavía no tiene su SKU (código de Orion). Sin él no se
             puede cuadrar el inventario.
           </p>
           {canLink ? (

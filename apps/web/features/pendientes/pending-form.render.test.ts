@@ -247,12 +247,14 @@ describe("PendingForm · identidad del producto al elegirlo", () => {
     expect(html).toContain("7702001234567");
   });
 
-  it("avisa cuando el producto todavía no tiene código de Orion", () => {
+  it("avisa cuando el producto todavía no tiene SKU", () => {
     const html = render({
       products: [{ id: "p1", name: "Eucerin tono claro", code: "PROV-euc2", orionCode: null }],
     });
 
-    expect(html).toContain("sin código de Orion");
+    // "SKU" es la palabra que usa gerencia; en la opción del selector, donde
+    // compite por el ancho con el nombre del producto, va sola.
+    expect(html).toContain("sin SKU");
   });
 
   // El código interno (`PROV-…`) no identifica nada del lado de Orion y compite

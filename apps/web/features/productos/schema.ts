@@ -36,10 +36,10 @@ export const orionLinkSchema = z.object({
   orionCode: z
     .string()
     .trim()
-    .min(1, { error: "Escribí el código de Orion." })
-    .max(80, { error: "El código de Orion es demasiado largo." })
+    .min(1, { error: "Escribí el SKU (código de Orion)." })
+    .max(80, { error: "El SKU (código de Orion) es demasiado largo." })
     .refine((value) => !/\s/.test(value), {
-      error: "El código de Orion no puede llevar espacios.",
+      error: "El SKU (código de Orion) no puede llevar espacios.",
     }),
   // Solo dígitos, y NUNCA `z.coerce.number()`. La coerción corre
   // `Number(valor)` antes de mirar `.int()` y `.min(0)`, y tanto `Number("")`

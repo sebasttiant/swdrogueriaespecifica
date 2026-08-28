@@ -214,7 +214,7 @@ export const pendingCreateSchema = z
           ctx.addIssue({
             code: "custom",
             message:
-              "El código de Orion no puede llevar espacios y va hasta 80 caracteres.",
+              "El SKU (código de Orion) no puede llevar espacios y va hasta 80 caracteres.",
           });
           return z.NEVER;
         }
@@ -298,7 +298,7 @@ export const pendingCreateSchema = z
         code: "custom",
         path: ["orionCode"],
         message:
-          "O cargás el código de Orion o seguís sin él, no las dos cosas.",
+          "O cargás el SKU (código de Orion) o continuás sin él, no las dos cosas.",
       });
     }
 

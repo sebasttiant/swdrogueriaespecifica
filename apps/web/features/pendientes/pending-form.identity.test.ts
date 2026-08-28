@@ -98,7 +98,7 @@ function noteInput(): HTMLElement | null {
 }
 
 async function enterDeferral(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole("checkbox", { name: /sin el código/i }));
+  await user.click(screen.getByRole("checkbox", { name: /continuar sin sku/i }));
   await user.selectOptions(reasonSelect() as HTMLSelectElement, "CODE_NOT_FOUND");
   await user.type(noteInput() as HTMLTextAreaElement, "Identidad anterior");
 }
@@ -106,7 +106,7 @@ async function enterDeferral(user: ReturnType<typeof userEvent.setup>) {
 function expectFreshIdentityDraft() {
   expect(orionInput()?.value).toBe("");
   expect(
-    (screen.getByRole("checkbox", { name: /sin el código/i }) as HTMLInputElement)
+    (screen.getByRole("checkbox", { name: /continuar sin sku/i }) as HTMLInputElement)
       .checked,
   ).toBe(false);
   expect(reasonSelect()).toBeNull();
@@ -201,7 +201,7 @@ describe("PendingForm · identidad Orion", () => {
     renderForm();
     await user.selectOptions(productSelect(), "p2");
 
-    await user.click(screen.getByRole("checkbox", { name: /sin el código/i }));
+    await user.click(screen.getByRole("checkbox", { name: /continuar sin sku/i }));
 
     // El campo obligatorio desaparece con su exigencia: si quedara montado y
     // vacío, el navegador frenaría el envío pidiendo algo que ya no se pide.
@@ -218,14 +218,14 @@ describe("PendingForm · identidad Orion", () => {
     expect(orionInput()?.required).toBe(true);
   });
 
-  it("ofrece una salida explícita: seguir sin el código indicando el motivo", async () => {
+  it("ofrece una salida explícita: continuar sin SKU indicando el motivo", async () => {
     const user = userEvent.setup();
     renderForm();
     await user.selectOptions(productSelect(), "p2");
 
     // Sin la salida, el mostrador se traba cuando Orion se cae: el vendedor
     // tiene un cliente enfrente y el pendiente NO puede depender del ERP.
-    await user.click(screen.getByRole("checkbox", { name: /sin el código/i }));
+    await user.click(screen.getByRole("checkbox", { name: /continuar sin sku/i }));
 
     expect(reasonSelect()).not.toBeNull();
     expect(noteInput()).not.toBeNull();
@@ -239,7 +239,7 @@ describe("PendingForm · identidad Orion", () => {
     const input = orionInput();
     expect(input).not.toBeNull();
     await user.type(input as HTMLInputElement, "ORN-999");
-    await user.click(screen.getByRole("checkbox", { name: /sin el código/i }));
+    await user.click(screen.getByRole("checkbox", { name: /continuar sin sku/i }));
 
     // El campo del código desaparece Y deja de postearse: dejarlo con texto
     // adentro mandaría los dos y el envío se rechazaría por contradictorio,
@@ -251,7 +251,7 @@ describe("PendingForm · identidad Orion", () => {
     const user = userEvent.setup();
     renderForm();
     await user.selectOptions(productSelect(), "p2");
-    await user.click(screen.getByRole("checkbox", { name: /sin el código/i }));
+    await user.click(screen.getByRole("checkbox", { name: /continuar sin sku/i }));
 
     const options = Array.from(
       (reasonSelect() as HTMLSelectElement).querySelectorAll("option"),
@@ -344,7 +344,7 @@ describe("PendingForm · identidad Orion", () => {
     const user = userEvent.setup();
     renderForm();
     await user.selectOptions(productSelect(), "p2");
-    await user.click(screen.getByRole("checkbox", { name: /sin el código/i }));
+    await user.click(screen.getByRole("checkbox", { name: /continuar sin sku/i }));
 
     expect(
       screen
