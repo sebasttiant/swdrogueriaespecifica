@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { prisma } from "@/lib/db/prisma";
 import { searchLaboratories } from "@/server/repositories/laboratory.repository";
-import type { LaboratoryCandidate } from "@/server/domain/laboratory/identity";
+import {
+  normalizeLaboratoryName,
+  type LaboratoryCandidate,
+} from "@/server/domain/laboratory/identity";
 
 // Tests de PostgreSQL real para searchLaboratories.
 // El objective: probar que la query parameterizada funciona correctamente,
@@ -15,9 +18,11 @@ function first<T>(arr: T[]): T {
   return item;
 }
 
+// `searchKey` es NOT NULL y la base verifica con un CHECK que derive del
+// nombre, así que por defecto se calcula igual que en la aplicación.
 async function createLab(
   name: string,
-  searchKey: string | null = null,
+  searchKey: string = normalizeLaboratoryName(name),
   needsReview = false,
 ): Promise<string> {
   const lab = await prisma.laboratory.create({

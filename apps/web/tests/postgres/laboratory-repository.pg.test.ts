@@ -195,6 +195,9 @@ describe("findOrCreateLaboratory · invariante", () => {
 
     const blindClient = new Proxy(prisma, {
       get(target, property, receiver) {
+        // La resolución por identidad va por `$queryRaw` —la misma expresión
+        // que defiende el índice—, así que cegar solo el modelo no alcanza.
+        if (property === "$queryRaw") return async () => [];
         if (property === "laboratory") {
           const model = Reflect.get(target, property, receiver);
           return { ...model, findUnique: async () => null, findFirst: async () => null };
@@ -206,52 +209,5 @@ describe("findOrCreateLaboratory · invariante", () => {
     await expect(
       findOrCreateLaboratory({ name, commandKey: key }, blindClient),
     ).rejects.toBeInstanceOf(LaboratoryResolutionInvariantError);
-  });
-});
-
-// --------------------------------------------------------------------------
-// Laboratorios anteriores a la migración de trazabilidad.
-//
-// `20260826190000_add_laboratory_traceability` agrega `searchKey` como columna
-// nullable y NO rellena las filas que ya estaban. Todo laboratorio anterior
-// queda con `searchKey` NULL, y el índice único de `searchKey` es PARCIAL, así
-// que esa fila no ocupa ninguna clave de búsqueda.
-//
-// El que sí ocupa es `laboratories_name_key`: total, sobre una columna NOT
-// NULL, y existe desde la primera migración de la tabla. Resolver un
-// laboratorio histórico choca contra ÉL, no contra `searchKey` — y ninguna de
-// las dos lecturas del camino de conflicto lo encuentra.
-// --------------------------------------------------------------------------
-describe("findOrCreateLaboratory · laboratorios previos a la migración", () => {
-  it("resuelve una fila histórica con searchKey NULL en vez de romper", async () => {
-    const name = named("Historico");
-    const legacy = await prisma.laboratory.create({
-      data: { name, searchKey: null },
-    });
-
-    const result = await findOrCreateLaboratory({
-      name,
-      commandKey: laboratoryCreateCommandKey("auto", USER, name),
-    });
-
-    expect(result.status).toBe("exists");
-    expect(result.laboratory.id).toBe(legacy.id);
-    expect(await prisma.laboratory.count({ where: { name } })).toBe(1);
-  });
-
-  it("no confunde una fila histórica con el nombre que otro comando pidió", async () => {
-    const legacyName = named("Historico Otro");
-    await prisma.laboratory.create({
-      data: { name: legacyName, searchKey: null },
-    });
-
-    const fresh = named("Historico Nuevo");
-    const result = await findOrCreateLaboratory({
-      name: fresh,
-      commandKey: laboratoryCreateCommandKey("auto", OTHER_USER, fresh),
-    });
-
-    expect(result.status).toBe("created");
-    expect(result.laboratory.searchKey).toBe(normalizeLaboratoryName(fresh));
   });
 });

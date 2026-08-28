@@ -101,8 +101,8 @@ export type LaboratoryRecord =
 /**
  * El conflicto esperado no resolvió a ninguna fila.
  *
- * No ocurre por vía natural: cada uno de los tres índices únicos de la tabla
- * tiene su lectura —`searchKey`, `name` y `createCommandKey`—, así que el
+ * No ocurre por vía natural: los dos índices que pueden bloquear el INSERT
+ * tienen su lectura —la identidad canónica y `createCommandKey`—, así que el
  * conflicto que los produjo resuelve a una fila. Llegar acá significa que la
  * fila se borró entre el INSERT y la lectura, o que chocó un índice que este
  * código no contempla. Se nombra en vez de devolver `undefined`
@@ -125,24 +125,23 @@ export class LaboratoryResolutionInvariantError extends Error {
  * viajar como excepción si esta función va a poder usarse dentro de una
  * transacción más grande.
  *
- * Los tres índices, y por qué el orden de las lecturas es ese:
+ * Quien decide si dos nombres son el mismo laboratorio es
+ * `laboratories_canonical_identity_key`, el índice único FUNCIONAL sobre
+ * `laboratory_canonical_identity(name)` que agrega
+ * `20260828120000_add_laboratory_canonical_identity`. Mide el NOMBRE con la
+ * misma regla que `normalizeLaboratoryName`, así que "Bayer" y "bayer" —o
+ * "Lab  Doble" y "Lab Doble"— chocan en la base, no en un `if` de acá.
  *
- * - `laboratories_searchKey_key`, parcial: la identidad canónica. Se lee
- *   primero porque es lo que el llamador realmente pidió.
- * - `laboratories_name_key`, TOTAL y sobre columna NOT NULL: existe desde la
- *   primera migración de la tabla. Los laboratorios anteriores a
- *   `20260826190000_add_laboratory_traceability` tienen `searchKey` NULL —esa
- *   migración agrega la columna y no la rellena—, así que no ocupan ninguna
- *   clave de búsqueda y el único índice contra el que chocan es este.
- * - `laboratories_createCommandKey_key`, parcial: el intento, no el nombre.
+ * Por eso la resolución lee por esa misma expresión y no por la columna
+ * `searchKey`: la autoridad y la lectura tienen que ser la misma cosa, o
+ * vuelve a abrirse la grieta por la que una identidad duplicada se colaba.
  *
  * Los tres resultados:
  *
  * - `created`: el INSERT devolvió fila, nadie compitió.
- * - `exists`: no insertó y el laboratorio que se pidió ya estaba, sea por su
- *   `searchKey` o por su nombre exacto. Cubre "ya existía", "otro proceso ganó
- *   la carrera" y "es una fila histórica", que para el llamador son lo mismo:
- *   el laboratorio que pidió, ya está.
+ * - `exists`: no insertó y el laboratorio que se pidió ya estaba. Cubre "ya
+ *   existía" y "otro proceso ganó la carrera", que para el llamador son lo
+ *   mismo: el laboratorio que pidió, ya está.
  * - `exact_name_exists`: no insertó, el nombre NO está, y quien ocupaba el
  *   lugar es el mismo `commandKey` con OTRO nombre. Es un intento que cambió de
  *   idea, no una carrera. Se nombra para que el llamador decida: devolver el
@@ -182,41 +181,19 @@ export async function findOrCreateLaboratory(
     return { status: "created", laboratory: inserted[0] };
   }
 
-  // 2. No insertó. El nombre normalizado es lo que el llamador pidió, así que
-  //    se busca por ahí primero.
-  const bySearchKey = await client.laboratory.findUnique({ where: { searchKey } });
-  if (bySearchKey) {
-    return { status: "exists", laboratory: bySearchKey };
+  // 2. No insertó. Se lee por la MISMA expresión que defiende el índice, no
+  //    por la columna `searchKey`, para que la lectura no pueda discrepar de
+  //    la autoridad. Usa el índice funcional, así que es una búsqueda directa.
+  const [byIdentity] = await client.$queryRaw<Laboratory[]>`
+    SELECT * FROM laboratories
+     WHERE laboratory_canonical_identity(name) = ${searchKey}
+     LIMIT 1
+  `;
+  if (byIdentity) {
+    return { status: "exists", laboratory: byIdentity };
   }
 
-  // 3. No hay fila con ese `searchKey`, pero el nombre puede estar ocupado
-  //    igual: es el caso de los laboratorios previos a la migración de
-  //    trazabilidad, que quedaron con `searchKey` NULL. La lectura es por el
-  //    mismo nombre exacto que se intentó insertar, así que solo puede
-  //    devolver la fila que bloqueó el índice — nunca una vecina.
-  //
-  //    ALCANCE, y es importante: esto cubre IGUALDAD TEXTUAL EXACTA y nada
-  //    más. Una fila histórica "Bayer" con `searchKey` NULL y una captura
-  //    "bayer" siguen siendo dos laboratorios, porque `laboratories_name_key`
-  //    es sensible a mayúsculas; lo mismo con "Lab  Doble" y "Lab Doble". Este
-  //    camino resuelve el caso en que el nombre llega escrito igual, que es el
-  //    que hace fallar la resolución hoy, y NO pretende defender la identidad
-  //    canónica. Esa protección —la regla viviendo en la base, con un trigger
-  //    y un único que la hacen cumplir— llega en el PR encadenado; hasta
-  //    entonces la grieta de las variantes normalizadas sigue abierta.
-  //
-  //    No se le rellena el `searchKey` acá a propósito: sería un UPDATE
-  //    dentro de una función de resolución, y un choque contra el único
-  //    parcial de `searchKey` abortaría la transacción del llamador. Rellenar
-  //    filas históricas es trabajo de una migración, no de una lectura.
-  const byName = await client.laboratory.findUnique({
-    where: { name: data.name.trim() },
-  });
-  if (byName) {
-    return { status: "exists", laboratory: byName };
-  }
-
-  // 4. El nombre tampoco está: entonces quien bloqueó el INSERT fue el
+  // 3. La identidad no está: entonces quien bloqueó el INSERT fue el
   //    commandKey. Mismo comando, otro laboratorio.
   if (data.commandKey) {
     const byCommandKey = await client.laboratory.findUnique({
@@ -227,7 +204,7 @@ export async function findOrCreateLaboratory(
     }
   }
 
-  // 5. Chocó contra algo y no resolvió a nada. Ver la nota del error.
+  // 4. Chocó contra algo y no resolvió a nada. Ver la nota del error.
   throw new LaboratoryResolutionInvariantError(searchKey);
 }
 
