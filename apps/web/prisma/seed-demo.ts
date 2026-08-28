@@ -60,6 +60,7 @@ async function main(): Promise<void> {
     });
 
     // --- Laboratorios ---
+    // `searchKey` no se manda: la deriva un trigger desde el nombre.
     const genfar = await prisma.laboratory.upsert({
       where: { name: "Genfar" },
       update: {},

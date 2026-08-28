@@ -33,6 +33,7 @@ import {
 } from "@/server/services/pending.service";
 import { linkOrionCodeAtCapture, linkOrionCode } from "@/server/services/sku-onboarding.service";
 import { findProductById } from "@/server/repositories/product.repository";
+import { laboratoryCreateCommandKey } from "@/server/domain/laboratory/identity";
 import { findOrCreateLaboratory } from "@/server/repositories/laboratory.repository";
 import { SkuConcurrencyError } from "@/server/repositories/sku-review.repository";
 import { SkuIdentityError } from "@/server/domain/catalog/sku-identity";
@@ -638,7 +639,11 @@ export async function createPendingAction(
     try {
       const lab = await findOrCreateLaboratory({
         name: capture.requestedLaboratoryName,
-        commandKey: `auto:${session.user.id}`,
+        commandKey: laboratoryCreateCommandKey(
+          "auto",
+          session.user.id,
+          capture.requestedLaboratoryName,
+        ),
       });
       resolvedLabId = lab.laboratory.id;
     } catch (error) {
