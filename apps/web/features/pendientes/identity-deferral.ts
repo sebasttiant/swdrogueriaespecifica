@@ -20,7 +20,12 @@ import type { PendingIdentityDeferral } from "@/lib/generated/prisma/client";
 // sí: agregar un motivo en Prisma y olvidarlo acá —o al revés— rompe el
 // typecheck. El import es de tipo, así que se borra al compilar y no arrastra
 // nada de Prisma a este módulo puro.
+// `NEW_PRODUCT` va PRIMERO a propósito. Los otros cuatro describen un fracaso
+// al conseguir el código; este describe que el código todavía no existe, que es
+// el caso más común al dar de alta productos. Ponerlo último obligaría a leer
+// tres motivos que no aplican antes de encontrar el que sí.
 export const PENDING_IDENTITY_DEFERRAL_REASONS = [
+  "NEW_PRODUCT",
   "ORION_UNAVAILABLE",
   "CODE_NOT_FOUND",
   "CODE_ALREADY_ASSIGNED",
@@ -36,6 +41,7 @@ export const PENDING_IDENTITY_DEFERRAL_LABELS: Record<
   PendingIdentityDeferralReason,
   string
 > = {
+  NEW_PRODUCT: "Producto nuevo, aún sin SKU",
   ORION_UNAVAILABLE: "Orion no responde",
   CODE_NOT_FOUND: "No encuentro el código",
   CODE_ALREADY_ASSIGNED: "El código ya está en otro producto",

@@ -247,7 +247,7 @@ describe("PendingForm · identidad Orion", () => {
     expect(orionInput()).toBeNull();
   });
 
-  it("los cuatro motivos de la lista cerrada están disponibles", async () => {
+  it("los cinco motivos de la lista cerrada están disponibles", async () => {
     const user = userEvent.setup();
     renderForm();
     await user.selectOptions(productSelect(), "p2");
@@ -259,7 +259,10 @@ describe("PendingForm · identidad Orion", () => {
       .map((option) => option.value)
       .filter(Boolean);
 
+    // `NEW_PRODUCT` va primero: es el caso más común al dar de alta productos,
+    // y los otros cuatro describen un fracaso al conseguir el código.
     expect(options).toEqual([
+      "NEW_PRODUCT",
       "ORION_UNAVAILABLE",
       "CODE_NOT_FOUND",
       "CODE_ALREADY_ASSIGNED",

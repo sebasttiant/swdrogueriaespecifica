@@ -54,6 +54,11 @@ enum PendingAvailabilityStatus {
 // con texto libre la cola no se puede contar, y sin contarla no se sabe si la
 // exigencia estorba o si Orion se cae seguido. La nota opcional va aparte.
 enum PendingIdentityDeferral {
+  // El producto es nuevo y todavía no tiene código en Orion. NO es un fracaso
+  // al conseguirlo: es que no existe todavía. Se separa de OTHER porque la cola
+  // de revisión necesita distinguir "Orion se cae seguido" de "estamos dando de
+  // alta productos nuevos", que piden acciones opuestas.
+  NEW_PRODUCT
   ORION_UNAVAILABLE
   CODE_NOT_FOUND
   CODE_ALREADY_ASSIGNED

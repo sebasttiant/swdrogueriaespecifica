@@ -265,6 +265,32 @@ function quarantineWhere() {
   return { receivedQuantity: { gt: prisma.missingItem.fields.orderedQuantity } };
 }
 
+/**
+ * Lo que NO está en cuarentena, dicho en positivo y a prueba de NULL.
+ *
+ * `NOT quarantineWhere()` parecía equivalente y no lo era. Con
+ * `orderedQuantity` NULA —un faltante recién creado, antes de que gerencia
+ * derive la cantidad— la comparación `receivedQuantity > NULL` da NULL, `NOT
+ * NULL` sigue siendo NULL, y un WHERE que evalúa NULL descarta la fila.
+ *
+ * O sea: TODO faltante nuevo quedaba invisible en la cola "Por pedir", que es
+ * justo la pantalla donde gerencia decide qué comprar. El contador no aplicaba
+ * este filtro, así que mostraba el número correcto sobre una lista vacía: el
+ * badge decía 1 y la tabla decía "Nada por pedir".
+ *
+ * La regla escrita arriba siempre fue esta —una `orderedQuantity` NULA es
+ * "todavía sin derivar", no un dato inválido—; lo que faltaba era decírselo a
+ * SQL, que no la deduce de un comentario.
+ */
+function notQuarantineWhere() {
+  return {
+    OR: [
+      { orderedQuantity: null },
+      { receivedQuantity: { lte: prisma.missingItem.fields.orderedQuantity } },
+    ],
+  };
+}
+
 // Le falta mercadería por llegar. Null = sin derivar todavía, sigue faltando.
 function incompleteWhere() {
   return {
@@ -303,7 +329,7 @@ function whereForScope(scope: MissingItemScope | undefined) {
             ],
           },
           incompleteWhere(),
-          { NOT: quarantineWhere() },
+          notQuarantineWhere(),
         ],
       };
     case "quarantine":
@@ -314,7 +340,7 @@ function whereForScope(scope: MissingItemScope | undefined) {
       return {
         AND: [
           { confirmedAt: null, status: { in: ACTIONABLE_STATUSES } },
-          { NOT: quarantineWhere() },
+          notQuarantineWhere(),
         ],
       };
   }
