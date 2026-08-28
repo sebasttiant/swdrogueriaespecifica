@@ -35,6 +35,23 @@ function escapeLike(input: string): string {
  *
  * Usa $queryRaw con parámetros atados (no interpolación) para prevenir
  * inyección SQL. El LIKE usa ESCAPE '!' para tratar metacaracteres como literales.
+ *
+ * NO atrapa errores de base. Antes había un `catch` que devolvía `[]` cuando
+ * "la tabla no existía todavía", y era doblemente equivocado:
+ *
+ * - `laboratories` existe desde `20260709130000_add_laboratory`. Lo que puede
+ *   faltar antes de la migración de trazabilidad son COLUMNAS —`searchKey`,
+ *   `needsReview`—, y eso es `42703`, no `42P01`.
+ * - Prisma 7 no expone el SQLSTATE en `.code`: ahí pone `P2010` y guarda el
+ *   código real en `meta.driverAdapterError.cause.originalCode`. La condición
+ *   nunca podía cumplirse; era código muerto que documentaba una garantía
+ *   inexistente.
+ *
+ * Y aunque se hubiera escrito bien, devolver `[]` es la respuesta peligrosa:
+ * una lista vacía le dice al operador "este laboratorio no está, creálo", que
+ * es justo cómo se fabrican identidades duplicadas. `searchLaboratoriesAction`
+ * ya convierte cualquier excepción en `{ ok: false, error }` y la pantalla la
+ * muestra. Una base rota se ve como base rota.
  */
 export async function searchLaboratories(
   query: string,
@@ -45,36 +62,21 @@ export async function searchLaboratories(
 
   const escapedQuery = escapeLike(normalized);
 
-  try {
-    // Búsqueda segura: parámetros atados via Prisma $queryRaw.
-    // LIKE con ESCAPE '!' trata %, _, e ! del input como literales.
-    // Orden: exacto (0) > prefijo (1) > contiene (2) > alfabético.
-    const rows = await client.$queryRaw<LaboratoryCandidate[]>`
-      SELECT id, name, "searchKey", "needsReview"
-        FROM laboratories
-       WHERE "searchKey" = ${normalized}
-          OR name ILIKE ${`%${escapedQuery}%`} ESCAPE '!'
-       ORDER BY
-         CASE WHEN "searchKey" = ${normalized} THEN 0
-              WHEN name ILIKE ${`${escapedQuery}%`} ESCAPE '!' THEN 1
-              ELSE 2 END,
-         name
-       LIMIT ${SEARCH_LIMIT}
-    `;
-
-    return rows;
-  } catch (error) {
-    // La tabla no existe (pre-migración 20260826190000): devolver vacío.
-    // Esto cubre el caso de deploy donde las migraciones aún no corrieron.
-    // Cualquier otro error se propaga — NO se confunde con "sin resultados".
-    const code =
-      typeof error === "object" && error !== null
-        ? (error as { code?: string; meta?: { code?: string } }).meta?.code ??
-          (error as { code?: string }).code
-        : undefined;
-    if (code === "42P01") return [];
-    throw error;
-  }
+  // Búsqueda segura: parámetros atados via Prisma $queryRaw.
+  // LIKE con ESCAPE '!' trata %, _, e ! del input como literales.
+  // Orden: exacto (0) > prefijo (1) > contiene (2) > alfabético.
+  return client.$queryRaw<LaboratoryCandidate[]>`
+    SELECT id, name, "searchKey", "needsReview"
+      FROM laboratories
+     WHERE "searchKey" = ${normalized}
+        OR name ILIKE ${`%${escapedQuery}%`} ESCAPE '!'
+     ORDER BY
+       CASE WHEN "searchKey" = ${normalized} THEN 0
+            WHEN name ILIKE ${`${escapedQuery}%`} ESCAPE '!' THEN 1
+            ELSE 2 END,
+       name
+     LIMIT ${SEARCH_LIMIT}
+  `;
 }
 
 // --------------------------------------------------------------------------

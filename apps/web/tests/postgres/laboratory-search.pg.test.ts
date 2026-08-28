@@ -139,3 +139,84 @@ describe("searchLaboratories", () => {
     expect(results2).toHaveLength(0);
   });
 });
+
+// --------------------------------------------------------------------------
+// El carácter de escape, como literal.
+//
+// `escapeLike` duplica `!` además de `%` y `_`. Si no lo hiciera, un `!` del
+// operador se comería el carácter siguiente y la búsqueda encontraría cosas
+// que nadie pidió.
+// --------------------------------------------------------------------------
+describe("searchLaboratories · el carácter de escape", () => {
+  it("encuentra un nombre que contiene el propio '!'", async () => {
+    const id = await createLab("Lab !Alpha", "lab !alpha");
+    await createLab("Lab Alpha", "lab alpha");
+
+    const results = await searchLaboratories("!alpha");
+
+    expect(results).toHaveLength(1);
+    expect(first(results).id).toBe(id);
+  });
+
+  it("'!' no consume el carácter siguiente", async () => {
+    await createLab("Lab X%Y", "lab x%y");
+
+    // Sin escapar el '!', el patrón `!%` sería "un % literal" y traería la
+    // fila de arriba. Escapado, `!` es un carácter más y no hay coincidencia.
+    const results = await searchLaboratories("!%");
+
+    expect(results).toHaveLength(0);
+  });
+});
+
+// --------------------------------------------------------------------------
+// Los cuatro escalones del orden, en una sola corrida.
+// --------------------------------------------------------------------------
+describe("searchLaboratories · orden por escalones", () => {
+  it("ordena exacto, luego prefijo, luego contiene, luego alfabético", async () => {
+    await createLab("Zeta Mk", "zeta mk");        // contiene
+    await createLab("Mk Pharma", "mk pharma");    // prefijo
+    await createLab("Alfa Mk", "alfa mk");        // contiene, antes alfabético
+    await createLab("Mk", "mk");                  // exacto
+    await createLab("Mk Global", "mk global");    // prefijo, antes alfabético
+
+    const results = await searchLaboratories("mk");
+
+    expect(results.map((r) => r.name)).toEqual([
+      "Mk",
+      "Mk Global",
+      "Mk Pharma",
+      "Alfa Mk",
+      "Zeta Mk",
+    ]);
+  });
+});
+
+// --------------------------------------------------------------------------
+// Una base rota se ve como base rota.
+//
+// El caso real pre-trazabilidad es una COLUMNA que falta (`42703`), no una
+// tabla. Y Prisma 7 pone `P2010` en `.code`, con el SQLSTATE escondido en
+// `meta.driverAdapterError.cause.originalCode`. Se prueba con el error de
+// verdad, emitido por PostgreSQL, no con uno inventado.
+// --------------------------------------------------------------------------
+describe("searchLaboratories · errores de base", () => {
+  it("una columna faltante NO se convierte en 'sin resultados'", async () => {
+    const failing = new Proxy(prisma, {
+      get(target, property, receiver) {
+        if (property === "$queryRaw") {
+          return () =>
+            prisma.$queryRaw`SELECT "columnaAusente" FROM laboratories LIMIT 1`;
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    }) as typeof prisma;
+
+    await expect(searchLaboratories("mk", failing)).rejects.toMatchObject({
+      code: "P2010",
+      meta: {
+        driverAdapterError: { cause: { originalCode: "42703" } },
+      },
+    });
+  });
+});
