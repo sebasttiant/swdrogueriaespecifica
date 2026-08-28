@@ -53,15 +53,24 @@ describe("MISSING_SCOPE_LABELS", () => {
 describe("missingScopeHref", () => {
   // La cola de trabajo es la URL limpia: es la que el gerente va a guardar en
   // favoritos y abrir 30 veces por día.
+  // La vista por defecto es la COMPACTA, no la completa: así lo fija
+  // `resolveMissingView`. La URL limpia es la de esa vista; la completa tiene
+  // que pedirse explícitamente, o el enlace de "Completa" quedaría apuntando a
+  // una URL que el resolvedor lee como compacta —y era exactamente el bug: el
+  // botón no se podía activar.
   it("deja /faltantes limpio para la vista por defecto", () => {
-    expect(missingScopeHref("actionable", "full")).toBe("/faltantes");
+    expect(missingScopeHref("actionable", "compact")).toBe("/faltantes");
+  });
+
+  it("pide la vista completa de forma explícita", () => {
+    expect(missingScopeHref("actionable", "full")).toBe("/faltantes?view=full");
   });
 
   it("conserva el layout elegido al cambiar de vista", () => {
-    expect(missingScopeHref("ordered", "compact")).toBe(
-      "/faltantes?scope=ordered&view=compact",
+    expect(missingScopeHref("ordered", "full")).toBe(
+      "/faltantes?scope=ordered&view=full",
     );
-    expect(missingScopeHref("actionable", "compact")).toBe("/faltantes?view=compact");
+    expect(missingScopeHref("ordered", "compact")).toBe("/faltantes?scope=ordered");
   });
 
   // Cambiar de vista NO arrastra el cursor: apuntaría a una fila que la nueva
@@ -75,11 +84,11 @@ describe("missingPageHref", () => {
   // Pasar de página NO puede devolverte a otra vista: con 847 faltantes,
   // perder el lugar es perder el trabajo hecho.
   it("preserva vista y layout al pasar de página", () => {
-    expect(missingPageHref("ordered", "compact", "cur-1")).toBe(
-      "/faltantes?scope=ordered&view=compact&cursor=cur-1",
+    expect(missingPageHref("ordered", "full", "cur-1")).toBe(
+      "/faltantes?scope=ordered&view=full&cursor=cur-1",
     );
-    expect(missingPageHref("actionable", "full", "cur-1")).toBe(
-      "/faltantes?cursor=cur-1",
+    expect(missingPageHref("ordered", "compact", "cur-1")).toBe(
+      "/faltantes?scope=ordered&cursor=cur-1",
     );
   });
 

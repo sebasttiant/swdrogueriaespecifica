@@ -97,7 +97,7 @@ export function UserList({
               </div>
               <div className="flex items-center justify-between gap-3">
                 {!isArchived && canManage ? (
-                  <Link
+                  <Link prefetch={false}
                     href={`/admin/${user.id}`}
                     className="text-sm font-semibold text-primary hover:underline"
                   >
@@ -176,7 +176,7 @@ export function UserList({
                     ) : canManage || (isSuperAdmin && !isSelf) ? (
                       <div className="flex items-center gap-4">
                         {canManage ? (
-                          <Link
+                          <Link prefetch={false}
                             href={`/admin/${user.id}`}
                             className="font-semibold text-primary hover:underline"
                           >
@@ -209,7 +209,7 @@ export function UserList({
 
       {nextCursor ? (
         <div className="pt-1 text-center">
-          <Link
+          <Link prefetch={false}
             href={`/admin?cursor=${encodeURIComponent(nextCursor)}`}
             className="text-sm font-semibold text-primary hover:underline"
           >

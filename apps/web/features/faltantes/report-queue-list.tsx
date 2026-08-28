@@ -114,7 +114,7 @@ export function ReportQueueList({
         className="flex items-center justify-between gap-2 pt-1 text-sm"
       >
         {page > 1 ? (
-          <Link
+          <Link prefetch={false}
             href={reportQueueHref(page - 1, scope)}
             className="inline-flex min-h-11 items-center px-2 font-semibold text-primary hover:underline"
           >
@@ -127,7 +127,7 @@ export function ReportQueueList({
         <span className="text-muted-foreground">Página {page}</span>
 
         {hasMore ? (
-          <Link
+          <Link prefetch={false}
             href={reportQueueHref(page + 1, scope)}
             className="inline-flex min-h-11 items-center px-2 font-semibold text-primary hover:underline"
           >

@@ -64,7 +64,7 @@ export function ProductList({ items, nextCursor, q }: ProductListProps) {
           : null;
 
         return (
-          <Link key={product.id} href={`/productos/${product.id}`} className="block">
+          <Link prefetch={false} key={product.id} href={`/productos/${product.id}`} className="block">
             <Card className="flex items-center justify-between gap-3 transition-colors hover:bg-muted/40">
               <div className="min-w-0">
                 <p className="break-words font-semibold text-text">{product.name}</p>
@@ -89,7 +89,7 @@ export function ProductList({ items, nextCursor, q }: ProductListProps) {
 
       {nextCursor ? (
         <div className="pt-1 text-center">
-          <Link
+          <Link prefetch={false}
             href={`/productos?cursor=${encodeURIComponent(nextCursor)}${q ? `&q=${encodeURIComponent(q)}` : ""}`}
             className="text-sm font-semibold text-primary hover:underline"
           >

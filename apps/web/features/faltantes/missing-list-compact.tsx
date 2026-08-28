@@ -145,7 +145,7 @@ export function MissingListCompact({
         <p className="text-sm text-muted-foreground">
           Estos ya se pidieron. Se cierran solos cuando bodega registra la
           entrada de la mercadería:{" "}
-          <Link
+          <Link prefetch={false}
             href="/entradas"
             className="font-semibold text-text underline underline-offset-2"
           >
@@ -220,7 +220,7 @@ export function MissingListCompact({
       {/* "Ver más" con altura de dedo (44px): esta es la vista del celular. */}
       {nextCursor ? (
         <div className="pt-1 text-center">
-          <Link
+          <Link prefetch={false}
             href={pageHref(nextCursor)}
             className="inline-flex min-h-11 items-center px-4 text-sm font-semibold text-primary hover:underline"
           >

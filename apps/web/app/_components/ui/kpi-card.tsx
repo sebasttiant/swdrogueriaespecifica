@@ -60,7 +60,7 @@ export function KpiCard({
   if (!href) return content;
 
   return (
-    <Link href={href} className="block rounded-[var(--radius-card)]">
+    <Link prefetch={false} href={href} className="block rounded-[var(--radius-card)]">
       {content}
     </Link>
   );

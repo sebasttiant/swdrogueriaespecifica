@@ -98,7 +98,7 @@ export default async function FaltantesPage({
           un contador obligaría a una consulta extra en cada carga de esta
           pantalla, que es la del vendedor en el celular. */}
       {canReviewMissingReports ? (
-        <Link
+        <Link prefetch={false}
           href={REVIEW_QUEUE_PATH}
           className="inline-block text-sm font-semibold text-primary hover:underline print:hidden"
         >
@@ -136,7 +136,7 @@ export default async function FaltantesPage({
         className="flex flex-wrap gap-2 text-sm font-semibold print:hidden"
       >
         {MISSING_SCOPES.map((option) => (
-          <Link
+          <Link prefetch={false}
             key={option}
             href={missingScopeHref(option, view)}
             aria-current={scope === option ? "page" : undefined}
@@ -163,7 +163,7 @@ export default async function FaltantesPage({
       {canSeeMissingQueue ? (
       <div className="flex flex-col gap-3 print:hidden sm:flex-row sm:items-center sm:justify-between">
         <nav aria-label="Vista de faltantes" className="flex gap-2 text-sm font-semibold">
-          <Link
+          <Link prefetch={false}
             href={missingScopeHref(scope, "full")}
             aria-current={view === "full" ? "page" : undefined}
             className={cn(
@@ -175,7 +175,7 @@ export default async function FaltantesPage({
           >
             Completa
           </Link>
-          <Link
+          <Link prefetch={false}
             href={missingScopeHref(scope, "compact")}
             aria-current={view === "compact" ? "page" : undefined}
             className={cn(

@@ -67,7 +67,7 @@ export function PendingReviewFilters({
           entender por qué. El atajo para volver a verlo todo tiene que estar a
           la vista, no depender de que alguien edite la URL. */}
       {hasActiveAxis(axes) ? (
-        <Link
+        <Link prefetch={false}
           href={reviewHref({ scope, view, basePath, axes: {} })}
           className="inline-flex min-h-11 items-center text-sm font-semibold text-primary underline underline-offset-4"
         >
@@ -124,7 +124,7 @@ function FilterLink({
   children: React.ReactNode;
 }) {
   return (
-    <Link
+    <Link prefetch={false}
       href={href}
       aria-current={isActive ? "true" : undefined}
       className={cn(

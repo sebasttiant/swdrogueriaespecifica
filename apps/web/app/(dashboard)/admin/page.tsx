@@ -48,14 +48,14 @@ export default async function AdminPage({
       {isSuperAdmin ? (
         <div className="flex items-center gap-3">
           {showArchived ? (
-            <Link
+            <Link prefetch={false}
               href="/admin"
               className="text-sm font-semibold text-primary hover:underline"
             >
               ← Ver activos
             </Link>
           ) : (
-            <Link
+            <Link prefetch={false}
               href="/admin?archived=true"
               className="text-sm font-semibold text-muted-foreground hover:underline"
             >

@@ -55,7 +55,7 @@ export function ArrivalNotices({
                     ) : null}
                   </div>
 
-                  <Link
+                  <Link prefetch={false}
                     href={`/pendientes?view=listado#pendiente-${notice.pendingId}`}
                     className="shrink-0 text-sm font-semibold underline underline-offset-2"
                   >

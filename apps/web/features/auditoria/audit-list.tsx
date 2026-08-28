@@ -187,7 +187,7 @@ export function AuditList({
 
       {nextCursor ? (
         <div className="pt-1 text-center">
-          <Link
+          <Link prefetch={false}
             href={buildVerMasHref(nextCursor, activeFilters)}
             className="text-sm font-semibold text-primary hover:underline"
           >

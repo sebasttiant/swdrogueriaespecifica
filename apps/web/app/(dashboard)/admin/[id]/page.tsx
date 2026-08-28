@@ -32,7 +32,7 @@ export default async function AdminUserEditPage({
         description="Actualizá el nombre, email, rol o contraseña del usuario. Dejá la contraseña vacía para conservarla."
       />
 
-      <Link
+      <Link prefetch={false}
         href="/admin"
         className="inline-block text-sm font-semibold text-primary hover:underline"
       >

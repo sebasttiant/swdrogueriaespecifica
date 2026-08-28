@@ -13,7 +13,7 @@ type QuickActionProps = {
 // Acción rápida: botón grande y tocable con el dedo (mobile-first).
 export function QuickAction({ label, href, icon: Icon, className }: QuickActionProps) {
   return (
-    <Link
+    <Link prefetch={false}
       href={href}
       className={cn(
         "flex min-h-24 flex-col items-center justify-center gap-2 rounded-[var(--radius-card)]",

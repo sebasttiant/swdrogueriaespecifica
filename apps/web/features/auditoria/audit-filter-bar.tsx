@@ -106,7 +106,7 @@ export function AuditFilterBar({
         >
           Filtrar
         </button>
-        <Link
+        <Link prefetch={false}
           href="/auditoria"
           className="min-h-11 inline-flex items-center rounded-[var(--radius-btn)] border border-border px-5 text-sm font-semibold text-muted-foreground hover:bg-muted/40"
         >

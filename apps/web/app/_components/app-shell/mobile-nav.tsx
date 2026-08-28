@@ -47,7 +47,7 @@ export function MobileNav({ role }: MobileNavProps) {
           const Icon = item.icon;
           return (
             <li key={item.href}>
-              <Link
+              <Link prefetch={false}
                 href={item.href}
                 aria-current={active ? "page" : undefined}
                 className={cn(
