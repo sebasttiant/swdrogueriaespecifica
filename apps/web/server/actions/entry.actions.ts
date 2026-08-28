@@ -8,9 +8,9 @@ import {
   auditContextFromHeaders,
   recordAudit,
 } from "@/server/services/audit.service";
-import { findOrCreateLaboratory } from "@/server/repositories/laboratory.repository";
 import {
   LaboratoryEvidenceConflictError,
+  LaboratoryNameResolutionError,
   registerInventoryEntry,
 } from "@/server/services/inventory-entry.service";
 import { inventoryEntryCreateSchema } from "@/features/entradas/schema";
@@ -53,39 +53,21 @@ export async function createInventoryEntryAction(
     return { error: "Revisá los datos de la entrada.", ok: false };
   }
 
-  // ------------------------------------------------------------------------
-  // Resolución del laboratorio recibido.
+  // El nombre del laboratorio viaja CRUDO al servicio. Bodega escribe un nombre
+  // y manda; no tiene por qué saber que atrás hay un catálogo.
   //
-  // Bodega escribe un nombre y manda; no tiene por qué saber que atrás hay un
-  // catálogo. Si eligió de la lista ya viene el id y no hay nada que resolver.
-  // Se hace ANTES de abrir la transacción: si el laboratorio no se puede
-  // resolver, no tiene sentido empezar a mover stock.
-  // ------------------------------------------------------------------------
-  const { receivedLaboratoryName, ...entryData } = parsed.data;
-  let receivedLaboratoryId = entryData.receivedLaboratoryId;
-
-  if (!receivedLaboratoryId && receivedLaboratoryName) {
-    try {
-      const resolved = await findOrCreateLaboratory({
-        name: receivedLaboratoryName,
-        commandKey: `entry:${session.user.id}:${entryData.idempotencyKey}`,
-      });
-      receivedLaboratoryId = resolved.laboratory.id;
-    } catch (error) {
-      console.error("[entradas] No se pudo resolver el laboratorio:", error);
-      return {
-        error: "No se pudo resolver el laboratorio. Intentá de nuevo.",
-        ok: false,
-      };
-    }
-  }
+  // Acá se resolvía antes de llamar al servicio, y eso creaba el laboratorio
+  // fuera de la transacción de inventario: una entrada que después se rechazaba
+  // —payload de idempotencia distinto, evidencia en conflicto— dejaba en el
+  // catálogo un laboratorio que nadie pidió. Resolver adentro es lo que hace
+  // que el rollback también se lo lleve.
+  const entryData = parsed.data;
 
   let allocatedMissingCount = 0;
 
   try {
     const result = await registerInventoryEntry({
       ...entryData,
-      ...(receivedLaboratoryId ? { receivedLaboratoryId } : {}),
       createdById: session.user.id,
     });
 
@@ -103,7 +85,10 @@ export async function createInventoryEntryAction(
         quantity: entryData.quantity,
         batchCode: entryData.batchCode,
         expiresAt: entryData.expiresAt.toISOString(),
-        receivedLaboratoryId: receivedLaboratoryId ?? null,
+        // Lo que la persona pidió, que es lo que hay que poder auditar. El id
+        // resuelto lo decide el servicio y ya queda en el lote.
+        receivedLaboratoryId: entryData.receivedLaboratoryId ?? null,
+        receivedLaboratoryName: entryData.receivedLaboratoryName ?? null,
       },
       context,
     });
@@ -126,6 +111,14 @@ export async function createInventoryEntryAction(
     // cuadra y que solo la persona que tiene la caja delante puede resolver.
     // Por eso se le nombra el lote y el laboratorio que ya quedó registrado,
     // nunca un id interno, que no le sirve para nada.
+    // El nombre resolvió a un laboratorio que no es el que se pidió. No se
+    // adjunta igual: sería inventarle al lote una evidencia que nadie observó.
+    if (error instanceof LaboratoryNameResolutionError) {
+      return {
+        error: `No se pudo registrar "${error.requestedName}" como laboratorio. Buscalo en la lista y seleccionalo.`,
+        ok: false,
+      };
+    }
     if (error instanceof LaboratoryEvidenceConflictError) {
       const registrado = error.existingLaboratoryName
         ? `el laboratorio ${error.existingLaboratoryName}`

@@ -1,26 +1,36 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Aislamos la action: acá se prueba el BORDE —guard, resolución del laboratorio
-// y traducción del rechazo a algo que una persona pueda leer—, no la
-// transacción, que ya tiene sus propios tests en el service.
+// Aislamos la action: acá se prueba el BORDE —guard, qué le pasa al servicio y
+// traducción del rechazo a algo que una persona pueda leer—, no la transacción,
+// que tiene sus propios tests en el service.
+//
+// La action NO resuelve el laboratorio. El nombre viaja crudo al servicio, que
+// lo resuelve DENTRO de su transacción; resolverlo acá dejaba laboratorios
+// huérfanos cuando la entrada se rechazaba después.
 // La clase vive DENTRO de `vi.hoisted` porque `vi.mock` se eleva por encima de
 // todo el módulo: declarada afuera, la fábrica del mock la leería antes de que
 // exista.
 const {
   requireCapability,
   registerInventoryEntry,
-  findOrCreateLaboratory,
   recordAudit,
   auditContextFromHeaders,
   revalidatePath,
   LaboratoryEvidenceConflictError,
+  LaboratoryNameResolutionError,
 } = vi.hoisted(() => ({
   requireCapability: vi.fn(),
   registerInventoryEntry: vi.fn(),
-  findOrCreateLaboratory: vi.fn(),
   recordAudit: vi.fn(),
   auditContextFromHeaders: vi.fn(),
   revalidatePath: vi.fn(),
+  LaboratoryNameResolutionError: class extends Error {
+    readonly requestedName: string;
+    constructor(requestedName: string) {
+      super("laboratory name resolved to a different laboratory");
+      this.requestedName = requestedName;
+    }
+  },
   LaboratoryEvidenceConflictError: class extends Error {
     readonly batchCode: string;
     readonly existingLaboratoryName: string | null;
@@ -37,8 +47,8 @@ vi.mock("@/lib/auth/require-role", () => ({ requireCapability }));
 vi.mock("@/server/services/inventory-entry.service", () => ({
   registerInventoryEntry,
   LaboratoryEvidenceConflictError,
+  LaboratoryNameResolutionError,
 }));
-vi.mock("@/server/repositories/laboratory.repository", () => ({ findOrCreateLaboratory }));
 vi.mock("@/server/services/audit.service", () => ({
   recordAudit,
   auditContextFromHeaders,
@@ -95,7 +105,8 @@ describe("createInventoryEntryAction · laboratorio recibido", () => {
       formData({ receivedLaboratoryId: "lab-mk" }),
     );
 
-    expect(findOrCreateLaboratory).not.toHaveBeenCalled();
+    // Elegir de la lista es más específico que escribir el nombre: el id viaja
+    // tal cual y el servicio no tiene nada que resolver.
     expect(registerInventoryEntry).toHaveBeenCalledWith(
       expect.objectContaining({ receivedLaboratoryId: "lab-mk" }),
     );
@@ -103,31 +114,31 @@ describe("createInventoryEntryAction · laboratorio recibido", () => {
   });
 
   // Bodega escribe el nombre y manda; no tiene por qué saber que existe un
-  // catálogo de laboratorios detrás.
-  it("resuelve el laboratorio por NOMBRE cuando no vino el id", async () => {
-    findOrCreateLaboratory.mockResolvedValue({ laboratory: { id: "lab-nuevo" } });
-
+  // catálogo de laboratorios detrás. El nombre viaja CRUDO: la action no lo
+  // resuelve, y por eso una entrada rechazada no deja laboratorios huérfanos.
+  it("pasa el NOMBRE crudo al servicio, sin resolverlo", async () => {
     await createInventoryEntryAction(PREV, formData({ receivedLaboratoryName: "Genfar" }));
 
-    expect(findOrCreateLaboratory).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "Genfar" }),
-    );
     expect(registerInventoryEntry).toHaveBeenCalledWith(
-      expect.objectContaining({ receivedLaboratoryId: "lab-nuevo" }),
+      expect.objectContaining({ receivedLaboratoryName: "Genfar" }),
     );
   });
 
   it("registra la entrada sin laboratorio cuando no se informó ninguno", async () => {
     await createInventoryEntryAction(PREV, formData());
 
-    expect(findOrCreateLaboratory).not.toHaveBeenCalled();
     expect(registerInventoryEntry).toHaveBeenCalledWith(
       expect.not.objectContaining({ receivedLaboratoryId: expect.anything() }),
     );
   });
 
-  it("avisa sin registrar nada si el laboratorio no se pudo resolver", async () => {
-    findOrCreateLaboratory.mockRejectedValue(new Error("db down"));
+  // El servicio devuelve este error cuando el nombre resolvió a OTRO
+  // laboratorio. La action no puede seguir: adjuntarlo sería inventar la
+  // evidencia del lote.
+  it("traduce el nombre que no resolvió, nombrando lo que la persona escribió", async () => {
+    registerInventoryEntry.mockRejectedValue(
+      new LaboratoryNameResolutionError("Genfar"),
+    );
 
     const result = await createInventoryEntryAction(
       PREV,
@@ -135,8 +146,9 @@ describe("createInventoryEntryAction · laboratorio recibido", () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/laboratorio/i);
-    expect(registerInventoryEntry).not.toHaveBeenCalled();
+    expect(result.error).toContain("Genfar");
+    expect(result.error).toMatch(/lista/i);
+    expect(revalidatePath).not.toHaveBeenCalled();
   });
 });
 

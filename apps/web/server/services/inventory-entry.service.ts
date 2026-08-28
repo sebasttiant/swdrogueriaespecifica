@@ -19,6 +19,12 @@ import {
 } from "@/server/repositories/missing-item.repository";
 import { markReportsReceivedByMissingItemIds } from "@/server/repositories/missing-report.repository";
 import {
+  findOrCreateLaboratory,
+  LaboratoryResolutionInvariantError,
+} from "@/server/repositories/laboratory.repository";
+import type { Prisma } from "@/lib/generated/prisma/client";
+import { laboratoryCreateCommandKey } from "@/server/domain/laboratory/identity";
+import {
   lockBatchLaboratoryEvidence,
   reserveReceivedBatchQuantity,
   reserveBatchForPending,
@@ -51,6 +57,20 @@ export type RegisterInventoryEntryInput = {
    * y ninguno puede escribir sobre otro.
    */
   receivedLaboratoryId?: string | null;
+  /**
+   * Laboratorio observado, escrito a mano por bodega.
+   *
+   * Se resuelve ACÁ ADENTRO y no en la Server Action a propósito. Resolverlo
+   * afuera creaba el laboratorio antes de abrir la transacción: una entrada que
+   * después se rechazaba —payload de idempotencia distinto, producto
+   * inexistente, evidencia en conflicto— dejaba en el catálogo un laboratorio
+   * que nadie pidió. Bodega tipeaba mal, la entrada se caía, y la basura
+   * quedaba. Adentro de la transacción, el rollback se lo lleva.
+   *
+   * Se ignora si ya vino `receivedLaboratoryId`: elegir de la lista es más
+   * específico que escribir el nombre.
+   */
+  receivedLaboratoryName?: string;
 };
 
 export type RegisterInventoryEntryResult = {
@@ -87,6 +107,24 @@ export class LaboratoryEvidenceConflictError extends Error {
   }
 }
 
+/**
+ * El nombre de laboratorio no resolvió a un laboratorio propio.
+ *
+ * `findOrCreateLaboratory` devuelve `exact_name_exists` cuando el INSERT chocó
+ * contra el `createCommandKey` y la identidad pedida no está en ninguna fila: el
+ * laboratorio que vuelve es OTRO. Usarlo sería adjuntarle al lote un laboratorio
+ * que bodega no escribió, que es exactamente el error que la evidencia de
+ * laboratorio existe para impedir.
+ */
+export class LaboratoryNameResolutionError extends Error {
+  readonly requestedName: string;
+
+  constructor(requestedName: string) {
+    super("laboratory name resolved to a different laboratory");
+    this.requestedName = requestedName;
+  }
+}
+
 function requestFingerprint(data: RegisterInventoryEntryInput): string {
   return JSON.stringify({
     productId: data.productId, quantity: data.quantity, batchCode: data.batchCode,
@@ -116,12 +154,57 @@ function isUniqueConstraint(error: unknown): error is { code: string } {
  *
  * Si cualquiera de las tres escrituras falla, Prisma revierte todo.
  */
+/**
+ * Convierte el nombre escrito por bodega en un `receivedLaboratoryId`.
+ *
+ * Devuelve la entrada intacta cuando no hay nombre que resolver o cuando ya
+ * vino el id. La clave de comando lleva la identidad del laboratorio adentro
+ * —vía `laboratoryCreateCommandKey`—, así que el mismo actor pidiendo el mismo
+ * laboratorio reusa su propio comando en vez de chocar contra él.
+ */
+async function resolveLaboratoryName(
+  data: RegisterInventoryEntryInput,
+  tx: Prisma.TransactionClient,
+): Promise<RegisterInventoryEntryInput> {
+  const name = data.receivedLaboratoryName?.trim();
+  if (data.receivedLaboratoryId || !name) return data;
+
+  const resolved = await findOrCreateLaboratory(
+    {
+      name,
+      commandKey: laboratoryCreateCommandKey(
+        "auto",
+        data.createdById ?? "sistema",
+        name,
+      ),
+      needsReview: true,
+    },
+    tx,
+  );
+
+  // No se toma la fila a la fuerza: si el comando resolvió a otro laboratorio,
+  // adjuntarlo sería inventar la evidencia.
+  if (resolved.status === "exact_name_exists") {
+    throw new LaboratoryNameResolutionError(name);
+  }
+
+  const { receivedLaboratoryName: _descartado, ...resto } = data;
+  return { ...resto, receivedLaboratoryId: resolved.laboratory.id };
+}
+
 export async function registerInventoryEntry(
   data: RegisterInventoryEntryInput,
 ): Promise<RegisterInventoryEntryResult> {
   try {
     return await prisma.$transaction(async (tx) => {
-    const fingerprint = requestFingerprint(data);
+    // El laboratorio se resuelve PRIMERO y dentro de la transacción, para que
+    // el fingerprint se calcule sobre el id ya resuelto: así el reintento de la
+    // misma entrada produce el mismo fingerprint aunque el nombre se haya
+    // escrito con otras mayúsculas, y cualquier fallo posterior revierte
+    // también el laboratorio.
+    const resolvedData = await resolveLaboratoryName(data, tx);
+    const fingerprint = requestFingerprint(resolvedData);
+    data = resolvedData;
     if (data.idempotencyKey) {
       const existing = await findInventoryEntryByIdempotencyKey(tx, data.idempotencyKey);
       if (existing) {
