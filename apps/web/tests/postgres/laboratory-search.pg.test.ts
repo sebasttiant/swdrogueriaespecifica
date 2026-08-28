@@ -15,13 +15,15 @@ function first<T>(arr: T[]): T {
   return item;
 }
 
+// `searchKey` no se manda: la deriva un trigger desde el nombre. El segundo
+// parámetro se conserva para no reescribir cada llamada, pero se ignora.
 async function createLab(
   name: string,
-  searchKey: string | null = null,
+  _searchKeyIgnorado?: string,
   needsReview = false,
 ): Promise<string> {
   const lab = await prisma.laboratory.create({
-    data: { name, searchKey, needsReview },
+    data: { name, needsReview },
   });
   return lab.id;
 }

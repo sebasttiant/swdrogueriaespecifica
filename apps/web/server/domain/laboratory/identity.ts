@@ -31,12 +31,29 @@ export class LaboratoryIdentityError extends Error {
 }
 
 // --------------------------------------------------------------------------
-// Normalización — la clave canónica del laboratorio.
+// Normalización — AYUDA de la pantalla, NO la identidad.
 //
-// El nombre normalizado es la IDENTIDAD: misma clave = mismo laboratorio.
-// Minúsculas + trim + colapsar espacios múltiples. Sin tildes, sin puntuación:
-// "Bayer S.A." y "bayer s.a" son el mismo laboratorio; "Bayer" y "Bayer Chile"
-// son distintos.
+// Minúsculas + trim + colapsar espacios múltiples: "Bayer S.A." y "bayer s.a."
+// son el mismo laboratorio; "Bayer" y "Bayer Chile" son distintos.
+//
+// Ojo con lo que esta función NO es: la identidad de un laboratorio la calcula
+// la BASE, con `laboratory_canonical_identity(text)`, y es la única autoridad.
+// Ver `20260828120000_add_laboratory_canonical_identity`.
+//
+// El intento de sostener las dos implementaciones en paralelo falló porque el
+// plegado de mayúsculas de Unicode no coincide y no puede coincidir:
+//
+//   "ΟΣ"          acá -> 03bf 03c2 (sigma FINAL)   PostgreSQL -> 03bf 03c3
+//   "İ"           acá -> 0069 0307 (largo 2)       PostgreSQL -> 0069
+//   "AB"    acá conserva U+0085              PostgreSQL lo hace espacio
+//
+// Las reglas de PostgreSQL dependen de su versión de Unicode y de su ICU: no
+// son reproducibles desde acá. Por eso esta función quedó para normalizar lo
+// que se TIPEA —decidir si la consulta está vacía, armar el patrón del ILIKE—,
+// donde una diferencia solo cambia qué se encuentra y nunca puede crear un
+// laboratorio duplicado.
+//
+// No la uses para decidir si dos nombres son el mismo laboratorio.
 // --------------------------------------------------------------------------
 
 const MULTI_SPACE = /\s+/g;
