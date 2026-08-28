@@ -100,6 +100,28 @@ export async function createLaboratoryAction(
       commandKey: laboratoryCreateCommandKey("manual", user.id, name),
     });
 
+    // `exact_name_exists` NO es un éxito: el repositorio lo emite cuando el
+    // INSERT chocó contra el `createCommandKey` y la identidad que se pidió no
+    // está en ninguna fila. El laboratorio que vuelve es OTRO —el que ese mismo
+    // comando creó antes con otro nombre—, así que darlo por bueno sustituiría
+    // en silencio lo que la persona escribió. La pantalla hace `setQuery(name)`
+    // con lo que reciba: aceptarlo le cambiaría el texto por uno que no tipeó.
+    //
+    // Con las claves de comando actuales no debería ocurrir por vía natural:
+    // tanto esta action como la de pendientes arman la clave con
+    // `laboratoryCreateCommandKey`, que lleva el nombre normalizado adentro, de
+    // modo que un choque por `createCommandKey` implica una fila con esa misma
+    // identidad —y la lectura por identidad la encuentra antes—. Se mapea igual
+    // porque el repositorio es público y un llamador futuro puede traer una
+    // clave que no cargue la identidad.
+    if (result.status === "exact_name_exists") {
+      return {
+        ok: false,
+        error: "Ese intento de creación ya resolvió a otro laboratorio.",
+        code: "EXACT_NAME_EXISTS",
+      };
+    }
+
     return {
       ok: true,
       laboratory: {
@@ -107,7 +129,7 @@ export async function createLaboratoryAction(
         name: result.laboratory.name,
         needsReview: result.laboratory.needsReview,
       },
-      status: result.status === "created" ? "created" : "exists",
+      status: result.status,
     };
   } catch (error) {
     const code =
