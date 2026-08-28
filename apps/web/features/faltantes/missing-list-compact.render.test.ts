@@ -273,7 +273,7 @@ describe("MissingListCompact · el nombre no se corta en el celular", () => {
 describe("MissingListCompact · la columna Acciones no miente", () => {
   const yaPedido = item({
     orderedAt: new Date("2026-08-01T00:00:00.000Z"),
-    orderedBy: { name: "Super Admin" },
+    orderedBy: { id: "u-1", name: "Super Admin" },
   });
 
   it("no dibuja el encabezado cuando ninguna fila ofrece acciones", () => {
@@ -306,7 +306,7 @@ describe("MissingListCompact · la columna Acciones no miente", () => {
 describe("MissingListCompact · dice cómo se cierra lo ya pedido", () => {
   const yaPedido = item({
     orderedAt: new Date("2026-08-01T00:00:00.000Z"),
-    orderedBy: { name: "Super Admin" },
+    orderedBy: { id: "u-1", name: "Super Admin" },
   });
 
   it("explica que se cierra al registrar la entrada, y enlaza ahí", () => {
