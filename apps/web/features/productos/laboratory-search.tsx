@@ -93,6 +93,12 @@ export function LaboratorySearch({
   function handleQueryChange(raw: string) {
     setQuery(raw);
     setHasFailed(false);
+    // Un ID identifica a UN laboratorio. Si el texto deja de ser su nombre, el
+    // ID dejó de corresponder: seleccionar Genfar y después escribir Bayer
+    // mandaba el ID de Genfar con el nombre Bayer, y como el ID gana sobre el
+    // nombre al resolver, el cliente terminaba con el laboratorio equivocado
+    // sin que nada lo delatara.
+    if (selected && raw !== selected.name) setSelected(null);
     if (!raw.trim()) {
       setSelected(null);
       setOptions([]);
@@ -154,9 +160,18 @@ export function LaboratorySearch({
 
   return (
     <Field label={label} htmlFor={inputId}>
+      {/* Lo que se ve es lo que se envía.
+          El nombre sale de `query` —el texto visible— y no de `selected`. Salía
+          de `selected`, y como el input visible no tiene `name`, lo que la
+          persona escribía sin clickear una sugerencia no entraba en FormData:
+          la pantalla mostraba "Genfar" y el servidor recibía "". Rechazaba con
+          "Escribí el nombre del laboratorio" sobre un campo lleno, y no había
+          forma de salir de ahí sin adivinar que había que clickear la lista.
+          El ID sigue viniendo de `selected`, porque un ID solo existe si se
+          eligió de verdad: escribir un nombre no lo inventa. */}
       <input type="hidden" name={name} value={selected?.id ?? ""} />
       {nameForLabel ? (
-        <input type="hidden" name={nameForLabel} value={selected?.name ?? ""} />
+        <input type="hidden" name={nameForLabel} value={query.trim()} />
       ) : null}
       <div className="space-y-2">
         <div className="relative">
