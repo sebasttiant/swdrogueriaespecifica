@@ -99,10 +99,11 @@ export type LaboratoryRecord =
 /**
  * El conflicto esperado no resolvió a ninguna fila.
  *
- * No ocurre por vía natural: un choque contra `searchKey` siempre lo encuentra
- * la búsqueda por `searchKey`, y lo mismo con `createCommandKey`. Llegar acá
- * significa que la fila se borró entre el INSERT y la lectura, o que chocó un
- * índice que este código no contempla. Se nombra en vez de devolver `undefined`
+ * No ocurre por vía natural: cada uno de los tres índices únicos de la tabla
+ * tiene su lectura —`searchKey`, `name` y `createCommandKey`—, así que el
+ * conflicto que los produjo resuelve a una fila. Llegar acá significa que la
+ * fila se borró entre el INSERT y la lectura, o que chocó un índice que este
+ * código no contempla. Se nombra en vez de devolver `undefined`
  * y romper más adelante, lejos de la causa.
  */
 export class LaboratoryResolutionInvariantError extends Error {
@@ -115,19 +116,31 @@ export class LaboratoryResolutionInvariantError extends Error {
  * Resolve-or-create idempotente.
  *
  * El INSERT usa `ON CONFLICT DO NOTHING` SIN target —vía `skipDuplicates`— a
- * propósito: la tabla tiene DOS índices únicos parciales, `searchKey` y
- * `createCommandKey`, y acotar el target a uno dejaría que el otro lanzara un
- * error. Eso importa más de lo que parece, porque en PostgreSQL un error aborta
- * la transacción ENTERA: cualquier consulta posterior falla con 25P02. Un
- * conflicto que se espera no puede viajar como excepción si esta función va a
- * poder usarse dentro de una transacción más grande.
+ * propósito: la tabla tiene TRES índices únicos y acotar el target a uno
+ * dejaría que los otros lanzaran un error. Eso importa más de lo que parece,
+ * porque en PostgreSQL un error aborta la transacción ENTERA: cualquier
+ * consulta posterior falla con 25P02. Un conflicto que se espera no puede
+ * viajar como excepción si esta función va a poder usarse dentro de una
+ * transacción más grande.
+ *
+ * Los tres índices, y por qué el orden de las lecturas es ese:
+ *
+ * - `laboratories_searchKey_key`, parcial: la identidad canónica. Se lee
+ *   primero porque es lo que el llamador realmente pidió.
+ * - `laboratories_name_key`, TOTAL y sobre columna NOT NULL: existe desde la
+ *   primera migración de la tabla. Los laboratorios anteriores a
+ *   `20260826190000_add_laboratory_traceability` tienen `searchKey` NULL —esa
+ *   migración agrega la columna y no la rellena—, así que no ocupan ninguna
+ *   clave de búsqueda y el único índice contra el que chocan es este.
+ * - `laboratories_createCommandKey_key`, parcial: el intento, no el nombre.
  *
  * Los tres resultados:
  *
  * - `created`: el INSERT devolvió fila, nadie compitió.
- * - `exists`: no insertó y el nombre normalizado ya estaba. Cubre tanto "ya
- *   existía" como "otro proceso ganó la carrera", que para el llamador son lo
- *   mismo: el laboratorio que pidió, ya está.
+ * - `exists`: no insertó y el laboratorio que se pidió ya estaba, sea por su
+ *   `searchKey` o por su nombre exacto. Cubre "ya existía", "otro proceso ganó
+ *   la carrera" y "es una fila histórica", que para el llamador son lo mismo:
+ *   el laboratorio que pidió, ya está.
  * - `exact_name_exists`: no insertó, el nombre NO está, y quien ocupaba el
  *   lugar es el mismo `commandKey` con OTRO nombre. Es un intento que cambió de
  *   idea, no una carrera. Se nombra para que el llamador decida: devolver el
@@ -174,8 +187,25 @@ export async function findOrCreateLaboratory(
     return { status: "exists", laboratory: bySearchKey };
   }
 
-  // 3. El nombre no está: entonces quien bloqueó el INSERT fue el commandKey.
-  //    Mismo comando, otro laboratorio.
+  // 3. No hay fila con ese `searchKey`, pero el nombre puede estar ocupado
+  //    igual: es el caso de los laboratorios previos a la migración de
+  //    trazabilidad, que quedaron con `searchKey` NULL. La lectura es por el
+  //    mismo nombre exacto que se intentó insertar, así que solo puede
+  //    devolver la fila que bloqueó el índice — nunca una vecina.
+  //
+  //    No se le rellena el `searchKey` acá a propósito: sería un UPDATE
+  //    dentro de una función de resolución, y un choque contra el único
+  //    parcial de `searchKey` abortaría la transacción del llamador. Rellenar
+  //    filas históricas es trabajo de una migración, no de una lectura.
+  const byName = await client.laboratory.findUnique({
+    where: { name: data.name.trim() },
+  });
+  if (byName) {
+    return { status: "exists", laboratory: byName };
+  }
+
+  // 4. El nombre tampoco está: entonces quien bloqueó el INSERT fue el
+  //    commandKey. Mismo comando, otro laboratorio.
   if (data.commandKey) {
     const byCommandKey = await client.laboratory.findUnique({
       where: { createCommandKey: data.commandKey },
@@ -185,7 +215,7 @@ export async function findOrCreateLaboratory(
     }
   }
 
-  // 4. Chocó contra algo y no resolvió a nada. Ver la nota del error.
+  // 5. Chocó contra algo y no resolvió a nada. Ver la nota del error.
   throw new LaboratoryResolutionInvariantError(searchKey);
 }
 
