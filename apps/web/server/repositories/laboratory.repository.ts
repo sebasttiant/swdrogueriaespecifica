@@ -195,6 +195,16 @@ export async function findOrCreateLaboratory(
   //    mismo nombre exacto que se intentó insertar, así que solo puede
   //    devolver la fila que bloqueó el índice — nunca una vecina.
   //
+  //    ALCANCE, y es importante: esto cubre IGUALDAD TEXTUAL EXACTA y nada
+  //    más. Una fila histórica "Bayer" con `searchKey` NULL y una captura
+  //    "bayer" siguen siendo dos laboratorios, porque `laboratories_name_key`
+  //    es sensible a mayúsculas; lo mismo con "Lab  Doble" y "Lab Doble". Este
+  //    camino resuelve el caso en que el nombre llega escrito igual, que es el
+  //    que hace fallar la resolución hoy, y NO pretende defender la identidad
+  //    canónica. Esa protección —la regla viviendo en la base, con un trigger
+  //    y un único que la hacen cumplir— llega en el PR encadenado; hasta
+  //    entonces la grieta de las variantes normalizadas sigue abierta.
+  //
   //    No se le rellena el `searchKey` acá a propósito: sería un UPDATE
   //    dentro de una función de resolución, y un choque contra el único
   //    parcial de `searchKey` abortaría la transacción del llamador. Rellenar
