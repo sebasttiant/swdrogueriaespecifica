@@ -39,6 +39,12 @@ export const inventoryEntryCreateSchema = z.object({
       return parsed;
     }),
   note: optionalText(280),
+  // Laboratorio OBSERVADO al recibir. Los DOS campos son opcionales: no saber
+  // qué laboratorio llegó no puede trabar la recepción de una caja. El id llega
+  // cuando se eligió de la lista; el nombre, cuando se escribió sin elegir, y la
+  // action lo resuelve. Es el mismo par que ya usa el alta de faltantes.
+  receivedLaboratoryId: optionalText(64),
+  receivedLaboratoryName: optionalText(120),
   idempotencyKey: z.string().uuid(),
 });
 

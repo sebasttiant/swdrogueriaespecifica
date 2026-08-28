@@ -8,7 +8,11 @@ import {
   auditContextFromHeaders,
   recordAudit,
 } from "@/server/services/audit.service";
-import { registerInventoryEntry } from "@/server/services/inventory-entry.service";
+import {
+  LaboratoryEvidenceConflictError,
+  LaboratoryNameResolutionError,
+  registerInventoryEntry,
+} from "@/server/services/inventory-entry.service";
 import { inventoryEntryCreateSchema } from "@/features/entradas/schema";
 
 // --------------------------------------------------------------------------
@@ -40,6 +44,8 @@ export async function createInventoryEntryAction(
     // undefined para que el schema aplique sus reglas (fecha obligatoria).
     expiresAt: formData.get("expiresAt") ?? undefined,
     note: formData.get("note") ?? undefined,
+    receivedLaboratoryId: formData.get("receivedLaboratoryId") ?? undefined,
+    receivedLaboratoryName: formData.get("receivedLaboratoryName") ?? undefined,
     idempotencyKey: formData.get("idempotencyKey"),
   });
 
@@ -47,11 +53,21 @@ export async function createInventoryEntryAction(
     return { error: "Revisá los datos de la entrada.", ok: false };
   }
 
+  // El nombre del laboratorio viaja CRUDO al servicio. Bodega escribe un nombre
+  // y manda; no tiene por qué saber que atrás hay un catálogo.
+  //
+  // Acá se resolvía antes de llamar al servicio, y eso creaba el laboratorio
+  // fuera de la transacción de inventario: una entrada que después se rechazaba
+  // —payload de idempotencia distinto, evidencia en conflicto— dejaba en el
+  // catálogo un laboratorio que nadie pidió. Resolver adentro es lo que hace
+  // que el rollback también se lo lleve.
+  const entryData = parsed.data;
+
   let allocatedMissingCount = 0;
 
   try {
     const result = await registerInventoryEntry({
-      ...parsed.data,
+      ...entryData,
       createdById: session.user.id,
     });
 
@@ -65,10 +81,14 @@ export async function createInventoryEntryAction(
       entity: "InventoryEntry",
       entityId: result.entry.id,
       after: {
-        productId: parsed.data.productId,
-        quantity: parsed.data.quantity,
-        batchCode: parsed.data.batchCode,
-        expiresAt: parsed.data.expiresAt.toISOString(),
+        productId: entryData.productId,
+        quantity: entryData.quantity,
+        batchCode: entryData.batchCode,
+        expiresAt: entryData.expiresAt.toISOString(),
+        // Lo que la persona pidió, que es lo que hay que poder auditar. El id
+        // resuelto lo decide el servicio y ya queda en el lote.
+        receivedLaboratoryId: entryData.receivedLaboratoryId ?? null,
+        receivedLaboratoryName: entryData.receivedLaboratoryName ?? null,
       },
       context,
     });
@@ -80,13 +100,34 @@ export async function createInventoryEntryAction(
         module: AUDIT_MODULES.ENTRADAS,
         entity: "MissingItem",
         after: {
-          productId: parsed.data.productId,
+          productId: entryData.productId,
           allocatedCount: allocatedMissingCount,
         },
         context,
       });
     }
   } catch (error) {
+    // El conflicto de evidencia NO es una falla del sistema: es un dato que no
+    // cuadra y que solo la persona que tiene la caja delante puede resolver.
+    // Por eso se le nombra el lote y el laboratorio que ya quedó registrado,
+    // nunca un id interno, que no le sirve para nada.
+    // El nombre resolvió a un laboratorio que no es el que se pidió. No se
+    // adjunta igual: sería inventarle al lote una evidencia que nadie observó.
+    if (error instanceof LaboratoryNameResolutionError) {
+      return {
+        error: `No se pudo registrar "${error.requestedName}" como laboratorio. Buscalo en la lista y seleccionalo.`,
+        ok: false,
+      };
+    }
+    if (error instanceof LaboratoryEvidenceConflictError) {
+      const registrado = error.existingLaboratoryName
+        ? `el laboratorio ${error.existingLaboratoryName}`
+        : "otro laboratorio";
+      return {
+        error: `El lote ${error.batchCode} ya se recibió con ${registrado}. Verificá la caja: si el laboratorio es distinto, usá otro código de lote.`,
+        ok: false,
+      };
+    }
     console.error("[entradas] No se pudo registrar la entrada:", error);
     return {
       error: "No se pudo registrar la entrada. Intentá de nuevo.",
