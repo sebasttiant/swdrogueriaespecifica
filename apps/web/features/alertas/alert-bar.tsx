@@ -5,6 +5,7 @@ import { alertSignature, type AlertCounts } from "@/lib/alertas/signature";
 import { can, seesAllPendings } from "@/lib/auth/permissions";
 import type { SessionRole } from "@/lib/auth/session";
 import { cn } from "@/lib/utils/cn";
+import { countArrivalNotices } from "@/server/services/arrival-notice.service";
 import {
   getOperationalAlertsCached,
   type AlertScope,
@@ -157,39 +158,108 @@ function alertScopeFor(role: SessionRole, userId: string): AlertScope {
   return { kind: "none" };
 }
 
+// --------------------------------------------------------------------------
+// "Llegó lo que esperabas": el aviso que NO es un reclamo.
+//
+// Va SEPARADO del aviso operativo, y las tres diferencias son deliberadas:
+//
+// 1. TONO. El operativo es rojo o amarillo porque describe algo que va mal.
+//    Este es una buena noticia. Meter "llegó tu pedido" en la misma barra
+//    amarilla que "hay faltantes sin resolver hace 8 horas" enseña a ignorar
+//    la barra entera, y un aviso que se ignora es peor que no tenerlo: deja
+//    creyendo que se avisó.
+//
+// 2. NO SE POSPONE. El "Posponer 8 h" tiene sentido contra un reclamo que
+//    insiste. Acá no hace falta: el aviso se limpia con la ACCIÓN —cuando el
+//    vendedor entrega o cancela, el pendiente sale del filtro de estado y el
+//    aviso desaparece solo—. Por eso queda FUERA de `AlertSnoozeWrapper`:
+//    silenciar "tu mercadería llegó" es perder la venta.
+//
+// 3. SIN DETALLE. La barra se pinta en TODAS las pantallas y su único trabajo
+//    es sacarte de donde estás. El cliente, la cantidad y la hora están en
+//    `/pendientes`, a un toque. Repetir la tarjeta entera acá no informa más:
+//    hace ruido, y en el celular desborda.
+//
+// Una sola línea y un enlace: en móvil no necesita colapsarse porque no hay
+// nada que colapsar.
+// --------------------------------------------------------------------------
+function ArrivalNoticeAlert({ total }: { total: number }) {
+  if (total === 0) return null;
+
+  return (
+    <Alert tone="success" role="status" className="shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+        <span className="text-sm font-semibold">
+          {total === 1
+            ? "Llegó 1 pedido tuyo"
+            : `Llegaron ${total} pedidos tuyos`}
+        </span>
+        <Link
+          prefetch={false}
+          href="/pendientes"
+          className="inline-flex min-h-11 items-center rounded-full border border-success/30 px-3 text-sm font-semibold"
+        >
+          Ver
+        </Link>
+      </div>
+    </Alert>
+  );
+}
+
 export async function AlertBar({ userId, role }: AlertBarProps) {
+  // El aviso de llegada NO depende del operativo, ni en el contenido ni en el
+  // fallo: que no haya nada que reclamar —o que esa consulta se caiga— no
+  // significa que no haya llegado mercadería. Se arma primero, antes del try,
+  // para que ningún camino de error se lo lleve puesto.
+  //
+  // Se cuenta acá y no dentro del componente para que este quede SINCRÓNICO:
+  // un componente async anidado solo se puede pintar en un render de servidor
+  // completo, y eso deja la barra sin forma de probarse.
+  let arrivalCount = 0;
+  try {
+    arrivalCount = await countArrivalNotices(userId);
+  } catch (error) {
+    // Un contador caído no puede impedirle a nadie registrar un pendiente, ni
+    // llevarse puesto el aviso operativo.
+    console.error("[alertas] No se pudo contar los avisos de llegada:", error);
+  }
+  const arrival = <ArrivalNoticeAlert total={arrivalCount} />;
+
   // Mismo criterio que el aviso de gerencia: si la consulta falla, no se
-  // muestra el aviso y la pantalla sigue funcionando. Un contador caído no
+  // muestra ESE aviso y la pantalla sigue funcionando. Un contador caído no
   // puede impedirle a nadie registrar un pendiente.
   let counts: AlertCounts;
   try {
     counts = await getOperationalAlertsCached(alertScopeFor(role, userId));
   } catch (error) {
     console.error("[alertas] No se pudo calcular el aviso operativo:", error);
-    return null;
+    return arrival;
   }
   const totalCount = totalAlerts(counts);
 
-  if (totalCount === 0) return null;
+  if (totalCount === 0) return arrival;
 
   const chips = buildAlertChips(counts);
   const severity = highestSeverity(chips);
   const signature = alertSignature(counts);
 
   return (
-    <AlertSnoozeWrapper
-      userId={userId}
-      role={role}
-      chips={chips}
-      highestSeverity={severity}
-      signature={signature}
-      totalCount={totalCount}
-    >
-      <OperationalAlertContent
+    <div className="space-y-3">
+      {arrival}
+      <AlertSnoozeWrapper
+        userId={userId}
+        role={role}
         chips={chips}
-        severity={severity}
+        highestSeverity={severity}
+        signature={signature}
         totalCount={totalCount}
-      />
-    </AlertSnoozeWrapper>
+      >
+        <OperationalAlertContent
+          chips={chips}
+          severity={severity}
+          totalCount={totalCount}
+        />
+      </AlertSnoozeWrapper>
+    </div>
   );
 }

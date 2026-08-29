@@ -129,3 +129,47 @@ export async function listArrivalNotices(
     noticedAt: fila.noticedAt,
   }));
 }
+
+// --------------------------------------------------------------------------
+// Cuántos avisos tiene esperando esta persona.
+//
+// Existe aparte de `listArrivalNotices` porque la barra de alertas se pinta en
+// TODAS las pantallas y ahí solo hace falta el número: traer diez filas con
+// nombre de cliente y cantidades para mostrar un "2" sería pagar el detalle en
+// cada render y, de paso, mover datos del cliente a una superficie que no los
+// muestra.
+//
+// Los filtros son EXACTAMENTE los de la lista, y eso no es una coincidencia
+// que haya que cuidar a mano: si el contador dijera "2" y la pantalla mostrara
+// una, el vendedor aprendería a desconfiar del aviso. Un aviso en el que no se
+// confía es peor que no tenerlo, porque deja creyendo que se avisó.
+// `arrival-notice-count.pg.test.ts` compara los dos contra PostgreSQL real.
+//
+// Cuenta PENDIENTES, no eventos: un pendiente que acumuló el aviso parcial y
+// después el completo es UN aviso. Por eso el `COUNT(DISTINCT p.id)` y no un
+// `COUNT(*)` sobre el join, que lo contaría dos veces.
+// --------------------------------------------------------------------------
+export async function countArrivalNotices(recipientId: string): Promise<number> {
+  const filas = await prisma.$queryRaw<{ total: bigint }[]>`
+    SELECT COUNT(DISTINCT p.id) AS total
+      FROM pendings p
+      JOIN notification_outbox n
+        ON n."aggregateType" = ${AGGREGATE_TYPE_PENDING}
+       AND n."aggregateId" = p.id
+       AND n."recipientId" = ${recipientId}
+       AND n."eventType" IN (
+             ${NOTIFICATION_EVENT.pendingAvailabilityPartial},
+             ${NOTIFICATION_EVENT.pendingAvailabilityFull}
+           )
+     WHERE p."createdById" = ${recipientId}
+       AND p.status::text IN ('PENDIENTE', 'PARCIAL')
+       AND p."availabilityStatus"::text IN (
+             'DISPONIBLE_PARCIAL', 'DISPONIBLE_COMPLETO'
+           )
+  `;
+
+  // `COUNT` vuelve como BIGINT y Prisma lo entrega como `bigint`. Convertirlo
+  // acá evita que un `bigint` se escape a la pantalla, donde `JSON.stringify`
+  // lanza y tumbaría la barra entera por un número.
+  return Number(filas[0]?.total ?? 0);
+}
