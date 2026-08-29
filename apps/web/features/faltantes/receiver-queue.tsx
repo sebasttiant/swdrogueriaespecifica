@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { Card } from "@/app/_components/ui/card";
+import { ReceiverArrivedButton } from "./receiver-arrived-button";
 import { EmptyState } from "@/app/_components/ui/empty-state";
 import { PackageCheck } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
@@ -126,9 +127,16 @@ export function ReceiverQueue({
                         Registrar entrada
                       </Link>
                     ) : (
-                      <span className="text-xs text-muted-foreground">
-                        Esperando que llegue
-                      </span>
+                      /* Acá se cortaba la cadena. La columna decía "Esperando
+                         que llegue" y no ofrecía nada, así que nada movía un
+                         faltante a EN_BODEGA: la pestaña de al lado quedaba
+                         siempre vacía y "Registrar entrada" —que solo se pinta
+                         ahí— era inalcanzable. Bodega recibía la caja y no
+                         tenía dónde decirlo. */
+                      <ReceiverArrivedButton
+                        missingItemId={item.id}
+                        productName={item.productName}
+                      />
                     )}
                   </td>
                 </tr>
