@@ -29,6 +29,14 @@ export type EntryFormState = {
   error: string | null;
   ok: boolean;
   closedMissingCount?: number;
+  /**
+   * El producto al que hay que completarle el SKU.
+   *
+   * Va aparte del mensaje para que la pantalla pueda enlazarlo. Decir
+   * "completalo en Productos" y dejar que lo busque a mano entre nombres casi
+   * idénticos repite el problema que hizo elegir el equivocado.
+   */
+  resolveSkuForProductId?: string;
 };
 
 export async function createInventoryEntryAction(
@@ -118,8 +126,9 @@ export async function createInventoryEntryAction(
     // código impreso encima y puede completarlo ahora mismo.
     if (error instanceof ProductIdentityRequiredError) {
       return {
-        error: `"${error.productName}" todavía no tiene SKU (código de Orion). Completalo en Productos y volvé a registrar la entrada.`,
+        error: `"${error.productName}" todavía no tiene SKU (código de Orion). Completalo y volvé a registrar la entrada.`,
         ok: false,
+        resolveSkuForProductId: error.productId,
       };
     }
     // El nombre resolvió a un laboratorio que no es el que se pidió. No se
