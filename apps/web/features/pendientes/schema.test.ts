@@ -653,3 +653,84 @@ describe("pendingCreateSchema · identidad Orion", () => {
     }
   });
 });
+
+// --------------------------------------------------------------------------
+// El laboratorio solicitado es OPCIONAL.
+//
+// Decisión de negocio: el vendedor tiene al cliente delante y muchas veces no
+// sabe el laboratorio. Frenar la venta por un dato que se puede completar
+// después es peor que guardarlo sin él. Cuando SÍ lo informa, todo el
+// comportamiento seguro se conserva.
+// --------------------------------------------------------------------------
+describe("pendingCreateSchema · laboratorio opcional", () => {
+  // CASO A — ausente por completo.
+  it("acepta un pendiente sin ningún campo de laboratorio", () => {
+    const {
+      requestedLaboratoryId: _id,
+      requestedLaboratoryName: _name,
+      ...sinLaboratorio
+    } = validInput;
+
+    const result = pendingCreateSchema.safeParse(sinLaboratorio);
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.requestedLaboratoryId).toBeUndefined();
+      expect(result.data.requestedLaboratoryName).toBeUndefined();
+    }
+  });
+
+  // CASO B — el formulario SIEMPRE manda los hidden, vacíos cuando no hay
+  // laboratorio. Un string vacío no es "un laboratorio llamado ''".
+  it("normaliza el nombre vacío a ausente", () => {
+    const result = pendingCreateSchema.safeParse({
+      ...validInput,
+      requestedLaboratoryId: "",
+      requestedLaboratoryName: "",
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.requestedLaboratoryName).toBeUndefined();
+    }
+  });
+
+  // CASO 5 — solo espacios es ausencia, no un nombre. Sin esto se crearía un
+  // laboratorio con nombre en blanco que después nadie puede buscar ni borrar.
+  it("trata un nombre de solo espacios como ausente", () => {
+    const result = pendingCreateSchema.safeParse({
+      ...validInput,
+      requestedLaboratoryId: "",
+      requestedLaboratoryName: "   ",
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.requestedLaboratoryName).toBeUndefined();
+    }
+  });
+
+  it("conserva el nombre escrito a mano, sin ID", () => {
+    const result = pendingCreateSchema.safeParse({
+      ...validInput,
+      requestedLaboratoryId: "",
+      requestedLaboratoryName: "  Tecnoquimicas  ",
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.requestedLaboratoryId).toBeUndefined();
+      expect(result.data.requestedLaboratoryName).toBe("Tecnoquimicas");
+    }
+  });
+
+  it("conserva la identidad seleccionada cuando vienen los dos", () => {
+    const result = pendingCreateSchema.safeParse(validInput);
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.requestedLaboratoryId).toBe("lab-1");
+      expect(result.data.requestedLaboratoryName).toBe("Lab Test");
+    }
+  });
+});

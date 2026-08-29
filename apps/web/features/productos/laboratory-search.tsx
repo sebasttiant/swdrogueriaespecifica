@@ -28,6 +28,8 @@ type LaboratorySearchProps = {
   label?: string;
   /** Si es requerido. */
   required?: boolean;
+  /** Ayuda breve bajo el campo. */
+  hint?: string;
   /** Texto de placeholder. */
   placeholder?: string;
 };
@@ -44,6 +46,7 @@ export function LaboratorySearch({
   defaultSelectedName,
   label = "Laboratorio",
   required = false,
+  hint,
   placeholder = "Buscá o creá un laboratorio",
 }: LaboratorySearchProps) {
   const inputId = useId();
@@ -174,6 +177,9 @@ export function LaboratorySearch({
         <input type="hidden" name={nameForLabel} value={query.trim()} />
       ) : null}
       <div className="space-y-2">
+        {hint ? (
+          <p className="text-xs text-muted-foreground">{hint}</p>
+        ) : null}
         <div className="relative">
           <Input
             id={inputId}

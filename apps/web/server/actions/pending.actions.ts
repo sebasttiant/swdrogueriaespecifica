@@ -409,7 +409,17 @@ export async function createPendingAction(
     orionCode: formData.get("orionCode") ?? undefined,
     identitySkippedReason: formData.get("identitySkippedReason") ?? undefined,
     identitySkippedNote: formData.get("identitySkippedNote") ?? undefined,
-    // T3: laboratorio solicitado — nombre para resolver cuando no hay ID.
+    // T3: laboratorio solicitado. OPCIONAL: si el vendedor no lo sabe, el
+    // pendiente se guarda sin él.
+    //
+    // El ID se leía... no se leía. El formulario lo manda desde que existe el
+    // autocomplete, el schema lo declara, y este objeto lo omitía: elegir una
+    // sugerencia no servía de nada, porque el ID se descartaba y SIEMPRE se
+    // resolvía por nombre. Funcionaba de casualidad —resolver "Genfar" devuelve
+    // Genfar— pero gastaba una consulta de más y, peor, pasaba por
+    // `findOrCreateLaboratory`: si el nombre normalizaba distinto del guardado,
+    // creaba un laboratorio nuevo en vez de usar el que la persona eligió.
+    requestedLaboratoryId: formData.get("requestedLaboratoryId") ?? undefined,
     requestedLaboratoryName: formData.get("requestedLaboratoryName") ?? undefined,
   });
 
