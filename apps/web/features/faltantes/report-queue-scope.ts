@@ -9,6 +9,9 @@
 // Viaja en la URL, server-rendered, sin estado de cliente.
 // --------------------------------------------------------------------------
 
+import { REPORTS_TAB_SCOPE } from "./missing-board-tabs";
+import { REVIEW_QUEUE_PATH } from "./report-queue-paging";
+
 export const REPORT_QUEUE_SCOPES = ["pending", "ordered", "arrived", "discarded"] as const;
 
 export type ReportQueueScope = (typeof REPORT_QUEUE_SCOPES)[number];
@@ -58,7 +61,8 @@ export function resolveReportQueueScope(param?: string | null): ReportQueueScope
 /** URL de una vista. El número de página NO se preserva al cambiar de pestaña:
  *  la página 3 de "por pedir" no existe necesariamente en "descartados". */
 export function reportQueueScopeHref(scope: ReportQueueScope): string {
-  return scope === "pending"
-    ? "/revision-faltantes"
-    : `/revision-faltantes?scope=${scope}`;
+  // `rscope`, no `scope`: `scope` ya nombra el estado de la COLA de faltantes
+  // en esta misma pantalla. Compartir el parámetro haría que elegir un estado
+  // del buzón cambiara también la pestaña, y al revés.
+  return `${REVIEW_QUEUE_PATH}?scope=${REPORTS_TAB_SCOPE}&rscope=${scope}`;
 }
