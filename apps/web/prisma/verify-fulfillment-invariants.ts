@@ -63,10 +63,21 @@ async function main() {
       active: true,
     },
   });
+  // Nace CON código de Orion, y el `update` también lo fija: desde H3 no entra
+  // mercadería al inventario sin SKU, así que un producto de prueba sin él no
+  // puede recorrer el flujo completo. El `update` importa porque este guion se
+  // corre muchas veces contra la misma base descartable y la fila puede venir
+  // de una corrida anterior a este campo.
   const product = await prisma.product.upsert({
     where: { code: "AGG-1" },
-    update: {},
-    create: { code: "AGG-1", name: "Producto agregado", unit: "unidad", active: true },
+    update: { orionCode: "AGG0001" },
+    create: {
+      code: "AGG-1",
+      name: "Producto agregado",
+      unit: "unidad",
+      active: true,
+      orionCode: "AGG0001",
+    },
   });
 
   const future = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
@@ -239,6 +250,41 @@ async function main() {
   );
 
   console.log("\nEscenario: llega solo una parte y el cliente decide");
+
+  // ACÁ FALTABA LA LLEGADA. El escenario decía "llega solo una parte" y no
+  // hacía llegar nada: entregaba contra un pendiente con reserva CERO. Pasó
+  // mientras el techo de la entrega eran solo los compromisos comerciales —lo
+  // pedido y lo facturado—; cuando se agregó el tercer techo (`reservedQuantity`,
+  // que es lo que impide registrar la salida de mercadería que nunca entró)
+  // este script quedó fallando y dejó de correrse.
+  //
+  // Se hace llegar por el CAMINO REAL, `registerInventoryEntry`, no escribiendo
+  // el lote a mano: así el guion prueba la cadena entera —asignación FIFO,
+  // reserva contra el pendiente y aviso al vendedor— en vez de una maqueta.
+  const { registerInventoryEntry } = await import(
+    "@/server/services/inventory-entry.service"
+  );
+  await registerInventoryEntry({
+    productId: product.id,
+    quantity: 3,
+    batchCode: `LOTE-PARCIAL-${Date.now()}`,
+    expiresAt: new Date(Date.now() + 31_536_000_000),
+    createdById: seller.id,
+    idempotencyKey: crypto.randomUUID(),
+  });
+
+  const conLlegada = await prisma.pending.findUniqueOrThrow({
+    where: { id: sinStock.pending.id },
+  });
+  assert(
+    conLlegada.inventoryReadyQuantity === 3,
+    `la entrada reserva las 3 unidades al pendiente (obtenido: ${conLlegada.inventoryReadyQuantity})`,
+  );
+  assert(
+    conLlegada.availabilityStatus === "DISPONIBLE_PARCIAL",
+    `queda disponible parcial, no completo (obtenido: ${conLlegada.availabilityStatus})`,
+  );
+
   assert(
     (await deliverPending({
       id: sinStock.pending.id,
