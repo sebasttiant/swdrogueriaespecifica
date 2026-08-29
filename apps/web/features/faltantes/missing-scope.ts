@@ -69,12 +69,18 @@ function missingHref(
   if (view === "full") params.set("view", "full");
   if (cursor) params.set("cursor", cursor);
   const query = params.toString();
-  return query ? `/faltantes?${query}` : "/faltantes";
+  // La mesa de trabajo se mudó a Revisión de faltantes. Si estos enlaces
+  // siguieran apuntando a /faltantes, tocar una pestaña te sacaría de la
+  // pantalla en la que estás trabajando.
+  return query ? `${MISSING_QUEUE_PATH}?${query}` : MISSING_QUEUE_PATH;
 }
 
 /** URL de una vista, preservando el layout elegido. El cursor NO se preserva:
  *  cambiar de vista empieza en su primera página, o el cursor apuntaría a una
  *  fila que esa vista no contiene. */
+/** Dónde vive la cola de faltantes. */
+export const MISSING_QUEUE_PATH = "/revision-faltantes";
+
 export function missingScopeHref(
   scope: MissingQueueScope,
   view: "full" | "compact",

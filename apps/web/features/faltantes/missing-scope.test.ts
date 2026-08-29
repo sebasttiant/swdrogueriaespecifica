@@ -58,19 +58,19 @@ describe("missingScopeHref", () => {
   // que pedirse explícitamente, o el enlace de "Completa" quedaría apuntando a
   // una URL que el resolvedor lee como compacta —y era exactamente el bug: el
   // botón no se podía activar.
-  it("deja /faltantes limpio para la vista por defecto", () => {
-    expect(missingScopeHref("actionable", "compact")).toBe("/faltantes");
+  it("deja la ruta limpia para la vista por defecto", () => {
+    expect(missingScopeHref("actionable", "compact")).toBe("/revision-faltantes");
   });
 
   it("pide la vista completa de forma explícita", () => {
-    expect(missingScopeHref("actionable", "full")).toBe("/faltantes?view=full");
+    expect(missingScopeHref("actionable", "full")).toBe("/revision-faltantes?view=full");
   });
 
   it("conserva el layout elegido al cambiar de vista", () => {
     expect(missingScopeHref("ordered", "full")).toBe(
-      "/faltantes?scope=ordered&view=full",
+      "/revision-faltantes?scope=ordered&view=full",
     );
-    expect(missingScopeHref("ordered", "compact")).toBe("/faltantes?scope=ordered");
+    expect(missingScopeHref("ordered", "compact")).toBe("/revision-faltantes?scope=ordered");
   });
 
   // Cambiar de vista NO arrastra el cursor: apuntaría a una fila que la nueva
@@ -85,10 +85,10 @@ describe("missingPageHref", () => {
   // perder el lugar es perder el trabajo hecho.
   it("preserva vista y layout al pasar de página", () => {
     expect(missingPageHref("ordered", "full", "cur-1")).toBe(
-      "/faltantes?scope=ordered&view=full&cursor=cur-1",
+      "/revision-faltantes?scope=ordered&view=full&cursor=cur-1",
     );
     expect(missingPageHref("ordered", "compact", "cur-1")).toBe(
-      "/faltantes?scope=ordered&cursor=cur-1",
+      "/revision-faltantes?scope=ordered&cursor=cur-1",
     );
   });
 
