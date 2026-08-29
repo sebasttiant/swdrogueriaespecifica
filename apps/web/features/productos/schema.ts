@@ -9,6 +9,32 @@ export const productCreateSchema = z.object({
   minStock: z.coerce.number().int().min(0).default(0),
   reorderQty: z.coerce.number().int().min(0).default(0),
   laboratoryId: z.string().trim().optional(),
+  // El SKU al ALTA, no después.
+  //
+  // Sin este campo todo producto nuevo nacía sin identidad: caía en la cola de
+  // "Revisión de identidad" y bloqueaba la entrada cuando llegaba la caja. El
+  // alta fabricaba el problema que el rechazo de la entrada atajaba. Quien da
+  // de alta casi siempre tiene el código delante —en la caja o en la factura—.
+  //
+  // Opcional: el producto nuevo sin código todavía existe (`NEW_PRODUCT` es un
+  // motivo válido de aplazamiento) y exigirlo cerraría un alta legítima.
+  //
+  // Vacío se normaliza a `undefined`, NUNCA a "": `orionCode` es único en la
+  // base, así que una cadena vacía guardada ocuparía el índice y el segundo
+  // producto sin código chocaría contra el primero.
+  //
+  // Mismas reglas que `orionLinkSchema`: la identidad es EXACTA y el código se
+  // guarda tal como vino de Orion. Un espacio adentro casi siempre es un pegado
+  // con basura y crearía una identidad que no coincide con la del otro sistema.
+  orionCode: z
+    .string()
+    .trim()
+    .max(80, { error: "El SKU (código de Orion) es demasiado largo." })
+    .refine((value) => !/\s/.test(value), {
+      error: "El SKU (código de Orion) no puede llevar espacios.",
+    })
+    .optional()
+    .transform((value) => (value === undefined || value === "" ? undefined : value)),
 });
 
 export type ProductCreateInput = z.infer<typeof productCreateSchema>;
