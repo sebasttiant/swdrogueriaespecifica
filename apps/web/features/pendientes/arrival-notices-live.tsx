@@ -36,11 +36,36 @@ function toNotice(view: ArrivalNoticeView): ArrivalNotice {
   return { ...view, noticedAt: new Date(view.noticedAt) };
 }
 
+/**
+ * Huella de una tanda de avisos, para no repintar lo que no cambió.
+ *
+ * Cada respuesta trae objetos NUEVOS aunque los datos sean idénticos, así que
+ * `setNotices` sin comparar dispararía un render cada quince segundos, para
+ * siempre, en cada pestaña abierta. La lista casi nunca cambia —lo normal es
+ * que no llegue nada—, y ese render vacío es puro trabajo.
+ *
+ * Se comparan los campos que la pantalla dibuja. La fecha va como número
+ * porque dos `Date` con el mismo instante no son iguales por identidad.
+ */
+function fingerprintOf(notices: ArrivalNotice[]): string {
+  return notices
+    .map(
+      (n) =>
+        `${n.pendingId}|${n.availabilityStatus}|${n.readyQuantity}|` +
+        `${n.quantity}|${n.productName}|${n.customerName ?? ""}|` +
+        `${n.noticedAt.getTime()}`,
+    )
+    .join("~");
+}
+
 export function ArrivalNoticesLive({
   initialNotices,
   canViewCustomerIdentity,
 }: Props) {
   const [notices, setNotices] = useState(initialNotices);
+  // La huella de lo que se está mostrando. Es un ref y no estado: cambiarla no
+  // tiene por qué repintar — justamente sirve para decidir si hace falta.
+  const shownFingerprint = useRef(fingerprintOf(initialNotices));
 
   // Refs y no estado: cambiarlas no tiene por qué repintar nada, y el efecto
   // debe montarse UNA vez. Con estado, cada respuesta reiniciaría el ciclo.
@@ -63,7 +88,16 @@ export function ArrivalNoticesLive({
         // estado ahí es el aviso de React sobre una fuga, y acá además sería
         // pintar datos de una pantalla que la persona ya dejó.
         if (!mounted.current) return;
-        if (result.ok) setNotices(result.notices.map(toNotice));
+        if (result.ok) {
+          const fresh = result.notices.map(toNotice);
+          const fingerprint = fingerprintOf(fresh);
+          // Lo normal es que no llegue nada nuevo. Repintar igual sería un
+          // render cada quince segundos por pestaña, sin nada que mostrar.
+          if (fingerprint !== shownFingerprint.current) {
+            shownFingerprint.current = fingerprint;
+            setNotices(fresh);
+          }
+        }
         // `ok:false` se ignora a propósito: un fallo pasajero conserva los
         // avisos que ya se veían. Vaciar la pantalla por un error de red le
         // haría creer al vendedor que el pedido dejó de estar listo.
