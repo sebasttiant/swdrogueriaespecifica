@@ -3,7 +3,12 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 const mocks = vi.hoisted(() => ({
   checkCapability: vi.fn(),
   listArrivalNotices: vi.fn(),
+  revalidatePath: vi.fn(),
 }));
+
+// Se mockea para PROBAR que no se llama: es una lectura, y revalidar desde acá
+// multiplicaría el trabajo por cada vendedor que tenga la pantalla abierta.
+vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
 
 vi.mock("@/lib/auth/require-role", () => ({ checkCapability: mocks.checkCapability }));
 vi.mock("@/server/services/arrival-notice.service", () => ({
@@ -114,5 +119,73 @@ describe("listArrivalNoticesAction · fallos", () => {
     if (result.ok) {
       expect(result.notices[0]?.noticedAt).toBe(aviso.noticedAt.getTime());
     }
+  });
+});
+
+// --------------------------------------------------------------------------
+// Un vendedor NUNCA recibe los avisos de otro.
+//
+// El aislamiento no depende de que la pantalla filtre: depende de con qué id se
+// consulta, y ese id sale de la sesión. Dos sesiones distintas tienen que
+// producir dos consultas distintas, sin excepción.
+// --------------------------------------------------------------------------
+describe("listArrivalNoticesAction · un vendedor no ve lo del otro", () => {
+  it("cada sesión consulta con SU id", async () => {
+    mocks.checkCapability.mockResolvedValue(sesion("OPERADOR", "vendedor-A"));
+    await listArrivalNoticesAction();
+    expect(mocks.listArrivalNotices).toHaveBeenLastCalledWith("vendedor-A");
+
+    mocks.checkCapability.mockResolvedValue(sesion("OPERADOR", "vendedor-B"));
+    await listArrivalNoticesAction();
+    expect(mocks.listArrivalNotices).toHaveBeenLastCalledWith("vendedor-B");
+  });
+
+  // Ver la cola global es un eje de LECTURA de pendientes; el aviso de llegada
+  // es personal —le dice a alguien que llame a SU cliente— y no se hereda por
+  // tener más permisos.
+  it("ni siquiera un ADMIN hereda los avisos de un vendedor", async () => {
+    mocks.checkCapability.mockResolvedValue(sesion("ADMIN", "admin-1"));
+
+    await listArrivalNoticesAction();
+
+    expect(mocks.listArrivalNotices).toHaveBeenCalledWith("admin-1");
+    expect(mocks.listArrivalNotices).not.toHaveBeenCalledWith("vendedor-1");
+  });
+});
+
+// --------------------------------------------------------------------------
+// Es una LECTURA. Lo que no hace importa tanto como lo que hace: se la va a
+// llamar en bucle desde el navegador, y una acción de lectura que escribe algo
+// —aunque sea revalidar una ruta— multiplica ese trabajo por cada vendedor
+// conectado.
+// --------------------------------------------------------------------------
+describe("listArrivalNoticesAction · no muta nada", () => {
+  it("no revalida rutas ni toca la caché", async () => {
+    mocks.checkCapability.mockResolvedValue(sesion("OPERADOR"));
+
+    await listArrivalNoticesAction();
+
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("devuelve una respuesta mínima: solo los avisos", async () => {
+    mocks.checkCapability.mockResolvedValue(sesion("ADMIN"));
+
+    const result = await listArrivalNoticesAction();
+
+    expect(Object.keys(result).sort()).toEqual(["notices", "ok"]);
+  });
+
+  it("el rechazo no filtra nada del error interno", async () => {
+    mocks.checkCapability.mockResolvedValue(sesion("OPERADOR"));
+    mocks.listArrivalNotices.mockRejectedValue(
+      new Error("connect ECONNREFUSED 10.0.0.5:5432 — password=secreto"),
+    );
+
+    const result = await listArrivalNoticesAction();
+
+    expect(result).toEqual({ ok: false });
+    expect(JSON.stringify(result)).not.toContain("ECONNREFUSED");
+    expect(JSON.stringify(result)).not.toContain("secreto");
   });
 });
