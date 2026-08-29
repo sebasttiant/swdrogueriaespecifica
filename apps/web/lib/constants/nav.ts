@@ -35,7 +35,11 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { label: "Faltantes", href: "/faltantes", icon: PackageX, primaryMobile: true, capability: "canViewFaltantes" },
   // Sin `primaryMobile`: es una vista de gerencia, no debe ocupar un lugar en
   // la barra inferior del celular del vendedor.
-  { label: "Revisión de faltantes", href: "/revision-faltantes", icon: Inbox, capability: "canReviewMissingReports" },
+  // La capability MÁS DÉBIL de las dos que abren la ruta: gerencia entra por
+  // `canReviewMissingReports` y bodega por `canReceiveMissingItems`, y la
+  // página decide qué proyección arma. Dejar la fuerte acá le escondería a
+  // bodega el módulo que sí puede usar.
+  { label: "Revisión de faltantes", href: "/revision-faltantes", icon: Inbox, capability: "canReceiveMissingItems" },
   // Va pegado al de faltantes porque son las dos superficies de revisión, y
   // tampoco ocupa lugar en la barra móvil. La diferencia con el de arriba es a
   // quién alcanza: esta la ve también el vendedor, acotada a sus propias filas.

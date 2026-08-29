@@ -1,0 +1,113 @@
+import Link from "next/link";
+
+import { Card } from "@/app/_components/ui/card";
+import { EmptyState } from "@/app/_components/ui/empty-state";
+import { PackageCheck } from "lucide-react";
+import { cn } from "@/lib/utils/cn";
+import type { ReceiverItem, ReceiverScope } from "@/server/services/missing-receiver.service";
+
+// --------------------------------------------------------------------------
+// La cola de bodega: lo que hay que recibir.
+//
+// DOS pestañas y ninguna más. "Por pedir" y "Descartados" no se ocultan por
+// estética: quien recibe no decide qué se compra, y ver la cola de compras
+// invita a marcar llegadas sobre mercadería que nadie pidió.
+//
+// Los datos que llegan acá ya vienen minimizados por el servidor. Esta pantalla
+// no tiene forma de mostrar el cliente aunque quisiera.
+// --------------------------------------------------------------------------
+
+const TABS: { scope: ReceiverScope; label: string; href: string }[] = [
+  { scope: "PEDIDO", label: "Ya pedidos", href: "/revision-faltantes" },
+  { scope: "EN_BODEGA", label: "En bodega", href: "/revision-faltantes?scope=arrived" },
+];
+
+const EMPTY: Record<ReceiverScope, { title: string; description: string }> = {
+  PEDIDO: {
+    title: "No hay nada esperando",
+    description: "Cuando gerencia pida un faltante, aparece acá para recibirlo.",
+  },
+  EN_BODEGA: {
+    title: "Nada llegó todavía",
+    description: "Lo que marques como llegado aparece acá hasta que registres la entrada.",
+  },
+};
+
+export function ReceiverQueue({
+  items,
+  scope,
+}: {
+  items: ReceiverItem[];
+  scope: ReceiverScope;
+}) {
+  return (
+    <div className="space-y-4">
+      <nav aria-label="Estado de la recepción" className="flex gap-2 text-sm font-semibold">
+        {TABS.map((tab) => (
+          <Link
+            prefetch={false}
+            key={tab.scope}
+            href={tab.href}
+            aria-current={scope === tab.scope ? "page" : undefined}
+            className={cn(
+              "rounded-lg px-3 py-1.5 transition-colors",
+              scope === tab.scope
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:bg-muted",
+            )}
+          >
+            {tab.label}
+          </Link>
+        ))}
+      </nav>
+
+      {items.length === 0 ? (
+        <Card>
+          <EmptyState
+            icon={PackageCheck}
+            title={EMPTY[scope].title}
+            description={EMPTY[scope].description}
+          />
+        </Card>
+      ) : (
+        <Card className="overflow-x-auto p-0">
+          <table className="w-full min-w-[44rem] text-left text-sm">
+            <thead className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2 font-medium">Producto</th>
+                <th className="px-3 py-2 font-medium">SKU (código de Orion)</th>
+                <th className="px-3 py-2 font-medium">Laboratorio</th>
+                <th className="px-3 py-2 font-medium">Falta recibir</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item) => (
+                <tr key={item.id} className="border-b border-border last:border-0">
+                  <td className="px-3 py-2 font-medium text-text">{item.productName}</td>
+                  <td className="px-3 py-2 font-mono text-xs text-muted-foreground">
+                    {/* Sin SKU no se puede registrar la entrada. Decirlo acá
+                        evita que bodega lo descubra recién al intentarlo. */}
+                    {item.orionCode ?? (
+                      <span className="font-sans text-warning-foreground">
+                        Falta el SKU
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-muted-foreground">
+                    {item.laboratoryName ?? item.requestedLaboratoryName ?? "—"}
+                  </td>
+                  <td className="px-3 py-2 font-bold tabular-nums text-text">
+                    {item.outstandingQuantity}
+                    <span className="ml-1 text-xs font-normal text-muted-foreground">
+                      {item.unit}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+      )}
+    </div>
+  );
+}

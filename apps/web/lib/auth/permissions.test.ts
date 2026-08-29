@@ -596,3 +596,44 @@ describe("canLinkProductIdentity", () => {
     expect(can("SUPERVISOR", "canManageProducts")).toBe(false);
   });
 });
+
+// --------------------------------------------------------------------------
+// Recibir NO es decidir qué se compra.
+//
+// Bodega necesita ver lo pedido para recibirlo. Darle `canReviewMissingReports`
+// para lograrlo le entregaría de paso el poder de pedir y descartar — que es
+// autoridad de compras, no de depósito. Por eso son dos ejes.
+// --------------------------------------------------------------------------
+describe("canReceiveMissingItems · recepción física", () => {
+  it("la tienen bodega y gerencia", () => {
+    expect(rolesWithCapability("canReceiveMissingItems")).toEqual([
+      "SUPERADMIN",
+      "ADMIN",
+      "BODEGA",
+    ]);
+  });
+
+  // Decisión vigente: supervisión no recibe mercadería.
+  it("SUPERVISOR y OPERADOR quedan afuera", () => {
+    expect(can("SUPERVISOR", "canReceiveMissingItems")).toBe(false);
+    expect(can("OPERADOR", "canReceiveMissingItems")).toBe(false);
+  });
+
+  it("recibir no arrastra autoridad de compras", () => {
+    expect(can("BODEGA", "canReceiveMissingItems")).toBe(true);
+    // `canDiscardMissingItems` todavía no existe como capability propia: el
+    // descarte va con la autoridad de compras. Cuando se separe, entra acá.
+    for (const compras of [
+      "canReviewMissingReports",
+      "canOrderMissingItems",
+    ] as const) {
+      expect(can("BODEGA", compras)).toBe(false);
+    }
+  });
+
+  // La identidad del cliente no entra al depósito: para recibir una caja no
+  // hace falta saber a quién se le vende.
+  it("bodega sigue sin ver al cliente", () => {
+    expect(can("BODEGA", "canViewCustomerIdentity")).toBe(false);
+  });
+});

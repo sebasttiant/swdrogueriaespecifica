@@ -223,6 +223,12 @@ export const CAPABILITIES = [
   // (todos reportan; solo gerencia revisa). ADMIN/SUPERADMIN la heredan de
   // `[...CAPABILITIES]`; no se agrega a SUPERVISOR/OPERADOR.
   "canReviewMissingReports",
+  // Recepción física: ver la cola de lo YA PEDIDO y lo que llegó a bodega, para
+  // registrar entradas. Es DISTINTA de `canReviewMissingReports`, que es
+  // autoridad de compras: quien recibe no decide qué se compra, y darle la
+  // revisión entera para que pueda recibir le entregaría de paso el poder de
+  // pedir y descartar.
+  "canReceiveMissingItems",
   "canManageAllPendings",
   // Gatea la LECTURA de la cola completa de pendientes (ver todas las filas,
   // no solo las propias). Es un eje DISTINTO de `canManageAllPendings`: leer
@@ -334,6 +340,9 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     // descarga no hace falta saber a quién se le vende.
     "canReadAllPendings",
     "canViewFaltantes",
+    // Recepción: la cola de lo pedido y lo llegado. NO incluye pedir ni
+    // descartar — esas siguen siendo decisiones de compras.
+    "canReceiveMissingItems",
     "canViewProductos",
     "canViewEntradas",
     "canManageProducts",

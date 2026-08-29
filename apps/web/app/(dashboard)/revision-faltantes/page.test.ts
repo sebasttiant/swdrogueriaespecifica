@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireCapability: vi.fn(),
   getMissingReportQueue: vi.fn(),
+  listReceiverQueue: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/require-role", () => ({
@@ -11,27 +12,43 @@ vi.mock("@/lib/auth/require-role", () => ({
 vi.mock("@/server/services/missing-report.service", () => ({
   getMissingReportQueue: mocks.getMissingReportQueue,
 }));
+vi.mock("@/server/services/missing-receiver.service", async (original) => {
+  const actual = await original<
+    typeof import("@/server/services/missing-receiver.service")
+  >();
+  return { ...actual, listReceiverQueue: mocks.listReceiverQueue };
+});
 
 import { MAX_REVIEW_QUEUE_PAGE } from "@/features/faltantes/report-queue-paging";
 import { DEFAULT_PAGE_SIZE } from "@/lib/pagination";
 
 import RevisionFaltantesPage from "./page";
 
-function searchParams(params: { page?: string } = {}) {
+function searchParams(params: { page?: string; scope?: string } = {}) {
   return Promise.resolve(params);
+}
+
+/** La sesión que entra a la ruta. El rol decide qué proyección se arma. */
+function sesion(role: "ADMIN" | "BODEGA") {
+  mocks.requireCapability.mockResolvedValue({ user: { id: "u-1", role } });
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.requireCapability.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
   mocks.getMissingReportQueue.mockResolvedValue({ groups: [], hasMore: false, page: 1 });
+  mocks.listReceiverQueue.mockResolvedValue([]);
 });
 
 describe("RevisionFaltantesPage · authorization", () => {
-  it("guards with canReviewMissingReports", async () => {
+  // El guard de ENTRADA usa la capability más débil de las dos que abren la
+  // ruta: gerencia entra por revisión, bodega por recepción. La proyección la
+  // decide después el rol. Pedir la fuerte acá le cerraría la puerta a bodega
+  // al mismo módulo que sí puede usar.
+  it("guards with canReceiveMissingItems", async () => {
     await RevisionFaltantesPage({ searchParams: searchParams() });
 
-    expect(mocks.requireCapability).toHaveBeenCalledWith("canReviewMissingReports");
+    expect(mocks.requireCapability).toHaveBeenCalledWith("canReceiveMissingItems");
   });
 
   // El orden importa: sin esto, mover el guard después del fetch expondría la
@@ -108,5 +125,56 @@ describe("RevisionFaltantesPage · page param", () => {
       pageSize: DEFAULT_PAGE_SIZE,
       scope: "pending",
     });
+  });
+});
+
+// --------------------------------------------------------------------------
+// Una ruta, dos proyecciones.
+//
+// Bodega entra al MISMO módulo que gerencia —no a una pantalla paralela con
+// otro nombre— pero ve la cola de recepción, que sale de `MissingItem` y no de
+// los reportes provisionales. Mezclarlas haría que bodega marque llegadas sobre
+// mercadería que compras todavía no pidió.
+// --------------------------------------------------------------------------
+describe("RevisionFaltantesPage · proyección por rol", () => {
+  it("BODEGA recibe la cola de recepción, nunca la de reportes", async () => {
+    sesion("BODEGA");
+
+    await RevisionFaltantesPage({ searchParams: searchParams() });
+
+    expect(mocks.listReceiverQueue).toHaveBeenCalledWith("PEDIDO");
+    expect(mocks.getMissingReportQueue).not.toHaveBeenCalled();
+  });
+
+  it("BODEGA puede abrir 'En bodega'", async () => {
+    sesion("BODEGA");
+
+    await RevisionFaltantesPage({ searchParams: searchParams({ scope: "arrived" }) });
+
+    expect(mocks.listReceiverQueue).toHaveBeenCalledWith("EN_BODEGA");
+  });
+
+  // Esconder las pestañas no alcanza: quien escribe la URL a mano tiene que
+  // caer en la cola permitida, y la consulta jamás debe pedir los estados de
+  // compras.
+  it.each(["pending", "discarded", "inventado"])(
+    "un scope de compras escrito a mano (%s) cae en 'Ya pedidos'",
+    async (scope) => {
+      sesion("BODEGA");
+
+      await RevisionFaltantesPage({ searchParams: searchParams({ scope }) });
+
+      expect(mocks.listReceiverQueue).toHaveBeenCalledWith("PEDIDO");
+      expect(mocks.getMissingReportQueue).not.toHaveBeenCalled();
+    },
+  );
+
+  it("gerencia conserva la cola de reportes completa", async () => {
+    sesion("ADMIN");
+
+    await RevisionFaltantesPage({ searchParams: searchParams() });
+
+    expect(mocks.getMissingReportQueue).toHaveBeenCalled();
+    expect(mocks.listReceiverQueue).not.toHaveBeenCalled();
   });
 });
