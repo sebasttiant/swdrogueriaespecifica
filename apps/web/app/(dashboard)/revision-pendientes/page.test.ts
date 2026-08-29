@@ -5,6 +5,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 const mocks = vi.hoisted(() => ({
   requireCapability: vi.fn(),
   getPendings: vi.fn(),
+  getMissingItems: vi.fn(),
+  getActionableMissingCount: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/require-role", () => ({
@@ -12,6 +14,10 @@ vi.mock("@/lib/auth/require-role", () => ({
 }));
 vi.mock("@/server/services/pending.service", () => ({
   getPendings: mocks.getPendings,
+}));
+vi.mock("@/server/services/missing-item.service", () => ({
+  getMissingItems: mocks.getMissingItems,
+  getActionableMissingCount: mocks.getActionableMissingCount,
 }));
 
 import RevisionPendientesPage from "./page";
@@ -31,6 +37,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.requireCapability.mockResolvedValue(GERENCIA);
   mocks.getPendings.mockResolvedValue({ items: [], nextCursor: null });
+  mocks.getMissingItems.mockResolvedValue({ items: [], nextCursor: null });
+  mocks.getActionableMissingCount.mockResolvedValue(0);
 });
 
 describe("RevisionPendientesPage · autorización", () => {
@@ -151,6 +159,110 @@ describe("RevisionPendientesPage · ejes de revisión", () => {
 
     expect(mocks.getPendings).toHaveBeenCalledWith(
       expect.objectContaining({ axes: { purchase: "SOLICITADO" } }),
+    );
+  });
+});
+
+// --------------------------------------------------------------------------
+// La mitad de ABASTECIMIENTO: qué hay que comprar para cumplir los pedidos de
+// cliente. Es la misma mesa de trabajo de Revisión de faltantes, acotada por
+// ORIGEN. La reposición de estantería sigue en la otra pantalla.
+// --------------------------------------------------------------------------
+describe("RevisionPendientesPage · abastecimiento", () => {
+  // EL TEST QUE SOSTIENE LA SEPARACIÓN. Sin este eje, la estantería vuelve a
+  // mezclarse con los pedidos de cliente, que es exactamente lo que gerencia
+  // pidió separar. Un default permisivo acá deshace el módulo entero en
+  // silencio: la pantalla seguiría andando y mostraría de más.
+  it("pide SOLO lo que nació de un pendiente de cliente", async () => {
+    await RevisionPendientesPage({
+      searchParams: searchParams({ tab: "abastecimiento" }),
+    });
+
+    expect(mocks.getMissingItems).toHaveBeenCalledWith(
+      expect.objectContaining({ origin: "pending" }),
+    );
+  });
+
+  it("cuenta por pedir solo sobre los pedidos de cliente", async () => {
+    await RevisionPendientesPage({ searchParams: searchParams() });
+
+    expect(mocks.getActionableMissingCount).toHaveBeenCalledWith("pending");
+  });
+
+  // El contador va aunque la pestaña esté cerrada: un número que solo se
+  // calcula al entrar no avisa de nada, que es justo lo que tiene que hacer.
+  it("cuenta aun estando en seguimiento", async () => {
+    await RevisionPendientesPage({ searchParams: searchParams() });
+
+    expect(mocks.getActionableMissingCount).toHaveBeenCalled();
+  });
+
+  // Un vendedor entra a esta pantalla por `canReviewPendings` y ve SU
+  // seguimiento. Comprar es autoridad de gerencia: la mitad no existe para él,
+  // ni siquiera escribiendo el parámetro a mano en la URL.
+  it("no le abre el abastecimiento al vendedor ni forzando la URL", async () => {
+    mocks.requireCapability.mockResolvedValue(VENDEDOR);
+
+    await RevisionPendientesPage({
+      searchParams: searchParams({ tab: "abastecimiento" }),
+    });
+
+    expect(mocks.getMissingItems).not.toHaveBeenCalled();
+    expect(mocks.getActionableMissingCount).not.toHaveBeenCalled();
+    expect(mocks.getPendings).toHaveBeenCalled();
+  });
+
+  // Las dos mitades no se consultan a la vez: traer los pendientes para no
+  // pintarlos es pagar una consulta cara —con identidad de cliente— al pedo.
+  it("no consulta los pendientes cuando se está en abastecimiento", async () => {
+    await RevisionPendientesPage({
+      searchParams: searchParams({ tab: "abastecimiento" }),
+    });
+
+    expect(mocks.getPendings).not.toHaveBeenCalled();
+  });
+
+  it("no consulta la cola de compras cuando se está en seguimiento", async () => {
+    await RevisionPendientesPage({ searchParams: searchParams() });
+
+    expect(mocks.getMissingItems).not.toHaveBeenCalled();
+  });
+
+  // `?sscope=` es input del usuario y termina en una consulta: basura conocida
+  // cae en la cola de trabajo, nunca rompe la página.
+  it("cae en la cola de trabajo ante un sscope inventado", async () => {
+    await RevisionPendientesPage({
+      searchParams: searchParams({ tab: "abastecimiento", sscope: "../../etc/passwd" }),
+    });
+
+    expect(mocks.getMissingItems).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: "actionable" }),
+    );
+  });
+
+  it("respeta el sscope de 'Ya pedidos'", async () => {
+    await RevisionPendientesPage({
+      searchParams: searchParams({ tab: "abastecimiento", sscope: "ordered" }),
+    });
+
+    expect(mocks.getMissingItems).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: "ordered" }),
+    );
+  });
+
+  // El cursor del abastecimiento es `scursor`, no `cursor`: si leyera `cursor`
+  // pasar de página en la lista de pendientes movería también este tablero.
+  it("pagina con su propio cursor y no con el de los pendientes", async () => {
+    await RevisionPendientesPage({
+      searchParams: searchParams({
+        tab: "abastecimiento",
+        scursor: "cur-suministro",
+        cursor: "cur-pendientes",
+      }),
+    });
+
+    expect(mocks.getMissingItems).toHaveBeenCalledWith(
+      expect.objectContaining({ cursor: "cur-suministro" }),
     );
   });
 });

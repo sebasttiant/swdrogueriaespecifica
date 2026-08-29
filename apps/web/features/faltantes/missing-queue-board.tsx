@@ -9,6 +9,7 @@ import {
   MISSING_SCOPE_EMPTY,
   missingPageHref,
   missingScopeHref,
+  type MissingBoardRoute,
   type MissingQueueScope,
 } from "@/features/faltantes/missing-scope";
 import type { MissingView } from "@/features/faltantes/missing-view";
@@ -41,6 +42,10 @@ type MissingQueueBoardProps = {
   canExport: boolean;
   canSeeSupplier: boolean;
   now: Date;
+  /** Ruta y nombres de parámetros del tablero. Ver `missing-scope.ts`. */
+  route: MissingBoardRoute;
+  /** Cómo se llama esta cola para el lector de pantalla. */
+  label: string;
 };
 
 export function MissingQueueBoard({
@@ -52,18 +57,20 @@ export function MissingQueueBoard({
   canExport,
   canSeeSupplier,
   now,
+  route,
+  label,
 }: MissingQueueBoardProps) {
   return (
     <div className="space-y-4">
       {/* Toggle de vista (completa/compacta) + export. Se ocultan al imprimir:
           el PDF es la lista, no los controles. */}
       <div className="flex flex-col gap-3 print:hidden sm:flex-row sm:items-center sm:justify-between">
-        <nav aria-label="Vista de faltantes" className="flex gap-2 text-sm font-semibold">
+        <nav aria-label={label} className="flex gap-2 text-sm font-semibold">
           {(["full", "compact"] as const).map((option) => (
             <Link
               prefetch={false}
               key={option}
-              href={missingScopeHref(scope, option)}
+              href={missingScopeHref(scope, option, route)}
               aria-current={view === option ? "page" : undefined}
               className={cn(
                 "rounded-lg px-3 py-1.5 transition-colors",
@@ -106,13 +113,13 @@ export function MissingQueueBoard({
           emptyTitle={MISSING_SCOPE_EMPTY[scope].title}
           emptyDescription={MISSING_SCOPE_EMPTY[scope].description}
           nextCursor={nextCursor}
-          pageHref={(next) => missingPageHref(scope, view, next)}
+          pageHref={(next) => missingPageHref(scope, view, next, route)}
         />
       ) : (
         <MissingList
           items={items}
           nextCursor={nextCursor}
-          pageHref={(next) => missingPageHref(scope, view, next)}
+          pageHref={(next) => missingPageHref(scope, view, next, route)}
           canQuickAct={canAct}
           canSeeStatus={canAct}
           canSeeSupplier={canSeeSupplier}

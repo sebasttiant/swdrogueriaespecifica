@@ -4,6 +4,7 @@ import {
   MISSING_SCOPES,
   MISSING_SCOPE_LABELS,
   missingScopeHref,
+  type MissingBoardRoute,
   type MissingQueueScope,
 } from "@/features/faltantes/missing-scope";
 import type { MissingView } from "@/features/faltantes/missing-view";
@@ -47,8 +48,16 @@ type MissingBoardTabsProps = {
   view: MissingView;
   /** "Cuánto me falta por pedir", global y no de la página actual. */
   actionableCount: number;
-  /** Cuántos reportes esperan decisión. */
-  reportsCount: number;
+  /**
+   * Cuántos reportes esperan decisión. `null` cuando la pantalla no tiene
+   * buzón: el abastecimiento de un pedido de cliente no nace de un reporte de
+   * vendedor, así que ahí la pestaña no existe en vez de mostrarse en cero.
+   */
+  reportsCount: number | null;
+  /** Ruta y nombres de parámetros del tablero. Ver `missing-scope.ts`. */
+  route: MissingBoardRoute;
+  /** Cómo se llama esta cola para el lector de pantalla. */
+  label: string;
 };
 
 export function MissingBoardTabs({
@@ -56,17 +65,19 @@ export function MissingBoardTabs({
   view,
   actionableCount,
   reportsCount,
+  route,
+  label,
 }: MissingBoardTabsProps) {
   return (
     <nav
-      aria-label="Estado de los faltantes"
+      aria-label={label}
       className="flex flex-wrap gap-2 text-sm font-semibold print:hidden"
     >
       {MISSING_SCOPES.map((option) => (
         <Link
           prefetch={false}
           key={option}
-          href={missingScopeHref(option, view)}
+          href={missingScopeHref(option, view, route)}
           aria-current={active === option ? "page" : undefined}
           className={tabClasses(active === option)}
         >
@@ -79,19 +90,21 @@ export function MissingBoardTabs({
         </Link>
       ))}
 
-      <Link
-        prefetch={false}
-        href={`?scope=${REPORTS_TAB_SCOPE}`}
-        aria-current={active === REPORTS_TAB_SCOPE ? "page" : undefined}
-        className={tabClasses(active === REPORTS_TAB_SCOPE)}
-      >
-        <span>Reportes</span>
-        {/* El contador solo aparece cuando hay algo esperando decisión: un "0"
-            permanente entrena a no mirar el número. */}
-        {reportsCount > 0 ? (
-          <span className="tabular-nums">{reportsCount}</span>
-        ) : null}
-      </Link>
+      {reportsCount === null ? null : (
+        <Link
+          prefetch={false}
+          href={`?scope=${REPORTS_TAB_SCOPE}`}
+          aria-current={active === REPORTS_TAB_SCOPE ? "page" : undefined}
+          className={tabClasses(active === REPORTS_TAB_SCOPE)}
+        >
+          <span>Reportes</span>
+          {/* El contador solo aparece cuando hay algo esperando decisión: un "0"
+              permanente entrena a no mirar el número. */}
+          {reportsCount > 0 ? (
+            <span className="tabular-nums">{reportsCount}</span>
+          ) : null}
+        </Link>
+      )}
     </nav>
   );
 }

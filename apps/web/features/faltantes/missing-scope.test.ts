@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   MISSING_SCOPES,
+  PENDING_SUPPLY_ROUTE,
+  SHELF_BOARD_ROUTE,
   MISSING_SCOPE_LABELS,
   missingPageHref,
   missingScopeHref,
@@ -104,5 +106,72 @@ describe("repositoryScopeFor", () => {
     expect(repositoryScopeFor("actionable")).toBe("actionable");
     expect(repositoryScopeFor("ordered")).toBe("ordered");
     expect(repositoryScopeFor("discarded")).toBe("discarded");
+  });
+});
+
+// --------------------------------------------------------------------------
+// La misma cola se pinta en DOS pantallas. Estos tests existen porque la
+// colisión de parámetros ya rompió esta pantalla una vez: al mudar el tablero,
+// el buzón de reportes compartía `?scope=` con la cola y moverse en uno movía
+// el otro. Se resolvió a mano con `rscope`; acá se resuelve por construcción.
+// --------------------------------------------------------------------------
+describe("rutas de tablero", () => {
+  it("la estantería arma sus enlaces sobre Revisión de faltantes", () => {
+    expect(missingScopeHref("ordered", "compact", SHELF_BOARD_ROUTE)).toBe(
+      "/revision-faltantes?scope=ordered",
+    );
+  });
+
+  it("el abastecimiento de cliente arma los suyos sobre Revisión de pendientes", () => {
+    const href = missingScopeHref("ordered", "compact", PENDING_SUPPLY_ROUTE);
+
+    expect(href.startsWith("/revision-pendientes?")).toBe(true);
+  });
+
+  // EL TEST QUE IMPORTA. Los nombres de parámetro de un tablero no pueden ser
+  // los del otro, o los dos se pisan en la misma URL de Revisión de pendientes,
+  // que ya usa `scope`, `view` y `cursor` para su lista de pendientes.
+  it("no comparte NINGÚN nombre de parámetro entre los dos tableros", () => {
+    const shelf = [
+      SHELF_BOARD_ROUTE.scopeParam,
+      SHELF_BOARD_ROUTE.viewParam,
+      SHELF_BOARD_ROUTE.cursorParam,
+    ];
+    const supply = [
+      PENDING_SUPPLY_ROUTE.scopeParam,
+      PENDING_SUPPLY_ROUTE.viewParam,
+      PENDING_SUPPLY_ROUTE.cursorParam,
+    ];
+
+    expect(supply.filter((param) => shelf.includes(param))).toEqual([]);
+  });
+
+  // Los tres nombres que Revisión de pendientes ya tiene ocupados con su propia
+  // lista. Si el tablero de abastecimiento usara uno, pasar de página en él
+  // movería también la lista de pendientes de la otra mitad.
+  it("no usa los parámetros que Revisión de pendientes ya tiene ocupados", () => {
+    const taken = ["scope", "view", "cursor", "purchase", "availability", "customer"];
+
+    expect(taken).not.toContain(PENDING_SUPPLY_ROUTE.scopeParam);
+    expect(taken).not.toContain(PENDING_SUPPLY_ROUTE.viewParam);
+    expect(taken).not.toContain(PENDING_SUPPLY_ROUTE.cursorParam);
+  });
+
+  // Sin esto, tocar "Ya pedidos" dentro del abastecimiento devuelve a
+  // seguimiento: el enlace pierde la mitad en la que estás parado.
+  it("arrastra la pestaña activa en TODOS los enlaces del abastecimiento", () => {
+    const scopeHref = missingScopeHref("discarded", "full", PENDING_SUPPLY_ROUTE);
+    const pageHref = missingPageHref("ordered", "compact", "cur-1", PENDING_SUPPLY_ROUTE);
+
+    expect(scopeHref).toContain("tab=abastecimiento");
+    expect(pageHref).toContain("tab=abastecimiento");
+  });
+
+  it("pagina el abastecimiento con su propio cursor", () => {
+    const href = missingPageHref("actionable", "compact", "cur-9", PENDING_SUPPLY_ROUTE);
+
+    expect(href).toContain("scursor=cur-9");
+    expect(href).not.toContain("cursor=cur-9&");
+    expect(new URL(href, "https://x").searchParams.get("cursor")).toBeNull();
   });
 });
