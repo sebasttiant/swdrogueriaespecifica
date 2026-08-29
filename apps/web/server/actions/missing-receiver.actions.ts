@@ -88,6 +88,10 @@ export async function markMissingItemArrivedAction(
     // Silencio deliberado: ver el comentario de arriba.
   }
 
+  // La cola de bodega vive en /recepcion; gerencia ve el mismo salto de estado
+  // en su tablero. Las dos se revalidan o una de las dos muestra el estado viejo.
+  revalidatePath("/recepcion");
   revalidatePath("/revision-faltantes");
+  revalidatePath("/revision-pendientes");
   return { error: null, ok: true };
 }

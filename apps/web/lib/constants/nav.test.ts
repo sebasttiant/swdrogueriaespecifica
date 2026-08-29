@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { visibleNavItems } from "./nav";
+import { NAV_ITEMS, visibleNavItems } from "./nav";
 
 function labels(role: Parameters<typeof visibleNavItems>[0]): string[] {
   return visibleNavItems(role).map((item) => item.label);
@@ -158,5 +158,46 @@ describe("Revisión de identidad", () => {
     );
     expect(item).toBeDefined();
     expect(item?.primaryMobile).toBeUndefined();
+  });
+});
+
+// --------------------------------------------------------------------------
+// Recepción es la pantalla de BODEGA, con nombre propio.
+//
+// Vivía como una proyección dentro de Revisión de faltantes, y ese cartel le
+// mentía: bodega no revisa faltantes, recibe mercadería —y encima marcaba la
+// llegada del pedido de un cliente dentro de un módulo de estantería—.
+// --------------------------------------------------------------------------
+describe("visibleNavItems · recepción", () => {
+  it("la ve quien recibe mercadería", () => {
+    for (const role of ["SUPERADMIN", "ADMIN", "BODEGA"] as const) {
+      expect(labels(role)).toContain("Recepción");
+    }
+  });
+
+  // Quien no recibe no la ve: el vendedor reporta y sigue vendiendo.
+  it("no la ven los roles que no reciben", () => {
+    expect(labels("SUPERVISOR")).not.toContain("Recepción");
+    expect(labels("OPERADOR")).not.toContain("Recepción");
+  });
+
+  // Bodega trabaja de pie, con la caja en una mano y el celular en la otra: su
+  // pantalla sí se gana un lugar en la barra inferior.
+  it("ocupa un lugar en la barra inferior móvil", () => {
+    const item = visibleNavItems("BODEGA").find(
+      (navItem) => navItem.href === "/recepcion",
+    );
+    expect(item?.primaryMobile).toBe(true);
+  });
+
+  // El enlace se ofrece con la MISMA capacidad que abre la puerta. Ofrecerlo con
+  // una parecida deja a alguien tocando una pantalla que el guard le cierra:
+  // eso ya pasó con SUPERVISOR y `canConfirmMissingItems`.
+  it("cada enlace usa la capacidad exacta del guard de su página", () => {
+    const byHref = Object.fromEntries(
+      NAV_ITEMS.map((item) => [item.href, item.capability]),
+    );
+    expect(byHref["/recepcion"]).toBe("canReceiveMissingItems");
+    expect(byHref["/revision-faltantes"]).toBe("canReviewMissingReports");
   });
 });

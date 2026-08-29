@@ -11,13 +11,13 @@ import {
   reportQueueScopeHref,
   resolveReportQueueScope,
 } from "@/features/faltantes/report-queue-scope";
-import { ReceiverQueue } from "@/features/faltantes/receiver-queue";
 import {
   MissingBoardTabs,
   REPORTS_TAB_SCOPE,
 } from "@/features/faltantes/missing-board-tabs";
 import { MissingQueueBoard } from "@/features/faltantes/missing-queue-board";
 import {
+  SHELF_BOARD_ROUTE,
   repositoryScopeFor,
   resolveMissingScope,
 } from "@/features/faltantes/missing-scope";
@@ -31,10 +31,6 @@ import { requireCapability } from "@/lib/auth/require-role";
 import { cn } from "@/lib/utils/cn";
 import { DEFAULT_PAGE_SIZE } from "@/lib/pagination";
 import { getMissingReportQueue } from "@/server/services/missing-report.service";
-import {
-  listReceiverQueue,
-  resolveReceiverScope,
-} from "@/server/services/missing-receiver.service";
 
 export const metadata: Metadata = { title: "Revisión de faltantes" };
 
@@ -62,15 +58,13 @@ export default async function RevisionFaltantesPage({
     rscope?: string;
   }>;
 }) {
-  // Una sola ruta, DOS proyecciones. Bodega entra al mismo módulo que gerencia
-  // —no a una pantalla paralela con otro nombre— pero ve otra cosa: la cola de
-  // recepción sobre `MissingItem`, con dos estados y sin datos del cliente.
+  // UNA proyección y una sola: la mesa de trabajo de GERENCIA.
   //
-  // La capability más débil manda el guard de entrada; la fuerte decide qué
-  // proyección se arma. Así bodega no necesita `canReviewMissingReports`, que
-  // le daría de paso el poder de pedir y descartar.
-  const session = await requireCapability("canReceiveMissingItems");
-  const reviewsPurchases = can(session.user.role, "canReviewMissingReports");
+  // Bodega tenía acá su cola de recepción, y el nombre le mentía: no revisa
+  // faltantes, recibe mercadería —y encima marcaba la llegada del pedido de un
+  // cliente dentro de un módulo de estantería—. Se mudó a `/recepcion`, con su
+  // propio nombre y las dos colas juntas.
+  const session = await requireCapability("canReviewMissingReports");
 
   const {
     page: rawPage,
@@ -80,24 +74,18 @@ export default async function RevisionFaltantesPage({
     rscope: rawReportScope,
   } = await searchParams;
 
-  if (!reviewsPurchases) {
-    // El scope se resuelve contra los estados PERMITIDOS: escribir
-    // `?scope=pending` a mano cae en "Ya pedidos", no en un error que delate
-    // que existe otra cola. Y la consulta nunca pide FALTANTE ni CANCELADO,
-    // así que no hay filtro de cliente que puedan saltearse.
-    const receiverScope = resolveReceiverScope(rawScope);
-    const items = await listReceiverQueue(receiverScope);
-
-    return (
-      <div className="space-y-4">
-        <PageHeader
-          title="Revisión de faltantes"
-          description="Lo que hay que recibir. Marcá la llegada y registrá la entrada."
-        />
-        <ReceiverQueue items={items} scope={receiverScope} />
-      </div>
-    );
-  }
+  // --------------------------------------------------------------------------
+  // Esta pantalla es ESTRICTAMENTE DE ESTANTERÍA.
+  //
+  // Un faltante que nació de un pendiente NO es una reposición: es el pedido de
+  // un cliente concreto, con fecha prometida y a veces con abono entregado. Se
+  // compra desde Revisión de PENDIENTES, que es donde el gerente tiene delante
+  // a quién está esperando.
+  //
+  // Bodega no queda afuera de nada: recibe los DOS orígenes en `/recepcion`,
+  // que es una cola de bultos físicos y no de decisiones de compra.
+  // --------------------------------------------------------------------------
+  const SHELF_ONLY = "shelf" as const;
 
   // El buzón de reportes es UNA PESTAÑA, no una pantalla aparte. Es un modelo
   // distinto (`MissingReport`), pero aprobar un reporte es lo que CREA un
@@ -124,10 +112,13 @@ export default async function RevisionFaltantesPage({
       : getMissingItems({
           cursor: rawCursor,
           scope: repositoryScopeFor(scope),
+          origin: SHELF_ONLY,
           canViewCustomerIdentity,
           canViewSupplierIdentity,
         }),
-    getActionableMissingCount(),
+    // El contador de "Por pedir" tiene que contar LO QUE ESTA PANTALLA MUESTRA.
+    // Global, marcaría trabajo que acá no se puede tocar.
+    getActionableMissingCount(SHELF_ONLY),
     getMissingReportQueue({
       page,
       pageSize: DEFAULT_PAGE_SIZE,
@@ -147,6 +138,8 @@ export default async function RevisionFaltantesPage({
         view={view}
         actionableCount={actionableCount}
         reportsCount={reports.groups.length}
+        route={SHELF_BOARD_ROUTE}
+        label="Estado de los faltantes"
       />
 
       {showingReports ? (
@@ -196,6 +189,8 @@ export default async function RevisionFaltantesPage({
           canExport={canExport}
           canSeeSupplier={canViewSupplierIdentity}
           now={now}
+          route={SHELF_BOARD_ROUTE}
+          label="Vista de faltantes"
         />
       )}
     </div>

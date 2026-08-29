@@ -64,10 +64,10 @@ describe("RevisionFaltantesPage · authorization", () => {
   // ruta: gerencia entra por revisión, bodega por recepción. La proyección la
   // decide después el rol. Pedir la fuerte acá le cerraría la puerta a bodega
   // al mismo módulo que sí puede usar.
-  it("guards with canReceiveMissingItems", async () => {
+  it("guards with canReviewMissingReports", async () => {
     await RevisionFaltantesPage({ searchParams: searchParams() });
 
-    expect(mocks.requireCapability).toHaveBeenCalledWith("canReceiveMissingItems");
+    expect(mocks.requireCapability).toHaveBeenCalledWith("canReviewMissingReports");
   });
 
   // El orden importa: sin esto, mover el guard después del fetch expondría la
@@ -155,39 +155,9 @@ describe("RevisionFaltantesPage · page param", () => {
 // los reportes provisionales. Mezclarlas haría que bodega marque llegadas sobre
 // mercadería que compras todavía no pidió.
 // --------------------------------------------------------------------------
-describe("RevisionFaltantesPage · proyección por rol", () => {
-  it("BODEGA recibe la cola de recepción, nunca la de reportes", async () => {
-    sesion("BODEGA");
-
-    await RevisionFaltantesPage({ searchParams: searchParams() });
-
-    expect(mocks.listReceiverQueue).toHaveBeenCalledWith("PEDIDO");
-    expect(mocks.getMissingReportQueue).not.toHaveBeenCalled();
-  });
-
-  it("BODEGA puede abrir 'En bodega'", async () => {
-    sesion("BODEGA");
-
-    await RevisionFaltantesPage({ searchParams: searchParams({ scope: "arrived" }) });
-
-    expect(mocks.listReceiverQueue).toHaveBeenCalledWith("EN_BODEGA");
-  });
-
-  // Esconder las pestañas no alcanza: quien escribe la URL a mano tiene que
-  // caer en la cola permitida, y la consulta jamás debe pedir los estados de
-  // compras.
-  it.each(["pending", "discarded", "inventado"])(
-    "un scope de compras escrito a mano (%s) cae en 'Ya pedidos'",
-    async (scope) => {
-      sesion("BODEGA");
-
-      await RevisionFaltantesPage({ searchParams: searchParams({ scope }) });
-
-      expect(mocks.listReceiverQueue).toHaveBeenCalledWith("PEDIDO");
-      expect(mocks.getMissingReportQueue).not.toHaveBeenCalled();
-    },
-  );
-
+// La proyección de BODEGA se mudó a `/recepcion`, y sus pruebas con ella. Acá
+// quedó una sola cosa: la mesa de trabajo de gerencia.
+describe("RevisionFaltantesPage · la cola de gerencia", () => {
   it("gerencia conserva la cola de reportes completa", async () => {
     sesion("ADMIN");
 
@@ -267,12 +237,38 @@ describe("RevisionFaltantesPage · la cola de gerencia vive acá", () => {
 
   // Bodega no cambia: su proyección sigue siendo la cola de recepción, sin
   // datos del cliente y sin las acciones de compras.
-  it("bodega sigue viendo su cola de recepción y NO la de gerencia", async () => {
-    sesion("BODEGA");
+});
+
+describe("RevisionFaltantesPage · solo estantería", () => {
+  it("le pide al service SOLO la reposición de estantería", async () => {
+    sesion("ADMIN");
 
     await RevisionFaltantesPage({ searchParams: searchParams() });
 
-    expect(mocks.listReceiverQueue).toHaveBeenCalledTimes(1);
-    expect(mocks.getMissingItems).not.toHaveBeenCalled();
+    expect(mocks.getMissingItems).toHaveBeenCalledWith(
+      expect.objectContaining({ origin: "shelf" }),
+    );
   });
+
+  // El número de la pestaña tiene que contar LO QUE LA PANTALLA MUESTRA. Global,
+  // marcaría trabajo que desde acá no se puede tocar y mandaría al gerente a
+  // buscar filas que no están.
+  it("cuenta 'Por pedir' solo sobre estantería", async () => {
+    sesion("ADMIN");
+
+    await RevisionFaltantesPage({ searchParams: searchParams() });
+
+    expect(mocks.getActionableMissingCount).toHaveBeenCalledWith("shelf");
+  });
+
+  it("mantiene el recorte al cambiar de pestaña", async () => {
+    sesion("ADMIN");
+
+    await RevisionFaltantesPage({ searchParams: searchParams({ scope: "ordered" }) });
+
+    expect(mocks.getMissingItems).toHaveBeenCalledWith(
+      expect.objectContaining({ origin: "shelf", scope: "ordered" }),
+    );
+  });
+
 });

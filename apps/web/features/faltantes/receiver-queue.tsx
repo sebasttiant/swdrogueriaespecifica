@@ -10,6 +10,12 @@ import type { ReceiverItem, ReceiverScope } from "@/server/services/missing-rece
 // --------------------------------------------------------------------------
 // La cola de bodega: lo que hay que recibir.
 //
+// UNA SOLA COLA, con los dos orígenes juntos. Bodega recibe CAJAS: no clasifica
+// de dónde nació la demanda. Partírsela en dos pantallas —una por pedidos de
+// cliente y otra por reposición— le pediría separar algo que no le importa, y
+// es exactamente así como un día se pasa una llegada. Gerencia mira por origen
+// porque decide qué comprar; bodega mira por bulto físico.
+//
 // DOS pestañas y ninguna más. "Por pedir" y "Descartados" no se ocultan por
 // estética: quien recibe no decide qué se compra, y ver la cola de compras
 // invita a marcar llegadas sobre mercadería que nadie pidió.
@@ -18,15 +24,19 @@ import type { ReceiverItem, ReceiverScope } from "@/server/services/missing-rece
 // no tiene forma de mostrar el cliente aunque quisiera.
 // --------------------------------------------------------------------------
 
+/** Dónde vive la cola de bodega. Su propia ruta, no una pestaña de otro módulo. */
+export const RECEPTION_PATH = "/recepcion";
+
 const TABS: { scope: ReceiverScope; label: string; href: string }[] = [
-  { scope: "PEDIDO", label: "Ya pedidos", href: "/revision-faltantes" },
-  { scope: "EN_BODEGA", label: "En bodega", href: "/revision-faltantes?scope=arrived" },
+  { scope: "PEDIDO", label: "Por recibir", href: RECEPTION_PATH },
+  { scope: "EN_BODEGA", label: "En bodega", href: `${RECEPTION_PATH}?scope=arrived` },
 ];
 
 const EMPTY: Record<ReceiverScope, { title: string; description: string }> = {
   PEDIDO: {
     title: "No hay nada esperando",
-    description: "Cuando gerencia pida un faltante, aparece acá para recibirlo.",
+    description:
+      "Cuando gerencia pida algo —para un cliente o para la estantería— aparece acá para recibirlo.",
   },
   EN_BODEGA: {
     title: "Nada llegó todavía",
@@ -76,6 +86,7 @@ export function ReceiverQueue({
             <thead className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
                 <th className="px-3 py-2 font-medium">Producto</th>
+                <th className="px-3 py-2 font-medium">Para</th>
                 <th className="px-3 py-2 font-medium">SKU (código de Orion)</th>
                 <th className="px-3 py-2 font-medium">Laboratorio</th>
                 <th className="px-3 py-2 font-medium">Falta recibir</th>
@@ -86,6 +97,23 @@ export function ReceiverQueue({
               {items.map((item) => (
                 <tr key={item.id} className="border-b border-border last:border-0">
                   <td className="px-3 py-2 font-medium text-text">{item.productName}</td>
+                  {/* Para QUÉ es esta caja. CATEGORÍA, nunca el nombre del
+                      cliente: el `select` del servicio ni siquiera lo trae, y
+                      mandarlo para que la pantalla lo escondiera sería mandarlo
+                      igual. Bodega necesita saber que hay alguien esperando
+                      —para priorizar la descarga—, no quién es. */}
+                  <td className="px-3 py-2">
+                    <span
+                      className={cn(
+                        "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold",
+                        item.originId
+                          ? "border-primary/30 bg-primary/10 text-primary"
+                          : "border-border bg-muted/40 text-muted-foreground",
+                      )}
+                    >
+                      {item.originId ? "Cliente" : "Estantería"}
+                    </span>
+                  </td>
                   <td className="px-3 py-2 font-mono text-xs text-muted-foreground">
                     {/* Sin SKU no se puede registrar la entrada. Decirlo acá
                         evita que bodega lo descubra recién al intentarlo. */}
