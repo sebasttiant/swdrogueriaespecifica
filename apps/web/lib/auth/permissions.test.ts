@@ -771,3 +771,31 @@ describe("recepción · quién marca la llegada y carga la entrada", () => {
     expect(can("BODEGA", "canOrderMissingItems")).toBe(false);
   });
 });
+
+// --------------------------------------------------------------------------
+// QUIÉN CARGA UN PENDIENTE. Gerencia también atiende el mostrador: un pendiente
+// no es exclusivo del vendedor.
+//
+// Importa para los avisos: si se dirigieran "al vendedor" por rol en vez de a
+// quien lo creó, un pendiente cargado por ADMIN llegaría a la droguería, se
+// cargaría al inventario y nadie se enteraría. El destinatario sale del
+// agregado (`createdById`), no del rol — probado contra la base en
+// `pending-reception-independence.pg.test.ts`.
+// --------------------------------------------------------------------------
+describe("pendientes · quién los crea", () => {
+  it.each(["SUPERADMIN", "ADMIN", "OPERADOR"] as const)(
+    "%s puede registrar un pendiente",
+    (role) => {
+      expect(can(role, "canCreatePendientes")).toBe(true);
+    },
+  );
+
+  // Y todos los que los crean pueden revisarlos, o cargarían algo que después
+  // no pueden seguir.
+  it.each(["SUPERADMIN", "ADMIN", "OPERADOR"] as const)(
+    "%s puede revisar los pendientes que carga",
+    (role) => {
+      expect(can(role, "canReviewPendings")).toBe(true);
+    },
+  );
+});
