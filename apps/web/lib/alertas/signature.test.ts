@@ -8,6 +8,7 @@ const ALL_CLEAR_COUNTS: AlertCounts = {
   overdueDeliveries: 0,
   upcomingDeliveries: 0,
   criticalMissing: 0,
+  stockoutProducts: 0,
 };
 
 describe("alertSignature", () => {
@@ -18,6 +19,7 @@ describe("alertSignature", () => {
       overdueDeliveries: 5,
       upcomingDeliveries: 7,
       criticalMissing: 11,
+      stockoutProducts: 13,
     };
 
     expect(alertSignature(counts)).toBe(alertSignature({ ...counts }));
@@ -30,6 +32,7 @@ describe("alertSignature", () => {
       overdueDeliveries: 1,
       upcomingDeliveries: 1,
       criticalMissing: 1,
+      stockoutProducts: 1,
     };
 
     const changed: AlertCounts = { ...baseline, expiredBatches: 2 };
@@ -44,8 +47,10 @@ describe("alertSignature", () => {
       overdueDeliveries: 15,
       upcomingDeliveries: 16,
       criticalMissing: 23,
+      stockoutProducts: 42,
     };
     const differentOrder = {
+      stockoutProducts: 42,
       criticalMissing: 23,
       upcomingDeliveries: 16,
       overdueDeliveries: 15,
@@ -56,9 +61,17 @@ describe("alertSignature", () => {
     expect(alertSignature(differentOrder)).toBe(alertSignature(canonical));
   });
 
+  // Un quiebre nuevo tiene que cambiar la firma: si no, la barra pospuesta no
+  // se vuelve a mostrar y bodega no se entera de que apareció.
+  it("changes when a stockout appears", () => {
+    const withStockout: AlertCounts = { ...ALL_CLEAR_COUNTS, stockoutProducts: 1 };
+
+    expect(alertSignature(withStockout)).not.toBe(alertSignature(ALL_CLEAR_COUNTS));
+  });
+
   it("returns a stable canonical signature for all-clear counts", () => {
     expect(alertSignature(ALL_CLEAR_COUNTS)).toBe(
-      "exp:0|crit:0|over:0|up:0|miss:0",
+      "exp:0|crit:0|over:0|up:0|miss:0|stockout:0",
     );
   });
 });

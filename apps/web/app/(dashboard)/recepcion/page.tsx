@@ -2,11 +2,13 @@ import type { Metadata } from "next";
 
 import { PageHeader } from "@/app/_components/app-shell/page-header";
 import { ReceiverQueue } from "@/features/faltantes/receiver-queue";
+import { StockoutList } from "@/features/faltantes/stockout-list";
 import { requireCapability } from "@/lib/auth/require-role";
 import {
   listReceiverQueue,
   resolveReceiverScope,
 } from "@/server/services/missing-receiver.service";
+import { listStockoutProducts } from "@/server/services/stockout.service";
 
 export const metadata: Metadata = { title: "Recepción" };
 
@@ -44,7 +46,12 @@ export default async function RecepcionPage({
   // a mano cae en "Por recibir", no en un error. Y la consulta nunca pide
   // FALTANTE ni CANCELADO, así que la cola de compras no se filtra por acá.
   const scope = resolveReceiverScope((await searchParams).scope);
-  const items = await listReceiverQueue(scope);
+  const [items, stockouts] = await Promise.all([
+    listReceiverQueue(scope),
+    // Va en las DOS pestañas: el quiebre no depende de qué está mirando
+    // bodega, y esconderlo en una sola lo volvería fácil de no ver nunca.
+    listStockoutProducts(),
+  ]);
 
   return (
     <div className="space-y-4">
@@ -52,6 +59,11 @@ export default async function RecepcionPage({
         title="Recepción"
         description="Lo que hay que recibir. Marcá la llegada y registrá la entrada."
       />
+      {/* Arriba de la cola a propósito: hay clientes esperando un producto que
+          quizá esté en el depósito sin cargar. Eso pesa más que seguir
+          recibiendo lo que ya se pidió. */}
+      <StockoutList items={stockouts} />
+
       <ReceiverQueue items={items} scope={scope} />
     </div>
   );

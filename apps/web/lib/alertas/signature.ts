@@ -4,6 +4,8 @@ export type AlertCounts = {
   overdueDeliveries: number;
   upcomingDeliveries: number;
   criticalMissing: number;
+  /** Productos del catálogo sin con qué cubrir lo ya prometido. Aviso de bodega. */
+  stockoutProducts: number;
 };
 
 export function alertSignature(counts: AlertCounts): string {
@@ -13,5 +15,6 @@ export function alertSignature(counts: AlertCounts): string {
     `over:${counts.overdueDeliveries}`,
     `up:${counts.upcomingDeliveries}`,
     `miss:${counts.criticalMissing}`,
+    `stockout:${counts.stockoutProducts}`,
   ].join("|");
 }

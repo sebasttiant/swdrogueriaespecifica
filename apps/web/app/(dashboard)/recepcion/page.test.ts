@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 const mocks = vi.hoisted(() => ({
   requireCapability: vi.fn(),
   listReceiverQueue: vi.fn(),
+  listStockoutProducts: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/require-role", () => ({
@@ -18,6 +19,10 @@ vi.mock("@/server/services/missing-receiver.service", async (original) => {
   >();
   return { ...actual, listReceiverQueue: mocks.listReceiverQueue };
 });
+
+vi.mock("@/server/services/stockout.service", () => ({
+  listStockoutProducts: mocks.listStockoutProducts,
+}));
 
 import RecepcionPage from "./page";
 
@@ -48,6 +53,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.requireCapability.mockResolvedValue({ user: { id: "u-1", role: "BODEGA" } });
   mocks.listReceiverQueue.mockResolvedValue([]);
+  mocks.listStockoutProducts.mockResolvedValue([]);
 });
 
 describe("RecepcionPage · autorización", () => {
@@ -145,5 +151,81 @@ describe("RecepcionPage · una cola, los dos orígenes", () => {
     // El id del pendiente tampoco se pinta: no le sirve a nadie y es un puntero
     // a datos que esta pantalla no debe tocar.
     expect(html).not.toContain("pending-1");
+  });
+});
+
+// --------------------------------------------------------------------------
+// QUIEBRE DE STOCK: un producto que la droguería SÍ lleva se quedó sin con qué
+// cubrir lo prometido a un cliente.
+//
+// Es el único aviso de bodega, y existe porque antes de comprar hay que mirar
+// el depósito: la caja puede estar recibida y sin cargar. Gerencia compra;
+// bodega busca.
+// --------------------------------------------------------------------------
+describe("RecepcionPage · sin stock con clientes esperando", () => {
+  function quiebre(overrides: Record<string, unknown> = {}) {
+    return {
+      productId: "prod-9",
+      productName: "Dolex",
+      orionCode: "5566",
+      unit: "unidad",
+      missingQuantity: 7,
+      waitingCount: 2,
+      oldestSince: new Date("2026-08-25T14:00:00Z"),
+      ...overrides,
+    };
+  }
+
+  it("consulta los quiebres en las dos pestañas", async () => {
+    await RecepcionPage({ searchParams: searchParams() });
+    await RecepcionPage({ searchParams: searchParams({ scope: "arrived" }) });
+
+    // En las dos: el quiebre no depende de qué esté mirando bodega, y
+    // esconderlo en una sola pestaña lo volvería fácil de no ver nunca.
+    expect(mocks.listStockoutProducts).toHaveBeenCalledTimes(2);
+  });
+
+  it("muestra qué falta, cuánto y hace cuánto", async () => {
+    mocks.listStockoutProducts.mockResolvedValue([quiebre()]);
+
+    const html = renderToStaticMarkup(await RecepcionPage({ searchParams: searchParams() }));
+
+    expect(html).toContain("Sin stock, con clientes esperando");
+    expect(html).toContain("Dolex");
+    expect(html).toContain("7");
+    expect(html).toContain("2 clientes esperando");
+  });
+
+  // EL TEST DE PRIVACIDAD. Bodega prioriza la búsqueda con el NÚMERO de gente
+  // que espera; la identidad del cliente no le hace falta para buscar una caja
+  // y no debe salir de la base. Mismo criterio que la cola de recepción.
+  it("dice CUÁNTOS esperan, nunca quiénes", async () => {
+    mocks.listStockoutProducts.mockResolvedValue([quiebre()]);
+
+    const html = renderToStaticMarkup(await RecepcionPage({ searchParams: searchParams() }));
+
+    // El tipo que devuelve el servicio no tiene campo de cliente: si alguien se
+    // lo agrega, este test no alcanza — pero la forma del dato lo impide antes.
+    expect(html).toContain("clientes esperando");
+    expect(html).not.toContain("customerName");
+  });
+
+  // Sin SKU no se puede registrar la entrada. Decirlo acá evita que bodega lo
+  // descubra recién al intentarlo, que es donde se cortaba la cadena antes.
+  it("avisa cuando falta el SKU y enlaza al producto exacto", async () => {
+    mocks.listStockoutProducts.mockResolvedValue([quiebre({ orionCode: null })]);
+
+    const html = renderToStaticMarkup(await RecepcionPage({ searchParams: searchParams() }));
+
+    expect(html).toContain("Falta el SKU");
+    expect(html).toContain("/productos/prod-9");
+  });
+
+  // Un bloque vacío permanente arriba de la cola es peso muerto en el celular
+  // de quien está de pie con una caja en la mano.
+  it("no pinta nada cuando no hay quiebres", async () => {
+    const html = renderToStaticMarkup(await RecepcionPage({ searchParams: searchParams() }));
+
+    expect(html).not.toContain("Sin stock, con clientes esperando");
   });
 });

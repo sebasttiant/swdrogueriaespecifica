@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   countOverduePendings: vi.fn(),
   countUpcomingPendings: vi.fn(),
   countOverdueMissingItems: vi.fn(),
+  countStockoutProducts: vi.fn(),
 }));
 
 vi.mock("@/server/services/product-batch.service", () => ({
@@ -17,6 +18,9 @@ vi.mock("@/server/repositories/pending.repository", () => ({
 vi.mock("@/server/repositories/missing-item.repository", () => ({
   countOverdueMissingItems: mocks.countOverdueMissingItems,
 }));
+vi.mock("@/server/services/stockout.service", () => ({
+  countStockoutProducts: mocks.countStockoutProducts,
+}));
 
 import { getOperationalAlerts } from "./operational-alerts.service";
 
@@ -28,6 +32,7 @@ beforeEach(() => {
   mocks.countOverduePendings.mockResolvedValue(4);
   mocks.countUpcomingPendings.mockResolvedValue(5);
   mocks.countOverdueMissingItems.mockResolvedValue(6);
+  mocks.countStockoutProducts.mockResolvedValue(7);
 });
 
 // --------------------------------------------------------------------------
@@ -44,6 +49,7 @@ describe("getOperationalAlerts · a quién le habla cada aviso", () => {
       overdueDeliveries: 4,
       upcomingDeliveries: 5,
       criticalMissing: 6,
+      stockoutProducts: 7,
     });
     expect(mocks.countOverduePendings).toHaveBeenCalledWith(NOW);
   });
@@ -60,6 +66,7 @@ describe("getOperationalAlerts · a quién le habla cada aviso", () => {
       overdueDeliveries: 1,
       upcomingDeliveries: 2,
       criticalMissing: 0,
+      stockoutProducts: 0,
     });
 
     expect(mocks.countOverduePendings).toHaveBeenCalledWith(NOW, "seller-1");
@@ -80,11 +87,62 @@ describe("getOperationalAlerts · a quién le habla cada aviso", () => {
       overdueDeliveries: 0,
       upcomingDeliveries: 0,
       criticalMissing: 0,
+      stockoutProducts: 0,
     });
 
     expect(mocks.countOverduePendings).not.toHaveBeenCalled();
     expect(mocks.countUpcomingPendings).not.toHaveBeenCalled();
     expect(mocks.getExpiringBatchCounts).not.toHaveBeenCalled();
     expect(mocks.countOverdueMissingItems).not.toHaveBeenCalled();
+  });
+});
+
+// --------------------------------------------------------------------------
+// El alcance de BODEGA. Durante un tiempo no recibía NINGÚN aviso, y con razón:
+// lo que había eran entregas a clientes y lotes por vencer, trabajo ajeno.
+//
+// Hay UN hecho que solo ella puede resolver: un producto que la droguería sí
+// lleva se quedó sin con qué cubrir lo prometido. Antes de comprarlo hay que
+// mirar el depósito, porque la caja puede estar recibida y sin cargar.
+// --------------------------------------------------------------------------
+describe("getOperationalAlerts · alcance de bodega", () => {
+  it("le da el quiebre de stock y NADA más", async () => {
+    const counts = await getOperationalAlerts(NOW, { kind: "warehouse" });
+
+    expect(counts.stockoutProducts).toBe(7);
+    // Entregas a clientes y lotes por vencer no son trabajo suyo: un aviso que
+    // no puede resolver enseña a ignorar la barra entera.
+    expect(counts.overdueDeliveries).toBe(0);
+    expect(counts.upcomingDeliveries).toBe(0);
+    expect(counts.expiredBatches).toBe(0);
+    expect(counts.criticalBatches).toBe(0);
+    expect(counts.criticalMissing).toBe(0);
+  });
+
+  it("no gasta ninguna consulta ajena para armarlo", async () => {
+    await getOperationalAlerts(NOW, { kind: "warehouse" });
+
+    expect(mocks.countStockoutProducts).toHaveBeenCalledTimes(1);
+    expect(mocks.getExpiringBatchCounts).not.toHaveBeenCalled();
+    expect(mocks.countOverduePendings).not.toHaveBeenCalled();
+    expect(mocks.countOverdueMissingItems).not.toHaveBeenCalled();
+  });
+
+  // Gerencia también lo ve: un quiebre con clientes esperando es la señal más
+  // temprana de que hay que comprar, antes de que el faltante venza.
+  it("gerencia también lo recibe, junto con el resto", async () => {
+    const counts = await getOperationalAlerts(NOW, { kind: "global" });
+
+    expect(counts.stockoutProducts).toBe(7);
+    expect(counts.criticalMissing).toBe(6);
+  });
+
+  // El vendedor no: él reporta y sigue vendiendo. Buscar una caja en el
+  // depósito no es su trabajo.
+  it("el vendedor no lo recibe", async () => {
+    const counts = await getOperationalAlerts(NOW, { kind: "owner", ownerId: "u-1" });
+
+    expect(counts.stockoutProducts).toBe(0);
+    expect(mocks.countStockoutProducts).not.toHaveBeenCalled();
   });
 });
