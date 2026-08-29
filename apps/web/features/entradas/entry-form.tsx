@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useActionState } from "@/lib/hooks/use-action-state";
+import { LaboratorySearch } from "@/features/productos/laboratory-search";
 
 import { Button } from "@/app/_components/ui/button";
 import { Field } from "@/app/_components/ui/field";
@@ -172,6 +173,22 @@ export function EntryForm({
             required
           />
         </Field>
+        {/* Laboratorio de lo que LLEGÓ, que no siempre es el que se pidió.
+            Es evidencia de la recepción: el servicio la compara contra el lote
+            bajo lock y crea el laboratorio si el nombre es nuevo, que es el
+            caso normal con un proveedor que recién empieza a traer.
+
+            Va sin `required` a propósito. Si el remito no lo aclara, exigirlo
+            frenaría una recepción real por un dato que bodega no tiene en la
+            mano — y la mercadería ya está en el depósito igual. */}
+        <div className="sm:col-span-2">
+          <LaboratorySearch
+            name="receivedLaboratoryId"
+            nameForLabel="receivedLaboratoryName"
+            label="Laboratorio de lo recibido (opcional)"
+            hint="Si el remito no lo aclara, dejalo vacío. Si es uno nuevo, escribilo igual."
+          />
+        </div>
         <Field label="Nota (opcional)" htmlFor="note" className="sm:col-span-2">
           <Input
             id="note"
