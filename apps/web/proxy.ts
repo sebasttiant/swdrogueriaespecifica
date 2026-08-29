@@ -52,16 +52,28 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
 }
 
 export const config = {
-  // Excluye assets internos de Next, las sondas de infraestructura y los
-  // archivos estáticos de /public (rutas de un solo segmento con extensión:
-  // /logo-especifica.webp, /favicon.ico, ...). Las rutas de app son sin
-  // extensión y siguen protegidas.
+  // Excluye assets internos de Next, las sondas de infraestructura, el endpoint
+  // de versión y los archivos estáticos de /public (rutas de un solo segmento
+  // con extensión: /logo-especifica.webp, /favicon.ico, ...). Las rutas de app
+  // son sin extensión y siguen protegidas.
   //
-  // `api/ready` va acá por el mismo motivo que `api/health`: quien consulta una
-  // sonda no tiene sesión, y una respuesta que es un redirect a /login no
-  // informa nada sobre la base —peor: es un 307 sin error, con toda la pinta de
-  // estar funcionando—. La respuesta de la sonda no dice nada del negocio.
+  // `api/health` y `api/ready` van acá porque quien consulta una sonda no tiene
+  // sesión, y una respuesta que es un redirect a /login no informa nada sobre
+  // la base —peor: es un 307 sin error, con toda la pinta de estar
+  // funcionando—. La respuesta de la sonda no dice nada del negocio.
+  //
+  // `api/version` va afuera por la misma razón: lo consulta una pestaña que
+  // puede haber perdido la sesión durante el despliegue, y ese es justamente el
+  // caso que tiene que detectar. Detrás del guard devolvería un redirect al
+  // login en vez de la versión, y el desfase quedaría invisible. No expone
+  // nada: solo el SHA del build, que ya viaja en cada asset.
+  //
+  // La exclusión de `api/version` termina en `$`, y eso NO es un detalle de
+  // estilo. Sin el ancla, `api/version` también abriría `/api/version-private`
+  // y `/api/version/secret`: un prefijo público deja pasar todo lo que empiece
+  // igual, y basta que alguien cree una ruta con ese nombre para regalar un
+  // endpoint sin sesión. Se acepta con y sin barra final, nada más.
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|api/health|api/ready|[^/]+\\.[^/]+$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|api/health|api/ready|api/version(?:/)?$|[^/]+\\.[^/]+$).*)",
   ],
 };
