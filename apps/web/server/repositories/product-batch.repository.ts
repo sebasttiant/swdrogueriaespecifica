@@ -389,6 +389,30 @@ export async function releasePendingReservations(
 }
 
 /** Consumes reserved lots FIFO when the customer receives units. */
+/**
+ * Unidades reservadas y TODAVÍA SIN CONSUMIR para un pendiente.
+ *
+ * Sale de la tabla, no de `Pending.reservedInventoryQuantity`: esa columna no
+ * se decrementa al entregar, así que es un acumulado y usarla como techo
+ * dejaría entregar dos veces la misma mercadería.
+ *
+ * Bloquea las filas (FOR UPDATE) y por eso DEBE llamarse dentro de la
+ * transacción de la entrega. Sin el lock, dos entregas simultáneas leerían la
+ * misma reserva, las dos se creerían con stock, y entre las dos sacarían más
+ * de lo que hay. Con él, la segunda espera y ve lo que la primera consumió.
+ */
+export async function lockReservedQuantityForPending(
+  client: Prisma.TransactionClient,
+  pendingId: string,
+): Promise<number> {
+  const rows = await client.$queryRaw<{ quantity: number }[]>`
+    SELECT quantity FROM pending_inventory_reservations
+     WHERE "pendingId" = ${pendingId}
+     FOR UPDATE
+  `;
+  return rows.reduce((total, row) => total + row.quantity, 0);
+}
+
 export async function consumePendingReservations(
   client: Prisma.TransactionClient,
   pendingId: string,
@@ -397,9 +421,16 @@ export async function consumePendingReservations(
   const reservations = (await client.pendingInventoryReservation.findMany({
     where: { pendingId }, orderBy: { createdAt: "asc" },
   })) ?? [];
-  // Rows created before the reservation ledger have no lot traceability. They
-  // remain deliverable; only new reservations may consume this ledger.
-  if (reservations.length === 0) return;
+  // Sin reservas no hay nada que consumir, y con una cantidad positiva eso NO
+  // puede pasar en silencio: acá se retornaba temprano, así que una entrega
+  // sobre un pendiente sin stock se registraba igual. Ese fue el camino por el
+  // que salieron cinco unidades que nunca entraron.
+  //
+  // Con cantidad cero no hay nada que reclamar y se sale sin ruido.
+  if (reservations.length === 0) {
+    if (quantity > 0) throw new Error("Pending reservation invariant violated");
+    return;
+  }
   let remaining = quantity;
   for (const reservation of reservations) {
     if (remaining === 0) break;

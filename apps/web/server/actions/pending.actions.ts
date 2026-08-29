@@ -907,6 +907,10 @@ const DELIVERY_REJECTION_MESSAGES: Record<DeliveryRejection, string> = {
   ALREADY_CANCELLED: "Este pendiente está cancelado.",
   NON_POSITIVE_QUANTITY: "Ingresá una cantidad válida.",
   EXCEEDS_REMAINING: "La cantidad supera lo que resta por entregar.",
+  // Accionable: dice qué falta y a dónde ir. Un "no se pudo" genérico deja al
+  // vendedor reintentando sobre algo que no va a cambiar solo.
+  NO_INVENTORY:
+    "No hay mercadería reservada para este pendiente. Bodega tiene que registrar la entrada antes de poder entregar.",
   NOT_OWNER: "No podés operar un pendiente creado por otro vendedor.",
   NOT_INVOICED: "Primero debés facturar este pendiente.",
 };
