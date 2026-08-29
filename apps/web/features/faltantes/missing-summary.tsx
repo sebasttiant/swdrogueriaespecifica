@@ -20,7 +20,12 @@ export function MissingSummary({ summary }: MissingSummaryProps) {
   // pintar "Vencidos: 0" de rojo entrena al operador a ignorar el color.
   const chips = [
     { label: "Abiertos", value: summary.open, alerts: false },
-    { label: "Vencidos", value: summary.overdue, alerts: summary.overdue > 0 },
+    // `null` = el eje de esta cola no puede vencer (la estantería no le promete
+    // fecha a nadie). Se OMITE en vez de pintarse en cero: un chip clavado en 0
+    // enseña que nunca hay nada tarde, que es lo contrario de una alarma.
+    ...(summary.overdue === null
+      ? []
+      : [{ label: "Vencidos", value: summary.overdue, alerts: summary.overdue > 0 }]),
     { label: "Pedidos", value: summary.ordered, alerts: false },
   ];
 
