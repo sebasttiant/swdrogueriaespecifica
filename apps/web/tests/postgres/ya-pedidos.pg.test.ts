@@ -21,7 +21,7 @@ let actorId = "";
 
 beforeAll(async () => {
   const product = await prisma.product.create({
-    data: { code: `YAP-${Date.now()}`, name: "Amoxicilina", unit: "unidad" },
+    data: { orionCode: `ORN-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, code: `YAP-${Date.now()}`, name: "Amoxicilina", unit: "unidad" },
   });
   productId = product.id;
 

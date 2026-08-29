@@ -11,6 +11,7 @@ import {
 import {
   LaboratoryEvidenceConflictError,
   LaboratoryNameResolutionError,
+  ProductIdentityRequiredError,
   registerInventoryEntry,
 } from "@/server/services/inventory-entry.service";
 import { inventoryEntryCreateSchema } from "@/features/entradas/schema";
@@ -111,6 +112,16 @@ export async function createInventoryEntryAction(
     // cuadra y que solo la persona que tiene la caja delante puede resolver.
     // Por eso se le nombra el lote y el laboratorio que ya quedó registrado,
     // nunca un id interno, que no le sirve para nada.
+    // Sin SKU no entra mercadería: cargar stock contra un producto sin identidad
+    // crea inventario que después nadie puede cuadrar contra Orion. El mensaje
+    // nombra el producto y dice DÓNDE resolverlo — quien recibe la caja tiene el
+    // código impreso encima y puede completarlo ahora mismo.
+    if (error instanceof ProductIdentityRequiredError) {
+      return {
+        error: `"${error.productName}" todavía no tiene SKU (código de Orion). Completalo en Productos y volvé a registrar la entrada.`,
+        ok: false,
+      };
+    }
     // El nombre resolvió a un laboratorio que no es el que se pidió. No se
     // adjunta igual: sería inventarle al lote una evidencia que nadie observó.
     if (error instanceof LaboratoryNameResolutionError) {

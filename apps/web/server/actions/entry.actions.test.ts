@@ -18,12 +18,22 @@ const {
   revalidatePath,
   LaboratoryEvidenceConflictError,
   LaboratoryNameResolutionError,
+  ProductIdentityRequiredError,
 } = vi.hoisted(() => ({
   requireCapability: vi.fn(),
   registerInventoryEntry: vi.fn(),
   recordAudit: vi.fn(),
   auditContextFromHeaders: vi.fn(),
   revalidatePath: vi.fn(),
+  ProductIdentityRequiredError: class extends Error {
+    readonly productId: string;
+    readonly productName: string;
+    constructor(params: { productId: string; productName: string }) {
+      super("product has no Orion code");
+      this.productId = params.productId;
+      this.productName = params.productName;
+    }
+  },
   LaboratoryNameResolutionError: class extends Error {
     readonly requestedName: string;
     constructor(requestedName: string) {
@@ -48,6 +58,7 @@ vi.mock("@/server/services/inventory-entry.service", () => ({
   registerInventoryEntry,
   LaboratoryEvidenceConflictError,
   LaboratoryNameResolutionError,
+  ProductIdentityRequiredError,
 }));
 vi.mock("@/server/services/audit.service", () => ({
   recordAudit,
@@ -199,6 +210,55 @@ describe("createInventoryEntryAction · conflicto de evidencia", () => {
 
   it("no revalida ninguna ruta cuando rechaza", async () => {
     await createInventoryEntryAction(PREV, formData({ receivedLaboratoryId: "lab-genfar" }));
+
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+});
+
+// --------------------------------------------------------------------------
+// Sin SKU no entra mercadería.
+//
+// Cargar stock contra un producto sin identidad crea inventario que después
+// nadie puede cuadrar contra Orion: existe acá y no existe allá, y la
+// diferencia aparece recién cuando alguien hace el conteo.
+// --------------------------------------------------------------------------
+describe("createInventoryEntryAction · identidad obligatoria", () => {
+  it("nombra el producto y dice dónde resolverlo", async () => {
+    registerInventoryEntry.mockRejectedValue(
+      new ProductIdentityRequiredError({
+        productId: "prod-9",
+        productName: "Gel Caliente Muscular",
+      }),
+    );
+
+    const result = await createInventoryEntryAction(PREV, formData());
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("Gel Caliente Muscular");
+    expect(result.error).toMatch(/SKU \(código de Orion\)/);
+    expect(result.error).toMatch(/Productos/);
+  });
+
+  // El id interno no le sirve a quien recibe la caja para encontrar el producto.
+  it("NO expone el id interno en el mensaje", async () => {
+    registerInventoryEntry.mockRejectedValue(
+      new ProductIdentityRequiredError({
+        productId: "cmtdu5ti8000301qfcb38fz3b",
+        productName: "Gel Caliente Muscular",
+      }),
+    );
+
+    const result = await createInventoryEntryAction(PREV, formData());
+
+    expect(result.error).not.toContain("cmtdu5ti8000301qfcb38fz3b");
+  });
+
+  it("no revalida ninguna ruta cuando rechaza", async () => {
+    registerInventoryEntry.mockRejectedValue(
+      new ProductIdentityRequiredError({ productId: "p", productName: "X" }),
+    );
+
+    await createInventoryEntryAction(PREV, formData());
 
     expect(revalidatePath).not.toHaveBeenCalled();
   });

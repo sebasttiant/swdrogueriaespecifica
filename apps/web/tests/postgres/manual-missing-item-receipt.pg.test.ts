@@ -31,7 +31,7 @@ let productId = "";
 
 beforeAll(async () => {
   const product = await prisma.product.create({
-    data: { code: `MAN-${Date.now()}`, name: "Amoxicilina 500mg", unit: "unidad" },
+    data: { orionCode: `ORN-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, code: `MAN-${Date.now()}`, name: "Amoxicilina 500mg", unit: "unidad" },
   });
   productId = product.id;
 });

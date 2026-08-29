@@ -6,6 +6,10 @@ const { prismaMock, tx } = vi.hoisted(() => {
     inventoryEntry: { create: vi.fn() },
     missingItem: { findMany: vi.fn(), updateMany: vi.fn() },
     missingReport: { updateMany: vi.fn() },
+    // La entrada exige SKU antes de escribir. Este caso viene a probar la
+    // reconciliación de reportes, no la identidad: el producto está
+    // identificado.
+    product: { findUnique: vi.fn() },
   };
   const prismaMock = {
     $transaction: vi.fn((fn: (client: typeof tx) => unknown) => fn(tx)),
@@ -37,6 +41,11 @@ let missingItems: MissingItemState[];
 let missingReports: MissingReportState[];
 
 beforeEach(() => {
+  tx.product.findUnique.mockResolvedValue({
+    id: "prod_1",
+    name: "Acetaminofén",
+    orionCode: "ORN-1",
+  });
   vi.clearAllMocks();
   missingItems = [
     {

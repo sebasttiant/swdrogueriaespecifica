@@ -27,7 +27,7 @@ const RUN = randomUUID().slice(0, 6);
 
 beforeAll(async () => {
   const product = await prisma.product.create({
-    data: { code: `ATO-${Date.now()}`, name: "Losartán 50mg", unit: "caja" },
+    data: { orionCode: `ORN-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, code: `ATO-${Date.now()}`, name: "Losartán 50mg", unit: "caja" },
   });
   productId = product.id;
 });
