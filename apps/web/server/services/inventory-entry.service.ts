@@ -116,6 +116,33 @@ export class LaboratoryEvidenceConflictError extends Error {
  * que bodega no escribió, que es exactamente el error que la evidencia de
  * laboratorio existe para impedir.
  */
+/**
+ * El producto todavía no tiene SKU (código de Orion).
+ *
+ * El SKU es lo único que ata un producto de la droguería con el mismo producto
+ * en Orion. Cargar stock contra un producto sin identidad crea inventario que
+ * después nadie puede cuadrar: existe acá y no existe allá, y la diferencia
+ * aparece recién cuando alguien hace el conteo.
+ *
+ * El vendedor SÍ puede aplazarlo al tomar el pedido —tiene al cliente delante—,
+ * pero ese aplazamiento se resuelve antes de que la mercadería toque el
+ * inventario. Bodega tiene la caja en la mano, con el código impreso encima: es
+ * el momento y la persona correctos para completarlo.
+ *
+ * Lleva el NOMBRE además del id porque el mensaje se le muestra a una persona,
+ * y un cuid no le sirve para encontrar el producto en la pantalla.
+ */
+export class ProductIdentityRequiredError extends Error {
+  readonly productId: string;
+  readonly productName: string;
+
+  constructor(params: { productId: string; productName: string }) {
+    super("product has no Orion code");
+    this.productId = params.productId;
+    this.productName = params.productName;
+  }
+}
+
 export class LaboratoryNameResolutionError extends Error {
   readonly requestedName: string;
 
@@ -202,6 +229,21 @@ export async function registerInventoryEntry(
     // misma entrada produce el mismo fingerprint aunque el nombre se haya
     // escrito con otras mayúsculas, y cualquier fallo posterior revierte
     // también el laboratorio.
+    // El SKU se exige ANTES de escribir nada. Va dentro de la transacción para
+    // que la lectura sea la misma que verá el resto de la operación: si alguien
+    // completa la identidad mientras esta entrada corre, la que manda es la que
+    // esta transacción vio.
+    const product = await tx.product.findUnique({
+      where: { id: data.productId },
+      select: { id: true, name: true, orionCode: true },
+    });
+    if (product && !product.orionCode) {
+      throw new ProductIdentityRequiredError({
+        productId: product.id,
+        productName: product.name,
+      });
+    }
+
     const resolvedData = await resolveLaboratoryName(data, tx);
     const fingerprint = requestFingerprint(resolvedData);
     data = resolvedData;

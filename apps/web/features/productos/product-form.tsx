@@ -25,7 +25,16 @@ export function ProductForm({ laboratories = [] }: { laboratories?: Laboratory[]
   return (
     <form action={formAction} className="space-y-4">
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Código" htmlFor="code">
+        {/* Este NO es el SKU. Es el código interno del catálogo —`PROV-…`,
+            `MED-001`— y no existe del otro lado, en Orion. Decía solo "Código",
+            y esa ambigüedad es la misma que hizo elegir el producto equivocado
+            al registrar una entrada: tres nombres parecidos y un código que no
+            identifica nada fuera de acá.
+
+            El SKU (código de Orion) se acuña por su propio flujo, que valida
+            unicidad e inmutabilidad; ponerlo como un campo más de este
+            formulario dejaría acuñar identidad sin esas garantías. */}
+        <Field label="Código interno" htmlFor="code">
           <Input id="code" name="code" required />
         </Field>
         <Field label="Nombre" htmlFor="name">

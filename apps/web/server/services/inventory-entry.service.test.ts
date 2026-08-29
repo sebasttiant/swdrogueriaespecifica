@@ -8,6 +8,10 @@ const { prismaMock, tx } = vi.hoisted(() => {
     inventoryAllocation: { create: vi.fn() },
     missingItem: { update: vi.fn() },
     pending: { findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn() },
+    // La entrada exige que el producto tenga SKU antes de escribir nada. El
+    // doble responde uno identificado por defecto: estos casos vienen a probar
+    // la transacción, no la identidad, que tiene su propia prueba en PostgreSQL.
+    product: { findUnique: vi.fn() },
     $queryRaw: vi.fn(),
   };
   const prismaMock = {
@@ -75,6 +79,13 @@ beforeEach(() => {
   prismaMock.$transaction.mockImplementation(
     (fn: (client: typeof tx) => unknown) => fn(tx),
   );
+  // Producto identificado por defecto: sin SKU la entrada se rechaza antes de
+  // escribir, y estos casos vienen a probar la transacción.
+  tx.product.findUnique.mockResolvedValue({
+    id: "prod_1",
+    name: "Acetaminofén",
+    orionCode: "ORN-1",
+  });
   vi.mocked(upsertBatchQuantity).mockResolvedValue({ id: "batch_1" } as never);
   // Por defecto el lote no existe todavía: la entrada lo crea.
   vi.mocked(lockBatchLaboratoryEvidence).mockResolvedValue(null);
