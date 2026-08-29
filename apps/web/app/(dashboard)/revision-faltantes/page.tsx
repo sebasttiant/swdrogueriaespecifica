@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { PageHeader } from "@/app/_components/app-shell/page-header";
+import { ReceiverQueue } from "@/features/faltantes/receiver-queue";
 import { ReportQueueList } from "@/features/faltantes/report-queue-list";
 import { parseReportQueuePage } from "@/features/faltantes/report-queue-paging";
 import {
@@ -31,6 +32,10 @@ import { requireCapability } from "@/lib/auth/require-role";
 import { cn } from "@/lib/utils/cn";
 import { DEFAULT_PAGE_SIZE } from "@/lib/pagination";
 import { getMissingReportQueue } from "@/server/services/missing-report.service";
+import {
+  listReceiverQueue,
+  resolveReceiverScope,
+} from "@/server/services/missing-receiver.service";
 
 export const metadata: Metadata = { title: "Revisión de faltantes" };
 
@@ -58,13 +63,37 @@ export default async function RevisionFaltantesPage({
     rscope?: string;
   }>;
 }) {
-  // UNA proyección y una sola: la mesa de trabajo de GERENCIA.
+  // Una ruta, DOS proyecciones — y las dos son DE ESTANTERÍA.
   //
-  // Bodega tenía acá su cola de recepción, y el nombre le mentía: no revisa
-  // faltantes, recibe mercadería —y encima marcaba la llegada del pedido de un
-  // cliente dentro de un módulo de estantería—. Se mudó a `/recepcion`, con su
-  // propio nombre y las dos colas juntas.
-  const session = await requireCapability("canReviewMissingReports");
+  // Gerencia decide qué reponer y qué descartar; bodega recibe lo que se
+  // compró. Bodega entra por la capability más débil y la página decide qué
+  // proyección arma, así no necesita `canReviewMissingReports`, que le daría de
+  // paso el poder de pedir y descartar.
+  //
+  // Los PEDIDOS DE CLIENTES no pasan por acá en ninguna de las dos: se compran,
+  // se reciben y se cargan desde Revisión de pendientes, que es donde el
+  // pendiente se completa entero. Un faltante que nació de un pendiente no es
+  // una reposición: hay una persona esperando, con fecha prometida.
+  const session = await requireCapability("canReceiveMissingItems");
+  const reviewsPurchases = can(session.user.role, "canReviewMissingReports");
+
+  if (!reviewsPurchases) {
+    // Bodega: solo la cola física de ESTANTERÍA. El scope se resuelve contra
+    // los estados permitidos, así que escribir `?scope=` a mano cae en "Ya
+    // pedidos" y la consulta nunca pide FALTANTE ni CANCELADO.
+    const receiverScope = resolveReceiverScope((await searchParams).scope);
+    const items = await listReceiverQueue(receiverScope, "shelf");
+
+    return (
+      <div className="space-y-4">
+        <PageHeader
+          title="Revisión de faltantes"
+          description="Reposición de estantería. Marcá la llegada y registrá la entrada."
+        />
+        <ReceiverQueue items={items} scope={receiverScope} />
+      </div>
+    );
+  }
 
   const {
     page: rawPage,
@@ -82,8 +111,8 @@ export default async function RevisionFaltantesPage({
   // compra desde Revisión de PENDIENTES, que es donde el gerente tiene delante
   // a quién está esperando.
   //
-  // Bodega no queda afuera de nada: recibe los DOS orígenes en `/recepcion`,
-  // que es una cola de bultos físicos y no de decisiones de compra.
+  // Bodega no queda afuera de nada: recibe la estantería en la proyección de
+  // arriba, y los pedidos de clientes en Revisión de pendientes.
   // --------------------------------------------------------------------------
   const SHELF_ONLY = "shelf" as const;
 

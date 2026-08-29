@@ -162,32 +162,28 @@ describe("Revisión de identidad", () => {
 });
 
 // --------------------------------------------------------------------------
-// Recepción es la pantalla de BODEGA, con nombre propio.
+// Bodega no tiene pantalla propia de recepción, y es deliberado: recibe los
+// pedidos de clientes en Revisión de PENDIENTES —donde marca la llegada y carga
+// la entrada sin cambiar de pantalla— y la reposición en Revisión de faltantes.
 //
-// Vivía como una proyección dentro de Revisión de faltantes, y ese cartel le
-// mentía: bodega no revisa faltantes, recibe mercadería —y encima marcaba la
-// llegada del pedido de un cliente dentro de un módulo de estantería—.
+// Hubo una `/recepcion` que juntaba las dos colas. Se retiró: un pendiente se
+// completa en un solo lugar, y mandar a bodega a otra pantalla para la mitad
+// del trabajo es cómo se deja un pedido a medio terminar.
 // --------------------------------------------------------------------------
-describe("visibleNavItems · recepción", () => {
-  it("la ve quien recibe mercadería", () => {
-    for (const role of ["SUPERADMIN", "ADMIN", "BODEGA"] as const) {
-      expect(labels(role)).toContain("Recepción");
+describe("visibleNavItems · dónde trabaja bodega", () => {
+  it("no existe una entrada de Recepción", () => {
+    for (const role of ["SUPERADMIN", "ADMIN", "SUPERVISOR", "OPERADOR", "BODEGA"] as const) {
+      expect(labels(role)).not.toContain("Recepción");
     }
+    expect(NAV_ITEMS.some((item) => item.href === "/recepcion")).toBe(false);
   });
 
-  // Quien no recibe no la ve: el vendedor reporta y sigue vendiendo.
-  it("no la ven los roles que no reciben", () => {
-    expect(labels("SUPERVISOR")).not.toContain("Recepción");
-    expect(labels("OPERADOR")).not.toContain("Recepción");
-  });
+  it("bodega llega a sus dos superficies desde el menú", () => {
+    const suyas = labels("BODEGA");
 
-  // Bodega trabaja de pie, con la caja en una mano y el celular en la otra: su
-  // pantalla sí se gana un lugar en la barra inferior.
-  it("ocupa un lugar en la barra inferior móvil", () => {
-    const item = visibleNavItems("BODEGA").find(
-      (navItem) => navItem.href === "/recepcion",
-    );
-    expect(item?.primaryMobile).toBe(true);
+    expect(suyas).toContain("Revisión de pendientes");
+    expect(suyas).toContain("Revisión de faltantes");
+    expect(suyas).toContain("Entradas");
   });
 
   // El enlace se ofrece con la MISMA capacidad que abre la puerta. Ofrecerlo con
@@ -197,7 +193,9 @@ describe("visibleNavItems · recepción", () => {
     const byHref = Object.fromEntries(
       NAV_ITEMS.map((item) => [item.href, item.capability]),
     );
-    expect(byHref["/recepcion"]).toBe("canReceiveMissingItems");
-    expect(byHref["/revision-faltantes"]).toBe("canReviewMissingReports");
+
+    // Revisión de faltantes arma DOS proyecciones y su guard es la más débil.
+    expect(byHref["/revision-faltantes"]).toBe("canReceiveMissingItems");
+    expect(byHref["/revision-pendientes"]).toBe("canReviewPendings");
   });
 });

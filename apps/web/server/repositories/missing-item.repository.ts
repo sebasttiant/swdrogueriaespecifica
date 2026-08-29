@@ -570,12 +570,41 @@ export async function createMissingItem(
   });
 }
 
+/**
+ * Los estados desde los que se puede marcar la llegada física.
+ *
+ * PEDIDO es el de siempre: la reposición de estantería se compra y después
+ * llega.
+ *
+ * FALTANTE se admite SOLO para lo que nació de un pendiente, y es la regla de
+ * negocio del 29-08-2026: cuando el vendedor registra el pedido de un cliente,
+ * ESE PRODUCTO YA FUE PEDIDO — por el cliente. No hace falta que gerencia
+ * apriete un segundo botón para convertirlo en "Pedido"; ese botón responde a
+ * otra pregunta ("¿se lo pedimos al proveedor?") y atarle la recepción hacía
+ * que bodega no viera nunca el pendiente de un cliente.
+ *
+ * "Pedido por el cliente" y "pedido al proveedor" no son lo mismo.
+ */
+const ARRIVABLE_FROM_ORDER = ["PEDIDO"] as const;
+const ARRIVABLE_FROM_PENDING = ["FALTANTE", "PEDIDO"] as const;
+
 export async function markMissingItemArrived(
   tx: Prisma.TransactionClient,
   data: { id: string; arrivedById: string; arrivedAt: Date },
 ): Promise<number> {
+  // El origen decide desde qué estados se admite la llegada, así que se lee
+  // ANTES de intentar el compare-and-set. Una fila de estantería sigue
+  // exigiendo PEDIDO: sin orden de compra nadie debería estar recibiéndola.
+  const target = await tx.missingItem.findUnique({
+    where: { id: data.id },
+    select: { originId: true },
+  });
+  if (!target) return 0;
+
+  const allowed = target.originId ? ARRIVABLE_FROM_PENDING : ARRIVABLE_FROM_ORDER;
+
   const { count } = await tx.missingItem.updateMany({
-    where: { id: data.id, status: "PEDIDO", confirmedAt: null },
+    where: { id: data.id, status: { in: [...allowed] }, confirmedAt: null },
     data: { status: "EN_BODEGA", arrivedById: data.arrivedById, arrivedAt: data.arrivedAt },
   });
   if (count === 0) return 0;
@@ -587,14 +616,10 @@ export async function markMissingItemArrived(
   //
   // Solo avanza desde ESPERANDO: si el pendiente ya está disponible (amarillo)
   // retroceder a verde sería mentirle al vendedor.
-  const arrived = await tx.missingItem.findUnique({
-    where: { id: data.id },
-    select: { originId: true },
-  });
-  if (arrived?.originId) {
+  if (target.originId) {
     await tx.pending.updateMany({
       where: {
-        id: arrived.originId,
+        id: target.originId,
         availabilityStatus: "ESPERANDO",
         // T2.2b: un cierre parcial es terminal; no resucitar a LLEGO_BODEGA.
         status: { notIn: ["ENTREGADO", "CANCELADO", "CLOSED_PARTIAL"] },

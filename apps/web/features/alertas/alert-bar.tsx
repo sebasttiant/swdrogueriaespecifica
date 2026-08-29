@@ -75,14 +75,13 @@ function buildAlertChips(counts: AlertCounts): AlertChip[] {
       href: "/faltantes",
     },
     // Un producto QUE LLEVAMOS se quedó sin con qué cubrir lo prometido.
-    // Enlaza a Recepción porque el primer gesto no es comprar: es mirar el
-    // depósito —la caja puede estar recibida y sin cargar—, y eso solo lo
-    // puede resolver bodega.
+    // Enlaza a la mitad de abastecimiento de Revisión de pendientes, que es
+    // donde se resuelve: ahí bodega marca la llegada y carga la entrada.
     {
       severity: ALERT_SEVERITY.DANGER,
       label: "Sin stock",
       count: counts.stockoutProducts,
-      href: "/recepcion",
+      href: "/revision-pendientes?tab=abastecimiento",
     },
   ];
 

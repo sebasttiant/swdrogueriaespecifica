@@ -9,7 +9,6 @@ import {
   ShieldCheck,
   Users,
   Inbox,
-  PackageCheck,
   ScanBarcode,
   type LucideIcon,
 } from "lucide-react";
@@ -35,18 +34,18 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { label: "Pendientes", href: "/pendientes", icon: ClipboardList, primaryMobile: true, capability: "canViewPendientes" },
   { label: "Faltantes", href: "/faltantes", icon: PackageX, primaryMobile: true, capability: "canViewFaltantes" },
   // Sin `primaryMobile`: es una vista de gerencia, no debe ocupar un lugar en
-  // la barra inferior del celular del vendedor. La capability es EXACTAMENTE la
-  // del guard de la página: ofrecer un enlace con una capacidad parecida deja a
-  // alguien tocando una puerta que después se le cierra.
-  { label: "Revisión de faltantes", href: "/revision-faltantes", icon: Inbox, capability: "canReviewMissingReports" },
-  // La pantalla de BODEGA, con nombre propio. Antes era una proyección dentro
-  // de Revisión de faltantes, y ese cartel le mentía: no revisa faltantes,
-  // recibe mercadería. Va en la barra móvil porque bodega trabaja de pie, con
-  // la caja en una mano y el celular en la otra.
-  { label: "Recepción", href: "/recepcion", icon: PackageCheck, primaryMobile: true, capability: "canReceiveMissingItems" },
+  // la barra inferior del celular del vendedor. La capability es la MÁS DÉBIL
+  // de las dos que abren la ruta —gerencia entra por `canReviewMissingReports`
+  // y bodega por `canReceiveMissingItems`—, porque la página arma una
+  // proyección distinta para cada una. Dejar la fuerte acá le escondería a
+  // bodega la recepción de estantería, que sí puede usar.
+  { label: "Revisión de faltantes", href: "/revision-faltantes", icon: Inbox, capability: "canReceiveMissingItems" },
   // Va pegado al de faltantes porque son las dos superficies de revisión, y
   // tampoco ocupa lugar en la barra móvil. La diferencia con el de arriba es a
   // quién alcanza: esta la ve también el vendedor, acotada a sus propias filas.
+  // Acá vive TAMBIÉN la recepción de los pedidos de clientes. Sigue SIN
+  // `primaryMobile`: la barra inferior está dimensionada para tres accesos y
+  // sumarle uno cuarto parte la fila. Bodega llega por el menú.
   { label: "Revisión de pendientes", href: "/revision-pendientes", icon: ClipboardCheck, capability: "canReviewPendings" },
   // Va con las otras dos superficies de revisión y tampoco ocupa lugar en la
   // barra móvil. Se gatea con `canFixProductIdentity` —la MISMA capacidad que

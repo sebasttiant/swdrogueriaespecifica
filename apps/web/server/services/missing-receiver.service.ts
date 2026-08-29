@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db/prisma";
+import type { MissingItemOrigin } from "@/server/repositories/missing-item.repository";
 
 // --------------------------------------------------------------------------
 // La cola de RECEPCIÓN: lo que bodega tiene que recibir.
@@ -58,9 +59,21 @@ const RECEIVER_PAGE_SIZE = 50;
  */
 export async function listReceiverQueue(
   scope: ReceiverScope,
+  // Eje de ORIGEN. `shelf` es lo único que se recibe por esta cola: los pedidos
+  // de clientes se reciben en Revisión de pendientes, donde bodega marca la
+  // llegada Y carga la entrada sin cambiar de pantalla. El default es "all"
+  // para no cambiar en silencio a un llamador que todavía no eligió eje.
+  origin: MissingItemOrigin = "all",
 ): Promise<ReceiverItem[]> {
+  const originWhere =
+    origin === "shelf"
+      ? { originId: null }
+      : origin === "pending"
+        ? { originId: { not: null } }
+        : {};
+
   const rows = await prisma.missingItem.findMany({
-    where: { status: scope },
+    where: { status: scope, ...originWhere },
     orderBy: [{ orderedAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
     take: RECEIVER_PAGE_SIZE,
     // El `select` es la minimización: lo que no se nombra acá no sale de la

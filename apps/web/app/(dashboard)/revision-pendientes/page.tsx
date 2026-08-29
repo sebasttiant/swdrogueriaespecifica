@@ -1,15 +1,9 @@
 import type { Metadata } from "next";
 
 import { PageHeader } from "@/app/_components/app-shell/page-header";
-import { MissingQueueBoard } from "@/features/faltantes/missing-queue-board";
-import { MissingBoardTabs } from "@/features/faltantes/missing-board-tabs";
-import {
-  PENDING_SUPPLY_ROUTE,
-  repositoryScopeFor,
-  resolveMissingScope,
-} from "@/features/faltantes/missing-scope";
-import { resolveMissingView } from "@/features/faltantes/missing-view";
 import { PendingList } from "@/features/pendientes/pending-list";
+import { PendingReceptionQueue } from "@/features/pendientes/pending-reception-queue";
+import { StockoutList } from "@/features/faltantes/stockout-list";
 import { ReviewTabs } from "@/features/pendientes/review-tabs";
 import { resolveReviewTab } from "@/features/pendientes/review-tab";
 import { PendingReviewFilters } from "@/features/pendientes/pending-review-filters";
@@ -18,9 +12,10 @@ import { can, seesAllPendings } from "@/lib/auth/permissions";
 import { requireCapability } from "@/lib/auth/require-role";
 import type { PendingScope } from "@/server/repositories/pending.repository";
 import {
-  getActionableMissingCount,
-  getMissingItems,
-} from "@/server/services/missing-item.service";
+  countPendingReception,
+  listPendingReception,
+} from "@/server/services/pending-reception.service";
+import { listStockoutProducts } from "@/server/services/stockout.service";
 import { getPendings } from "@/server/services/pending.service";
 
 export const metadata: Metadata = { title: "Revisión de pendientes" };
@@ -60,12 +55,6 @@ export default async function RevisionPendientesPage({
     customer?: string;
     /** Qué mitad de la pantalla: seguimiento o abastecimiento. */
     tab?: string;
-    // Ejes del tablero de abastecimiento. Llevan prefijo `s` porque `scope`,
-    // `view` y `cursor` ya son de la lista de pendientes de arriba: sin el
-    // prefijo, mover un tablero movería el otro. Ver `missing-scope.ts`.
-    sscope?: string;
-    sview?: string;
-    scursor?: string;
   }>;
 }) {
   const session = await requireCapability("canReviewPendings");
@@ -89,53 +78,41 @@ export default async function RevisionPendientesPage({
   // capability que pedir un faltante, no la de cancelar.
   const canManageStatus = can(session.user.role, "canOrderMissingItems");
 
-  const {
-    cursor,
-    scope: rawScope,
-    tab: rawTab,
-    sscope: rawSupplyScope,
-    sview: rawSupplyView,
-    scursor: rawSupplyCursor,
-    ...rawAxes
-  } = await searchParams;
+  const { cursor, scope: rawScope, tab: rawTab, ...rawAxes } = await searchParams;
 
   // --------------------------------------------------------------------------
-  // ABASTECIMIENTO: qué hay que COMPRAR para cumplir los pedidos de cliente.
+  // ABASTECIMIENTO: la mitad FÍSICA del pendiente.
   //
-  // Es la misma mesa de trabajo de Revisión de faltantes —mismas pestañas,
-  // mismas palabras, mismo gesto de un toque— pero acotada por ORIGEN: solo lo
-  // que nació de un pendiente. La reposición de estantería sigue viviendo en
-  // Revisión de faltantes. El origen decide la pantalla; el gerente no tiene
-  // que acordarse de filtrar.
+  // Qué llegó, qué falta conseguir, quién lo recibió. Es donde BODEGA trabaja
+  // los pedidos de clientes, dentro del mismo módulo que gerencia y no en una
+  // pantalla aparte: un pendiente se completa en un solo lugar.
   //
-  // La autoridad de compras es la MISMA que en la otra pantalla
-  // (`canOrderMissingItems`), no una nueva: quien puede pedir, puede pedir, sin
-  // importar desde dónde lo toca. Un vendedor entra a esta pantalla por
-  // `canReviewPendings` y ve su seguimiento; la mitad de abastecimiento no
-  // existe para él.
+  // NO HAY BOTÓN DE "PEDIDO", y es la regla de negocio, no un recorte: cuando
+  // el vendedor registró el pendiente, el cliente YA PIDIÓ el producto. Pedirle
+  // a gerencia un segundo clic para "convertirlo en pedido" confundía dos cosas
+  // distintas —pedido por el CLIENTE contra pedido al PROVEEDOR— y ataba la
+  // recepción a una acción que nadie hacía: bodega no veía nunca el pendiente.
+  //
+  // La decisión de compra sigue existiendo y sigue siendo de gerencia, pero
+  // vive en Seguimiento, con su propio eje (`purchaseStatus`).
+  //
+  // Quién puede ACTUAR acá es `canReceiveMissingItems`: BODEGA, ADMIN y
+  // SUPERADMIN. Bodega es la responsable habitual; gerencia, el respaldo. El
+  // vendedor puede MIRAR el estado de sus pendientes —es su cliente el que
+  // espera— pero no marca llegadas ni carga entradas.
   // --------------------------------------------------------------------------
-  const tab = canManageStatus ? resolveReviewTab(rawTab) : "seguimiento";
+  const canReceive = can(session.user.role, "canReceiveMissingItems");
+  const tab = resolveReviewTab(rawTab);
   const showingSupply = tab === "abastecimiento";
 
-  const supplyScope = resolveMissingScope(rawSupplyScope);
-  const supplyView = resolveMissingView(rawSupplyView);
-
-  const [supplyQueue, supplyCount] = await Promise.all([
-    showingSupply
-      ? getMissingItems({
-          cursor: rawSupplyCursor,
-          scope: repositoryScopeFor(supplyScope),
-          // El corazón de esta pantalla: SOLO lo que nació de un pedido de
-          // cliente. Sin este eje volvería a mezclarse la estantería, que es
-          // justo lo que se pidió separar.
-          origin: "pending",
-          canViewCustomerIdentity,
-          canViewSupplierIdentity: can(session.user.role, "canViewSupplierIdentity"),
-        })
-      : Promise.resolve(null),
+  const [reception, stockouts, receptionCount] = await Promise.all([
+    showingSupply ? listPendingReception() : Promise.resolve(null),
+    // Los productos QUE LLEVAMOS y hoy no alcanzan. Va con la cola porque el
+    // primer gesto de bodega es el mismo: mirar el depósito antes de esperar.
+    showingSupply && canReceive ? listStockoutProducts() : Promise.resolve([]),
     // El contador va SIEMPRE, esté abierta la pestaña o no: un número que solo
     // se calcula al entrar no avisa de nada, que es justo lo que tiene que hacer.
-    canManageStatus ? getActionableMissingCount("pending") : Promise.resolve(0),
+    countPendingReception(),
   ]);
 
   // Los ejes salen de la URL con la misma desconfianza que el scope: un valor
@@ -171,43 +148,15 @@ export default async function RevisionPendientesPage({
         }
       />
 
-      {/* Las pestañas solo existen para quien puede comprar. Al vendedor no se
-          le muestra una mitad que no puede usar: sería un lugar más donde tocar
-          sin que pase nada. */}
-      {canManageStatus ? (
-        <ReviewTabs active={tab} supplyCount={supplyCount} />
-      ) : null}
+      {/* Las pestañas son para todos los que entran: el vendedor también quiere
+          saber si lo suyo ya llegó a la droguería. Lo que cambia por rol no es
+          la pestaña sino lo que se puede TOCAR adentro. */}
+      <ReviewTabs active={tab} supplyCount={receptionCount} />
 
       {showingSupply ? (
         <>
-          {/* Las MISMAS pestañas y las MISMAS palabras que Revisión de
-              faltantes. Quien las usa tiene 60 años: que se parezcan es lo que
-              evita tener que aprender dos cosas. Sin buzón de reportes, porque
-              un pedido de cliente no nace de un reporte de vendedor. */}
-          <MissingBoardTabs
-            active={supplyScope}
-            view={supplyView}
-            actionableCount={supplyCount}
-            reportsCount={null}
-            route={PENDING_SUPPLY_ROUTE}
-            label="Estado del abastecimiento"
-          />
-
-          <MissingQueueBoard
-            items={supplyQueue!.items}
-            nextCursor={supplyQueue!.nextCursor}
-            scope={supplyScope}
-            view={supplyView}
-            canAct={canManageStatus}
-            // El export de la cola es de estantería y baja TODO lo abierto sin
-            // distinguir origen. Ofrecerlo acá prometería un archivo de esta
-            // pantalla y entregaría otro. Queda para su propio PR.
-            canExport={false}
-            canSeeSupplier={can(session.user.role, "canViewSupplierIdentity")}
-            now={new Date()}
-            route={PENDING_SUPPLY_ROUTE}
-            label="Vista del abastecimiento"
-          />
+          <StockoutList items={stockouts} />
+          <PendingReceptionQueue items={reception!} canReceive={canReceive} />
         </>
       ) : (
         <>

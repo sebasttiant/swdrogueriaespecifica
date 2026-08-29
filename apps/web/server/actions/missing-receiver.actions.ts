@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 
 import { requireCapability } from "@/lib/auth/require-role";
+import { enqueuePendingArrivalNotification } from "@/server/services/notification-outbox.service";
 import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
 import { prisma } from "@/lib/db/prisma";
 import { markMissingItemArrived } from "@/server/repositories/missing-item.repository";
@@ -28,7 +29,12 @@ import {
 export type ReceiverActionState = { error: string | null; ok: boolean };
 
 /**
- * Marca la llegada física de un faltante ya pedido.
+ * Marca la llegada física.
+ *
+ * Autorizada con `canReceiveMissingItems`: BODEGA, ADMIN y SUPERADMIN. Bodega
+ * es la responsable habitual; gerencia actúa de respaldo. VENDEDOR, OPERADOR y
+ * SUPERVISOR reciben la negativa ACÁ, en el servidor — esconder el botón no
+ * autoriza nada.
  *
  * Recibe SOLO el id. El actor sale de la sesión: aceptar un `arrivedById` del
  * cliente permitiría firmar la recepción a nombre de otro, y la auditoría de
@@ -48,21 +54,44 @@ export async function markMissingItemArrivedAction(
   const arrivedAt = new Date();
   let changed = 0;
   try {
-    changed = await prisma.$transaction((tx) =>
-      markMissingItemArrived(tx, {
+    changed = await prisma.$transaction(async (tx) => {
+      const count = await markMissingItemArrived(tx, {
         id: missingItemId,
         arrivedById: session.user.id,
         arrivedAt,
-      }),
-    );
+      });
+      if (count === 0) return 0;
+
+      // ALERTA 1 — LA LLEGADA FÍSICA. Va DENTRO de la transacción: si la
+      // marca se revierte, el aviso se revierte con ella. Un aviso que
+      // sobrevive al hecho que lo causó es peor que no avisar.
+      //
+      // Dice "llegó a la droguería", NO "podés facturar": entre los dos hay un
+      // paso —cargar la entrada— y confundirlos hace que el vendedor le
+      // prometa al cliente algo que el sistema todavía no puede cumplir. La
+      // alerta de disponibilidad la emite la entrada, y es otro evento.
+      //
+      // Idempotente por el outbox: la clave de transición es el estado
+      // alcanzado, así que recargar la página o volver a marcar no encola un
+      // segundo aviso.
+      const arrived = await tx.missingItem.findUnique({
+        where: { id: missingItemId },
+        select: { originId: true },
+      });
+      if (arrived?.originId) {
+        await enqueuePendingArrivalNotification(arrived.originId, tx);
+      }
+      return count;
+    });
   } catch {
     return { error: "No se pudo registrar la llegada. Reintentá.", ok: false };
   }
 
   // `changed === 0` es la respuesta del compare-and-set: la fila ya no estaba
-  // en PEDIDO. Puede ser que otro la marcó primero —dos personas descargando el
-  // mismo pedido— o que nunca se compró. En los dos casos el estado que hay es
-  // el correcto y NO se pisa; se dice qué pasó y se deja mirar de nuevo.
+  // en un estado que admita la llegada. Puede ser que otro la marcó primero
+  // —dos personas descargando el mismo bulto— o que una reposición de
+  // estantería todavía no se compró. En los dos casos el estado que hay es el
+  // correcto y NO se pisa; se dice qué pasó y se deja mirar de nuevo.
   if (changed === 0) {
     return {
       error:
@@ -88,10 +117,12 @@ export async function markMissingItemArrivedAction(
     // Silencio deliberado: ver el comentario de arriba.
   }
 
-  // La cola de bodega vive en /recepcion; gerencia ve el mismo salto de estado
-  // en su tablero. Las dos se revalidan o una de las dos muestra el estado viejo.
-  revalidatePath("/recepcion");
-  revalidatePath("/revision-faltantes");
+  // Bodega trabaja el pedido de cliente en Revisión de pendientes y la
+  // reposición de estantería en Revisión de faltantes. El vendedor ve el aviso
+  // en su propia pantalla. Las tres se revalidan o alguna muestra el estado
+  // viejo justo después de la acción que lo cambió.
   revalidatePath("/revision-pendientes");
+  revalidatePath("/revision-faltantes");
+  revalidatePath("/pendientes");
   return { error: null, ok: true };
 }

@@ -724,3 +724,50 @@ describe("faltantes · quién reporta y quién controla", () => {
     }
   });
 });
+
+// --------------------------------------------------------------------------
+// RECEPCIÓN DE PENDIENTES. Marcar "Ya llegó", vincular o crear el producto y
+// registrar la entrada pertenecen a BODEGA, ADMIN y SUPERADMIN.
+//
+// BODEGA es la responsable habitual; gerencia actúa de respaldo cuando no está.
+// VENDEDOR, OPERADOR y SUPERVISOR reciben la negativa DESDE EL SERVIDOR: los
+// guards usan esta misma capability, así que esconder el botón no autoriza
+// nada y mostrarlo tampoco.
+// --------------------------------------------------------------------------
+describe("recepción · quién marca la llegada y carga la entrada", () => {
+  it("es exactamente BODEGA, ADMIN y SUPERADMIN", () => {
+    expect(rolesWithCapability("canReceiveMissingItems")).toEqual([
+      "SUPERADMIN",
+      "ADMIN",
+      "BODEGA",
+    ]);
+  });
+
+  it.each(["SUPERADMIN", "ADMIN", "BODEGA"] as const)(
+    "%s puede recibir y cargar la entrada",
+    (role) => {
+      expect(can(role, "canReceiveMissingItems")).toBe(true);
+      expect(can(role, "canCreateEntries")).toBe(true);
+      // Y completar la identidad del producto que está recibiendo.
+      expect(can(role, "canLinkProductIdentity")).toBe(true);
+    },
+  );
+
+  it.each(["SUPERVISOR", "OPERADOR"] as const)(
+    "%s no puede recibir ni cargar entradas",
+    (role) => {
+      expect(can(role, "canReceiveMissingItems")).toBe(false);
+      expect(can(role, "canCreateEntries")).toBe(false);
+    },
+  );
+
+  // BODEGA recibe, pero NO decide sobre el cliente: no factura, no entrega
+  // ajenos y no toca los datos comerciales. Recibir una caja y cerrar una venta
+  // son dos autoridades distintas.
+  it("BODEGA recibe pero no decide sobre el cliente", () => {
+    expect(can("BODEGA", "canReceiveMissingItems")).toBe(true);
+    expect(can("BODEGA", "canViewCustomerIdentity")).toBe(false);
+    expect(can("BODEGA", "canManageAllPendings")).toBe(false);
+    expect(can("BODEGA", "canOrderMissingItems")).toBe(false);
+  });
+});

@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   auditContextFromHeaders: vi.fn(),
   revalidatePath: vi.fn(),
   transaction: vi.fn(),
+  findMissingItem: vi.fn(),
+  enqueueArrival: vi.fn(),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
@@ -23,15 +25,22 @@ vi.mock("@/server/services/audit.service", () => ({
   recordAudit: mocks.recordAudit,
   auditContextFromHeaders: mocks.auditContextFromHeaders,
 }));
+vi.mock("@/server/services/notification-outbox.service", () => ({
+  enqueuePendingArrivalNotification: mocks.enqueueArrival,
+}));
 
 import { markMissingItemArrivedAction } from "./missing-receiver.actions";
 
 // --------------------------------------------------------------------------
-// "Ya llegó a bodega" mueve el faltante de PEDIDO a EN_BODEGA. Nada más.
+// "Ya llegó" registra la llegada FÍSICA y avisa. Nada más.
 //
-// No crea inventario y no avisa al vendedor: notificarle "ya llegó" cuando
-// todavía no puede entregar nada lo mandaría a llamar a un cliente que va a
-// venir a buscar algo que el sistema no tiene.
+// NO crea inventario y NO habilita facturar: entre la llegada y la venta está
+// el registro de la entrada, que es el que asigna stock. El aviso lo dice con
+// esas palabras —"llegó a la droguería, todavía sin cargar"— porque prometerle
+// al cliente que puede pasar a buscarlo cuando el sistema no tiene nada
+// asignado es exactamente el error que este aviso separado evita.
+//
+// La alerta de "podés facturar" es OTRO evento y lo emite la entrada.
 // --------------------------------------------------------------------------
 
 const PREV = { error: null, ok: false };
@@ -50,7 +59,13 @@ beforeEach(() => {
   mocks.auditContextFromHeaders.mockResolvedValue({ userId: "bodega-1" });
   mocks.recordAudit.mockResolvedValue({ ok: true });
   mocks.markMissingItemArrived.mockResolvedValue(1);
-  mocks.transaction.mockImplementation((fn: (tx: unknown) => unknown) => fn({}));
+  mocks.enqueueArrival.mockResolvedValue({ id: "outbox-1" });
+  // Por defecto la fila viene de un PENDIENTE: es el caso que la regla nueva
+  // habilita —el pendiente nace solicitado— y el que emite el aviso.
+  mocks.findMissingItem.mockResolvedValue({ originId: "pending-1" });
+  mocks.transaction.mockImplementation((fn: (tx: unknown) => unknown) =>
+    fn({ missingItem: { findUnique: mocks.findMissingItem } }),
+  );
 });
 
 describe("markMissingItemArrivedAction · autorización", () => {
@@ -156,5 +171,75 @@ describe("markMissingItemArrivedAction · auditoría", () => {
     const result = await markMissingItemArrivedAction(PREV, formData());
 
     expect(result.ok).toBe(true);
+  });
+});
+
+// --------------------------------------------------------------------------
+// ALERTA 1 — LA LLEGADA FÍSICA.
+//
+// Es un evento propio, distinto del de disponibilidad. Dice "la caja está en la
+// droguería", no "podés facturar": entre los dos está el registro de la
+// entrada. Confundirlos hace que el vendedor le prometa al cliente algo que el
+// sistema todavía no puede cumplir.
+// --------------------------------------------------------------------------
+describe("markMissingItemArrivedAction · aviso de llegada", () => {
+  it("avisa al dueño del pendiente cuando la mercadería llega", async () => {
+    await markMissingItemArrivedAction(PREV, formData("mi-1"));
+
+    expect(mocks.enqueueArrival).toHaveBeenCalledWith("pending-1", expect.anything());
+  });
+
+  // DENTRO de la transacción: si la marca se revierte, el aviso se revierte con
+  // ella. Un aviso que sobrevive al hecho que lo causó es peor que no avisar.
+  it("encola el aviso dentro de la misma transacción que la marca", async () => {
+    const orden: string[] = [];
+    mocks.transaction.mockImplementation(async (fn: (tx: unknown) => unknown) => {
+      orden.push("abre-tx");
+      const salida = await fn({ missingItem: { findUnique: mocks.findMissingItem } });
+      orden.push("cierra-tx");
+      return salida;
+    });
+    mocks.enqueueArrival.mockImplementation(async () => {
+      orden.push("encola");
+      return { id: "outbox-1" };
+    });
+
+    await markMissingItemArrivedAction(PREV, formData("mi-1"));
+
+    expect(orden).toEqual(["abre-tx", "encola", "cierra-tx"]);
+  });
+
+  // Una reposición de estantería no tiene cliente esperando: no hay a quién
+  // avisarle.
+  it("no avisa cuando la fila es de estantería", async () => {
+    mocks.findMissingItem.mockResolvedValue({ originId: null });
+
+    await markMissingItemArrivedAction(PREV, formData("mi-2"));
+
+    expect(mocks.enqueueArrival).not.toHaveBeenCalled();
+  });
+
+  // Si el compare-and-set no movió nada —otro la marcó primero— no hubo
+  // llegada nueva que anunciar.
+  it("no avisa si la llegada no cambió nada", async () => {
+    mocks.markMissingItemArrived.mockResolvedValue(0);
+
+    const result = await markMissingItemArrivedAction(PREV, formData("mi-3"));
+
+    expect(result.ok).toBe(false);
+    expect(mocks.enqueueArrival).not.toHaveBeenCalled();
+  });
+
+  // Idempotencia: la garantía real vive en el outbox —la clave de transición es
+  // el estado alcanzado—, pero acá se fija que la acción no invente una clave
+  // por intento, que es como se rompería el dedupe sin que ninguna prueba lo note.
+  it("repetir la marca no inventa una clave nueva por intento", async () => {
+    await markMissingItemArrivedAction(PREV, formData("mi-1"));
+    await markMissingItemArrivedAction(PREV, formData("mi-1"));
+
+    for (const call of mocks.enqueueArrival.mock.calls) {
+      expect(call[0]).toBe("pending-1");
+    }
+    expect(mocks.enqueueArrival).toHaveBeenCalledTimes(2);
   });
 });
