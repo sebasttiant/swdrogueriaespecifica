@@ -223,7 +223,7 @@ describe("createInventoryEntryAction · conflicto de evidencia", () => {
 // diferencia aparece recién cuando alguien hace el conteo.
 // --------------------------------------------------------------------------
 describe("createInventoryEntryAction · identidad obligatoria", () => {
-  it("nombra el producto y dice dónde resolverlo", async () => {
+  it("nombra el producto y explica qué falta", async () => {
     registerInventoryEntry.mockRejectedValue(
       new ProductIdentityRequiredError({
         productId: "prod-9",
@@ -236,7 +236,34 @@ describe("createInventoryEntryAction · identidad obligatoria", () => {
     expect(result.ok).toBe(false);
     expect(result.error).toContain("Gel Caliente Muscular");
     expect(result.error).toMatch(/SKU \(código de Orion\)/);
-    expect(result.error).toMatch(/Productos/);
+  });
+
+  // El mensaje decía "completalo en Productos" y ahí terminaba: bodega quedaba
+  // buscando entre tres productos de nombre casi igual, que es justo el error
+  // que este rechazo existe para impedir. El servidor ya sabe cuál rechazó, así
+  // que lo devuelve para que la pantalla lo enlace en vez de hacerlo buscar.
+  it("devuelve el producto a resolver, para que la pantalla lo enlace", async () => {
+    registerInventoryEntry.mockRejectedValue(
+      new ProductIdentityRequiredError({
+        productId: "prod-9",
+        productName: "Gel Caliente Muscular",
+      }),
+    );
+
+    const result = await createInventoryEntryAction(PREV, formData());
+
+    expect(result.resolveSkuForProductId).toBe("prod-9");
+  });
+
+  // Va en un campo aparte, no dentro del texto: el id es el destino de un
+  // enlace, no algo que alguien deba leer ni transcribir.
+  it("no ofrece producto a resolver cuando el rechazo es por otra causa", async () => {
+    registerInventoryEntry.mockRejectedValue(new Error("falla cualquiera"));
+
+    const result = await createInventoryEntryAction(PREV, formData());
+
+    expect(result.ok).toBe(false);
+    expect(result.resolveSkuForProductId).toBeUndefined();
   });
 
   // El id interno no le sirve a quien recibe la caja para encontrar el producto.

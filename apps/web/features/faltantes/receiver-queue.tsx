@@ -89,9 +89,18 @@ export function ReceiverQueue({
                     {/* Sin SKU no se puede registrar la entrada. Decirlo acá
                         evita que bodega lo descubra recién al intentarlo. */}
                     {item.orionCode ?? (
-                      <span className="font-sans text-warning-foreground">
-                        Falta el SKU
-                      </span>
+                      /* Enlaza al producto EXACTO. El mensaje "completalo en
+                         Productos" obligaba a buscarlo a mano entre nombres
+                         casi idénticos — el mismo problema que hizo elegir el
+                         equivocado al registrar la entrada. Acá el id ya está
+                         decidido por el faltante: no hay nada que buscar. */
+                      <Link
+                        prefetch={false}
+                        href={`/productos/${item.productId}`}
+                        className="font-sans font-semibold text-warning-foreground underline underline-offset-2"
+                      >
+                        Falta el SKU — completalo
+                      </Link>
                     )}
                   </td>
                   <td className="px-3 py-2 text-muted-foreground">

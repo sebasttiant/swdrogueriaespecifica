@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { useActionState } from "@/lib/hooks/use-action-state";
 
@@ -183,6 +184,19 @@ export function EntryForm({
       {state.error ? (
         <p role="alert" className="text-sm font-medium text-danger">
           {state.error}
+        </p>
+      ) : null}
+      {state.resolveSkuForProductId ? (
+        /* El enlace lleva al producto EXACTO. Sin él, "completalo en Productos"
+           obliga a buscarlo entre nombres parecidos — el mismo problema. */
+        <p className="text-sm">
+          <Link
+            prefetch={false}
+            href={`/productos/${state.resolveSkuForProductId}`}
+            className="font-semibold text-primary underline underline-offset-2"
+          >
+            Ir a completar el SKU
+          </Link>
         </p>
       ) : null}
       {state.ok ? (

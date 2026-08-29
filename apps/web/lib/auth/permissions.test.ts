@@ -637,3 +637,32 @@ describe("canReceiveMissingItems · recepción física", () => {
     expect(can("BODEGA", "canViewCustomerIdentity")).toBe(false);
   });
 });
+
+// --------------------------------------------------------------------------
+// Quién puede resolver el SKU de un producto.
+//
+// El mensaje que rechaza una entrada sin identidad manda a completarlo. Si el
+// rol que recibe la caja no pudiera hacerlo, ese mensaje sería un callejón sin
+// salida: la mercadería queda en el depósito sin poder cargarse y nadie sabe a
+// quién pedirle qué.
+// --------------------------------------------------------------------------
+describe("resolver la identidad de un producto", () => {
+  it("bodega puede: es quien tiene la caja con el código impreso", () => {
+    expect(can("BODEGA", "canViewProductos")).toBe(true);
+    expect(can("BODEGA", "canManageProducts")).toBe(true);
+    expect(can("BODEGA", "canLinkProductIdentity")).toBe(true);
+  });
+
+  it("gerencia también", () => {
+    for (const rol of ["ADMIN", "SUPERADMIN"] as const) {
+      expect(can(rol, "canManageProducts")).toBe(true);
+      expect(can(rol, "canLinkProductIdentity")).toBe(true);
+    }
+  });
+
+  // El vendedor aplaza el SKU al tomar el pedido, pero no lo acuña: la
+  // identidad se completa con el producto en la mano.
+  it("el vendedor no gestiona el catálogo", () => {
+    expect(can("OPERADOR", "canManageProducts")).toBe(false);
+  });
+});
