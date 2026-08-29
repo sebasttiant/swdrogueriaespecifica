@@ -2,10 +2,17 @@
 
 import { createElement } from "react";
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@/server/actions/missing-receiver.actions", () => ({
+  markMissingItemArrivedAction: vi.fn(),
+}));
 
 import { ReceiverQueue } from "./receiver-queue";
-import type { ReceiverItem } from "@/server/services/missing-receiver.service";
+import type {
+  ReceiverItem,
+  ReceiverScope,
+} from "@/server/services/missing-receiver.service";
 
 // --------------------------------------------------------------------------
 // Un producto sin SKU no se puede recibir, y decirlo no alcanza.
@@ -39,8 +46,8 @@ function faltante(overrides: Partial<ReceiverItem> = {}): ReceiverItem {
   };
 }
 
-const montar = (items: ReceiverItem[]) =>
-  render(createElement(ReceiverQueue, { items, scope: "PEDIDO" as const }));
+const montar = (items: ReceiverItem[], scope: ReceiverScope = "PEDIDO") =>
+  render(createElement(ReceiverQueue, { items, scope }));
 
 const enlacesSinSku = () => screen.queryAllByRole("link", { name: /falta el sku/i });
 
@@ -78,5 +85,59 @@ describe("cola de bodega · producto sin SKU", () => {
 
     expect(screen.getByText("ORN-4412")).toBeDefined();
     expect(enlacesSinSku()).toHaveLength(0);
+  });
+});
+
+// --------------------------------------------------------------------------
+// Cada pestaña ofrece UN gesto, el suyo.
+//
+// La cadena se cortaba acá: "Ya pedidos" solo mostraba el texto "Esperando que
+// llegue". Nada movía un faltante a EN_BODEGA, así que "En bodega" quedaba
+// siempre vacía y "Registrar entrada" —que solo existe en esa pestaña— no se
+// alcanzaba nunca. Bodega recibía la caja y no tenía dónde decirlo.
+// --------------------------------------------------------------------------
+describe("cola de bodega · el gesto de cada pestaña", () => {
+  it("en 'Ya pedidos' ofrece marcar la llegada", () => {
+    montar([faltante({ productName: "Vitamina D" })], "PEDIDO");
+
+    expect(
+      screen.getByRole("button", { name: /llegó vitamina d/i }),
+    ).toBeDefined();
+  });
+
+  // Marcar la llegada NO es registrar la entrada: la caja está acá, pero hasta
+  // que no se cargan lote, vencimiento y cantidad real no hay stock.
+  it("en 'Ya pedidos' todavía NO ofrece registrar la entrada", () => {
+    montar([faltante()], "PEDIDO");
+
+    expect(screen.queryByRole("link", { name: /registrar entrada/i })).toBeNull();
+  });
+
+  it("en 'En bodega' ofrece registrar la entrada", () => {
+    montar([faltante({ status: "EN_BODEGA" })], "EN_BODEGA");
+
+    expect(
+      screen.getByRole("link", { name: /registrar entrada/i }).getAttribute("href"),
+    ).toContain("missingItemId=mi-1");
+  });
+
+  // Volver a marcar la llegada de algo que ya está en bodega no significa nada.
+  it("en 'En bodega' ya no ofrece marcar la llegada", () => {
+    montar([faltante({ status: "EN_BODEGA" })], "EN_BODEGA");
+
+    expect(screen.queryByRole("button", { name: /llegó/i })).toBeNull();
+  });
+
+  it("cada fila marca SU propio faltante", () => {
+    montar(
+      [
+        faltante({ id: "mi-1", productName: "Vitamina D" }),
+        faltante({ id: "mi-2", productName: "Crema Ponds" }),
+      ],
+      "PEDIDO",
+    );
+
+    expect(screen.getByRole("button", { name: /llegó vitamina d/i })).toBeDefined();
+    expect(screen.getByRole("button", { name: /llegó crema ponds/i })).toBeDefined();
   });
 });
