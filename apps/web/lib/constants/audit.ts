@@ -63,6 +63,10 @@ export const AUDIT_ACTIONS = {
   MISSING_STATUS_CHANGE: "missing.status.change",
   MISSING_CONFIRM_OK: "missing.confirm.ok",
   MISSING_ITEM_ORDERED: "missing.ordered",
+  // Llegada FÍSICA a bodega. Es su propia acción y no se reusa la del reporte:
+  // una la registra quien recibe la caja, la otra quien revisa la cola de
+  // compras, y confundirlas haría imposible auditar después quién hizo qué.
+  MISSING_ITEM_ARRIVED: "missing.arrived",
   // Descarte de un faltante duplicado o que ya no hace falta. Acción propia y
   // NO un alias de `MISSING_CONFIRM_OK`: descartar afirma que nadie lo va a
   // pedir, confirmar afirmaba que ya se pidió. Son hechos opuestos.
