@@ -12,7 +12,7 @@ import {
   PendingForm,
   type ProductOption,
 } from "@/features/pendientes/pending-form";
-import { ArrivalNotices } from "@/features/pendientes/arrival-notices";
+import { ArrivalNoticesLive } from "@/features/pendientes/arrival-notices-live";
 import { PendingCompactList } from "@/features/pendientes/pending-compact-list";
 import { PendingList } from "@/features/pendientes/pending-list";
 import { PendingReviewFilters } from "@/features/pendientes/pending-review-filters";
@@ -111,8 +111,8 @@ export default async function PendientesPage({
       {/* Arriba del formulario a propósito: lo que ya llegó es acción
           pendiente sobre un cliente que está esperando, y eso pesa más que
           cargar un pedido nuevo. */}
-      <ArrivalNotices
-        notices={arrivalNotices}
+      <ArrivalNoticesLive
+        initialNotices={arrivalNotices}
         canViewCustomerIdentity={canViewCustomerIdentity}
       />
 
