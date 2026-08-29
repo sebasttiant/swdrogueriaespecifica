@@ -276,11 +276,15 @@ describe("listArrivalNotices · el historial no tapa lo vivo", () => {
 });
 
 // --------------------------------------------------------------------------
-// Dos entradas concurrentes sobre el mismo pendiente no pueden producir dos
-// avisos ni uno incoherente. La unicidad la garantiza el índice de transición
-// del outbox, no el código.
+// Transiciones repetidas sobre el mismo pendiente dejan UN solo aviso.
+//
+// Quien deduplica es el índice único de transición del outbox, no el código.
+// Estas llamadas son SECUENCIALES: prueban la deduplicación, no la
+// concurrencia. Demostrar que dos entradas simultáneas se comportan bien exige
+// barreras entre transacciones, y eso no está acá — decirlo importa, porque una
+// prueba mal nombrada da por cubierto algo que nadie verificó.
 // --------------------------------------------------------------------------
-describe("listArrivalNotices · concurrencia", () => {
+describe("listArrivalNotices · transiciones repetidas", () => {
   it("dos avisos de la misma transición dejan UN solo aviso", async () => {
     const pendingId = await nuevoPendiente({ createdById: vendedorId });
 
