@@ -19,31 +19,13 @@
 // --------------------------------------------------------------------------
 
 import { prisma } from "@/lib/db/prisma";
-import type { Prisma } from "@/lib/generated/prisma/client";
-import { listInboxNotifications } from "@/server/notifications/notification-inbox";
-import { NOTIFICATION_EVENT } from "@/server/services/notification-outbox.service";
+import {
+  AGGREGATE_TYPE_PENDING,
+  NOTIFICATION_EVENT,
+} from "@/server/services/notification-outbox.service";
 
 /** Cuántos avisos mira la pantalla por defecto. */
 export const DEFAULT_ARRIVAL_NOTICE_LIMIT = 10;
-
-/**
- * Cuántos eventos se leen de la bandeja para llenar esos avisos.
- *
- * Es mayor que el techo de salida a propósito: la bandeja trae eventos de
- * pendientes que ya se cerraron, y esos se descartan acá. Sin holgura, una
- * racha de pendientes entregados dejaría la pantalla vacía teniendo avisos
- * vivos más abajo.
- */
-const INBOX_SCAN_LIMIT = 50;
-
-/** Los dos estados de disponibilidad sobre los que se avisa. */
-const ESTADOS_CON_STOCK = ["DISPONIBLE_PARCIAL", "DISPONIBLE_COMPLETO"] as const;
-
-/**
- * Un pendiente cerrado ya no necesita aviso: el vendedor hizo lo que tenía que
- * hacer, o el pedido murió. `PENDIENTE` y `PARCIAL` son los que siguen vivos.
- */
-const ESTADOS_ABIERTOS = ["PENDIENTE", "PARCIAL"] as const;
 
 export type ArrivalNotice = {
   pendingId: string;
@@ -60,12 +42,32 @@ export type ArrivalNotice = {
 };
 
 /**
- * Los avisos vivos de una persona, del más viejo al más nuevo.
+ * Los avisos vivos de una persona, del que espera hace más tiempo al más
+ * reciente.
  *
- * El orden NO es cronológico inverso como en una bandeja de correo: acá el
- * primero es el que espera hace más tiempo. Es el mismo FIFO con el que se
- * atiende la cola, y la pantalla no puede contradecirlo — si el aviso más nuevo
- * quedara arriba, el vendedor llamaría primero al cliente que llegó último.
+ * EL ORDEN DE LA CONSULTA IMPORTA, y antes estaba al revés. Se leían los 50
+ * eventos más nuevos de la bandeja y recién después se descartaban los de
+ * pendientes ya cerrados. Un vendedor con volumen —sesenta pedidos atendidos
+ * esta semana— dejaba de ver al cliente que espera desde el lunes: los eventos
+ * nuevos gastaban el cupo y el aviso vivo quedaba afuera. Fallaba en silencio,
+ * y justo cuando más movimiento hay.
+ *
+ * Ahora manda el pendiente. El conjunto de avisos vivos lo determina la tabla
+ * de pendientes —míos, abiertos, con stock reservado—, que son decenas, no el
+ * historial de eventos, que solo crece. El JOIN con el outbox cumple dos
+ * funciones y ninguna es decorativa: aporta `noticedAt` y EXIGE que el evento
+ * exista. Sin esa exigencia, un pendiente al que alguien le tocara la
+ * disponibilidad a mano mostraría un aviso que nadie emitió.
+ *
+ * `MIN(createdAt)` es cuándo empezó la espera de ESE cliente: un pendiente que
+ * pasó a parcial y después a completo tiene dos eventos, y el que importa es el
+ * primero. El `LIMIT` cae sobre el conjunto ya filtrado, así que un pendiente
+ * cerrado no puede volver a consumir el cupo de uno vivo.
+ *
+ * El aislamiento va por partida doble —`p."createdById"` y `n."recipientId"`—
+ * porque son dos hechos distintos: quién tomó el pedido y a quién se le avisó.
+ * Exigir los dos hace que ver la cola global no alcance para heredar el aviso
+ * personal de otro vendedor.
  */
 export async function listArrivalNotices(
   recipientId: string,
@@ -76,72 +78,54 @@ export async function listArrivalNotices(
     throw new RangeError(`limit debe ser un entero positivo, se recibió ${limit}`);
   }
 
-  const { items } = await listInboxNotifications(recipientId, {
-    limit: INBOX_SCAN_LIMIT,
-  });
+  type Fila = {
+    id: string;
+    quantity: number;
+    inventoryReadyQuantity: number;
+    availabilityStatus: string;
+    customerName: string | null;
+    productName: string;
+    noticedAt: Date;
+  };
 
-  const avisados = items.filter(
-    (evento) =>
-      evento.eventType === NOTIFICATION_EVENT.pendingAvailabilityFull ||
-      evento.eventType === NOTIFICATION_EVENT.pendingAvailabilityPartial,
-  );
-  if (avisados.length === 0) return [];
+  // Los estados van como literales en el SQL —no como parámetros— porque son
+  // constantes del dominio, no entrada de nadie. `::text` evita tener que
+  // castear el enum en cada comparación.
+  const filas = await prisma.$queryRaw<Fila[]>`
+    SELECT p.id,
+           p.quantity,
+           p."inventoryReadyQuantity",
+           p."availabilityStatus"::text AS "availabilityStatus",
+           p."customerName",
+           pr.name AS "productName",
+           MIN(n."createdAt") AS "noticedAt"
+      FROM pendings p
+      JOIN products pr ON pr.id = p."productId"
+      JOIN notification_outbox n
+        ON n."aggregateType" = ${AGGREGATE_TYPE_PENDING}
+       AND n."aggregateId" = p.id
+       AND n."recipientId" = ${recipientId}
+       AND n."eventType" IN (
+             ${NOTIFICATION_EVENT.pendingAvailabilityPartial},
+             ${NOTIFICATION_EVENT.pendingAvailabilityFull}
+           )
+     WHERE p."createdById" = ${recipientId}
+       AND p.status::text IN ('PENDIENTE', 'PARCIAL')
+       AND p."availabilityStatus"::text IN (
+             'DISPONIBLE_PARCIAL', 'DISPONIBLE_COMPLETO'
+           )
+     GROUP BY p.id, pr.name
+     ORDER BY MIN(n."createdAt") ASC, p.id ASC
+     LIMIT ${limit}
+  `;
 
-  // Un pendiente puede tener dos eventos —pasó a parcial y después a completo—.
-  // Interesa el más viejo: es cuando el cliente empezó a esperar noticias.
-  const primerAvisoPorPendiente = new Map<string, Date>();
-  for (const evento of avisados) {
-    const pendingId = pendingIdDe(evento.payload);
-    if (!pendingId) continue;
-    const previo = primerAvisoPorPendiente.get(pendingId);
-    if (!previo || evento.createdAt < previo) {
-      primerAvisoPorPendiente.set(pendingId, evento.createdAt);
-    }
-  }
-  if (primerAvisoPorPendiente.size === 0) return [];
-
-  // La verdad de si el aviso sigue vivo la tiene el pendiente, no el evento.
-  const pendientes = await prisma.pending.findMany({
-    where: {
-      id: { in: [...primerAvisoPorPendiente.keys()] },
-      createdById: recipientId,
-      status: { in: [...ESTADOS_ABIERTOS] },
-      availabilityStatus: { in: [...ESTADOS_CON_STOCK] },
-    },
-    select: {
-      id: true,
-      quantity: true,
-      inventoryReadyQuantity: true,
-      availabilityStatus: true,
-      customerName: true,
-      product: { select: { name: true } },
-    },
-  });
-
-  return pendientes
-    .map((pendiente) => ({
-      pendingId: pendiente.id,
-      productName: pendiente.product.name,
-      quantity: pendiente.quantity,
-      readyQuantity: pendiente.inventoryReadyQuantity,
-      availabilityStatus:
-        pendiente.availabilityStatus as ArrivalNotice["availabilityStatus"],
-      customerName: pendiente.customerName,
-      noticedAt: primerAvisoPorPendiente.get(pendiente.id) as Date,
-    }))
-    .sort((a, b) => a.noticedAt.getTime() - b.noticedAt.getTime())
-    .slice(0, limit);
-}
-
-/**
- * El `pendingId` del payload, o `null` si el evento no lo trae.
- *
- * El payload es `Json` en la base: lo que entra tipado sale sin tipo, y un
- * evento viejo o de otra versión puede no tener la forma esperada. Se descarta
- * en vez de romper la pantalla entera por un registro.
- */
-function pendingIdDe(payload: Prisma.JsonValue | unknown): string | null {
-  if (typeof payload !== "object" || payload === null) return null;
-  const valor = (payload as { pendingId?: unknown }).pendingId;
-  return typeof valor === "string" && valor.length > 0 ? valor : null;
+  return filas.map((fila) => ({
+    pendingId: fila.id,
+    productName: fila.productName,
+    quantity: fila.quantity,
+    readyQuantity: fila.inventoryReadyQuantity,
+    availabilityStatus: fila.availabilityStatus as ArrivalNotice["availabilityStatus"],
+    customerName: fila.customerName,
+    noticedAt: fila.noticedAt,
+  }));
 }
