@@ -215,3 +215,105 @@ describe("listArrivalNotices · orden y techo", () => {
     expect(avisos).toHaveLength(5);
   });
 });
+
+// --------------------------------------------------------------------------
+// El historial NO puede tapar un aviso vivo.
+//
+// La consulta leía los 50 eventos más nuevos de la persona y recién después
+// descartaba los de pendientes cerrados. Un vendedor con volumen —60 pedidos
+// atendidos esta semana— dejaba de ver al cliente que espera desde el lunes:
+// los eventos nuevos gastaban el cupo y el aviso vivo quedaba afuera. Fallaba
+// en silencio, y justo cuando más movimiento hay.
+// --------------------------------------------------------------------------
+describe("listArrivalNotices · el historial no tapa lo vivo", () => {
+  it("muestra el aviso vivo aunque haya 60 eventos posteriores de pendientes cerrados", async () => {
+    const vivo = await nuevoPendiente({ createdById: vendedorId });
+    await bodegaInforma(vivo, "DISPONIBLE_COMPLETO");
+
+    // 60 pendientes que llegaron DESPUÉS y ya se entregaron: sus eventos son
+    // más nuevos y antes consumían el cupo de lectura.
+    for (let i = 0; i < 60; i += 1) {
+      const cerrado = await nuevoPendiente({ createdById: vendedorId });
+      await bodegaInforma(cerrado, "DISPONIBLE_COMPLETO");
+      await prisma.pending.update({
+        where: { id: cerrado },
+        data: { status: "ENTREGADO" },
+      });
+    }
+
+    const avisos = await listArrivalNotices(vendedorId);
+
+    expect(avisos.map((a) => a.pendingId)).toContain(vivo);
+  });
+
+  it("devuelve como mucho el techo pedido, y son los más antiguos", async () => {
+    const creados: string[] = [];
+    for (let i = 0; i < 14; i += 1) {
+      const id = await nuevoPendiente({ createdById: vendedorId });
+      await bodegaInforma(id, "DISPONIBLE_COMPLETO");
+      creados.push(id);
+    }
+
+    const avisos = await listArrivalNotices(vendedorId);
+
+    expect(avisos).toHaveLength(10);
+    expect(avisos.map((a) => a.pendingId)).toEqual(creados.slice(0, 10));
+  });
+
+  // El estado del pendiente NO alcanza: el aviso existe porque bodega informó.
+  // Fabricarlo desde la disponibilidad sola inventaría un aviso que nadie emitió.
+  it("no inventa un aviso si el evento nunca se encoló", async () => {
+    const sinEvento = await nuevoPendiente({ createdById: vendedorId });
+    await prisma.pending.update({
+      where: { id: sinEvento },
+      data: { availabilityStatus: "DISPONIBLE_COMPLETO", inventoryReadyQuantity: 3 },
+    });
+
+    const avisos = await listArrivalNotices(vendedorId);
+
+    expect(avisos.map((a) => a.pendingId)).not.toContain(sinEvento);
+  });
+});
+
+// --------------------------------------------------------------------------
+// Transiciones repetidas sobre el mismo pendiente dejan UN solo aviso.
+//
+// Quien deduplica es el índice único de transición del outbox, no el código.
+// Estas llamadas son SECUENCIALES: prueban la deduplicación, no la
+// concurrencia. Demostrar que dos entradas simultáneas se comportan bien exige
+// barreras entre transacciones, y eso no está acá — decirlo importa, porque una
+// prueba mal nombrada da por cubierto algo que nadie verificó.
+// --------------------------------------------------------------------------
+describe("listArrivalNotices · transiciones repetidas", () => {
+  it("dos avisos de la misma transición dejan UN solo aviso", async () => {
+    const pendingId = await nuevoPendiente({ createdById: vendedorId });
+
+    // La segunda transición idéntica choca contra el único y no duplica.
+    await bodegaInforma(pendingId, "DISPONIBLE_PARCIAL");
+    await bodegaInforma(pendingId, "DISPONIBLE_PARCIAL");
+
+    const avisos = await listArrivalNotices(vendedorId);
+
+    expect(avisos.filter((a) => a.pendingId === pendingId)).toHaveLength(1);
+  });
+
+  // Parcial y completo son transiciones distintas: quedan dos eventos, pero el
+  // aviso es uno y `noticedAt` es el del PRIMERO — cuándo empezó la espera.
+  it("parcial y luego completo dejan UN aviso, fechado en el primero", async () => {
+    const pendingId = await nuevoPendiente({ createdById: vendedorId });
+
+    await bodegaInforma(pendingId, "DISPONIBLE_PARCIAL");
+    const primero = await prisma.notificationOutbox.findFirstOrThrow({
+      where: { aggregateId: pendingId },
+      orderBy: { createdAt: "asc" },
+    });
+    await bodegaInforma(pendingId, "DISPONIBLE_COMPLETO");
+
+    const avisos = await listArrivalNotices(vendedorId);
+    const aviso = avisos.find((a) => a.pendingId === pendingId);
+
+    expect(avisos.filter((a) => a.pendingId === pendingId)).toHaveLength(1);
+    expect(aviso?.availabilityStatus).toBe("DISPONIBLE_COMPLETO");
+    expect(aviso?.noticedAt.getTime()).toBe(primero.createdAt.getTime());
+  });
+});
