@@ -5,6 +5,7 @@ import {
   countUpcomingPendings,
 } from "@/server/repositories/pending.repository";
 import { countOverdueMissingItems } from "@/server/repositories/missing-item.repository";
+import { countStockoutProducts } from "@/server/services/stockout.service";
 
 const EMPTY_COUNTS: AlertCounts = {
   expiredBatches: 0,
@@ -12,6 +13,7 @@ const EMPTY_COUNTS: AlertCounts = {
   overdueDeliveries: 0,
   upcomingDeliveries: 0,
   criticalMissing: 0,
+  stockoutProducts: 0,
 };
 
 /**
@@ -25,12 +27,19 @@ const EMPTY_COUNTS: AlertCounts = {
  * deja: "coloco mi nombre y dejo que Andrés y don Guillermo hagan lo que
  * quieran con eso".
  *
- * Quien no tiene ninguna de las dos —bodega— no recibe avisos. Antes veía
- * "Próximas 1", que son entregas a clientes: ruido sobre trabajo ajeno.
+ * `warehouse` es bodega. Durante un tiempo no recibió NINGÚN aviso, y con
+ * razón: lo que había eran entregas a clientes y lotes por vencer, trabajo
+ * ajeno. Pero hay un hecho que solo ella puede resolver — un producto que la
+ * droguería SÍ lleva se quedó sin con qué cubrir lo prometido. Antes de
+ * comprarlo hay que mirar el depósito: la caja puede estar recibida y sin
+ * cargar. Ese es su aviso, y es el único.
+ *
+ * `none` queda para quien no tiene ninguna de las anteriores.
  */
 export type AlertScope =
   | { kind: "global" }
   | { kind: "owner"; ownerId: string }
+  | { kind: "warehouse" }
   | { kind: "none" };
 
 export async function getOperationalAlerts(
@@ -38,6 +47,10 @@ export async function getOperationalAlerts(
   scope: AlertScope = { kind: "global" },
 ): Promise<AlertCounts> {
   if (scope.kind === "none") return EMPTY_COUNTS;
+
+  if (scope.kind === "warehouse") {
+    return { ...EMPTY_COUNTS, stockoutProducts: await countStockoutProducts() };
+  }
 
   if (scope.kind === "owner") {
     const [overdueDeliveries, upcomingDeliveries] = await Promise.all([
@@ -47,13 +60,21 @@ export async function getOperationalAlerts(
     return { ...EMPTY_COUNTS, overdueDeliveries, upcomingDeliveries };
   }
 
-  const [expiringCounts, overdueDeliveries, upcomingDeliveries, criticalMissing] =
-    await Promise.all([
-      getExpiringBatchCounts(now),
-      countOverduePendings(now),
-      countUpcomingPendings(now),
-      countOverdueMissingItems(now),
-    ]);
+  const [
+    expiringCounts,
+    overdueDeliveries,
+    upcomingDeliveries,
+    criticalMissing,
+    stockoutProducts,
+  ] = await Promise.all([
+    getExpiringBatchCounts(now),
+    countOverduePendings(now),
+    countUpcomingPendings(now),
+    countOverdueMissingItems(now),
+    // Gerencia también lo ve: un quiebre con clientes esperando es la señal
+    // más temprana de que hay que comprar, antes de que el faltante venza.
+    countStockoutProducts(),
+  ]);
 
   return {
     expiredBatches: expiringCounts.expired,
@@ -61,6 +82,7 @@ export async function getOperationalAlerts(
     overdueDeliveries,
     upcomingDeliveries,
     criticalMissing,
+    stockoutProducts,
   };
 }
 

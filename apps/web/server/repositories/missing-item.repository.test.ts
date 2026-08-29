@@ -23,7 +23,9 @@ vi.mock("@/lib/db/prisma", () => ({ prisma: prismaMock }));
 import { encodeCursor } from "@/lib/pagination";
 import {
   confirmMissingItem,
+  countActionableMissingItems,
   countConfirmedMissingItems,
+  countOpenMissingItems,
   countOrderedMissingItems,
   countOverdueMissingItems,
   countUnclosedActionableMissingItemsBefore,
@@ -586,5 +588,93 @@ describe("createMissingItem", () => {
     expect(args.data.sellerCode).toBeNull();
     expect(args.data.requestedLaboratoryId).toBeNull();
     expect(args.data.confirmationNote).toBeUndefined();
+  });
+});
+
+// --------------------------------------------------------------------------
+// EL EJE DE ORIGEN. Dos negocios distintos conviven en `missing_items`:
+// reposición de estantería (`originId` NULO) y producto comprometido con un
+// cliente vía pendiente (`originId` NO nulo).
+//
+// El eje existe para que ningún contador vuelva a sumarlos. El KPI decía 47 y
+// la cola mostraba 12: los otros 35 eran de la otra pantalla. Un número que no
+// cuadra con ninguna cola no orienta, enseña a desconfiar del tablero.
+//
+// Se prueba el WHERE que sale hacia PostgreSQL, no el resultado: es la
+// traducción de la regla de negocio a la consulta lo que puede romperse.
+// --------------------------------------------------------------------------
+describe("eje de origen en los contadores", () => {
+  const COUNTERS = [
+    { name: "abiertos", run: countOpenMissingItems },
+    { name: "por pedir", run: countActionableMissingItems },
+    { name: "pedidos", run: countOrderedMissingItems },
+    { name: "confirmados", run: countConfirmedMissingItems },
+  ] as const;
+
+  beforeEach(() => {
+    prismaMock.missingItem.count.mockResolvedValue(0);
+  });
+
+  // (1) Un pendiente NO tiene que engordar los contadores de faltantes.
+  it.each(COUNTERS)("'$name' de estantería excluye lo que nació de un pendiente", async ({ run }) => {
+    await run("shelf");
+
+    const { where } = prismaMock.missingItem.count.mock.calls.at(-1)![0];
+    expect(where.originId).toBe(null);
+  });
+
+  // (2) Un faltante de estantería NO tiene que engordar "Pendientes por abastecer".
+  it.each(COUNTERS)("'$name' de clientes excluye la reposición de estantería", async ({ run }) => {
+    await run("pending");
+
+    const { where } = prismaMock.missingItem.count.mock.calls.at(-1)![0];
+    expect(where.originId).toEqual({ not: null });
+  });
+
+  // (3) Los dos ejes son COMPLEMENTARIOS: `null` y `not null` no dejan huecos ni
+  // se solapan, así que estantería + clientes = total. Sin esto, un filtro mal
+  // escrito podría perder filas y nadie se enteraría: los dos números bajarían
+  // juntos y cada pantalla se vería consistente consigo misma.
+  it.each(COUNTERS)("'$name' sin eje no filtra por origen, y los dos ejes lo parten en dos", async ({ run }) => {
+    await run("all");
+    const { where: global } = prismaMock.missingItem.count.mock.calls.at(-1)![0];
+    expect(global.originId).toBeUndefined();
+
+    await run("shelf");
+    const { where: shelf } = prismaMock.missingItem.count.mock.calls.at(-1)![0];
+    await run("pending");
+    const { where: pending } = prismaMock.missingItem.count.mock.calls.at(-1)![0];
+
+    // El resto de la condición es IDÉNTICO en las tres: lo único que cambia es
+    // el origen. Si un eje arrastrara además otro filtro, su población dejaría
+    // de ser una mitad del total y la suma no cerraría.
+    const { originId: _g, ...globalRest } = global;
+    const { originId: _s, ...shelfRest } = shelf;
+    const { originId: _p, ...pendingRest } = pending;
+    expect(shelfRest).toEqual(globalRest);
+    expect(pendingRest).toEqual(globalRest);
+  });
+
+  // El default es "all" para que un llamador que todavía no eligió eje siga
+  // viendo lo mismo que antes. Un default `shelf` habría cambiado en silencio
+  // números que nadie tocó.
+  it.each(COUNTERS)("'$name' sin argumento no filtra por origen", async ({ run }) => {
+    await run();
+
+    const { where } = prismaMock.missingItem.count.mock.calls.at(-1)![0];
+    expect(where.originId).toBeUndefined();
+  });
+
+  // "Vencido" se mide contra la fecha prometida a un cliente. Una reposición de
+  // estantería no le promete nada a nadie, así que este contador es de
+  // pendientes POR CONSTRUCCIÓN y no acepta eje: pedírselo "de estantería"
+  // daría 0 para siempre, y un cero permanente en rojo entrena a ignorar el color.
+  it("los vencidos son siempre de pendientes y no aceptan eje", async () => {
+    await countOverdueMissingItems(new Date());
+
+    const { where } = prismaMock.missingItem.count.mock.calls.at(-1)![0];
+    // Siempre acotado a pendientes, sin forma de pedir otra cosa: la firma no
+    // expone eje de origen, así que este WHERE es el único que puede salir.
+    expect(where.originId).toEqual({ not: null });
   });
 });

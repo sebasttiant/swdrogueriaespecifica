@@ -271,8 +271,16 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     "canFixProductIdentity",
     "canLinkProductIdentity",
     "canCreatePendientes",
+    // Reporta un faltante como todos los demás perfiles, y hasta ahí llega. Los
+    // controles de Revisión de faltantes —pedir, confirmar, descartar, exportar—
+    // son de ADMIN/SUPERADMIN y de nadie más.
+    //
+    // Tenía además `canConfirmMissingItems`, que no gateaba NINGUNA superficie:
+    // todas las acciones de faltantes exigen `canOrderMissingItems`, y
+    // `confirmMissingItemOk` no tiene Server Action que la invoque. Lo único que
+    // hacía era destapar el atajo a Revisión de faltantes, una pantalla cuyo
+    // guard después lo rebotaba al dashboard.
     "canSubmitMissingReports",
-    "canConfirmMissingItems",
     "canViewCustomerIdentity",
     // Supervisión: ve y opera la cola completa, no solo lo que registró. Ya
     // entregaba y cancelaba pendientes de cualquiera antes de que existiera el

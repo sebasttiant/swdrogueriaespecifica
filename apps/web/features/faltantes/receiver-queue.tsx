@@ -10,6 +10,10 @@ import type { ReceiverItem, ReceiverScope } from "@/server/services/missing-rece
 // --------------------------------------------------------------------------
 // La cola de bodega: lo que hay que recibir.
 //
+// SOLO ESTANTERÍA. Los pedidos de clientes se reciben en Revisión de
+// pendientes: ahí bodega marca la llegada Y carga la entrada sin cambiar de
+// pantalla, que es lo que evita dejar un pendiente a medio completar.
+//
 // DOS pestañas y ninguna más. "Por pedir" y "Descartados" no se ocultan por
 // estética: quien recibe no decide qué se compra, y ver la cola de compras
 // invita a marcar llegadas sobre mercadería que nadie pidió.
@@ -18,15 +22,19 @@ import type { ReceiverItem, ReceiverScope } from "@/server/services/missing-rece
 // no tiene forma de mostrar el cliente aunque quisiera.
 // --------------------------------------------------------------------------
 
+/** Dónde vive la recepción de ESTANTERÍA. Los pedidos de clientes se reciben
+ *  en Revisión de pendientes, que es donde el pendiente se completa entero. */
+const SHELF_RECEPTION_PATH = "/revision-faltantes";
+
 const TABS: { scope: ReceiverScope; label: string; href: string }[] = [
-  { scope: "PEDIDO", label: "Ya pedidos", href: "/revision-faltantes" },
-  { scope: "EN_BODEGA", label: "En bodega", href: "/revision-faltantes?scope=arrived" },
+  { scope: "PEDIDO", label: "Por recibir", href: SHELF_RECEPTION_PATH },
+  { scope: "EN_BODEGA", label: "En bodega", href: `${SHELF_RECEPTION_PATH}?scope=arrived` },
 ];
 
 const EMPTY: Record<ReceiverScope, { title: string; description: string }> = {
   PEDIDO: {
     title: "No hay nada esperando",
-    description: "Cuando gerencia pida un faltante, aparece acá para recibirlo.",
+    description: "Cuando gerencia pida una reposición, aparece acá para recibirla.",
   },
   EN_BODEGA: {
     title: "Nada llegó todavía",

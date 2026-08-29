@@ -21,6 +21,7 @@ import {
   listOpenMissingItemsForExport,
   orderMissingItem as persistOrderedMissingItem,
   type MissingItemListItem,
+  type MissingItemOrigin,
   type MissingItemScope,
 } from "@/server/repositories/missing-item.repository";
 import { reporterNamesByLinkedItemIds } from "@/server/repositories/missing-report.repository";
@@ -117,6 +118,9 @@ export async function getMissingItems(params: {
   // Vista de la cola. Sin valor = `actionable` (lo que falta por pedir), que es
   // el default del repositorio.
   scope?: MissingItemScope;
+  // De dónde nació la necesidad: pedido de un cliente, reposición de
+  // estantería, o sin filtrar. Eje ORTOGONAL al scope; ver el repositorio.
+  origin?: MissingItemOrigin;
   // Requerido (sin default): que falte el flag debe ser un error de tipos,
   // nunca una fuga silenciosa de PII. `false` fuerza la minimización abajo.
   canViewCustomerIdentity: boolean;
@@ -167,8 +171,12 @@ export async function getMissingItems(params: {
 // laboratorio, cantidad, estado, proveedor).
 export async function getMissingItemsForExport(
   canViewSupplierIdentity: boolean,
+  // El archivo tiene que contener EXACTAMENTE lo que muestra el tablero desde
+  // el que se descargó. Un export global bajado desde la cola de estantería
+  // prometería una lista y entregaría otra, con pedidos de clientes adentro.
+  origin: MissingItemOrigin = "all",
 ): Promise<MissingExportRow[]> {
-  const items = await listOpenMissingItemsForExport();
+  const items = await listOpenMissingItemsForExport(origin);
   return buildMissingExportRows(items, canViewSupplierIdentity);
 }
 
@@ -189,18 +197,23 @@ export async function createManualMissingItem(input: CreateManualMissingItemInpu
 
 // Cuántos faltantes esperan que gerencia los pida: el número de la pestaña
 // "Por pedir". Distinto del KPI de abiertos, que incluye los ya pedidos.
-export function getActionableMissingCount(): Promise<number> {
-  return countActionableMissingItems();
+export function getActionableMissingCount(
+  origin: MissingItemOrigin = "all",
+): Promise<number> {
+  return countActionableMissingItems(origin);
 }
 
 // Conteo de faltantes abiertos para el KPI del dashboard.
-export function getOpenMissingCount(): Promise<number> {
-  return countOpenMissingItems();
+export function getOpenMissingCount(
+  origin: MissingItemOrigin = "all",
+): Promise<number> {
+  return countOpenMissingItems(origin);
 }
 
 export type MissingItemsSummary = {
   open: number;
-  overdue: number;
+  /** `null` cuando el eje pedido no puede vencer. Ver `getMissingItemsSummary`. */
+  overdue: number | null;
   ordered: number;
   confirmed: number;
 };
@@ -209,14 +222,24 @@ export type MissingItemsSummary = {
 // cursor). `overdue` es un SUBCONJUNTO de `open` (además exige confirmedAt:
 // null + status abierto + promesa vencida) — la UI debe dejarlo claro.
 // `now` inyectable para tests deterministas.
+/**
+ * La franja de indicadores de una cola.
+ *
+ * `overdue` es `null` cuando el eje pedido no puede vencer. "Vencido" se mide
+ * contra la fecha prometida a un cliente, y una reposición de estantería no le
+ * prometió nada a nadie: pedirlo "de estantería" daría 0 para siempre. Un chip
+ * clavado en cero es peor que ninguno —enseña que nunca hay nada tarde—, así
+ * que se devuelve `null` y la franja no lo pinta.
+ */
 export async function getMissingItemsSummary(
   now: Date = new Date(),
+  origin: MissingItemOrigin = "all",
 ): Promise<MissingItemsSummary> {
   const [open, overdue, ordered, confirmed] = await Promise.all([
-    countOpenMissingItems(),
-    countOverdueMissingItems(now),
-    countOrderedMissingItems(),
-    countConfirmedMissingItems(),
+    countOpenMissingItems(origin),
+    origin === "shelf" ? Promise.resolve(null) : countOverdueMissingItems(now),
+    countOrderedMissingItems(origin),
+    countConfirmedMissingItems(origin),
   ]);
   return { open, overdue, ordered, confirmed };
 }

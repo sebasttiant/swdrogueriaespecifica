@@ -16,6 +16,8 @@ vi.mock("@/server/services/operational-alerts.service", () => ({
   getOperationalAlertsCached: mocks.getOperationalAlertsCached,
 }));
 
+import type { AlertCounts } from "@/lib/alertas/signature";
+
 import { AlertBar } from "./alert-bar";
 
 // --------------------------------------------------------------------------
@@ -33,12 +35,13 @@ import { AlertBar } from "./alert-bar";
 //    Repetir la tarjeta entera acá desborda en el celular.
 // --------------------------------------------------------------------------
 
-const SIN_ALERTAS = {
+const SIN_ALERTAS: AlertCounts = {
   expiredBatches: 0,
   criticalBatches: 0,
   overdueDeliveries: 0,
   upcomingDeliveries: 0,
   criticalMissing: 0,
+  stockoutProducts: 0,
 };
 
 async function pintar(): Promise<string> {

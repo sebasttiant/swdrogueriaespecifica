@@ -5,6 +5,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 const mocks = vi.hoisted(() => ({
   requireCapability: vi.fn(),
   getPendings: vi.fn(),
+  listPendingReception: vi.fn(),
+  countPendingReception: vi.fn(),
+  listStockoutProducts: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/require-role", () => ({
@@ -12,6 +15,13 @@ vi.mock("@/lib/auth/require-role", () => ({
 }));
 vi.mock("@/server/services/pending.service", () => ({
   getPendings: mocks.getPendings,
+}));
+vi.mock("@/server/services/pending-reception.service", () => ({
+  listPendingReception: mocks.listPendingReception,
+  countPendingReception: mocks.countPendingReception,
+}));
+vi.mock("@/server/services/stockout.service", () => ({
+  listStockoutProducts: mocks.listStockoutProducts,
 }));
 
 import RevisionPendientesPage from "./page";
@@ -31,6 +41,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.requireCapability.mockResolvedValue(GERENCIA);
   mocks.getPendings.mockResolvedValue({ items: [], nextCursor: null });
+  mocks.listPendingReception.mockResolvedValue([]);
+  mocks.countPendingReception.mockResolvedValue(0);
+  mocks.listStockoutProducts.mockResolvedValue([]);
 });
 
 describe("RevisionPendientesPage · autorización", () => {
@@ -152,5 +165,157 @@ describe("RevisionPendientesPage · ejes de revisión", () => {
     expect(mocks.getPendings).toHaveBeenCalledWith(
       expect.objectContaining({ axes: { purchase: "SOLICITADO" } }),
     );
+  });
+});
+
+
+// --------------------------------------------------------------------------
+// LA MITAD FÍSICA: donde BODEGA trabaja los pedidos de clientes.
+//
+// Regla de negocio del 29-08-2026: el pendiente NACE SOLICITADO. Cuando el
+// vendedor lo registra, el cliente ya pidió el producto. No hace falta que
+// gerencia apriete "Pedido" para que bodega lo vea — ese botón responde a otra
+// pregunta ("¿se lo pedimos al proveedor?") y atarle la recepción hacía que el
+// pedido de un cliente no le llegara nunca a bodega.
+// --------------------------------------------------------------------------
+describe("RevisionPendientesPage · la mitad física", () => {
+  function fila(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "mi-1",
+      pendingId: "pend-1",
+      productId: "prod-1",
+      productName: "Glucerna",
+      orionCode: "1020",
+      unit: "unidad",
+      laboratoryName: "MK",
+      requestedLaboratoryName: null,
+      requestedQuantity: 12,
+      reservedQuantity: 0,
+      outstandingQuantity: 12,
+      hasArrived: false,
+      arrivedByName: null,
+      arrivedAt: null,
+      requestedAt: new Date("2026-08-25T14:00:00Z"),
+      ...overrides,
+    };
+  }
+
+  it("consulta la cola física al abrir abastecimiento", async () => {
+    await RevisionPendientesPage({
+      searchParams: searchParams({ tab: "abastecimiento" }),
+    });
+
+    expect(mocks.listPendingReception).toHaveBeenCalled();
+  });
+
+  // El contador va aunque la pestaña esté cerrada: un número que solo se
+  // calcula al entrar no avisa de nada.
+  it("cuenta aun estando en seguimiento", async () => {
+    await RevisionPendientesPage({ searchParams: searchParams() });
+
+    expect(mocks.countPendingReception).toHaveBeenCalled();
+    expect(mocks.listPendingReception).not.toHaveBeenCalled();
+  });
+
+  it("no consulta los pendientes cuando se está en la mitad física", async () => {
+    await RevisionPendientesPage({
+      searchParams: searchParams({ tab: "abastecimiento" }),
+    });
+
+    expect(mocks.getPendings).not.toHaveBeenCalled();
+  });
+
+  // EL TEST DE LA REGLA. Sin botón de "Pedido": el pendiente ya nació pedido
+  // por el cliente. Si alguien vuelve a colgar esa acción acá, confunde otra
+  // vez "pedido por el cliente" con "pedido al proveedor".
+  it("NO ofrece marcar el pendiente como pedido", async () => {
+    mocks.listPendingReception.mockResolvedValue([fila()]);
+
+    const html = renderToStaticMarkup(
+      await RevisionPendientesPage({ searchParams: searchParams({ tab: "abastecimiento" }) }),
+    );
+
+    expect(html).not.toContain("Marcar Glucerna como pedido");
+    expect(html).not.toContain("Descartar Glucerna");
+  });
+
+  // BODEGA es la responsable habitual; ADMIN y SUPERADMIN el respaldo. Los tres
+  // tienen `canReceiveMissingItems`.
+  it.each(["BODEGA", "ADMIN", "SUPERADMIN"] as const)(
+    "%s puede marcar la llegada",
+    async (role) => {
+      mocks.requireCapability.mockResolvedValue({ user: { id: "u-1", role } });
+      mocks.listPendingReception.mockResolvedValue([fila()]);
+
+      const html = renderToStaticMarkup(
+        await RevisionPendientesPage({ searchParams: searchParams({ tab: "abastecimiento" }) }),
+      );
+
+      expect(html).toContain("Ya llegó");
+    },
+  );
+
+  // El vendedor MIRA —es su cliente el que espera— pero no marca llegadas ni
+  // carga entradas. La negativa real vive en el servidor; esto solo evita
+  // ofrecer un control que después se rechaza.
+  it.each(["OPERADOR", "SUPERVISOR"] as const)(
+    "%s ve el estado pero no puede marcar la llegada",
+    async (role) => {
+      mocks.requireCapability.mockResolvedValue({ user: { id: "u-1", role } });
+      mocks.listPendingReception.mockResolvedValue([fila()]);
+
+      const html = renderToStaticMarkup(
+        await RevisionPendientesPage({ searchParams: searchParams({ tab: "abastecimiento" }) }),
+      );
+
+      expect(html).toContain("Glucerna");
+      expect(html).not.toContain("Ya llegó");
+    },
+  );
+
+  // Ya llegó ≠ podés facturar. Entre los dos hay un paso —cargar la entrada— y
+  // la pantalla tiene que decirlo con esas palabras.
+  it("una fila que ya llegó ofrece registrar la entrada, no facturar", async () => {
+    mocks.requireCapability.mockResolvedValue({ user: { id: "u-1", role: "BODEGA" } });
+    mocks.listPendingReception.mockResolvedValue([
+      fila({ hasArrived: true, arrivedByName: "Bodeguero", arrivedAt: new Date() }),
+    ]);
+
+    const html = renderToStaticMarkup(
+      await RevisionPendientesPage({ searchParams: searchParams({ tab: "abastecimiento" }) }),
+    );
+
+    expect(html).toContain("Llegó · sin cargar");
+    expect(html).toContain("Registrar entrada");
+    // Y la auditoría a la vista: quién recibió.
+    expect(html).toContain("Bodeguero");
+    expect(html).not.toContain("Facturar");
+  });
+
+  // La minimización vive en el servicio, pero la pantalla tampoco debe pintar
+  // lo que no le llega. El tipo de la fila no tiene campo de cliente.
+  it("la mitad física no muestra datos del cliente", async () => {
+    mocks.requireCapability.mockResolvedValue({ user: { id: "u-1", role: "BODEGA" } });
+    mocks.listPendingReception.mockResolvedValue([fila()]);
+
+    const html = renderToStaticMarkup(
+      await RevisionPendientesPage({ searchParams: searchParams({ tab: "abastecimiento" }) }),
+    );
+
+    expect(html).not.toContain("customerName");
+    expect(html).not.toContain("customerPhone");
+  });
+
+  it("muestra lo reservado junto a lo que falta, para no leerse como cero", async () => {
+    mocks.requireCapability.mockResolvedValue({ user: { id: "u-1", role: "BODEGA" } });
+    mocks.listPendingReception.mockResolvedValue([
+      fila({ reservedQuantity: 4, outstandingQuantity: 8 }),
+    ]);
+
+    const html = renderToStaticMarkup(
+      await RevisionPendientesPage({ searchParams: searchParams({ tab: "abastecimiento" }) }),
+    );
+
+    expect(html).toContain("4 de 12 ya reservadas");
   });
 });

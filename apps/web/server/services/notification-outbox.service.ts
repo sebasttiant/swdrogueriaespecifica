@@ -33,6 +33,12 @@ export const AGGREGATE_TYPE_PENDING = "Pending";
 export const NOTIFICATION_EVENT = {
   pendingAvailabilityPartial: "pending.availability.partial",
   pendingAvailabilityFull: "pending.availability.full",
+  // LLEGADA FÍSICA. Es un aviso DISTINTO de los de disponibilidad y no un
+  // grado menor de ellos: dice "la caja está en la droguería", no "podés
+  // facturar". Entre los dos hay un paso —cargar la entrada— y confundirlos
+  // hace que el vendedor le prometa al cliente algo que el sistema todavía no
+  // puede cumplir.
+  pendingArrivedWarehouse: "pending.arrival.warehouse",
 } as const;
 
 export type AvailabilityStatus = "DISPONIBLE_PARCIAL" | "DISPONIBLE_COMPLETO";
@@ -55,6 +61,46 @@ export type PendingAvailabilityNotification = {
  */
 function transitionKeyFor(availabilityStatus: AvailabilityStatus): string {
   return availabilityStatus;
+}
+
+/**
+ * Encola el aviso de LLEGADA FÍSICA para el dueño del pendiente.
+ *
+ * "Ya llegó a la droguería, pero todavía no está cargado al inventario."
+ *
+ * NO habilita facturar y no afirma que haya inventario asignado: eso lo dice
+ * el aviso de disponibilidad, después de que bodega registre la entrada. Son
+ * dos hechos distintos y por eso son dos eventos distintos.
+ *
+ * Idempotente por el mismo mecanismo que los otros: la clave de transición es
+ * el estado alcanzado, así que volver a marcar la llegada —o recargar la
+ * página— no encola un segundo aviso.
+ */
+export async function enqueuePendingArrivalNotification(
+  pendingId: string,
+  client: Prisma.TransactionClient = prisma,
+): Promise<NotificationOutbox | null> {
+  const pending = await client.pending.findUnique({
+    where: { id: pendingId },
+    select: { id: true, createdById: true },
+  });
+  if (!pending || !pending.createdById) return null;
+
+  const eventType = NOTIFICATION_EVENT.pendingArrivedWarehouse;
+  const payload = { pendingId: pending.id, availabilityStatus: "LLEGO_BODEGA" };
+
+  return enqueueOutboxEvent(
+    {
+      recipientId: pending.createdById,
+      eventType,
+      aggregateType: AGGREGATE_TYPE_PENDING,
+      aggregateId: pending.id,
+      transitionKey: "LLEGO_BODEGA",
+      payload,
+      fingerprint: fingerprintOf(eventType, payload),
+    },
+    client,
+  );
 }
 
 /**

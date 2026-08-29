@@ -54,38 +54,89 @@ export function repositoryScopeFor(scope: MissingQueueScope): MissingItemScope {
   return REPOSITORY_SCOPE[scope];
 }
 
+// --------------------------------------------------------------------------
+// Dónde vive un tablero y CÓMO se llaman sus parámetros en la URL.
+//
+// La misma cola operativa se muestra en DOS pantallas —reposición de
+// estantería en Revisión de faltantes, pedidos de cliente en Revisión de
+// pendientes— y cada una arma sus enlaces sobre su propia ruta. Una constante
+// fija acá haría que tocar una pestaña te sacara de la pantalla en la que
+// estás trabajando; ese bug ya apareció una vez, en la mudanza a Revisión.
+//
+// Los NOMBRES de los parámetros también viajan acá, y no es decoración.
+// Revisión de pendientes ya usa `scope`, `view` y `cursor` para su propia
+// lista de pendientes. Si el tablero de abastecimiento reusara esos nombres,
+// los dos se pisarían en la misma URL: cambiar de pestaña en uno movería el
+// otro. Ya pasó con el buzón de reportes, que terminó necesitando `rscope`.
+// Declararlos en la ruta hace la colisión IMPOSIBLE por construcción, en vez
+// de dejarla dependiendo de que alguien se acuerde.
+// --------------------------------------------------------------------------
+export type MissingBoardRoute = {
+  basePath: string;
+  scopeParam: string;
+  viewParam: string;
+  cursorParam: string;
+  /**
+   * Lo que TODO enlace de este tablero tiene que arrastrar: sin esto, tocar
+   * una pestaña dentro de una sub-pantalla te devuelve a la de arriba.
+   */
+  persistentParams?: Readonly<Record<string, string>>;
+};
+
+/** Dónde vive la cola de faltantes de ESTANTERÍA. */
+export const MISSING_QUEUE_PATH = "/revision-faltantes";
+
+/** Dónde vive el abastecimiento de los pedidos de CLIENTE. */
+export const PENDING_SUPPLY_PATH = "/revision-pendientes";
+
+/** Valor de `?tab=` que abre el abastecimiento en Revisión de pendientes. */
+export const SUPPLY_TAB = "abastecimiento";
+
+export const SHELF_BOARD_ROUTE: MissingBoardRoute = {
+  basePath: MISSING_QUEUE_PATH,
+  scopeParam: "scope",
+  viewParam: "view",
+  cursorParam: "cursor",
+};
+
+export const PENDING_SUPPLY_ROUTE: MissingBoardRoute = {
+  basePath: PENDING_SUPPLY_PATH,
+  // Prefijo `s` de "suministro": estos tres nombres NO pueden ser `scope`,
+  // `view` ni `cursor`, que ya son de la lista de pendientes de esa pantalla.
+  scopeParam: "sscope",
+  viewParam: "sview",
+  cursorParam: "scursor",
+  persistentParams: { tab: SUPPLY_TAB },
+};
+
 function missingHref(
+  route: MissingBoardRoute,
   scope: MissingQueueScope,
   view: "full" | "compact",
   cursor?: string,
 ): string {
-  const params = new URLSearchParams();
-  if (scope !== "actionable") params.set("scope", scope);
+  const params = new URLSearchParams(route.persistentParams);
+  if (scope !== "actionable") params.set(route.scopeParam, scope);
   // Se escribe el valor NO predeterminado, y el predeterminado es `compact`
   // —lo fija `resolveMissingView`—. Estaba al revés: el enlace de "Completa"
   // omitía el parámetro, la URL quedaba sin `view`, y el resolvedor la leía
   // como compacta. El botón era literalmente imposible de activar: se hacía
   // clic, la URL cambiaba de scope y la vista seguía siendo la misma.
-  if (view === "full") params.set("view", "full");
-  if (cursor) params.set("cursor", cursor);
+  if (view === "full") params.set(route.viewParam, "full");
+  if (cursor) params.set(route.cursorParam, cursor);
   const query = params.toString();
-  // La mesa de trabajo se mudó a Revisión de faltantes. Si estos enlaces
-  // siguieran apuntando a /faltantes, tocar una pestaña te sacaría de la
-  // pantalla en la que estás trabajando.
-  return query ? `${MISSING_QUEUE_PATH}?${query}` : MISSING_QUEUE_PATH;
+  return query ? `${route.basePath}?${query}` : route.basePath;
 }
 
 /** URL de una vista, preservando el layout elegido. El cursor NO se preserva:
  *  cambiar de vista empieza en su primera página, o el cursor apuntaría a una
  *  fila que esa vista no contiene. */
-/** Dónde vive la cola de faltantes. */
-export const MISSING_QUEUE_PATH = "/revision-faltantes";
-
 export function missingScopeHref(
   scope: MissingQueueScope,
   view: "full" | "compact",
+  route: MissingBoardRoute = SHELF_BOARD_ROUTE,
 ): string {
-  return missingHref(scope, view);
+  return missingHref(route, scope, view);
 }
 
 /** URL de la página SIGUIENTE, preservando vista y layout. Sin esto, "Ver más"
@@ -95,8 +146,9 @@ export function missingPageHref(
   scope: MissingQueueScope,
   view: "full" | "compact",
   cursor: string,
+  route: MissingBoardRoute = SHELF_BOARD_ROUTE,
 ): string {
-  return missingHref(scope, view, cursor);
+  return missingHref(route, scope, view, cursor);
 }
 
 // Qué decir cuando una vista no tiene nada. Un mensaje genérico ("no hay

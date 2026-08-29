@@ -17,8 +17,10 @@ import { getMyMissingReports } from "@/server/services/missing-report.service";
 
 export const metadata: Metadata = { title: "Faltantes" };
 
-export default async function FaltantesPage({
-}) {
+// Sin `searchParams`: la mesa de trabajo se mudó a Revisión de faltantes y con
+// ella los ejes de la URL. Quedaba un destructuring vacío —`({ })`— que exigía
+// un argumento para nada.
+export default async function FaltantesPage() {
   const session = await requireCapability("canViewFaltantes");
 	const canOrderMissingItems = can(session.user.role, "canOrderMissingItems");
 	const canCreateMissingItems = can(session.user.role, "canCreateMissingItems");
@@ -39,14 +41,24 @@ export default async function FaltantesPage({
 	// nombre y ya dejo que Andrés y don Guillermo hagan lo que quieran con eso".
 	// Mostrarle "Por pedir" y "Descartados" le pedía opinar sobre decisiones que
 	// no toma. Él ve SUS reportes y en qué estado quedaron, y nada más.
+	//
+	// El atajo se ofrece con la MISMA capacidad que abre la puerta
+	// (`canReceiveMissingItems`, el guard de `/revision-faltantes`), no con una
+	// parecida. Antes se gateaba con `canConfirmMissingItems`: SUPERVISOR la
+	// tiene, veía la tarjeta, la tocaba y el guard lo rebotaba al dashboard sin
+	// decirle nada. Un enlace a una puerta cerrada es peor que no tener enlace.
 	// --------------------------------------------------------------------------
-	const canSeeMissingQueue =
-		canOrderMissingItems || can(session.user.role, "canConfirmMissingItems");
+	const canSeeMissingQueue = can(session.user.role, "canReceiveMissingItems");
 
   // Un único instante compartido por el resumen global y el agrupamiento de
   // la página actual, para que ambos hablen del mismo "ahora".
   const [summary, myReports] = await Promise.all([
-    getMissingItemsSummary(new Date()),
+    // Si la pantalla dice "Faltantes", el número tiene que ser de faltantes de
+    // estantería. Global, decía 47 y Revisión de faltantes mostraba 12: los
+    // otros 35 eran pedidos de clientes, que se compran en Revisión de
+    // pendientes. Un indicador que no cuadra con ninguna pantalla no orienta,
+    // enseña a desconfiar del número.
+    getMissingItemsSummary(new Date(), "shelf"),
     canSubmitMissingReports ? getMyMissingReports(session.user.id) : Promise.resolve([]),
   ]);
 

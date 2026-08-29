@@ -74,11 +74,25 @@ export default async function DashboardPage() {
   const canSeeAll = seesAllPendings(session.user.role);
 
   const now = new Date();
-  const [dashboard, openMissingCount, expiringCounts] = await Promise.all([
-    getPendingDashboard({ canViewCustomerIdentity, now, scope: canSeeAll ? "global" : "owner", ownerId: canSeeAll ? undefined : session.user.id }),
-    getOpenMissingCount(),
-    getExpiringBatchCounts(now),
-  ]);
+  // --------------------------------------------------------------------------
+  // DOS NEGOCIOS, DOS NÚMEROS.
+  //
+  // Había un solo KPI "Faltantes abiertos" que sumaba la reposición de
+  // estantería con los productos comprometidos con clientes. Decía 47, y al
+  // entrar a Revisión de faltantes aparecían 12: los otros 35 eran pedidos de
+  // clientes, que se compran en otra pantalla. Un número que no cuadra con
+  // ninguna cola no orienta; enseña a desconfiar del tablero.
+  //
+  // Cada tarjeta cuenta EXACTAMENTE la población que se va a encontrar al
+  // tocarla, y lleva a la pantalla donde esa población se puede trabajar.
+  // --------------------------------------------------------------------------
+  const [dashboard, shelfMissingCount, pendingSupplyCount, expiringCounts] =
+    await Promise.all([
+      getPendingDashboard({ canViewCustomerIdentity, now, scope: canSeeAll ? "global" : "owner", ownerId: canSeeAll ? undefined : session.user.id }),
+      getOpenMissingCount("shelf"),
+      getOpenMissingCount("pending"),
+      getExpiringBatchCounts(now),
+    ]);
 
   const hasOverdue = dashboard.overdueCount > 0;
   const dateLabel = capitalize(
@@ -172,13 +186,28 @@ export default async function DashboardPage() {
             hint={hasOverdue ? `${dashboard.overdueCount} vencido${dashboard.overdueCount === 1 ? "" : "s"}` : "Al día"}
             href="/pendientes"
           />
+          {/* Reposición de estantería. Enlaza a la MESA DE TRABAJO, no a
+              /faltantes: esa pantalla es la de captura y no tiene cola, así que
+              el enlace viejo prometía gestión y no daba dónde tocar. */}
           <KpiCard
-            label="Faltantes abiertos"
-            value={openMissingCount}
+            label="Faltantes de estantería"
+            value={shelfMissingCount}
             icon={PackageX}
-            tone={openMissingCount > 0 ? "danger" : "success"}
-            hint={openMissingCount > 0 ? "Requieren gestión" : "Sin faltantes"}
-            href="/faltantes"
+            tone={shelfMissingCount > 0 ? "danger" : "success"}
+            hint={shelfMissingCount > 0 ? "Requieren gestión" : "Sin faltantes"}
+            href="/revision-faltantes"
+          />
+          {/* Lo comprometido con clientes. Va aparte y no sumado: acá hay una
+              persona esperando, con fecha prometida y a veces con abono
+              entregado. Es más urgente que reponer un estante, y fundido en un
+              solo número quedaba invisible. */}
+          <KpiCard
+            label="Pendientes por abastecer"
+            value={pendingSupplyCount}
+            icon={PackageX}
+            tone={pendingSupplyCount > 0 ? "danger" : "success"}
+            hint={pendingSupplyCount > 0 ? "Hay clientes esperando" : "Nada por conseguir"}
+            href="/revision-pendientes?tab=abastecimiento"
           />
           <KpiCard
             label="Entregas próximas / atrasadas"

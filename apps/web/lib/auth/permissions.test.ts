@@ -216,7 +216,7 @@ describe("capabilities · can()", () => {
     expect(can("BODEGA", "canManageAllPendings")).toBe(false);
   });
 
-  it("SUPERVISOR tiene capabilities operativas y puede confirmar faltantes", () => {
+  it("SUPERVISOR tiene capabilities operativas pero NO controla faltantes", () => {
     expect(can("SUPERVISOR", "canViewDashboard")).toBe(true);
     expect(can("SUPERVISOR", "canViewPendientes")).toBe(true);
     expect(can("SUPERVISOR", "canViewFaltantes")).toBe(true);
@@ -226,7 +226,10 @@ describe("capabilities · can()", () => {
     // El circuito de recepción es de gerencia y bodega: la supervisión ve la
     // lista de entradas pero no registra.
     expect(can("SUPERVISOR", "canCreateEntries")).toBe(false);
-    expect(can("SUPERVISOR", "canConfirmMissingItems")).toBe(true);
+    // Sobre faltantes solo REPORTA, igual que OPERADOR y BODEGA. Los controles
+    // de Revisión de faltantes son de ADMIN/SUPERADMIN (decisión del 29-08-2026).
+    expect(can("SUPERVISOR", "canSubmitMissingReports")).toBe(true);
+    expect(can("SUPERVISOR", "canConfirmMissingItems")).toBe(false);
     expect(can("SUPERVISOR", "canDeliverPendings")).toBe(true);
     expect(can("SUPERVISOR", "canCancelPendings")).toBe(true);
   });
@@ -350,11 +353,14 @@ describe("rolesWithCapability", () => {
     ]);
   });
 
-  it("canConfirmMissingItems incluye SUPERVISOR sin incluir OPERADOR", () => {
+  // Ya no incluye SUPERVISOR: dar el OK sobre un faltante es un control de
+  // Revisión de faltantes, y esos son de gerencia. Además no gateaba ninguna
+  // superficie —toda acción de faltantes exige `canOrderMissingItems`—, así que
+  // lo único que hacía era mostrarle un atajo que el guard después le negaba.
+  it("canConfirmMissingItems es solo de gerencia", () => {
     expect(rolesWithCapability("canConfirmMissingItems")).toEqual([
       "SUPERADMIN",
       "ADMIN",
-      "SUPERVISOR",
     ]);
   });
 
@@ -665,4 +671,131 @@ describe("resolver la identidad de un producto", () => {
   it("el vendedor no gestiona el catálogo", () => {
     expect(can("OPERADOR", "canManageProducts")).toBe(false);
   });
+});
+
+// --------------------------------------------------------------------------
+// The faltantes split, stated once as a table.
+//
+// Business rule (2026-08-29): EVERY profile reports a missing product with the
+// basic form. The Revisión de faltantes controls — order, confirm, discard,
+// export — belong to ADMIN/SUPERADMIN and nobody else. BODEGA is the one
+// exception on the receiving side: it does not buy, it receives.
+// --------------------------------------------------------------------------
+describe("faltantes · quién reporta y quién controla", () => {
+  const EVERY_ROLE = ["SUPERADMIN", "ADMIN", "SUPERVISOR", "OPERADOR", "BODEGA"] as const;
+  const MANAGEMENT_ONLY = [
+    "canCreateMissingItems",
+    "canOrderMissingItems",
+    "canReviewMissingReports",
+    "canConfirmMissingItems",
+    "canExportFaltantes",
+  ] as const;
+
+  it("every profile reports", () => {
+    for (const role of EVERY_ROLE) {
+      expect(can(role, "canSubmitMissingReports")).toBe(true);
+    }
+  });
+
+  it.each(MANAGEMENT_ONLY)("%s belongs to ADMIN/SUPERADMIN only", (capability) => {
+    expect(rolesWithCapability(capability)).toEqual(["SUPERADMIN", "ADMIN"]);
+  });
+
+  // SUPERVISOR used to hold canConfirmMissingItems. It gated no surface —every
+  // faltantes Server Action requires canOrderMissingItems, and
+  // confirmMissingItemOk has no action at all— and its only visible effect was
+  // revealing a shortcut to a screen whose guard then bounced the user back to
+  // the dashboard. A capability that opens no door and grants no action is not
+  // a permission, it is a trap.
+  it("SUPERVISOR only reports, like every other operational role", () => {
+    expect(can("SUPERVISOR", "canSubmitMissingReports")).toBe(true);
+    for (const capability of MANAGEMENT_ONLY) {
+      expect(can("SUPERVISOR", capability)).toBe(false);
+    }
+    // Nor may it enter the review screen: that guard is canReceiveMissingItems.
+    expect(can("SUPERVISOR", "canReceiveMissingItems")).toBe(false);
+  });
+
+  // BODEGA receives boxes; it never decides what to buy.
+  it("BODEGA receives but does not buy", () => {
+    expect(can("BODEGA", "canReceiveMissingItems")).toBe(true);
+    for (const capability of MANAGEMENT_ONLY) {
+      expect(can("BODEGA", capability)).toBe(false);
+    }
+  });
+});
+
+// --------------------------------------------------------------------------
+// RECEPCIÓN DE PENDIENTES. Marcar "Ya llegó", vincular o crear el producto y
+// registrar la entrada pertenecen a BODEGA, ADMIN y SUPERADMIN.
+//
+// BODEGA es la responsable habitual; gerencia actúa de respaldo cuando no está.
+// VENDEDOR, OPERADOR y SUPERVISOR reciben la negativa DESDE EL SERVIDOR: los
+// guards usan esta misma capability, así que esconder el botón no autoriza
+// nada y mostrarlo tampoco.
+// --------------------------------------------------------------------------
+describe("recepción · quién marca la llegada y carga la entrada", () => {
+  it("es exactamente BODEGA, ADMIN y SUPERADMIN", () => {
+    expect(rolesWithCapability("canReceiveMissingItems")).toEqual([
+      "SUPERADMIN",
+      "ADMIN",
+      "BODEGA",
+    ]);
+  });
+
+  it.each(["SUPERADMIN", "ADMIN", "BODEGA"] as const)(
+    "%s puede recibir y cargar la entrada",
+    (role) => {
+      expect(can(role, "canReceiveMissingItems")).toBe(true);
+      expect(can(role, "canCreateEntries")).toBe(true);
+      // Y completar la identidad del producto que está recibiendo.
+      expect(can(role, "canLinkProductIdentity")).toBe(true);
+    },
+  );
+
+  it.each(["SUPERVISOR", "OPERADOR"] as const)(
+    "%s no puede recibir ni cargar entradas",
+    (role) => {
+      expect(can(role, "canReceiveMissingItems")).toBe(false);
+      expect(can(role, "canCreateEntries")).toBe(false);
+    },
+  );
+
+  // BODEGA recibe, pero NO decide sobre el cliente: no factura, no entrega
+  // ajenos y no toca los datos comerciales. Recibir una caja y cerrar una venta
+  // son dos autoridades distintas.
+  it("BODEGA recibe pero no decide sobre el cliente", () => {
+    expect(can("BODEGA", "canReceiveMissingItems")).toBe(true);
+    expect(can("BODEGA", "canViewCustomerIdentity")).toBe(false);
+    expect(can("BODEGA", "canManageAllPendings")).toBe(false);
+    expect(can("BODEGA", "canOrderMissingItems")).toBe(false);
+  });
+});
+
+// --------------------------------------------------------------------------
+// QUIÉN CARGA UN PENDIENTE. Gerencia también atiende el mostrador: un pendiente
+// no es exclusivo del vendedor.
+//
+// Importa para los avisos: si se dirigieran "al vendedor" por rol en vez de a
+// quien lo creó, un pendiente cargado por ADMIN llegaría a la droguería, se
+// cargaría al inventario y nadie se enteraría. El destinatario sale del
+// agregado (`createdById`), no del rol — probado contra la base en
+// `pending-reception-independence.pg.test.ts`.
+// --------------------------------------------------------------------------
+describe("pendientes · quién los crea", () => {
+  it.each(["SUPERADMIN", "ADMIN", "OPERADOR"] as const)(
+    "%s puede registrar un pendiente",
+    (role) => {
+      expect(can(role, "canCreatePendientes")).toBe(true);
+    },
+  );
+
+  // Y todos los que los crean pueden revisarlos, o cargarían algo que después
+  // no pueden seguir.
+  it.each(["SUPERADMIN", "ADMIN", "OPERADOR"] as const)(
+    "%s puede revisar los pendientes que carga",
+    (role) => {
+      expect(can(role, "canReviewPendings")).toBe(true);
+    },
+  );
 });

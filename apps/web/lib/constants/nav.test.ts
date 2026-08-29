@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { visibleNavItems } from "./nav";
+import { NAV_ITEMS, visibleNavItems } from "./nav";
 
 function labels(role: Parameters<typeof visibleNavItems>[0]): string[] {
   return visibleNavItems(role).map((item) => item.label);
@@ -158,5 +158,44 @@ describe("Revisión de identidad", () => {
     );
     expect(item).toBeDefined();
     expect(item?.primaryMobile).toBeUndefined();
+  });
+});
+
+// --------------------------------------------------------------------------
+// Bodega no tiene pantalla propia de recepción, y es deliberado: recibe los
+// pedidos de clientes en Revisión de PENDIENTES —donde marca la llegada y carga
+// la entrada sin cambiar de pantalla— y la reposición en Revisión de faltantes.
+//
+// Hubo una `/recepcion` que juntaba las dos colas. Se retiró: un pendiente se
+// completa en un solo lugar, y mandar a bodega a otra pantalla para la mitad
+// del trabajo es cómo se deja un pedido a medio terminar.
+// --------------------------------------------------------------------------
+describe("visibleNavItems · dónde trabaja bodega", () => {
+  it("no existe una entrada de Recepción", () => {
+    for (const role of ["SUPERADMIN", "ADMIN", "SUPERVISOR", "OPERADOR", "BODEGA"] as const) {
+      expect(labels(role)).not.toContain("Recepción");
+    }
+    expect(NAV_ITEMS.some((item) => item.href === "/recepcion")).toBe(false);
+  });
+
+  it("bodega llega a sus dos superficies desde el menú", () => {
+    const suyas = labels("BODEGA");
+
+    expect(suyas).toContain("Revisión de pendientes");
+    expect(suyas).toContain("Revisión de faltantes");
+    expect(suyas).toContain("Entradas");
+  });
+
+  // El enlace se ofrece con la MISMA capacidad que abre la puerta. Ofrecerlo con
+  // una parecida deja a alguien tocando una pantalla que el guard le cierra:
+  // eso ya pasó con SUPERVISOR y `canConfirmMissingItems`.
+  it("cada enlace usa la capacidad exacta del guard de su página", () => {
+    const byHref = Object.fromEntries(
+      NAV_ITEMS.map((item) => [item.href, item.capability]),
+    );
+
+    // Revisión de faltantes arma DOS proyecciones y su guard es la más débil.
+    expect(byHref["/revision-faltantes"]).toBe("canReceiveMissingItems");
+    expect(byHref["/revision-pendientes"]).toBe("canReviewPendings");
   });
 });

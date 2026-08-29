@@ -37,7 +37,8 @@ function totalAlerts(counts: AlertCounts): number {
     counts.criticalBatches +
     counts.overdueDeliveries +
     counts.upcomingDeliveries +
-    counts.criticalMissing
+    counts.criticalMissing +
+    counts.stockoutProducts
   );
 }
 
@@ -72,6 +73,15 @@ function buildAlertChips(counts: AlertCounts): AlertChip[] {
       label: "Faltantes críticos",
       count: counts.criticalMissing,
       href: "/faltantes",
+    },
+    // Un producto QUE LLEVAMOS se quedó sin con qué cubrir lo prometido.
+    // Enlaza a la mitad de abastecimiento de Revisión de pendientes, que es
+    // donde se resuelve: ahí bodega marca la llegada y carga la entrada.
+    {
+      severity: ALERT_SEVERITY.DANGER,
+      label: "Sin stock",
+      count: counts.stockoutProducts,
+      href: "/revision-pendientes?tab=abastecimiento",
     },
   ];
 
@@ -150,10 +160,18 @@ function OperationalAlertContent({
 //
 // Gerencia y supervisión ven el estado de toda la droguería. El vendedor ve
 // SOLO las entregas que él prometió: un lote por vencer no lo resuelve él. La
-// bodega, desde que opera pendientes propios (T4.4), recibe el mismo recorte
-// por dueño que el vendedor: sus entregas, no las ajenas.
+// bodega recibe UN solo aviso, el suyo: un producto que la droguería lleva se
+// quedó sin con qué cubrir lo prometido, y antes de comprarlo hay que mirar el
+// depósito.
 function alertScopeFor(role: SessionRole, userId: string): AlertScope {
   if (seesAllPendings(role)) return { kind: "global" };
+  // Bodega ANTES que el recorte por dueño: ve la cola completa de pendientes
+  // (`canReadAllPendings`) pero no opera los ajenos, así que el recorte por
+  // dueño la dejaba con las entregas que ella misma cargó —casi ninguna— y sin
+  // el único aviso que sí puede resolver.
+  if (can(role, "canReceiveMissingItems") && !can(role, "canOrderMissingItems")) {
+    return { kind: "warehouse" };
+  }
   if (can(role, "canViewPendientes")) return { kind: "owner", ownerId: userId };
   return { kind: "none" };
 }

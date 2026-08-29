@@ -27,7 +27,11 @@ export async function GET(request: Request): Promise<Response> {
 
   const format =
     new URL(request.url).searchParams.get("format") === "csv" ? "csv" : "xlsx";
-  const rows = await getMissingItemsForExport(canViewSupplierIdentity);
+  // De estantería, igual que el tablero desde el que se descarga. El
+  // abastecimiento de los pedidos de cliente se mira en Revisión de pendientes
+  // y todavía no tiene export propio: un archivo que mezclara los dos sería un
+  // listado de compras que nadie puede usar tal cual.
+  const rows = await getMissingItemsForExport(canViewSupplierIdentity, "shelf");
   const stamp = new Date().toISOString().slice(0, 10);
 
   if (format === "csv") {

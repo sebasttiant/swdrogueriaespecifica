@@ -155,39 +155,10 @@ describe("RevisionFaltantesPage · page param", () => {
 // los reportes provisionales. Mezclarlas haría que bodega marque llegadas sobre
 // mercadería que compras todavía no pidió.
 // --------------------------------------------------------------------------
-describe("RevisionFaltantesPage · proyección por rol", () => {
-  it("BODEGA recibe la cola de recepción, nunca la de reportes", async () => {
-    sesion("BODEGA");
-
-    await RevisionFaltantesPage({ searchParams: searchParams() });
-
-    expect(mocks.listReceiverQueue).toHaveBeenCalledWith("PEDIDO");
-    expect(mocks.getMissingReportQueue).not.toHaveBeenCalled();
-  });
-
-  it("BODEGA puede abrir 'En bodega'", async () => {
-    sesion("BODEGA");
-
-    await RevisionFaltantesPage({ searchParams: searchParams({ scope: "arrived" }) });
-
-    expect(mocks.listReceiverQueue).toHaveBeenCalledWith("EN_BODEGA");
-  });
-
-  // Esconder las pestañas no alcanza: quien escribe la URL a mano tiene que
-  // caer en la cola permitida, y la consulta jamás debe pedir los estados de
-  // compras.
-  it.each(["pending", "discarded", "inventado"])(
-    "un scope de compras escrito a mano (%s) cae en 'Ya pedidos'",
-    async (scope) => {
-      sesion("BODEGA");
-
-      await RevisionFaltantesPage({ searchParams: searchParams({ scope }) });
-
-      expect(mocks.listReceiverQueue).toHaveBeenCalledWith("PEDIDO");
-      expect(mocks.getMissingReportQueue).not.toHaveBeenCalled();
-    },
-  );
-
+// Las DOS proyecciones de esta ruta son de ESTANTERÍA: gerencia decide qué
+// reponer, bodega recibe lo que se compró. Los pedidos de clientes no pasan por
+// acá en ninguna de las dos.
+describe("RevisionFaltantesPage · la cola de gerencia", () => {
   it("gerencia conserva la cola de reportes completa", async () => {
     sesion("ADMIN");
 
@@ -267,12 +238,87 @@ describe("RevisionFaltantesPage · la cola de gerencia vive acá", () => {
 
   // Bodega no cambia: su proyección sigue siendo la cola de recepción, sin
   // datos del cliente y sin las acciones de compras.
-  it("bodega sigue viendo su cola de recepción y NO la de gerencia", async () => {
+});
+
+describe("RevisionFaltantesPage · solo estantería", () => {
+  it("le pide al service SOLO la reposición de estantería", async () => {
+    sesion("ADMIN");
+
+    await RevisionFaltantesPage({ searchParams: searchParams() });
+
+    expect(mocks.getMissingItems).toHaveBeenCalledWith(
+      expect.objectContaining({ origin: "shelf" }),
+    );
+  });
+
+  // El número de la pestaña tiene que contar LO QUE LA PANTALLA MUESTRA. Global,
+  // marcaría trabajo que desde acá no se puede tocar y mandaría al gerente a
+  // buscar filas que no están.
+  it("cuenta 'Por pedir' solo sobre estantería", async () => {
+    sesion("ADMIN");
+
+    await RevisionFaltantesPage({ searchParams: searchParams() });
+
+    expect(mocks.getActionableMissingCount).toHaveBeenCalledWith("shelf");
+  });
+
+  it("mantiene el recorte al cambiar de pestaña", async () => {
+    sesion("ADMIN");
+
+    await RevisionFaltantesPage({ searchParams: searchParams({ scope: "ordered" }) });
+
+    expect(mocks.getMissingItems).toHaveBeenCalledWith(
+      expect.objectContaining({ origin: "shelf", scope: "ordered" }),
+    );
+  });
+
+});
+
+// --------------------------------------------------------------------------
+// La proyección de BODEGA volvió a esta ruta, pero SOLO para estantería. Los
+// pedidos de clientes se reciben en Revisión de pendientes, donde bodega marca
+// la llegada y carga la entrada sin cambiar de pantalla.
+// --------------------------------------------------------------------------
+describe("RevisionFaltantesPage · la recepción de estantería", () => {
+  it("a BODEGA le arma la cola física, no la de reportes", async () => {
     sesion("BODEGA");
 
     await RevisionFaltantesPage({ searchParams: searchParams() });
 
-    expect(mocks.listReceiverQueue).toHaveBeenCalledTimes(1);
+    expect(mocks.listReceiverQueue).toHaveBeenCalled();
+    expect(mocks.getMissingReportQueue).not.toHaveBeenCalled();
     expect(mocks.getMissingItems).not.toHaveBeenCalled();
   });
+
+  // EL TEST QUE SOSTIENE LA SEPARACIÓN. Si esta cola trajera también los
+  // pedidos de clientes, bodega los recibiría desde acá y volvería a haber dos
+  // pantallas para completar un pendiente.
+  it("le pide SOLO la reposición de estantería", async () => {
+    sesion("BODEGA");
+
+    await RevisionFaltantesPage({ searchParams: searchParams() });
+
+    expect(mocks.listReceiverQueue).toHaveBeenCalledWith("PEDIDO", "shelf");
+  });
+
+  it("puede abrir 'En bodega', siempre acotado a estantería", async () => {
+    sesion("BODEGA");
+
+    await RevisionFaltantesPage({ searchParams: searchParams({ scope: "arrived" }) });
+
+    expect(mocks.listReceiverQueue).toHaveBeenCalledWith("EN_BODEGA", "shelf");
+  });
+
+  // Esconder pestañas no alcanza: quien escribe la URL a mano tiene que caer en
+  // una cola permitida, y la consulta jamás debe pedir los estados de compras.
+  it.each(["pending", "discarded", "inventado"])(
+    "un scope de compras escrito a mano (%s) cae en 'Por recibir'",
+    async (scope) => {
+      sesion("BODEGA");
+
+      await RevisionFaltantesPage({ searchParams: searchParams({ scope }) });
+
+      expect(mocks.listReceiverQueue).toHaveBeenCalledWith("PEDIDO", "shelf");
+    },
+  );
 });

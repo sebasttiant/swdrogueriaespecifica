@@ -2,11 +2,20 @@ import type { Metadata } from "next";
 
 import { PageHeader } from "@/app/_components/app-shell/page-header";
 import { PendingList } from "@/features/pendientes/pending-list";
+import { PendingReceptionQueue } from "@/features/pendientes/pending-reception-queue";
+import { StockoutList } from "@/features/faltantes/stockout-list";
+import { ReviewTabs } from "@/features/pendientes/review-tabs";
+import { resolveReviewTab } from "@/features/pendientes/review-tab";
 import { PendingReviewFilters } from "@/features/pendientes/pending-review-filters";
 import { parseReviewAxes, reviewPageHref } from "@/features/pendientes/review-axes";
 import { can, seesAllPendings } from "@/lib/auth/permissions";
 import { requireCapability } from "@/lib/auth/require-role";
 import type { PendingScope } from "@/server/repositories/pending.repository";
+import {
+  countPendingReception,
+  listPendingReception,
+} from "@/server/services/pending-reception.service";
+import { listStockoutProducts } from "@/server/services/stockout.service";
 import { getPendings } from "@/server/services/pending.service";
 
 export const metadata: Metadata = { title: "Revisión de pendientes" };
@@ -44,6 +53,8 @@ export default async function RevisionPendientesPage({
     purchase?: string;
     availability?: string;
     customer?: string;
+    /** Qué mitad de la pantalla: seguimiento o abastecimiento. */
+    tab?: string;
   }>;
 }) {
   const session = await requireCapability("canReviewPendings");
@@ -67,7 +78,42 @@ export default async function RevisionPendientesPage({
   // capability que pedir un faltante, no la de cancelar.
   const canManageStatus = can(session.user.role, "canOrderMissingItems");
 
-  const { cursor, scope: rawScope, ...rawAxes } = await searchParams;
+  const { cursor, scope: rawScope, tab: rawTab, ...rawAxes } = await searchParams;
+
+  // --------------------------------------------------------------------------
+  // ABASTECIMIENTO: la mitad FÍSICA del pendiente.
+  //
+  // Qué llegó, qué falta conseguir, quién lo recibió. Es donde BODEGA trabaja
+  // los pedidos de clientes, dentro del mismo módulo que gerencia y no en una
+  // pantalla aparte: un pendiente se completa en un solo lugar.
+  //
+  // NO HAY BOTÓN DE "PEDIDO", y es la regla de negocio, no un recorte: cuando
+  // el vendedor registró el pendiente, el cliente YA PIDIÓ el producto. Pedirle
+  // a gerencia un segundo clic para "convertirlo en pedido" confundía dos cosas
+  // distintas —pedido por el CLIENTE contra pedido al PROVEEDOR— y ataba la
+  // recepción a una acción que nadie hacía: bodega no veía nunca el pendiente.
+  //
+  // La decisión de compra sigue existiendo y sigue siendo de gerencia, pero
+  // vive en Seguimiento, con su propio eje (`purchaseStatus`).
+  //
+  // Quién puede ACTUAR acá es `canReceiveMissingItems`: BODEGA, ADMIN y
+  // SUPERADMIN. Bodega es la responsable habitual; gerencia, el respaldo. El
+  // vendedor puede MIRAR el estado de sus pendientes —es su cliente el que
+  // espera— pero no marca llegadas ni carga entradas.
+  // --------------------------------------------------------------------------
+  const canReceive = can(session.user.role, "canReceiveMissingItems");
+  const tab = resolveReviewTab(rawTab);
+  const showingSupply = tab === "abastecimiento";
+
+  const [reception, stockouts, receptionCount] = await Promise.all([
+    showingSupply ? listPendingReception() : Promise.resolve(null),
+    // Los productos QUE LLEVAMOS y hoy no alcanzan. Va con la cola porque el
+    // primer gesto de bodega es el mismo: mirar el depósito antes de esperar.
+    showingSupply && canReceive ? listStockoutProducts() : Promise.resolve([]),
+    // El contador va SIEMPRE, esté abierta la pestaña o no: un número que solo
+    // se calcula al entrar no avisa de nada, que es justo lo que tiene que hacer.
+    countPendingReception(),
+  ]);
 
   // Los ejes salen de la URL con la misma desconfianza que el scope: un valor
   // que no está en el enum se descarta y equivale a no filtrar. Estos strings
@@ -78,13 +124,18 @@ export default async function RevisionPendientesPage({
   // Un `?scope=cualquier-cosa` no abre los cerrados.
   const scope: PendingScope = rawScope === "history" ? "history" : "active";
 
-  const pendings = await getPendings({
-    cursor,
-    scope,
-    axes,
-    canViewCustomerIdentity,
-    ownerId: canSeeAll ? undefined : session.user.id,
-  });
+  // Solo se consulta la mitad que se está mirando. La otra no se pinta, así
+  // que traerla sería pagar una consulta cara —con identidad de cliente— para
+  // descartarla.
+  const pendings = showingSupply
+    ? null
+    : await getPendings({
+        cursor,
+        scope,
+        axes,
+        canViewCustomerIdentity,
+        ownerId: canSeeAll ? undefined : session.user.id,
+      });
 
   return (
     <div className="space-y-4">
@@ -97,25 +148,39 @@ export default async function RevisionPendientesPage({
         }
       />
 
-      <PendingReviewFilters
-        axes={axes}
-        scope={scope}
-        view="detalle"
-        basePath={BASE_PATH}
-      />
+      {/* Las pestañas son para todos los que entran: el vendedor también quiere
+          saber si lo suyo ya llegó a la droguería. Lo que cambia por rol no es
+          la pestaña sino lo que se puede TOCAR adentro. */}
+      <ReviewTabs active={tab} supplyCount={receptionCount} />
 
-      <PendingList
-        items={pendings.items}
-        nextCursor={pendings.nextCursor}
-        canDeliver={canDeliver}
-        canCancel={canCancel}
-        canManageStatus={canManageStatus}
-        canContactOrInvoice={canContactOrInvoice}
-        scope={scope}
-        pageHref={(nextCursor) =>
-          reviewPageHref({ scope, view: "detalle", axes, basePath: BASE_PATH, cursor: nextCursor })
-        }
-      />
+      {showingSupply ? (
+        <>
+          <StockoutList items={stockouts} />
+          <PendingReceptionQueue items={reception!} canReceive={canReceive} />
+        </>
+      ) : (
+        <>
+          <PendingReviewFilters
+            axes={axes}
+            scope={scope}
+            view="detalle"
+            basePath={BASE_PATH}
+          />
+
+          <PendingList
+            items={pendings!.items}
+            nextCursor={pendings!.nextCursor}
+            canDeliver={canDeliver}
+            canCancel={canCancel}
+            canManageStatus={canManageStatus}
+            canContactOrInvoice={canContactOrInvoice}
+            scope={scope}
+            pageHref={(nextCursor) =>
+              reviewPageHref({ scope, view: "detalle", axes, basePath: BASE_PATH, cursor: nextCursor })
+            }
+          />
+        </>
+      )}
     </div>
   );
 }
