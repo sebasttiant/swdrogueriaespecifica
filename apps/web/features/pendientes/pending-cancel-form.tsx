@@ -23,6 +23,8 @@ export function PendingCancelForm({ pendingId }: PendingCancelFormProps) {
   const [state, formAction, isPending] = useActionState(
     cancelPendingAction,
     INITIAL_STATE,
+    // Escribe: no se despacha sobre un build viejo.
+    { mutation: true },
   );
 
   return (

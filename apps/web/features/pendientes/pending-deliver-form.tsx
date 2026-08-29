@@ -30,6 +30,8 @@ export function PendingDeliverForm({
   const [state, formAction, isPending] = useActionState(
     deliverPendingAction,
     INITIAL_STATE,
+    // Escribe: no se despacha sobre un build viejo.
+    { mutation: true },
   );
   const inputId = `quantity-${pendingId}`;
 

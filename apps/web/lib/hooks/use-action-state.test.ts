@@ -8,17 +8,24 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 /** El refresco se agrupa en un microtask: hay que dejarlo correr. */
 const tick = () => act(async () => { await Promise.resolve(); });
 
-const { refresh, useRouterMock } = vi.hoisted(() => {
+const { refresh, useRouterMock, staleRef } = vi.hoisted(() => {
   const refresh = vi.fn();
   return {
     refresh,
     useRouterMock: vi.fn(() => ({ refresh })),
+    staleRef: { value: false },
   };
 });
 
 vi.mock("next/navigation", () => ({ useRouter: useRouterMock }));
 
+// El guard real sondea al servidor; acá solo interesa el estado que expone.
+vi.mock("@/features/deployment/deployment-guard", () => ({
+  useDeployment: () => ({ isStale: staleRef.value, reload: () => {} }),
+}));
+
 import { useActionState } from "./use-action-state";
+
 
 // --------------------------------------------------------------------------
 // Este hook existe para que el operador NO tenga que apretar F5.
@@ -31,17 +38,20 @@ import { useActionState } from "./use-action-state";
 afterEach(() => {
   vi.clearAllMocks();
   useRouterMock.mockReturnValue({ refresh });
+  // El desfase es global al módulo: sin resetearlo, encenderlo en una prueba
+  // bloquearía las mutaciones de todas las que vengan después.
+  staleRef.value = false;
 });
 
 /** Monta un componente que expone el `dispatch` del hook para la prueba. */
 function montar(accion: (previo: string, carga: string) => string) {
   const contenedor = document.createElement("div");
   document.body.appendChild(contenedor);
-  let disparar: ((carga: string) => void) | null = null;
+  const salida: { disparar: ((carga: string) => void) | null } = { disparar: null };
 
   function Sonda() {
     const [estado, dispatch] = useActionState(accion, "inicial");
-    disparar = dispatch;
+    salida.disparar = dispatch;
     return createElement("output", null, estado);
   }
 
@@ -51,7 +61,7 @@ function montar(accion: (previo: string, carga: string) => string) {
   });
 
   return {
-    disparar: (carga: string) => act(() => disparar?.(carga)),
+    disparar: (carga: string) => act(() => salida.disparar?.(carga)),
     texto: () => contenedor.textContent,
     desmontar: () => act(() => root.unmount()),
   };
@@ -176,5 +186,88 @@ describe("useActionState del proyecto · varios formularios en la pantalla", () 
 
     a.desmontar();
     b.desmontar();
+  });
+});
+
+// --------------------------------------------------------------------------
+// Con el servidor en otra versión, las mutaciones NO se despachan.
+//
+// Los ids de Server Action se generan al compilar. Mandar uno viejo no falla
+// rápido: el botón se queda en "Guardando…" y desde el mostrador eso se lee
+// como que la aplicación se colgó. Lo que sigue es alguien apretando Facturar
+// de nuevo — sobre dinero y stock.
+// --------------------------------------------------------------------------
+describe("useActionState del proyecto · desfase de versión", () => {
+  function montarConDesfase(opciones?: { mutation?: boolean }) {
+    const contenedor = document.createElement("div");
+    document.body.appendChild(contenedor);
+    const accion = vi.fn((_p: string, c: string) => c);
+    const salida: { disparar: ((c: string) => void) | null } = { disparar: null };
+
+    function Sonda() {
+      const [estado, dispatch, pendiente] = useActionState(
+        accion,
+        "inicial",
+        opciones as never,
+      );
+      salida.disparar = dispatch;
+      return createElement("output", null, `${estado}|${pendiente}`);
+    }
+
+    // El servidor ya sirve otro build. Se enciende ANTES de renderizar: el
+    // guard real lo descubre sondeando, y acá solo interesa el estado.
+    staleRef.value = true;
+    const root = createRoot(contenedor);
+    act(() => {
+      root.render(createElement(Sonda));
+    });
+    return {
+      accion,
+      disparar: (c: string) => act(() => salida.disparar?.(c)),
+      texto: () => contenedor.textContent,
+      desmontar: () => act(() => root.unmount()),
+    };
+  }
+
+  it("no despacha una mutación marcada", () => {
+    const { accion, disparar, desmontar } = montarConDesfase({ mutation: true });
+
+    disparar("facturar");
+
+    expect(accion).not.toHaveBeenCalled();
+    desmontar();
+  });
+
+  // Que no despache es la mitad: si además encendiera `isPending`, el botón
+  // quedaría girando igual y no habríamos arreglado nada.
+  it("no enciende el estado de espera", () => {
+    const { disparar, texto, desmontar } = montarConDesfase({ mutation: true });
+
+    disparar("facturar");
+
+    expect(texto()).toBe("inicial|false");
+    desmontar();
+  });
+
+  // Las lecturas siguen: una búsqueda que falla se reintenta sin consecuencia,
+  // y bloquearlas dejaría la pantalla inutilizable sin motivo.
+  it("las acciones NO marcadas como mutación siguen despachando", () => {
+    const { accion, disparar, desmontar } = montarConDesfase();
+
+    disparar("buscar");
+
+    expect(accion).toHaveBeenCalled();
+    desmontar();
+  });
+
+  it("NUNCA reenvía la mutación por su cuenta", async () => {
+    const { accion, disparar, desmontar } = montarConDesfase({ mutation: true });
+
+    disparar("facturar");
+    await tick();
+    await tick();
+
+    expect(accion).not.toHaveBeenCalled();
+    desmontar();
   });
 });

@@ -113,6 +113,8 @@ export function PendingForm({
   const [state, formAction, isPending] = useActionState(
     createPendingAction,
     INITIAL_STATE,
+    // Escribe: no se despacha sobre un build viejo.
+    { mutation: true },
   );
 
   return (
