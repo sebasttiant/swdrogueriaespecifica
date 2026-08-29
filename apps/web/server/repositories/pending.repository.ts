@@ -438,6 +438,7 @@ export type PendingForDelivery = {
   deliveredQuantity: number;
   status: PendingStatus;
   createdById: string | null;
+  cancelledQuantity: number;
   inventoryReadyQuantity: number;
   invoicedQuantity: number;
   customerStatus: "POR_CONTACTAR" | "CONTACTADO" | "FACTURADO" | "ENTREGADO" | "CANCELADO";
@@ -463,7 +464,7 @@ export async function lockPendingForUpdate(
   id: string,
 ): Promise<PendingForDelivery | null> {
   const rows = await client.$queryRaw<PendingForDelivery[]>`
-    SELECT id, quantity, "deliveredQuantity", status, "createdById", "inventoryReadyQuantity", "invoicedQuantity", "customerStatus"
+    SELECT id, quantity, "deliveredQuantity", "cancelledQuantity", status, "createdById", "inventoryReadyQuantity", "invoicedQuantity", "customerStatus"
     FROM pendings WHERE id = ${id} FOR UPDATE
   `;
   return rows[0] ?? null;

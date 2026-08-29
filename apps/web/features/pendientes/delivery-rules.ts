@@ -14,7 +14,10 @@ export type DeliveryRejection =
   | "NON_POSITIVE_QUANTITY"
   | "EXCEEDS_REMAINING"
   | "NOT_OWNER"
-  | "NOT_INVOICED";
+  | "NOT_INVOICED"
+  // Se separa de EXCEEDS_REMAINING a propósito: "no hay stock" manda al
+  // operador a bodega, "excede lo pendiente" lo manda a revisar la cantidad.
+  | "NO_INVENTORY";
 
 /** Cantidad restante por entregar. Nunca negativa. */
 export function remainingQuantity(quantity: number, deliveredQuantity: number): number {
@@ -43,6 +46,16 @@ export type ValidateDeliveryInput = {
   deliverQuantity: number;
   invoicedQuantity?: number;
   customerStatus?: string;
+  /**
+   * Unidades REALMENTE reservadas y todavía sin consumir para este pendiente.
+   *
+   * Sale de la tabla de reservas, no de `Pending.reservedInventoryQuantity`:
+   * esa columna nunca se decrementa al entregar, así que es un acumulado y
+   * usarla como techo dejaría entregar dos veces la misma mercadería.
+   */
+  reservedQuantity: number;
+  /** Lo que el cliente ya no espera. Sale del techo comercial. */
+  cancelledQuantity?: number;
 };
 
 /**
@@ -73,11 +86,26 @@ export function validateDelivery(
     return "NON_POSITIVE_QUANTITY";
   }
 
-  // No se entrega más de lo pedido ni más de lo facturado. Con entregas
-  // parciales el techo real es el menor de los dos.
+  // Sin mercadería reservada no hay nada que entregar, y decirlo aparte importa:
+  // el mensaje "no hay stock" manda al operador a bodega, mientras que
+  // "excede lo pendiente" lo manda a revisar la cantidad. Son dos problemas
+  // distintos y llevan a dos lugares distintos.
+  if (input.reservedQuantity <= 0) return "NO_INVENTORY";
+
+  // El techo es el MENOR de tres, y el tercero es el que faltaba.
+  //
+  // Los dos primeros son compromisos comerciales —lo pedido y lo facturado— y
+  // por sí solos permitieron registrar la salida de cinco unidades que nunca
+  // entraron al inventario. El stock quedó mintiendo, y eso solo se descubre
+  // cuando alguien va al estante y no encuentra nada.
+  //
+  // `cancelledQuantity` entra al techo comercial: lo que el cliente ya no
+  // espera dejó de ser entregable.
   const remaining = Math.min(
-    remainingQuantity(input.quantity, input.deliveredQuantity),
+    remainingQuantity(input.quantity, input.deliveredQuantity) -
+      (input.cancelledQuantity ?? 0),
     (input.invoicedQuantity ?? input.quantity) - input.deliveredQuantity,
+    input.reservedQuantity,
   );
   if (input.deliverQuantity > remaining) return "EXCEEDS_REMAINING";
 

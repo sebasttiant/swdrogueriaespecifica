@@ -47,6 +47,7 @@ import {
   claimableStockForPending,
   consumePendingReservations,
   releasePendingReservations,
+  lockReservedQuantityForPending,
 } from "@/server/repositories/product-batch.repository";
 import { prisma } from "@/lib/db/prisma";
 import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
@@ -639,13 +640,21 @@ export async function deliverPending(
     if (!input.canManageAll && current.createdById !== input.deliveredById) {
       return { pending: null, rejection: "NOT_OWNER" };
     }
+    // El techo FÍSICO, leído bajo el mismo lock que el pendiente. Va antes de
+    // validar porque la regla lo necesita: sin este dato, el único techo era el
+    // compromiso comercial, y por ahí salieron cinco unidades que nunca
+    // entraron al inventario.
+    const reservedQuantity = await lockReservedQuantityForPending(tx, current.id);
+
     const rejection = validateDelivery({
       status: current.status,
       quantity: current.quantity,
       deliveredQuantity: current.deliveredQuantity,
+      cancelledQuantity: current.cancelledQuantity,
       deliverQuantity: input.quantity,
       invoicedQuantity: current.invoicedQuantity,
       customerStatus: current.customerStatus,
+      reservedQuantity,
     });
     if (rejection) {
       return { pending: null, rejection };

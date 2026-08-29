@@ -353,9 +353,28 @@ function pendingForDelivery(overrides: Partial<PendingRow> = {}): PendingRow {
   };
 }
 
-// `lockPendingForUpdate` devuelve la fila bloqueada; `$queryRaw` devuelve un array.
-function mockLockedPending(row: PendingRow | null) {
-  tx.$queryRaw.mockResolvedValue(row ? [row] : []);
+// Dos consultas crudas distintas comparten `$queryRaw`: la fila bloqueada del
+// pendiente y las reservas vivas. Se responden por SQL y no por orden de
+// llamada, porque atarse al orden convierte cualquier reordenamiento futuro en
+// una falla que no dice nada sobre el comportamiento.
+function mockLockedPending(row: PendingRow | null, reserved = 999) {
+  tx.$queryRaw.mockImplementation((...args: unknown[]) => {
+    const sql = lockSqlFrom(args);
+    if (sql.includes("pending_inventory_reservations")) {
+      return Promise.resolve(reserved > 0 ? [{ quantity: reserved }] : []);
+    }
+    return Promise.resolve(row ? [row] : []);
+  });
+  // La reserva también se CONSUME, por el cliente de Prisma. El doble tiene que
+  // contar la misma historia que la suma bloqueada: si dice que hay stock y
+  // después no hay nada que consumir, el invariante falla con razón.
+  if (reserved > 0) {
+    tx.pendingInventoryReservation.findMany.mockResolvedValue([
+      { id: "res-1", pendingId: "pend-1", batchId: "batch-1", quantity: reserved },
+    ]);
+  } else {
+    tx.pendingInventoryReservation.findMany.mockResolvedValue([]);
+  }
 }
 
 // El CAS escribió la fila (caso normal, con el lock tomado).
@@ -373,7 +392,9 @@ describe("deliverPending", () => {
 
     await deliverPending(input, now);
 
-    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    // Dos consultas crudas: la fila del pendiente y las reservas vivas. Las dos
+    // bloquean, y las dos tienen que estar dentro de la misma transacción.
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
     const sql = lockSqlFrom(tx.$queryRaw.mock.calls[0]!);
     // El lock de fila es LA garantía de serialización: sin `FOR UPDATE` dos
     // operadores leen el mismo `deliveredQuantity` y sobre-entregan.
@@ -444,15 +465,13 @@ describe("deliverPending", () => {
 
   it("two sequential partials that sum to quantity end ENTREGADO", async () => {
     // First partial: 4 of 10.
-    tx.$queryRaw.mockResolvedValueOnce([pendingForDelivery({ deliveredQuantity: 0 })]);
+    mockLockedPending(pendingForDelivery({ deliveredQuantity: 0 }));
     tx.pending.updateMany.mockResolvedValueOnce({ count: 1 });
     const first = await deliverPending({ ...input, quantity: 4 }, now);
     expect(first.pending?.status).toBe("PARCIAL");
 
     // Second partial: remaining 6, completes the pending.
-    tx.$queryRaw.mockResolvedValueOnce([
-      pendingForDelivery({ status: "PARCIAL", deliveredQuantity: 4 }),
-    ]);
+    mockLockedPending(pendingForDelivery({ status: "PARCIAL", deliveredQuantity: 4 }));
     tx.pending.updateMany.mockResolvedValueOnce({ count: 1 });
     const second = await deliverPending({ ...input, quantity: 6 }, now);
 

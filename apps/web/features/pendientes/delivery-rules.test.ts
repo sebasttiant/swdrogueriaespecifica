@@ -47,6 +47,9 @@ describe("validateDelivery", () => {
     quantity: 10,
     deliveredQuantity: 4,
     deliverQuantity: 6,
+    // Stock suficiente por defecto: estos casos vienen a hablar del techo
+    // COMERCIAL, no del físico. El físico tiene su propio bloque abajo.
+    reservedQuantity: 10,
   };
 
   it("rejects ALREADY_DELIVERED when status is ENTREGADO", () => {
@@ -96,7 +99,13 @@ describe("validateDelivery", () => {
 
   it("allows a PARCIAL pending to be delivered further", () => {
     expect(
-      validateDelivery({ status: "PARCIAL", quantity: 10, deliveredQuantity: 4, deliverQuantity: 6 }),
+      validateDelivery({
+        status: "PARCIAL",
+        quantity: 10,
+        deliveredQuantity: 4,
+        deliverQuantity: 6,
+        reservedQuantity: 6,
+      }),
     ).toBeNull();
   });
 });
@@ -176,5 +185,62 @@ describe("deliverySummary", () => {
         unit: "unidad",
       }),
     ).toBe("Entregado: 3 de 5 unidad");
+  });
+});
+
+// --------------------------------------------------------------------------
+// El techo FÍSICO.
+//
+// En producción quedó un pendiente con cinco unidades entregadas e inventario
+// en cero: la regla miraba estado, pedido, entregado y facturado, y ningún dato
+// de inventario. El stock quedó mintiendo, y eso solo se descubre cuando
+// alguien va al estante y no encuentra nada.
+// --------------------------------------------------------------------------
+describe("validateDelivery · techo físico", () => {
+  const base = {
+    status: "PENDIENTE" as const,
+    quantity: 10,
+    deliveredQuantity: 0,
+    deliverQuantity: 5,
+    reservedQuantity: 10,
+  };
+
+  it("rechaza sin mercadería reservada", () => {
+    expect(validateDelivery({ ...base, reservedQuantity: 0 })).toBe("NO_INVENTORY");
+  });
+
+  // Se distingue de EXCEEDS_REMAINING a propósito: "no hay stock" manda al
+  // operador a bodega; "excede lo pendiente", a revisar la cantidad.
+  it("no confunde falta de stock con exceso de cantidad", () => {
+    expect(validateDelivery({ ...base, reservedQuantity: 0 })).not.toBe(
+      "EXCEEDS_REMAINING",
+    );
+  });
+
+  it("rechaza entregar más de lo reservado", () => {
+    expect(validateDelivery({ ...base, reservedQuantity: 3 })).toBe(
+      "EXCEEDS_REMAINING",
+    );
+  });
+
+  it("acepta exactamente lo reservado", () => {
+    expect(validateDelivery({ ...base, reservedQuantity: 5 })).toBeNull();
+  });
+
+  // Lo que el cliente ya no espera dejó de ser entregable.
+  it("descuenta lo cancelado del techo comercial", () => {
+    expect(
+      validateDelivery({ ...base, quantity: 10, cancelledQuantity: 7, deliverQuantity: 5 }),
+    ).toBe("EXCEEDS_REMAINING");
+  });
+
+  // El techo es el MENOR de los tres, no el primero que se encuentre.
+  it("manda el más chico de los tres techos", () => {
+    expect(
+      validateDelivery({ ...base, reservedQuantity: 2, invoicedQuantity: 10, deliverQuantity: 3 }),
+    ).toBe("EXCEEDS_REMAINING");
+    expect(
+      validateDelivery({ ...base, reservedQuantity: 10, invoicedQuantity: 2, deliverQuantity: 3 }),
+    ).toBe("EXCEEDS_REMAINING");
   });
 });
