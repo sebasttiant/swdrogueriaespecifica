@@ -480,15 +480,31 @@ describe("getMissingItemsSummary", () => {
     expect(repo.countOverdueMissingItems).toHaveBeenCalledTimes(1);
   });
 
-  it("calls the now-independent counts with no arguments", async () => {
+  // The now-independent counts take the ORIGIN axis and nothing else: `now`
+  // must never leak into a query that does not filter by date. The axis
+  // defaults to "all", so an unscoped summary still counts both businesses.
+  it("calls the now-independent counts with the origin axis only", async () => {
     mockCounts();
 
     await getMissingItemsSummary(now);
 
-    expect(repo.countOpenMissingItems).toHaveBeenCalledWith();
+    expect(repo.countOpenMissingItems).toHaveBeenCalledWith("all");
     expect(repo.countOpenMissingItems).toHaveBeenCalledTimes(1);
-    expect(repo.countOrderedMissingItems).toHaveBeenCalledWith();
-    expect(repo.countConfirmedMissingItems).toHaveBeenCalledWith();
+    expect(repo.countOrderedMissingItems).toHaveBeenCalledWith("all");
+    expect(repo.countConfirmedMissingItems).toHaveBeenCalledWith("all");
+  });
+
+  // A shelf restock promises nothing to anybody, so it can never be overdue.
+  // The service does not even ask: it reports `null` and the summary strip
+  // drops the chip instead of pinning it at zero.
+  it("skips the overdue query for the shelf axis and reports null", async () => {
+    mockCounts();
+
+    const summary = await getMissingItemsSummary(now, "shelf");
+
+    expect(repo.countOverdueMissingItems).not.toHaveBeenCalled();
+    expect(summary.overdue).toBeNull();
+    expect(repo.countOpenMissingItems).toHaveBeenCalledWith("shelf");
   });
 
   it("runs every count concurrently, matching Promise.all semantics", async () => {

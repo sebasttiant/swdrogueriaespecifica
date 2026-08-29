@@ -104,6 +104,28 @@ export type MissingItemScope =
   | "discarded"
   | "history";
 
+// --------------------------------------------------------------------------
+// De DÓNDE nació la necesidad. Eje ORTOGONAL al scope de arriba, no una vista
+// más: un faltante tiene a la vez un estado ("por pedir") y un origen ("lo
+// pidió un cliente"). Cruzarlos en un solo enum daría diez valores y haría
+// imposible preguntar por uno sin fijar el otro.
+//
+//   pending  nació de un pendiente de cliente (`originId` apunta al Pending).
+//            Gerencia lo compra desde Revisión de PENDIENTES: hay una persona
+//            esperando, con fecha prometida y a veces con abono entregado.
+//   shelf    reposición de estantería: alta manual de gerencia o aprobación de
+//            un reporte de vendedor. Se compra desde Revisión de FALTANTES.
+//   all      sin filtrar. Es el default para no cambiar en silencio lo que ve
+//            un llamador que todavía no eligió eje.
+//
+// El motor NO distingue: la entrada de inventario recorre `missing_items` por
+// producto y llega al pendiente por `originId`. Este eje es de LECTURA, para
+// decidir qué pantalla muestra qué. Ver `inventory-entry.service.ts`.
+// --------------------------------------------------------------------------
+export const MISSING_ORIGINS = ["pending", "shelf", "all"] as const;
+
+export type MissingItemOrigin = (typeof MISSING_ORIGINS)[number];
+
 export type ConfirmMissingItemData = {
   id: string;
   confirmedById: string;
@@ -174,6 +196,8 @@ export async function listMissingItems(params: {
   cursor?: string | null;
   take?: number;
   scope?: MissingItemScope;
+  // Eje de origen. Sin valor = `all`, que es no filtrar.
+  origin?: MissingItemOrigin;
 }): Promise<Paginated<MissingItemListItem>> {
   const take = clampTake(params.take);
   let cursorId = params.cursor ? decodeCursor(params.cursor) : null;
@@ -191,7 +215,7 @@ export async function listMissingItems(params: {
     if (!exists) cursorId = null;
   }
 
-  const where = whereForScope(params.scope);
+  const where = whereFor(params.scope, params.origin);
 
   const rows = await prisma.missingItem.findMany({
     take: take + 1,
@@ -301,6 +325,35 @@ function incompleteWhere() {
   };
 }
 
+// El filtro del eje de origen. `undefined` = no restringe, para que componerlo
+// con el filtro de vista no agregue una cláusula vacía.
+function whereForOrigin(origin: MissingItemOrigin | undefined) {
+  switch (origin) {
+    case "pending":
+      return { originId: { not: null } };
+    case "shelf":
+      return { originId: null };
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Compone los dos ejes. Se mantienen SEPARADOS hasta acá a propósito: cada uno
+ * se lee y se prueba solo, y agregar una vista nueva no puede romper el filtro
+ * de origen (ni al revés).
+ */
+function whereFor(
+  scope: MissingItemScope | undefined,
+  origin: MissingItemOrigin | undefined,
+) {
+  const scopeWhere = whereForScope(scope);
+  const originWhere = whereForOrigin(origin);
+  if (!scopeWhere) return originWhere;
+  if (!originWhere) return scopeWhere;
+  return { AND: [scopeWhere, originWhere] };
+}
+
 /**
  * Filtro de cada vista. `undefined` = sin filtro (historial completo).
  *
@@ -346,9 +399,16 @@ function whereForScope(scope: MissingItemScope | undefined) {
   }
 }
 
-export function countOpenMissingItems(): Promise<number> {
+export function countOpenMissingItems(
+  origin: MissingItemOrigin = "all",
+): Promise<number> {
+  const originWhere = whereForOrigin(origin);
   return prisma.missingItem.count({
-    where: { confirmedAt: null, status: { in: OPEN_STATUSES } },
+    where: {
+      confirmedAt: null,
+      status: { in: OPEN_STATUSES },
+      ...(originWhere ?? {}),
+    },
   });
 }
 
@@ -357,9 +417,16 @@ export function countOpenMissingItems(): Promise<number> {
  * importa al gerente ("cuánto me falta"), y NO es `countOpenMissingItems`: ese
  * incluye los ya pedidos, que siguen abiertos pero no requieren trabajo.
  */
-export function countActionableMissingItems(): Promise<number> {
+export function countActionableMissingItems(
+  origin: MissingItemOrigin = "all",
+): Promise<number> {
+  const originWhere = whereForOrigin(origin);
   return prisma.missingItem.count({
-    where: { confirmedAt: null, status: { in: ACTIONABLE_STATUSES } },
+    where: {
+      confirmedAt: null,
+      status: { in: ACTIONABLE_STATUSES },
+      ...(originWhere ?? {}),
+    },
   });
 }
 
@@ -369,9 +436,16 @@ export function countActionableMissingItems(): Promise<number> {
 // desmadra. Mismo orden que la lista (más nuevos primero).
 const EXPORT_MAX = 2000;
 
-export function listOpenMissingItemsForExport(): Promise<MissingItemListItem[]> {
+export function listOpenMissingItemsForExport(
+  origin: MissingItemOrigin = "all",
+): Promise<MissingItemListItem[]> {
+  const originWhere = whereForOrigin(origin);
   return prisma.missingItem.findMany({
-    where: { confirmedAt: null, status: { in: OPEN_STATUSES } },
+    where: {
+      confirmedAt: null,
+      status: { in: OPEN_STATUSES },
+      ...(originWhere ?? {}),
+    },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: EXPORT_MAX,
     select: LIST_SELECT,
@@ -384,14 +458,22 @@ export function countAllMissingItems(): Promise<number> {
 }
 
 // Faltantes ya pedidos a un proveedor (chip "Pedidos" de la cola operativa).
-export function countOrderedMissingItems(): Promise<number> {
-  return prisma.missingItem.count({ where: { status: "PEDIDO" } });
+export function countOrderedMissingItems(
+  origin: MissingItemOrigin = "all",
+): Promise<number> {
+  return prisma.missingItem.count({
+    where: { status: "PEDIDO", ...(whereForOrigin(origin) ?? {}) },
+  });
 }
 
 // Faltantes con "OK gerencia". Se cuenta por `confirmedAt` —el hecho registrado—
 // y no por estado: el service garantiza que un PEDIDO nunca queda confirmado.
-export function countConfirmedMissingItems(): Promise<number> {
-  return prisma.missingItem.count({ where: { confirmedAt: { not: null } } });
+export function countConfirmedMissingItems(
+  origin: MissingItemOrigin = "all",
+): Promise<number> {
+  return prisma.missingItem.count({
+    where: { confirmedAt: { not: null }, ...(whereForOrigin(origin) ?? {}) },
+  });
 }
 
 // Faltantes creados desde `since` (para el conteo "del día").
@@ -441,6 +523,19 @@ export function countUnclosedActionableMissingItemsBefore(
   });
 }
 
+/**
+ * Cuántos faltantes se pasaron de la fecha prometida.
+ *
+ * NO TOMA EJE DE ORIGEN, y no es un olvido: "vencido" se mide contra
+ * `origin.promisedAt`, la fecha que se le prometió a un cliente. Una reposición
+ * de estantería no le promete nada a nadie, así que por CONSTRUCCIÓN solo los
+ * pendientes pueden vencer — el `originId: { not: null }` de acá abajo ya lo
+ * dice.
+ *
+ * Pedirle este número "de estantería" daría 0 para siempre. Por eso el
+ * parámetro no existe: un cero permanente pintado de rojo entrena a ignorar el
+ * color, que es justo lo contrario de para lo que sirve una alarma.
+ */
 export function countOverdueMissingItems(now: Date = new Date()): Promise<number> {
   return prisma.missingItem.count({
     where: {
