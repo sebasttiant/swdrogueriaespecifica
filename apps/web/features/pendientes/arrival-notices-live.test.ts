@@ -4,7 +4,17 @@ import { createElement } from "react";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ listArrivalNoticesAction: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  listArrivalNoticesAction: vi.fn(),
+  refresh: vi.fn(),
+}));
+
+// Se mockea para PROBAR que NUNCA se llama. Recargar la ruta entera cada quince
+// segundos volvería a pedir el formulario, los filtros y el listado completo
+// para actualizar un cartel de dos líneas — por cada vendedor conectado.
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: mocks.refresh }),
+}));
 
 vi.mock("@/server/actions/arrival-notice.actions", () => ({
   listArrivalNoticesAction: mocks.listArrivalNoticesAction,
@@ -184,5 +194,121 @@ describe("ArrivalNoticesLive · errores pasajeros", () => {
     await vi.advanceTimersByTimeAsync(POLL_MS);
 
     expect(mocks.listArrivalNoticesAction).toHaveBeenCalledTimes(2);
+  });
+});
+
+// --------------------------------------------------------------------------
+// El ciclo se encadena: el turno siguiente se agenda cuando el anterior cerró,
+// no cada quince segundos pase lo que pase. Con la red lenta, un intervalo
+// ciego acumula turnos sobre una petición que todavía no volvió.
+// --------------------------------------------------------------------------
+describe("ArrivalNoticesLive · el ciclo se encadena", () => {
+  // CASO G
+  it("no agenda el turno siguiente hasta terminar el actual", async () => {
+    const enVuelo: { resolver: ((v: unknown) => void) | null } = { resolver: null };
+    mocks.listArrivalNoticesAction.mockImplementation(
+      () => new Promise((r) => { enVuelo.resolver = r; }),
+    );
+    renderLive();
+
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    expect(mocks.listArrivalNoticesAction).toHaveBeenCalledTimes(1);
+
+    // Pasan varios turnos con la respuesta colgada: ninguno dispara nada.
+    await vi.advanceTimersByTimeAsync(POLL_MS * 4);
+    expect(mocks.listArrivalNoticesAction).toHaveBeenCalledTimes(1);
+
+    // Recién al cerrar, el ciclo sigue.
+    enVuelo.resolver?.({ ok: true, notices: [] });
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    expect(mocks.listArrivalNoticesAction).toHaveBeenCalledTimes(2);
+  });
+
+  // CASO M — un rerender del padre no puede dejar dos ciclos corriendo.
+  it("un rerender no multiplica los ciclos", async () => {
+    const { rerender } = renderLive();
+
+    for (let i = 0; i < 4; i += 1) {
+      rerender(
+        createElement(ArrivalNoticesLive, {
+          initialNotices: [],
+          canViewCustomerIdentity: true,
+        }),
+      );
+    }
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+
+    expect(mocks.listArrivalNoticesAction).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ArrivalNoticesLive · lo que NO hace", () => {
+  // CASO I — escribir estado después de desmontar es la fuga que React avisa,
+  // y acá además sería pintar datos de una pantalla que la persona ya dejó.
+  it("una respuesta que llega después de desmontar no rompe nada", async () => {
+    const enVuelo: { resolver: ((v: unknown) => void) | null } = { resolver: null };
+    mocks.listArrivalNoticesAction.mockImplementation(
+      () => new Promise((r) => { enVuelo.resolver = r; }),
+    );
+    const { unmount } = renderLive();
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+
+    unmount();
+    enVuelo.resolver?.({ ok: true, notices: [notice({ productName: "Tarde" })] });
+
+    await expect(vi.advanceTimersByTimeAsync(0)).resolves.not.toThrow();
+    expect(screen.queryByText(/Tarde/)).toBeNull();
+  });
+
+  // CASO L — prueba de COMPORTAMIENTO: se ejecutan los ciclos y se comprueba
+  // que `refresh` no se llamó nunca. Buscar texto en el archivo demuestra que
+  // la vía no existe hoy, pero no que no se use; esto demuestra lo segundo.
+  it("nunca llama a router.refresh, ni con respuestas nuevas", async () => {
+    renderLive([notice({ productName: "Inicial" })]);
+    mocks.listArrivalNoticesAction.mockResolvedValue({
+      ok: true,
+      notices: [notice({ pendingId: "p-9", productName: "Recién llegado" })],
+    });
+
+    await vi.advanceTimersByTimeAsync(POLL_MS * 3);
+    window.dispatchEvent(new Event("focus"));
+    setVisibility("hidden");
+    setVisibility("visible");
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+
+    await waitFor(() => expect(screen.getByText(/Recién llegado/)).toBeDefined());
+    expect(mocks.refresh).not.toHaveBeenCalled();
+  });
+
+  // Complemento estático: además de no usarlo, no existe la vía.
+  it("tampoco importa el router", async () => {
+    const { readFileSync } = await import("node:fs");
+    const codigo = readFileSync(
+      "features/pendientes/arrival-notices-live.tsx",
+      "utf8",
+    )
+      // Sin comentarios: los de este componente EXPLICAN por qué no se usa el
+      // router, y mencionarlo ahí no puede contar como usarlo.
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/.*/g, "");
+
+    expect(codigo).not.toMatch(/from "next\/navigation"/);
+    expect(codigo).not.toMatch(/useRouter/);
+  });
+});
+
+describe("ArrivalNoticesLive · solo toca los avisos", () => {
+  // CASO K
+  it("reemplaza los avisos y nada más", async () => {
+    renderLive([notice({ productName: "Viejo" })]);
+    mocks.listArrivalNoticesAction.mockResolvedValue({
+      ok: true,
+      notices: [notice({ pendingId: "p-2", productName: "Nuevo" })],
+    });
+
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+
+    await waitFor(() => expect(screen.getByText(/Nuevo/)).toBeDefined());
+    expect(screen.queryByText(/Viejo/)).toBeNull();
   });
 });
