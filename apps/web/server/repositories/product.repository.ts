@@ -30,6 +30,10 @@ export type ProductListItem = Pick<
   // Earliest expiry among batches with quantity > 0. Null if no active batches.
   // Used to compute per-product worst expiry tier in the catalog list (S3).
   worstExpiresAt: Date | null;
+  // El laboratorio del catálogo. Desempata cuando dos productos se llaman
+  // parecido, que es exactamente lo que hizo elegir el equivocado al registrar
+  // una entrada. `null` mientras nadie se lo asignó.
+  laboratory: { name: string } | null;
 };
 
 export type CreateProductData = {
@@ -63,6 +67,9 @@ const LIST_SELECT = {
   reorderQty: true,
   active: true,
   createdAt: true,
+  // El laboratorio desempata cuando dos productos se llaman parecido. Sin él,
+  // la lista de entradas obliga a elegir entre nombres casi idénticos.
+  laboratory: { select: { name: true } },
   batches: {
     where: { quantity: { gt: 0 } },
     select: { expiresAt: true },

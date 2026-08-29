@@ -78,6 +78,7 @@ export function ReceiverQueue({
                 <th className="px-3 py-2 font-medium">SKU (código de Orion)</th>
                 <th className="px-3 py-2 font-medium">Laboratorio</th>
                 <th className="px-3 py-2 font-medium">Falta recibir</th>
+                <th className="px-3 py-2 font-medium">Acción</th>
               </tr>
             </thead>
             <tbody>
@@ -101,6 +102,25 @@ export function ReceiverQueue({
                     <span className="ml-1 text-xs font-normal text-muted-foreground">
                       {item.unit}
                     </span>
+                  </td>
+                  <td className="px-3 py-2">
+                    {scope === "EN_BODEGA" ? (
+                      /* El producto viaja en la URL y queda FIJO del otro lado.
+                         Esa es la diferencia con entrar a Entradas y buscarlo:
+                         acá la identidad ya la decidió el faltante, y volver a
+                         elegirla reabre el error que este camino cierra. */
+                      <Link
+                        prefetch={false}
+                        href={`/entradas?productId=${item.productId}&missingItemId=${item.id}&quantity=${item.outstandingQuantity}`}
+                        className="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground"
+                      >
+                        Registrar entrada
+                      </Link>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">
+                        Esperando que llegue
+                      </span>
+                    )}
                   </td>
                 </tr>
               ))}

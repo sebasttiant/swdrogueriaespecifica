@@ -22,20 +22,64 @@ export type ProductOption = {
   id: string;
   name: string;
   code: string;
+  /**
+   * Identidad en Orion, o `null` si el producto todavía no la tiene.
+   *
+   * La opción mostraba `nombre (código interno)`, y el código interno —`PROV-…`—
+   * no significa nada del otro lado del mostrador. Con tres productos llamados
+   * "Gel Caliente Muscular", "Gel Muscular Caliente" y "Gel Caliente Muscular",
+   * bodega no tenía con qué distinguirlos: eligió uno, la entrada se registró
+   * contra un producto que ningún pendiente esperaba, y el aviso nunca llegó.
+   */
+  orionCode: string | null;
+  /** Lo que termina de desempatar cuando dos productos se llaman parecido. */
+  laboratoryName: string | null;
 };
 
 type EntryFormProps = {
   products: ProductOption[];
   selectedProductId?: string;
+  /**
+   * El producto llega FIJO desde la cola de bodega y no se puede cambiar.
+   *
+   * Es la diferencia entre las dos formas de registrar una entrada. Cuando sale
+   * de un faltante, la identidad ya está decidida por el pendiente que la
+   * originó: dejar elegir de nuevo reabre exactamente el error que este camino
+   * viene a cerrar. Cuando bodega registra una entrada suelta, elige — y ahí la
+   * lista muestra SKU y laboratorio para que pueda hacerlo sin adivinar.
+   */
+  lockedProduct?: ProductOption;
+  /** El faltante que originó esta entrada, para trazarla. */
+  missingItemId?: string;
   // Cantidad que la cola de bodega ya sabe que falta cargar. Llega escrita para
   // que recibir una caja no obligue a recordar ni buscar cuánto se había
   // pedido; sigue siendo editable porque el proveedor a veces manda de menos.
   selectedQuantity?: number;
 };
 
+/**
+ * Cómo se lee un producto en la lista.
+ *
+ * Nombre, SKU y laboratorio. El código interno queda afuera: `PROV-euc2` no
+ * existe del otro lado del mostrador y ocupa el lugar del dato que sí
+ * desempata. Sin SKU se dice "sin SKU" en vez de dejar el hueco, porque un
+ * paréntesis vacío no le dice a nadie que falta cargarlo.
+ */
+function productLabel(product: ProductOption): string {
+  const sku = product.orionCode ?? "sin SKU";
+  const lab = product.laboratoryName ? ` · ${product.laboratoryName}` : "";
+  return `${product.name} — ${sku}${lab}`;
+}
+
 // Alta de entrada de inventario. Único client component del slice (necesita
 // useActionState). La lista de productos llega del server component que la monta.
-export function EntryForm({ products, selectedProductId, selectedQuantity }: EntryFormProps) {
+export function EntryForm({
+  products,
+  selectedProductId,
+  selectedQuantity,
+  lockedProduct,
+  missingItemId,
+}: EntryFormProps) {
   const [operationId, setOperationId] = useState(() => crypto.randomUUID());
   const [state, formAction, isPending] = useActionState(async (previousState: EntryFormState, formData: FormData) => {
     const result = await createInventoryEntryAction(previousState, formData);
@@ -55,16 +99,44 @@ export function EntryForm({ products, selectedProductId, selectedQuantity }: Ent
     <form action={formAction} className="space-y-4">
       <input type="hidden" name="idempotencyKey" value={operationId} />
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Producto" htmlFor="productId" className="sm:col-span-2">
-          <Select id="productId" name="productId" required defaultValue={selectedProductId}>
-            <option value="">Elegí un producto…</option>
-            {products.map((product) => (
-              <option key={product.id} value={product.id}>
-                {product.name} ({product.code})
-              </option>
-            ))}
-          </Select>
-        </Field>
+        {lockedProduct ? (
+          <Field label="Producto" className="sm:col-span-2">
+            {/* Hidden y no `disabled`: un campo deshabilitado NO entra en el
+                FormData, y la entrada se enviaría sin producto. */}
+            <input type="hidden" name="productId" value={lockedProduct.id} />
+            {missingItemId ? (
+              <input type="hidden" name="missingItemId" value={missingItemId} />
+            ) : null}
+            <div className="rounded-lg border border-border bg-muted px-3 py-2">
+              <p className="font-medium text-text">{lockedProduct.name}</p>
+              <p className="text-xs text-muted-foreground">
+                SKU (código de Orion):{" "}
+                <span className="font-mono">
+                  {lockedProduct.orionCode ?? "sin asignar"}
+                </span>
+                {lockedProduct.laboratoryName
+                  ? ` · ${lockedProduct.laboratoryName}`
+                  : ""}
+              </p>
+              {/* Se dice POR QUÉ no se puede cambiar. Un campo bloqueado sin
+                  explicación se lee como una falla de la pantalla. */}
+              <p className="mt-1 text-xs text-muted-foreground">
+                Viene del faltante que estás recibiendo. No se puede cambiar.
+              </p>
+            </div>
+          </Field>
+        ) : (
+          <Field label="Producto" htmlFor="productId" className="sm:col-span-2">
+            <Select id="productId" name="productId" required defaultValue={selectedProductId}>
+              <option value="">Elegí un producto…</option>
+              {products.map((product) => (
+                <option key={product.id} value={product.id}>
+                  {productLabel(product)}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
         <Field label="Cantidad" htmlFor="quantity">
           <Input
             id="quantity"

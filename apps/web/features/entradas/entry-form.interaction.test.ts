@@ -42,7 +42,15 @@ describe("EntryForm · idempotency", () => {
 
   it("keeps its key through uncertain retries and rotates it only after confirmed success", async () => {
     const { container } = render(createElement(EntryForm, {
-      products: [{ id: "product-1", name: "Acetaminofén", code: "ACE-1" }],
+      products: [
+        {
+          id: "product-1",
+          name: "Acetaminofén",
+          code: "ACE-1",
+          orionCode: "ORN-1",
+          laboratoryName: "Genfar",
+        },
+      ],
     }));
     const keyInput = container.querySelector('input[name="idempotencyKey"]') as HTMLInputElement;
     const initialKey = keyInput.value;

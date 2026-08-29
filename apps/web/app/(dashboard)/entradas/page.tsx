@@ -16,14 +16,21 @@ export const metadata: Metadata = { title: "Entradas" };
 export default async function EntradasPage({
   searchParams,
 }: {
-  searchParams: Promise<{ cursor?: string; productId?: string; quantity?: string }>;
+  searchParams: Promise<{
+    cursor?: string;
+    productId?: string;
+    quantity?: string;
+    // Presente cuando la entrada sale de la cola de bodega: ahí el producto ya
+    // está decidido por el faltante y no se vuelve a elegir.
+    missingItemId?: string;
+  }>;
 }) {
   const session = await requireCapability("canViewEntradas");
   // El circuito de recepción (form de nueva entrada + cola de bodega) es de
   // gerencia y bodega: OPERADOR y SUPERVISOR ven la lista pero no registran.
   const canCreate = can(session.user.role, "canCreateEntries");
 
-  const { cursor, productId, quantity } = await searchParams;
+  const { cursor, productId, quantity, missingItemId } = await searchParams;
 
   // La cola de bodega propone la cantidad. Solo se acepta un entero positivo:
   // cualquier otra cosa en la URL se ignora y el formulario vuelve a su default.
@@ -44,7 +51,18 @@ export default async function EntradasPage({
       id: product.id,
       name: product.name,
       code: product.code,
+      orionCode: product.orionCode,
+      laboratoryName: product.laboratory?.name ?? null,
     }));
+
+  // Cuando la entrada viene de un faltante, el producto queda FIJO. Se busca
+  // entre las opciones ya cargadas: si el id de la URL no corresponde a un
+  // producto activo, no se bloquea nada y el formulario vuelve a pedir que se
+  // elija — un id inventado no puede fijar una identidad.
+  const lockedProduct =
+    missingItemId && productId
+      ? productOptions.find((option) => option.id === productId)
+      : undefined;
 
   return (
     <div className="space-y-6">
@@ -69,6 +87,8 @@ export default async function EntradasPage({
             products={productOptions}
             selectedProductId={productId}
             selectedQuantity={suggestedQuantity}
+            lockedProduct={lockedProduct}
+            missingItemId={lockedProduct ? missingItemId : undefined}
           />
         </Card>
       ) : null}
