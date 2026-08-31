@@ -129,9 +129,24 @@ function ProductEditFields({
   isPending: boolean;
   onClose: () => void;
 }) {
-  // El eco del intento anterior cuando falló; ausente al entrar o tras un
-  // éxito, y ahí manda el producto guardado.
+  // El eco de la última respuesta: lo enviado si falló, lo guardado si salió
+  // bien. Ausente solo al abrir el formulario por primera vez.
   const previous = state.values;
+
+  // EL TESTIGO SE FIJA AL MONTAR, no se lee de las props en cada render.
+  //
+  // `router.refresh()` de este proyecto corre ante cualquier respuesta y
+  // también ante acciones AJENAS de esta misma pantalla —vincular el SKU desde
+  // la tarjeta de identidad, por ejemplo—. Leyendo `product.updatedAt` en vivo,
+  // ese refresco le daba al borrador un testigo FRESCO mientras los campos
+  // seguían mostrando lo escrito sobre la versión anterior: al enviar, esa
+  // mezcla pasaba el control de concurrencia y sobrescribía en silencio la
+  // edición de otra persona.
+  //
+  // Este componente se remonta con cada respuesta, así que "al montar" es
+  // exactamente "al abrir el formulario o al recibir una respuesta", que es
+  // cuando el testigo debe renovarse — y solo entonces.
+  const [witness] = useState(() => previous?.expectedUpdatedAt ?? product.updatedAt);
 
   return (
     <Card className="space-y-4">
@@ -148,11 +163,7 @@ function ProductEditFields({
             pisaría la edición ajena, que es exactamente lo que el control
             existe para impedir. Con el testigo del eco, el reintento vuelve a
             chocar y la única salida es recargar — que es la correcta. */}
-        <input
-          type="hidden"
-          name="expectedUpdatedAt"
-          value={previous?.expectedUpdatedAt ?? product.updatedAt}
-        />
+        <input type="hidden" name="expectedUpdatedAt" value={witness} />
 
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Nombre" htmlFor="edit-name" className="sm:col-span-2">

@@ -418,3 +418,35 @@ describe("editar producto · un SEGUNDO borrador tras un guardado exitoso", () =
     expect(campo(view.container, "name")?.value).toBe("Segundo borrador");
   });
 });
+
+describe("editar producto · el testigo se fija al abrir", () => {
+  // El primer borrador, antes de que exista ningún eco: el testigo salía de
+  // las props, y `router.refresh()` las actualiza. Si otra persona modificó el
+  // catálogo y después cualquier acción local de esta pantalla dispara el
+  // refresco, el envío mezclaba valores viejos con un testigo fresco, pasaba
+  // el control de concurrencia y sobrescribía la edición ajena.
+  it("un refresco ajeno no le da un testigo fresco al borrador inicial", async () => {
+    const user = userEvent.setup();
+    const view = render(createElement(ProductEditForm, { product: PRODUCTO }));
+    await user.click(screen.getByRole("button", { name: "Editar producto" }));
+
+    const nombre = campo(view.container, "name")!;
+    await user.clear(nombre);
+    await user.type(nombre, "Primer borrador");
+
+    // Otra persona guardó, y una acción local de esta pantalla trae la versión
+    // nueva por refresco.
+    view.rerender(
+      createElement(ProductEditForm, {
+        product: { ...PRODUCTO, updatedAt: "2026-09-01T12:00:00.000Z" },
+      }),
+    );
+
+    // El borrador sigue, y el testigo tiene que seguir siendo el de cuando se
+    // abrió: enviarlo con el fresco pisaría la edición de la otra persona.
+    expect(campo(view.container, "name")?.value).toBe("Primer borrador");
+    expect(campo(view.container, "expectedUpdatedAt")?.value).toBe(
+      "2026-08-31T12:00:00.000Z",
+    );
+  });
+});
