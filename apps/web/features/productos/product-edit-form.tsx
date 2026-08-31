@@ -94,7 +94,23 @@ export function ProductEditForm({ product }: { product: EditableProduct }) {
       //   falló  -> del eco de lo enviado  -> vuelven llenos.
       //   salió  -> del producto guardado  -> muestran lo que se acaba de
       //                                       guardar.
-      key={state.submissionId ?? "initial"}
+      // La clave lleva DOS cosas, y las dos hacen falta:
+      //
+      //   submissionId    remonta ante cada respuesta.
+      //   product.updatedAt  remonta otra vez cuando `router.refresh()` trae
+      //                   el producto ya guardado.
+      //
+      // Sin la segunda, el éxito remontaba leyendo el producto VIEJO —el
+      // refresco todavía no había llegado— y después nada volvía a releerlo:
+      // los campos no controlados quedaban mostrando los valores previos al
+      // guardado junto a un testigo nuevo y válido. Apretar "Guardar cambios"
+      // otra vez mandaba esos valores viejos, pasaba el control de
+      // concurrencia y REVERTÍA lo que se acababa de guardar.
+      //
+      // En el camino de error no molesta: si nadie escribió, `updatedAt` no se
+      // movió y la clave no cambia; y si el rechazo fue por concurrencia, el
+      // eco sigue en el estado, así que el remonte extra vuelve a leerlo a él.
+      key={`${state.submissionId ?? "initial"}:${product.updatedAt}`}
       product={product}
       state={state}
       formAction={formAction}

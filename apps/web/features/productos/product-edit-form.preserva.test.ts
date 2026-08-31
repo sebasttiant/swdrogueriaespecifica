@@ -202,3 +202,77 @@ describe("editar producto · el laboratorio escrito no recupera el id viejo", ()
     expect(campo(container, "laboratoryId")?.value).toBe("");
   });
 });
+
+// --------------------------------------------------------------------------
+// Después de un guardado EXITOSO.
+//
+// El éxito cambia `submissionId` y NO trae eco, así que los campos se
+// remontan leyendo el producto que el componente tiene en ese instante — que
+// todavía es el VIEJO, porque `router.refresh()` no llegó. Cuando llega, el
+// testigo (controlado) se actualiza, pero los campos no controlados NO se
+// releen: quedan mostrando los valores previos al guardado junto a un testigo
+// nuevo y válido.
+//
+// El resultado es peor que un detalle visual: apretar "Guardar cambios" otra
+// vez manda esos valores viejos, pasa el control de concurrencia y REVIERTE lo
+// que se acababa de guardar.
+// --------------------------------------------------------------------------
+describe("editar producto · tras un guardado exitoso", () => {
+  it("muestra lo GUARDADO cuando llegan los datos frescos, no lo anterior", async () => {
+    mocks.updateProductAction.mockReturnValue({
+      error: null,
+      ok: true,
+      submissionId: "exito-1",
+    });
+
+    const user = userEvent.setup();
+    const view = render(createElement(ProductEditForm, { product: PRODUCTO }));
+    await user.click(screen.getByRole("button", { name: "Editar producto" }));
+
+    const nombre = campo(view.container, "name")!;
+    await user.clear(nombre);
+    await user.type(nombre, "Dolex Niños Jarabe");
+    await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    await screen.findByRole("status");
+
+    // Esto es `router.refresh()` llegando: el producto ya guardado.
+    view.rerender(
+      createElement(ProductEditForm, {
+        product: {
+          ...PRODUCTO,
+          name: "Dolex Niños Jarabe",
+          updatedAt: "2026-09-01T09:00:00.000Z",
+        },
+      }),
+    );
+
+    expect(campo(view.container, "name")?.value).toBe("Dolex Niños Jarabe");
+  });
+
+  it("el testigo y los campos describen el MISMO producto", async () => {
+    mocks.updateProductAction.mockReturnValue({
+      error: null,
+      ok: true,
+      submissionId: "exito-2",
+    });
+
+    const user = userEvent.setup();
+    const view = render(createElement(ProductEditForm, { product: PRODUCTO }));
+    await user.click(screen.getByRole("button", { name: "Editar producto" }));
+    await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    await screen.findByRole("status");
+
+    view.rerender(
+      createElement(ProductEditForm, {
+        product: { ...PRODUCTO, minStock: 42, updatedAt: "2026-09-01T09:00:00.000Z" },
+      }),
+    );
+
+    // Si el testigo es el nuevo pero los campos son los viejos, reenviar
+    // revierte el guardado que acaba de ocurrir.
+    expect(campo(view.container, "expectedUpdatedAt")?.value).toBe(
+      "2026-09-01T09:00:00.000Z",
+    );
+    expect(campo(view.container, "minStock")?.value).toBe("42");
+  });
+});
