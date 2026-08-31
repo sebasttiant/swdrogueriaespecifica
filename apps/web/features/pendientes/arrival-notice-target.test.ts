@@ -143,7 +143,7 @@ describe("el aviso de llegada lleva a una fila que EXISTE", () => {
   it("va a Revisión de pendientes, no a la pantalla de captura", () => {
     const html = renderNotices();
 
-    expect(html).toContain('href="/revision-pendientes#');
+    expect(html).toContain('href="/revision-pendientes?');
     expect(html).not.toContain('href="/pendientes');
   });
 

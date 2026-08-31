@@ -2,6 +2,7 @@ import { z } from "zod";
 
 
 import { compactCopInput } from "@/lib/format/currency";
+import { MANUAL_UNIT_FALLBACK } from "./presentation";
 import { parseBogotaWallTime } from "@/lib/datetime/bogota";
 import {
   MANAGEMENT_ELIGIBLE_STATUSES,
@@ -33,8 +34,9 @@ const optionalText = (max: number) =>
     .optional()
     .transform((value) => (value && value.length > 0 ? value : undefined));
 
-// Unidad por defecto de un producto manual cuando el operador no la especifica.
-const MANUAL_UNIT_FALLBACK = "unidad";
+// El relleno de presentación de un producto manual, definido en un solo lugar:
+// lo escribe este esquema y lo reconoce `presentationLabel` para NO mostrarlo
+// como si fuera un dato que alguien cargó.
 
 // Cota de cordura de un monto: cien millones de pesos. No es un límite
 // comercial, frena un tipeo accidental (ej. un código de barras en el campo).

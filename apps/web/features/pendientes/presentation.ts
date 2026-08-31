@@ -37,15 +37,43 @@ export const NO_PRESENTATION_LABEL = "Sin presentación";
 export const PRESENTATION_LABEL = "Presentación";
 
 /**
+ * Lo que se guarda en `product.unit` cuando el vendedor NO escribe una
+ * presentación al cargar un producto manual.
+ *
+ * Es un relleno técnico, no un dato: la columna es `String` no nulo, así que
+ * algo hay que escribir. Vive acá —y no en el esquema de validación— porque
+ * quien lo lee es la pantalla, y porque la regla de "esto no es información"
+ * tiene que estar en el mismo archivo que la decide.
+ */
+export const MANUAL_UNIT_FALLBACK = "unidad";
+
+/**
  * La presentación lista para mostrar, o `NO_PRESENTATION_LABEL`.
  *
- * `unit` es `String` no nulo en el esquema, pero llega vacío o con solo
- * espacios en productos legados y en los manuales que nadie completó. Los tres
- * casos son "no tiene presentación" para quien mira la pantalla.
+ * Tres casos son "no tiene presentación" para quien mira la pantalla:
+ *
+ *   vacío o espacios  -> productos legados y manuales sin completar.
+ *   `MANUAL_UNIT_FALLBACK` -> el relleno que escribe el formulario cuando el
+ *                        vendedor deja el campo en blanco.
+ *
+ * El tercero es el que importa. Ese "unidad" no lo escribió nadie: lo puso el
+ * sistema para poder guardar la fila. Mostrarlo como presentación es presentar
+ * un relleno como si fuera un dato, y quien lee la pantalla no tiene forma de
+ * distinguirlo de una presentación de verdad — decide una compra creyendo que
+ * alguien la registró.
+ *
+ * EL PRECIO, dicho de frente: un producto cuya presentación real sea
+ * literalmente "unidad" va a leerse como "Sin presentación". Se acepta porque
+ * en una droguería las presentaciones son frasco, sobre, caja, blíster o
+ * ampolla; "unidad" es la ausencia de una presentación especial, no una. Si
+ * algún día hace falta distinguirlas de verdad, eso pide una columna propia y
+ * su migración, no una comparación de textos.
  */
 export function presentationLabel(unit: string | null | undefined): string {
   const trimmed = unit?.trim();
-  return trimmed ? trimmed : NO_PRESENTATION_LABEL;
+  if (!trimmed) return NO_PRESENTATION_LABEL;
+  if (trimmed.toLowerCase() === MANUAL_UNIT_FALLBACK) return NO_PRESENTATION_LABEL;
+  return trimmed;
 }
 
 /**
@@ -55,5 +83,12 @@ export function presentationLabel(unit: string | null | undefined): string {
  * etiqueta de "sin presentación", que es texto de pantalla y no un valor.
  */
 export function hasPresentation(unit: string | null | undefined): boolean {
-  return Boolean(unit?.trim());
+  // Se compara contra las ENTRADAS que significan ausencia, no contra la
+  // etiqueta de salida. Delegar en `presentationLabel` parecía más corto y
+  // metía un defecto: un producto cuya unidad fuera literalmente "Sin
+  // presentación" —texto de pantalla, no un valor— se habría contado como si
+  // no tuviera ninguna.
+  const trimmed = unit?.trim();
+  if (!trimmed) return false;
+  return trimmed.toLowerCase() !== MANUAL_UNIT_FALLBACK;
 }

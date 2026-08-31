@@ -38,6 +38,25 @@ export function pendingAnchorId(pendingId: string): string {
 }
 
 /**
+ * El parámetro que le dice al SERVIDOR qué fila hay que garantizar en la página.
+ *
+ * Existe por un detalle de HTTP que decide todo el diseño: el fragmento de una
+ * URL —el `#loquesea`— NUNCA se envía al servidor. Lo resuelve el navegador,
+ * solo, sobre el HTML que ya recibió.
+ *
+ * Con la lista paginada de a 20, eso significa que un ancla alcanza únicamente
+ * si el pendiente cayó en la primera página. Para uno más viejo, el servidor no
+ * tiene forma de saber que hacía falta —el `#` no le llegó—, no lo renderiza, y
+ * el enlace vuelve a no hacer nada. El mismo síntoma de siempre, reapareciendo
+ * solo con los pedidos que ya bajaron en la cola.
+ *
+ * Por eso el id viaja DOS veces: en la query, que sí llega al servidor y le
+ * permite traer esa fila; y en el fragmento, que es lo que hace saltar al
+ * navegador una vez que la fila está en el DOM.
+ */
+export const FOCUS_PARAM = "focus";
+
+/**
  * Enlace a un pendiente concreto dentro de Revisión de pendientes.
  *
  * Sin `?tab=`: `resolveReviewTab` manda a "seguimiento" por defecto, que es la
@@ -45,7 +64,22 @@ export function pendingAnchorId(pendingId: string): string {
  * un default que ya está definido en un solo lugar.
  */
 export function pendingReviewHref(pendingId: string): string {
-  return `${REVIEW_PATH}#${pendingAnchorId(pendingId)}`;
+  const query = new URLSearchParams({ [FOCUS_PARAM]: pendingId });
+  return `${REVIEW_PATH}?${query.toString()}#${pendingAnchorId(pendingId)}`;
+}
+
+/**
+ * Lee el `?focus=` de la URL.
+ *
+ * Es input de usuario y termina en una consulta: se acepta solo un id con la
+ * forma que genera la aplicación (cuid), y cualquier otra cosa se descarta. El
+ * recorte por dueño manda igual del lado del servicio; esto es la primera
+ * puerta, no la única.
+ */
+export function resolveFocusedPendingId(raw: string | undefined | null): string | null {
+  const trimmed = raw?.trim();
+  if (!trimmed) return null;
+  return /^[a-z0-9]{20,40}$/i.test(trimmed) ? trimmed : null;
 }
 
 /**

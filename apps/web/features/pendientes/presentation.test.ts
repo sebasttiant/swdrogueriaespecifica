@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  MANUAL_UNIT_FALLBACK,
   NO_PRESENTATION_LABEL,
   PRESENTATION_LABEL,
   hasPresentation,
@@ -66,10 +67,32 @@ describe("presentación · producto manual", () => {
     expect(presentationLabel("Sobre")).toBe("Sobre");
   });
 
-  // `schema.ts` completa "unidad" cuando el vendedor deja el campo vacío, así
-  // que un manual sin presentación llega con un valor real, no vacío.
-  it("el relleno por defecto del formulario se muestra como cualquier otra", () => {
-    expect(presentationLabel("unidad")).toBe("unidad");
+  // El caso que motivó revisar esto. Cuando el vendedor deja el campo vacío,
+  // el formulario guarda "unidad" para poder escribir la fila. Ese texto NO lo
+  // escribió nadie, y mostrarlo como presentación es presentar un relleno del
+  // sistema como si fuera un dato: quien lee la pantalla no puede distinguirlo
+  // de una presentación de verdad y decide una compra creyendo que alguien la
+  // registró.
+  it("el relleno del formulario NO se muestra como una presentación real", () => {
+    expect(presentationLabel(MANUAL_UNIT_FALLBACK)).toBe(NO_PRESENTATION_LABEL);
+    expect(presentationLabel("unidad")).toBe(NO_PRESENTATION_LABEL);
+  });
+
+  it("da igual cómo esté escrito: es el mismo relleno", () => {
+    for (const variante of ["Unidad", "UNIDAD", "  unidad  "]) {
+      expect(presentationLabel(variante)).toBe(NO_PRESENTATION_LABEL);
+    }
+  });
+
+  // Una presentación de verdad no se toca, aunque contenga la palabra.
+  it("una presentación real que menciona la palabra sí se muestra", () => {
+    expect(presentationLabel("Caja x 10 unidades")).toBe("Caja x 10 unidades");
+    expect(presentationLabel("unidad blíster")).toBe("unidad blíster");
+  });
+
+  it("hasPresentation también lo considera ausente", () => {
+    expect(hasPresentation(MANUAL_UNIT_FALLBACK)).toBe(false);
+    expect(hasPresentation("Frasco")).toBe(true);
   });
 });
 

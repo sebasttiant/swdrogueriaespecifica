@@ -13,7 +13,6 @@ import { computeDeadlineStatus } from "./deadline-status";
 import { derivePaymentState } from "./payment-state";
 import { fulfillmentNotice, isTerminal, outstanding } from "./fulfillment-notice";
 import { identityWarning } from "./identity-warning";
-import { pendingAnchorId } from "./pending-anchor";
 import { PRESENTATION_LABEL, presentationLabel } from "./presentation";
 import {
   isManagementStatus,
@@ -352,15 +351,17 @@ export function PendingCompactList({
             canManageAll,
           });
           return (
-            <Card
-              key={pending.id}
-              // Destino del enlace "Ver el pendiente" del aviso de llegada.
-              // `scroll-mt-20` deja aire para el topbar sticky (h-16): sin eso
-              // la fila queda TAPADA por la barra y parece que no pasó nada,
-              // que es el mismo síntoma que este arreglo viene a sacar.
-              id={pendingAnchorId(pending.id)}
-              className="scroll-mt-20 space-y-2 p-3"
-            >
+            // SIN ancla, a propósito. Esta lista pinta las DOS vistas —tarjetas
+            // y tabla— en el MISMO documento, ocultando una con CSS
+            // (`lg:hidden` / `hidden lg:block`). Poner el `id` en las dos deja
+            // dos elementos con el mismo identificador: HTML inválido, y el
+            // navegador salta al PRIMERO, que en escritorio es la tarjeta
+            // oculta. Saltar a un elemento `display:none` no hace nada —el
+            // mismo síntoma que el defecto original.
+            //
+            // El ancla vive solo en `PendingList` (Revisión de pendientes), que
+            // pinta una sola variante por fila. Nada enlaza acá con fragmento.
+            <Card key={pending.id} className="space-y-2 p-3">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="break-words font-medium text-text">
@@ -467,11 +468,7 @@ export function PendingCompactList({
                 canManageAll,
               });
               return (
-                <tr
-                  key={pending.id}
-                  id={pendingAnchorId(pending.id)}
-                  className="scroll-mt-20 border-b border-border last:border-0"
-                >
+                <tr key={pending.id} className="border-b border-border last:border-0">
                   <td className="px-3 py-2 font-medium text-text">
                     {pending.product.name}
                     {identityNotice ? (
