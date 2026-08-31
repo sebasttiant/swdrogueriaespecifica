@@ -276,3 +276,76 @@ describe("editar producto · tras un guardado exitoso", () => {
     expect(campo(view.container, "minStock")?.value).toBe("42");
   });
 });
+
+// --------------------------------------------------------------------------
+// El borrador SIN enviar sobrevive a un refresco ajeno.
+//
+// En esta misma pantalla está la tarjeta de identidad: alguien puede vincular
+// o corregir el SKU con el formulario de edición abierto y a medio llenar. Esa
+// acción escribe en la fila `Product`, mueve su `updatedAt`, y `router.refresh()`
+// trae la versión nueva hasta acá.
+//
+// Si el remonte por versión se aplicara siempre, ese refresco descartaría el
+// borrador: nombre, mínimos y laboratorio escritos y todavía no enviados. Por
+// eso el remonte por versión vale SOLO para cerrar el ciclo de un guardado
+// exitoso de ESTE formulario.
+// --------------------------------------------------------------------------
+describe("editar producto · un refresco ajeno no borra el borrador", () => {
+  it("conserva lo escrito cuando otra acción de la pantalla mueve el producto", async () => {
+    const user = userEvent.setup();
+    const view = render(createElement(ProductEditForm, { product: PRODUCTO }));
+    await user.click(screen.getByRole("button", { name: "Editar producto" }));
+
+    const nombre = campo(view.container, "name")!;
+    await user.clear(nombre);
+    await user.type(nombre, "Borrador sin enviar");
+
+    const minimo = campo(view.container, "minStock")!;
+    await user.clear(minimo);
+    await user.type(minimo, "77");
+
+    // Alguien vinculó el SKU desde la tarjeta de identidad: la fila cambió y
+    // `router.refresh()` trae la versión nueva. NO hubo envío de este form.
+    view.rerender(
+      createElement(ProductEditForm, {
+        product: { ...PRODUCTO, updatedAt: "2026-09-01T10:00:00.000Z" },
+      }),
+    );
+
+    expect(campo(view.container, "name")?.value).toBe("Borrador sin enviar");
+    expect(campo(view.container, "minStock")?.value).toBe("77");
+  });
+
+  it("tampoco lo borra si el refresco llega tras un error de validación", async () => {
+    mocks.updateProductAction.mockReturnValue({
+      error: "Revisa los datos del producto.",
+      ok: false,
+      submissionId: "fallo-3",
+      values: {
+        code: "MED-001",
+        name: "Lo que escribí",
+        unit: "Frasco",
+        minStock: "5",
+        reorderQty: "20",
+        laboratoryId: "lab-1",
+        laboratoryName: "Genfar",
+        active: "on",
+        expectedUpdatedAt: "2026-08-31T12:00:00.000Z",
+      },
+    });
+
+    const user = userEvent.setup();
+    const view = render(createElement(ProductEditForm, { product: PRODUCTO }));
+    await user.click(screen.getByRole("button", { name: "Editar producto" }));
+    await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    await screen.findByRole("alert");
+
+    view.rerender(
+      createElement(ProductEditForm, {
+        product: { ...PRODUCTO, updatedAt: "2026-09-01T10:00:00.000Z" },
+      }),
+    );
+
+    expect(campo(view.container, "name")?.value).toBe("Lo que escribí");
+  });
+});

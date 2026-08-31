@@ -94,23 +94,26 @@ export function ProductEditForm({ product }: { product: EditableProduct }) {
       //   falló  -> del eco de lo enviado  -> vuelven llenos.
       //   salió  -> del producto guardado  -> muestran lo que se acaba de
       //                                       guardar.
-      // La clave lleva DOS cosas, y las dos hacen falta:
+      // La clave remonta ante cada respuesta, y SOLO tras un guardado exitoso
+      // de este formulario incorpora además la versión del producto.
       //
-      //   submissionId    remonta ante cada respuesta.
-      //   product.updatedAt  remonta otra vez cuando `router.refresh()` trae
-      //                   el producto ya guardado.
+      // Por qué hace falta la versión: el éxito remontaba leyendo el producto
+      // VIEJO —`router.refresh()` todavía no había llegado— y después nada
+      // volvía a releerlo. Los campos quedaban mostrando los valores previos
+      // al guardado junto a un testigo nuevo y válido, así que apretar
+      // "Guardar cambios" otra vez los reenviaba, pasaba el control de
+      // concurrencia y REVERTÍA lo recién guardado.
       //
-      // Sin la segunda, el éxito remontaba leyendo el producto VIEJO —el
-      // refresco todavía no había llegado— y después nada volvía a releerlo:
-      // los campos no controlados quedaban mostrando los valores previos al
-      // guardado junto a un testigo nuevo y válido. Apretar "Guardar cambios"
-      // otra vez mandaba esos valores viejos, pasaba el control de
-      // concurrencia y REVERTÍA lo que se acababa de guardar.
-      //
-      // En el camino de error no molesta: si nadie escribió, `updatedAt` no se
-      // movió y la clave no cambia; y si el rechazo fue por concurrencia, el
-      // eco sigue en el estado, así que el remonte extra vuelve a leerlo a él.
-      key={`${state.submissionId ?? "initial"}:${product.updatedAt}`}
+      // Por qué SOLO tras el éxito: en esta misma pantalla está la tarjeta de
+      // identidad. Alguien puede vincular el SKU con este formulario abierto y
+      // a medio llenar; eso escribe en la fila y mueve su `updatedAt`. Con la
+      // versión siempre en la clave, ese refresco ajeno remontaba todo desde
+      // `product` y descartaba el borrador sin aviso.
+      key={
+        state.ok
+          ? `${state.submissionId}:${product.updatedAt}`
+          : (state.submissionId ?? "initial")
+      }
       product={product}
       state={state}
       formAction={formAction}
