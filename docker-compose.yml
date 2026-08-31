@@ -65,6 +65,14 @@ services:
       # y es `seed.ts` quien decide: la exige solo cuando tiene que CREAR el
       # administrador, no en cada despliegue.
       SEED_ADMIN_PASSWORD: "${SEED_ADMIN_PASSWORD:-}"
+      # `seed.ts` LEE esta variable y `env.example` la documenta, pero no
+      # llegaba al contenedor: quien la definía en su `.env` obtenía igual el
+      # administrador por defecto, sin ningún aviso.
+      #
+      # Se pasa vacía cuando no está definida, como la contraseña. Es
+      # `resolveAdminEmail` quien decide, y descarta la cadena vacía a
+      # propósito: un `??` solo atraparía `undefined` y acá siempre llega "".
+      SEED_ADMIN_EMAIL: "${SEED_ADMIN_EMAIL:-}"
     depends_on:
       migrate:
         condition: service_completed_successfully
