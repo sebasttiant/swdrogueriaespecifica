@@ -329,7 +329,35 @@ export async function updateProductAction(
 
   revalidatePath("/productos");
   revalidatePath(`/productos/${id}`);
-  // Sin `values`: al remontar, los campos vuelven a leer el producto ya
-  // guardado, que es exactamente lo que se acaba de escribir.
-  return { error: null, ok: true, submissionId: randomUUID() };
+
+  // CON `values`, y esto es lo que cierra toda una clase de errores.
+  //
+  // La alternativa era dejar que los campos releyeran el producto de las
+  // props. Pero `router.refresh()` llega DESPUÉS de la respuesta, así que el
+  // remonte del éxito leía el producto viejo, y hacer que la clave dependiera
+  // de la versión para releerlo abría otro agujero: un refresco disparado por
+  // OTRA acción de la misma pantalla —vincular el SKU, por ejemplo— borraba
+  // cualquier borrador sin enviar.
+  //
+  // Devolviendo lo guardado, el formulario nunca depende de cuándo llega el
+  // refresco: muestra exactamente lo que quedó escrito en la base, y su
+  // testigo es el de esa fila.
+  return {
+    error: null,
+    ok: true,
+    submissionId: randomUUID(),
+    values: {
+      code: changed.after.code,
+      name: changed.after.name,
+      unit: changed.after.unit,
+      minStock: String(changed.after.minStock),
+      reorderQty: String(changed.after.reorderQty),
+      laboratoryId: changed.after.laboratoryId ?? "",
+      // El nombre no está en la fila del producto; se conserva el que se envió
+      // para que el buscador siga mostrando el laboratorio elegido.
+      laboratoryName: echo.laboratoryName,
+      active: changed.after.active ? "on" : "",
+      expectedUpdatedAt: changed.after.updatedAt.toISOString(),
+    },
+  };
 }

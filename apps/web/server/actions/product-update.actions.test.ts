@@ -36,6 +36,8 @@ const ANTES = {
   reorderQty: 0,
   laboratoryId: null,
   active: true,
+  // El éxito devuelve el eco de lo guardado, y su testigo sale de acá.
+  updatedAt: new Date("2026-09-01T09:00:00.000Z"),
 };
 
 function formData(overrides: Record<string, string> = {}): FormData {
@@ -227,5 +229,38 @@ describe("updateProductAction · el laboratorio escrito no resuelve", () => {
     expect(data.laboratoryId).toBeNull();
     expect(data.expectedUpdatedAt).toBeInstanceOf(Date);
     expect(data.actorId).toBe("user-1");
+  });
+});
+
+describe("updateProductAction · el éxito devuelve lo GUARDADO", () => {
+  // Sin esto, el formulario tendría que releer el producto de las props, y eso
+  // depende de cuándo llegue `router.refresh()`. De esa dependencia salieron
+  // dos pérdidas de datos distintas.
+  it("el eco trae los valores de la fila, no los enviados", async () => {
+    editProduct.mockResolvedValue({
+      status: "saved",
+      before: ANTES,
+      after: { ...ANTES, unit: "Frasco", minStock: 42 },
+    });
+
+    const state = await updateProductAction({ error: null, ok: false }, formData());
+
+    expect(state.ok).toBe(true);
+    expect(state.values?.unit).toBe("Frasco");
+    expect(state.values?.minStock).toBe("42");
+  });
+
+  it("el testigo del eco es el de la fila guardada", async () => {
+    const state = await updateProductAction({ error: null, ok: false }, formData());
+
+    expect(state.values?.expectedUpdatedAt).toBe("2026-09-01T09:00:00.000Z");
+  });
+
+  it("cada respuesta trae una identidad distinta, para poder remontar", async () => {
+    const a = await updateProductAction({ error: null, ok: false }, formData());
+    const b = await updateProductAction({ error: null, ok: false }, formData());
+
+    expect(a.submissionId).toBeTruthy();
+    expect(a.submissionId).not.toBe(b.submissionId);
   });
 });

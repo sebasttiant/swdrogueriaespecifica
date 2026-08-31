@@ -219,10 +219,23 @@ describe("editar producto · el laboratorio escrito no recupera el id viejo", ()
 // --------------------------------------------------------------------------
 describe("editar producto · tras un guardado exitoso", () => {
   it("muestra lo GUARDADO cuando llegan los datos frescos, no lo anterior", async () => {
+    // El éxito devuelve el eco de lo GUARDADO: así el formulario no depende de
+    // cuándo llega `router.refresh()`.
     mocks.updateProductAction.mockReturnValue({
       error: null,
       ok: true,
       submissionId: "exito-1",
+      values: {
+        code: "MED-001",
+        name: "Dolex Niños Jarabe",
+        unit: "Frasco",
+        minStock: "5",
+        reorderQty: "20",
+        laboratoryId: "lab-1",
+        laboratoryName: "Genfar",
+        active: "on",
+        expectedUpdatedAt: "2026-09-01T09:00:00.000Z",
+      },
     });
 
     const user = userEvent.setup();
@@ -254,6 +267,17 @@ describe("editar producto · tras un guardado exitoso", () => {
       error: null,
       ok: true,
       submissionId: "exito-2",
+      values: {
+        code: "MED-001",
+        name: "Dolex Niños",
+        unit: "Frasco",
+        minStock: "42",
+        reorderQty: "20",
+        laboratoryId: "lab-1",
+        laboratoryName: "Genfar",
+        active: "on",
+        expectedUpdatedAt: "2026-09-01T09:00:00.000Z",
+      },
     });
 
     const user = userEvent.setup();
@@ -347,5 +371,50 @@ describe("editar producto · un refresco ajeno no borra el borrador", () => {
     );
 
     expect(campo(view.container, "name")?.value).toBe("Lo que escribí");
+  });
+});
+
+describe("editar producto · un SEGUNDO borrador tras un guardado exitoso", () => {
+  // El caso que encontró la quinta ronda: `state.ok` sigue en `true` después
+  // del primer guardado, así que cualquier clave que mirara la versión del
+  // producto volvía a remontar con el siguiente refresco ajeno y borraba el
+  // borrador nuevo. Con el eco del guardado, la clave ya no mira la versión.
+  it("sobrevive a un refresco ajeno posterior", async () => {
+    mocks.updateProductAction.mockReturnValue({
+      error: null,
+      ok: true,
+      submissionId: "exito-3",
+      values: {
+        code: "MED-001",
+        name: "Ya guardado",
+        unit: "Frasco",
+        minStock: "5",
+        reorderQty: "20",
+        laboratoryId: "lab-1",
+        laboratoryName: "Genfar",
+        active: "on",
+        expectedUpdatedAt: "2026-09-01T09:00:00.000Z",
+      },
+    });
+
+    const user = userEvent.setup();
+    const view = render(createElement(ProductEditForm, { product: PRODUCTO }));
+    await user.click(screen.getByRole("button", { name: "Editar producto" }));
+    await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    await screen.findByRole("status");
+
+    // Segundo borrador, sin enviar.
+    const nombre = campo(view.container, "name")!;
+    await user.clear(nombre);
+    await user.type(nombre, "Segundo borrador");
+
+    // Alguien vincula el SKU desde la tarjeta de identidad: refresco ajeno.
+    view.rerender(
+      createElement(ProductEditForm, {
+        product: { ...PRODUCTO, updatedAt: "2026-09-01T11:00:00.000Z" },
+      }),
+    );
+
+    expect(campo(view.container, "name")?.value).toBe("Segundo borrador");
   });
 });

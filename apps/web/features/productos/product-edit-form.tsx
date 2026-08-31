@@ -94,26 +94,19 @@ export function ProductEditForm({ product }: { product: EditableProduct }) {
       //   falló  -> del eco de lo enviado  -> vuelven llenos.
       //   salió  -> del producto guardado  -> muestran lo que se acaba de
       //                                       guardar.
-      // La clave remonta ante cada respuesta, y SOLO tras un guardado exitoso
-      // de este formulario incorpora además la versión del producto.
+      // La clave remonta ante cada respuesta, y NADA MÁS.
       //
-      // Por qué hace falta la versión: el éxito remontaba leyendo el producto
-      // VIEJO —`router.refresh()` todavía no había llegado— y después nada
-      // volvía a releerlo. Los campos quedaban mostrando los valores previos
-      // al guardado junto a un testigo nuevo y válido, así que apretar
-      // "Guardar cambios" otra vez los reenviaba, pasaba el control de
-      // concurrencia y REVERTÍA lo recién guardado.
+      // No depende de `product.updatedAt`, y esa es la decisión importante:
+      // `router.refresh()` de este proyecto corre ante cualquier respuesta y
+      // también ante acciones AJENAS de la misma pantalla —vincular el SKU
+      // desde la tarjeta de identidad, por ejemplo—. Cualquier clave que mire
+      // la versión del producto termina remontando en un refresco que este
+      // formulario no pidió, y borrando el borrador sin enviar.
       //
-      // Por qué SOLO tras el éxito: en esta misma pantalla está la tarjeta de
-      // identidad. Alguien puede vincular el SKU con este formulario abierto y
-      // a medio llenar; eso escribe en la fila y mueve su `updatedAt`. Con la
-      // versión siempre en la clave, ese refresco ajeno remontaba todo desde
-      // `product` y descartaba el borrador sin aviso.
-      key={
-        state.ok
-          ? `${state.submissionId}:${product.updatedAt}`
-          : (state.submissionId ?? "initial")
-      }
+      // Los campos no necesitan las props frescas porque la respuesta ya trae
+      // lo que corresponde mostrar: el eco de lo enviado si falló, y el eco de
+      // lo GUARDADO si salió bien.
+      key={state.submissionId ?? "initial"}
       product={product}
       state={state}
       formAction={formAction}
