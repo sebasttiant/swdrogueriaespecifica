@@ -22,6 +22,7 @@
     "db:migrate": "pnpm --filter @drogueria/web db:migrate",
     "db:deploy": "pnpm --filter @drogueria/web db:deploy",
     "db:seed": "pnpm --filter @drogueria/web db:seed",
+    "db:preflight": "pnpm --filter @drogueria/web db:preflight",
     "data:reset:operational": "bash scripts/reset-operational-data.sh",
     "data:seed:operational:dry": "bash scripts/seed-operational-data.sh --dry-run",
     "data:seed:operational": "bash scripts/seed-operational-data.sh --execute",

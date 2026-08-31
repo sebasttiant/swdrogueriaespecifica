@@ -117,6 +117,32 @@ until db_status="$(docker compose ps -q "$DB_SERVICE" | xargs -r docker inspect 
 done
 docker compose ps
 
+# --------------------------------------------------------------------------
+# Preflight de identidad canónica de laboratorios.
+#
+# `20260828120000_add_laboratory_canonical_identity` ABORTA a propósito si la
+# base ya trae dos laboratorios que colapsan a la misma identidad ("Bayer" y
+# "bayer"). Sin este paso uno se entera en el medio de la migración; con él, se
+# entera acá, con el respaldo ya hecho y sin nada tocado todavía.
+#
+# Es de SOLO LECTURA: instala la regla de la migración como función temporal de
+# su sesión y hace un SELECT agrupado. No escribe, no elige y no reasigna nada
+# — eso es una decisión de negocio y la toma una persona.
+#
+# Corre en la imagen `migrate` (ya construida arriba) con `--no-deps`, así no
+# arrastra el resto del compose. Código 1 = hay duplicados; 2 = no se pudo
+# verificar. Los dos abortan: desplegar sin saber es el riesgo que esto evita.
+# --------------------------------------------------------------------------
+echo "==> Preflight: identidad canónica de laboratorios..."
+if ! docker compose run --rm --no-deps "$MIGRATE_SERVICE" \
+       node_modules/.bin/tsx prisma/preflight-laboratory-identity.ts; then
+  echo ""
+  echo "ERROR: el preflight de laboratorios no pasó. El deploy se detiene ANTES de migrar."
+  echo "       La base quedó intacta y el respaldo de arriba sigue siendo válido."
+  echo "       Resolvé los duplicados que se listan arriba y volvé a correr ./deploy.sh"
+  exit 1
+fi
+
 echo "==> Running Prisma migrations..."
 docker compose run --rm --no-deps "$MIGRATE_SERVICE"
 
