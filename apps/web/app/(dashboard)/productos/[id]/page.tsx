@@ -5,12 +5,14 @@ import { can } from "@/lib/auth/permissions";
 import { requireCapability } from "@/lib/auth/require-role";
 import { Card, CardTitle } from "@/app/_components/ui/card";
 import { BatchList } from "@/features/productos/batch-list";
+import { ProductEditForm } from "@/features/productos/product-edit-form";
 import { ProductIdentityCard } from "@/features/productos/product-identity-card";
 import {
   getBatchesByProduct,
   getSellableStock,
 } from "@/server/services/product-batch.service";
 import { getProduct } from "@/server/services/product.service";
+import { findLaboratoryById } from "@/server/repositories/laboratory.repository";
 
 export default async function ProductDetailPage({
   params,
@@ -27,9 +29,19 @@ export default async function ProductDetailPage({
   const product = await getProduct(id);
   if (!product) notFound();
 
-  const [stock, batches] = await Promise.all([
+  // Quién puede editar el catálogo. La pantalla lo usa para decidir si ofrece
+  // el formulario; la Server Action lo REVALIDA por su cuenta, porque esconder
+  // un botón no autoriza nada: una Server Action es una URL.
+  const canEdit = can(session.user.role, "canManageProducts");
+
+  const [stock, batches, laboratory] = await Promise.all([
     getSellableStock(id),
     getBatchesByProduct({ productId: id, cursor }),
+    // El nombre del laboratorio se busca solo si hay que pintarlo: el
+    // formulario necesita mostrarlo ya elegido en el buscador.
+    canEdit && product.laboratoryId
+      ? findLaboratoryById(product.laboratoryId)
+      : null,
   ]);
 
   return (
@@ -48,6 +60,22 @@ export default async function ProductDetailPage({
           Suma de lotes disponibles, con stock y no vencidos.
         </p>
       </Card>
+
+      {canEdit ? (
+        <ProductEditForm
+          product={{
+            id: product.id,
+            code: product.code,
+            name: product.name,
+            unit: product.unit,
+            minStock: product.minStock,
+            reorderQty: product.reorderQty,
+            active: product.active,
+            laboratoryId: product.laboratoryId,
+            laboratoryName: laboratory?.name ?? null,
+          }}
+        />
+      ) : null}
 
       <ProductIdentityCard
         productId={product.id}

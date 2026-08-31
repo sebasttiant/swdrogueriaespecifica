@@ -40,6 +40,47 @@ export const productCreateSchema = z.object({
 export type ProductCreateInput = z.infer<typeof productCreateSchema>;
 
 // --------------------------------------------------------------------------
+// Edición de un producto del CATÁLOGO.
+//
+// Lo que se edita acá es IDENTIDAD: cómo se llama el producto, cómo viene y
+// cuándo hay que reponerlo. Las CANTIDADES no están y no van a estar: el stock
+// se mueve con entradas, salidas y ajustes, que dejan un movimiento auditable
+// detrás. Un `stock = 20` escrito a mano convierte cualquier cuadre posterior
+// en una ficción, porque nadie puede reconstruir de dónde salió ese número.
+//
+// El SKU (código de Orión) TAMPOCO está acá, y no es un olvido. Tiene su
+// propio circuito con control de concurrencia —`orionLinkSchema` para
+// vincularlo cuando falta, y la corrección explícita cuando ya existe—, porque
+// mover una identidad que el inventario entero referencia no puede ser un
+// campo más de un formulario largo. Se edita desde la tarjeta de identidad.
+// --------------------------------------------------------------------------
+export const productUpdateSchema = z.object({
+  id: z.string().trim().min(1, { error: "Falta el producto." }),
+  code: z.string().trim().min(1, "El código es obligatorio").max(40),
+  name: z.string().trim().min(1, "El nombre es obligatorio").max(120),
+  // "Presentación" en pantalla: frasco, sobre, caja, blíster, ampolla. La
+  // columna se sigue llamando `unit` porque la usa el inventario entero.
+  unit: z.string().trim().min(1, "La presentación es obligatoria").max(20),
+  minStock: z.coerce.number().int().min(0).default(0),
+  reorderQty: z.coerce.number().int().min(0).default(0),
+  // Vacío = sin laboratorio. Se distingue de "no lo mandaron" a propósito:
+  // desvincular el laboratorio es una edición válida.
+  laboratoryId: z
+    .string()
+    .trim()
+    .optional()
+    .transform((value) => (value === undefined || value === "" ? null : value)),
+  // Una casilla no marcada NO viaja en el FormData: por eso el default es
+  // `false` y no `true`. Leerlo al revés desactivaría productos en silencio.
+  active: z
+    .union([z.literal("on"), z.literal("true"), z.literal("false")])
+    .optional()
+    .transform((value) => value === "on" || value === "true"),
+});
+
+export type ProductUpdateInput = z.infer<typeof productUpdateSchema>;
+
+// --------------------------------------------------------------------------
 // Vínculo del producto con su código Orion.
 //
 // El dominio (`normalizeOrionCode`) vuelve a validar todo esto, así que acá no

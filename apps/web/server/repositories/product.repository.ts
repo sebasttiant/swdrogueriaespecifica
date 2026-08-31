@@ -142,6 +142,33 @@ export async function createProduct(
   return client.product.create({ data });
 }
 
+/** Los campos de catálogo que la edición puede tocar. Nada de cantidades. */
+export type UpdateProductData = {
+  code: string;
+  name: string;
+  unit: string;
+  minStock: number;
+  reorderQty: number;
+  laboratoryId: string | null;
+  active: boolean;
+};
+
+/**
+ * Actualiza los datos de CATÁLOGO de un producto.
+ *
+ * El tipo es la garantía: `UpdateProductData` no tiene `orionCode`, ni
+ * `internalSku`, ni `identityVersion`, ni ninguna cantidad. Un llamador no
+ * puede colar por acá un cambio de identidad ni un stock escrito a mano,
+ * aunque lo intente — no compila.
+ */
+export async function updateProduct(
+  id: string,
+  data: UpdateProductData,
+  client: Prisma.TransactionClient = prisma,
+): Promise<Product> {
+  return client.product.update({ where: { id }, data });
+}
+
 export async function upsertProvisionalProduct(
   client: Prisma.TransactionClient,
   data: { normalizedName: string; displayName: string },

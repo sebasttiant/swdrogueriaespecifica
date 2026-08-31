@@ -8,6 +8,8 @@ import type { Paginated } from "@/lib/pagination";
 import type { Product } from "@/lib/generated/prisma/client";
 import {
   createProduct,
+  updateProduct,
+  type UpdateProductData,
   findProductById,
   listProducts,
   type CreateProductData,
@@ -50,4 +52,24 @@ export function getProduct(id: string): Promise<Product | null> {
 
 export function addProduct(data: CreateProductData): Promise<Product> {
   return createProduct(data);
+}
+
+/**
+ * Edita los datos de catálogo de un producto y devuelve el ANTES y el DESPUÉS.
+ *
+ * Devuelve los dos a propósito: quien audita necesita saber qué cambió, no
+ * solo cómo quedó. "El laboratorio ahora es Genfar" no dice nada; "era Bayer y
+ * ahora es Genfar" es lo que permite entender una decisión seis meses después.
+ *
+ * Devuelve `null` si el producto no existe, en vez de tirar: para la acción es
+ * un 404, no un error del sistema.
+ */
+export async function editProduct(
+  id: string,
+  data: UpdateProductData,
+): Promise<{ before: Product; after: Product } | null> {
+  const before = await findProductById(id);
+  if (!before) return null;
+  const after = await updateProduct(id, data);
+  return { before, after };
 }
