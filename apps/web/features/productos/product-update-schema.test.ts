@@ -19,6 +19,7 @@ const BASE = {
   unit: "Frasco",
   minStock: "5",
   reorderQty: "20",
+  expectedUpdatedAt: "2026-08-31T12:00:00.000Z",
 };
 
 describe("edición de producto · lo que se puede cambiar", () => {
@@ -138,10 +139,79 @@ describe("edición de producto · lo que NO se puede tocar desde acá", () => {
   });
 
   it("el resultado tiene EXACTAMENTE los campos de catálogo, ni uno más", () => {
-    const claves = Object.keys(productUpdateSchema.parse({ ...BASE, active: "on" })).sort();
+    // Con TODOS los campos presentes, para que la lista sea la completa:
+    // `laboratoryName` es opcional y sin él la comparación probaría de menos.
+    const claves = Object.keys(
+      productUpdateSchema.parse({ ...BASE, active: "on", laboratoryName: "Genfar" }),
+    ).sort();
 
     expect(claves).toEqual(
-      ["active", "code", "id", "laboratoryId", "minStock", "name", "reorderQty", "unit"].sort(),
+      [
+        "active",
+        "code",
+        "expectedUpdatedAt",
+        "id",
+        "laboratoryId",
+        "laboratoryName",
+        "minStock",
+        "name",
+        "reorderQty",
+        "unit",
+      ].sort(),
     );
+  });
+});
+
+// --------------------------------------------------------------------------
+// El nombre ESCRITO en el buscador de laboratorio.
+//
+// El buscador suelta la selección en cuanto alguien escribe algo distinto de
+// lo elegido: manda el id vacío y el texto en `laboratoryName`. Si el esquema
+// no lo acepta, ese texto se pierde y "escribí Genfar y guardé" termina
+// quitando el laboratorio con la pantalla mostrando Genfar.
+// --------------------------------------------------------------------------
+describe("edición de producto · el laboratorio escrito a mano", () => {
+  it("acepta el nombre tipeado aunque no haya id", () => {
+    const parsed = productUpdateSchema.parse({ ...BASE, laboratoryName: "Genfar" });
+
+    expect(parsed.laboratoryId).toBeNull();
+    expect(parsed.laboratoryName).toBe("Genfar");
+  });
+
+  it("lo recorta", () => {
+    expect(productUpdateSchema.parse({ ...BASE, laboratoryName: "  Genfar  " }).laboratoryName)
+      .toBe("Genfar");
+  });
+
+  it("sin nombre escrito, no hay nada que resolver", () => {
+    expect(productUpdateSchema.parse(BASE).laboratoryName).toBeUndefined();
+  });
+});
+
+// --------------------------------------------------------------------------
+// El testigo de concurrencia.
+//
+// Este formulario manda TODOS los campos, así que dos personas editando cosas
+// distintas del mismo producto se pisan: la última en guardar reescribe con
+// los valores viejos de su propia pantalla lo que la otra acababa de corregir.
+// --------------------------------------------------------------------------
+describe("edición de producto · el testigo de concurrencia", () => {
+  it("lo convierte en fecha", () => {
+    const parsed = productUpdateSchema.parse(BASE);
+
+    expect(parsed.expectedUpdatedAt).toBeInstanceOf(Date);
+    expect(parsed.expectedUpdatedAt.toISOString()).toBe("2026-08-31T12:00:00.000Z");
+  });
+
+  it("es obligatorio: sin él no se puede detectar un pisotón", () => {
+    const { expectedUpdatedAt: _quitado, ...sinTestigo } = BASE;
+    expect(productUpdateSchema.safeParse(sinTestigo).success).toBe(false);
+  });
+
+  it("rechaza una fecha que no es fecha", () => {
+    expect(productUpdateSchema.safeParse({ ...BASE, expectedUpdatedAt: "ayer" }).success)
+      .toBe(false);
+    expect(productUpdateSchema.safeParse({ ...BASE, expectedUpdatedAt: "" }).success)
+      .toBe(false);
   });
 });

@@ -48,6 +48,7 @@ function formData(overrides: Record<string, string> = {}): FormData {
     minStock: "5",
     reorderQty: "20",
     active: "on",
+    expectedUpdatedAt: "2026-08-31T12:00:00.000Z",
     ...overrides,
   };
   for (const [k, v] of Object.entries(base)) fd.set(k, v);
@@ -58,7 +59,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   requireCapability.mockResolvedValue({ user: { id: "user-1", role: "BODEGA" } });
   auditContextFromHeaders.mockResolvedValue({ actorId: "user-1" });
-  editProduct.mockResolvedValue({ before: ANTES, after: { ...ANTES, unit: "Frasco" } });
+  editProduct.mockResolvedValue({
+    status: "saved",
+    before: ANTES,
+    after: { ...ANTES, unit: "Frasco" },
+  });
 });
 
 describe("updateProductAction · autorización", () => {
@@ -89,7 +94,18 @@ describe("updateProductAction · lo que deja pasar al servicio", () => {
     const [id, data] = editProduct.mock.calls[0]!;
     expect(id).toBe("prod-1");
     expect(Object.keys(data).sort()).toEqual(
-      ["active", "code", "laboratoryId", "minStock", "name", "reorderQty", "unit"].sort(),
+      [
+        "actorId",
+        "active",
+        "code",
+        "expectedUpdatedAt",
+        "laboratoryId",
+        "laboratoryName",
+        "minStock",
+        "name",
+        "reorderQty",
+        "unit",
+      ].sort(),
     );
   });
 
@@ -133,7 +149,7 @@ describe("updateProductAction · auditoría", () => {
   });
 
   it("no audita si el producto ya no existe", async () => {
-    editProduct.mockResolvedValue(null);
+    editProduct.mockResolvedValue({ status: "not_found" });
 
     const state = await updateProductAction({ error: null, ok: false }, formData());
 
@@ -159,5 +175,57 @@ describe("updateProductAction · errores accionables", () => {
 
     expect(revalidatePath).toHaveBeenCalledWith("/productos");
     expect(revalidatePath).toHaveBeenCalledWith("/productos/prod-1");
+  });
+});
+
+// --------------------------------------------------------------------------
+// Los dos casos que la revisión encontró. Los dos terminan igual: NO se
+// guarda, se explica por qué, y lo escrito vuelve intacto.
+// --------------------------------------------------------------------------
+describe("updateProductAction · alguien más guardó en el medio", () => {
+  it("no pisa: avisa y conserva lo escrito", async () => {
+    editProduct.mockResolvedValue({ status: "stale" });
+
+    const state = await updateProductAction({ error: null, ok: false }, formData());
+
+    expect(state.ok).toBe(false);
+    expect(state.error).toContain("Alguien más actualizó este producto");
+    expect(state.values?.name).toBe("Dolex Niños");
+    expect(recordAudit).not.toHaveBeenCalled();
+  });
+
+  it("el mensaje dice qué hacer, no solo que falló", async () => {
+    editProduct.mockResolvedValue({ status: "stale" });
+
+    const state = await updateProductAction({ error: null, ok: false }, formData());
+
+    expect(state.error).toContain("Recarga la pantalla");
+  });
+});
+
+describe("updateProductAction · el laboratorio escrito no resuelve", () => {
+  it("no le pega al producto un laboratorio que nadie escribió", async () => {
+    editProduct.mockResolvedValue({ status: "laboratory_unresolved", name: "Genfar" });
+
+    const state = await updateProductAction({ error: null, ok: false }, formData());
+
+    expect(state.ok).toBe(false);
+    expect(state.error).toContain("Genfar");
+    expect(recordAudit).not.toHaveBeenCalled();
+  });
+
+  // El texto tipeado tiene que llegar al servicio: si no, "escribí Genfar y
+  // guardé" termina quitando el laboratorio con la pantalla mostrando Genfar.
+  it("le pasa al servicio el nombre escrito y el testigo de concurrencia", async () => {
+    await updateProductAction(
+      { error: null, ok: false },
+      formData({ laboratoryId: "", laboratoryName: "Genfar" }),
+    );
+
+    const [, data] = editProduct.mock.calls[0]!;
+    expect(data.laboratoryName).toBe("Genfar");
+    expect(data.laboratoryId).toBeNull();
+    expect(data.expectedUpdatedAt).toBeInstanceOf(Date);
+    expect(data.actorId).toBe("user-1");
   });
 });

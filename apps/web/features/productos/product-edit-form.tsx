@@ -27,6 +27,12 @@ export type EditableProduct = {
   active: boolean;
   laboratoryId: string | null;
   laboratoryName: string | null;
+  /**
+   * Cuándo se leyó este producto, en ISO. Viaja al servidor como testigo de
+   * concurrencia: si alguien guardó en el medio, el guardado se rechaza en vez
+   * de pisar su corrección con los valores viejos de esta pantalla.
+   */
+  updatedAt: string;
 };
 
 // --------------------------------------------------------------------------
@@ -121,6 +127,10 @@ function ProductEditFields({
 
       <form action={formAction} className="space-y-4">
         <input type="hidden" name="id" value={product.id} />
+        {/* El producto tal como se leyó. No sale del eco: si volviera el del
+            intento fallido, el segundo intento chocaría contra el mismo
+            desfasaje para siempre. */}
+        <input type="hidden" name="expectedUpdatedAt" value={product.updatedAt} />
 
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Nombre" htmlFor="edit-name" className="sm:col-span-2">

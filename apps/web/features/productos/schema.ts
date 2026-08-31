@@ -70,6 +70,32 @@ export const productUpdateSchema = z.object({
     .trim()
     .optional()
     .transform((value) => (value === undefined || value === "" ? null : value)),
+  /**
+   * El texto que quedó ESCRITO en el buscador de laboratorio.
+   *
+   * Hace falta porque el buscador suelta la selección en cuanto alguien
+   * escribe algo distinto de lo elegido (`laboratory-search.tsx`): manda el id
+   * vacío y el nombre tipeado. Sin leer este campo, "escribí Genfar y guardé"
+   * se traducía en "quitá el laboratorio", con la pantalla mostrando Genfar.
+   */
+  laboratoryName: z.string().trim().max(120).optional(),
+  /**
+   * Cuándo se leyó el producto que se está editando.
+   *
+   * Es el testigo de concurrencia. Este formulario manda TODOS los campos, así
+   * que dos personas editando cosas distintas del mismo producto se pisan: la
+   * última en guardar reescribe con los valores viejos de su propia pantalla lo
+   * que la otra acababa de corregir, y encima el `before` de la auditoría no
+   * describe lo que realmente reemplazó.
+   */
+  expectedUpdatedAt: z
+    .string()
+    .trim()
+    .min(1, { error: "Falta la versión del producto." })
+    .refine((value) => !Number.isNaN(Date.parse(value)), {
+      error: "La versión del producto no es válida.",
+    })
+    .transform((value) => new Date(value)),
   // Una casilla no marcada NO viaja en el FormData: por eso el default es
   // `false` y no `true`. Leerlo al revés desactivaría productos en silencio.
   active: z

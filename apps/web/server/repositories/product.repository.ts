@@ -169,6 +169,31 @@ export async function updateProduct(
   return client.product.update({ where: { id }, data });
 }
 
+/**
+ * Actualiza SOLO si el producto sigue como se leyó. Devuelve `null` si no.
+ *
+ * `updatedAt` alcanza como testigo y evita una columna nueva: Prisma lo mueve
+ * en cada escritura (`@updatedAt`), así que si alguien guardó en el medio, el
+ * `where` no encuentra la fila y el `count` vuelve en 0.
+ *
+ * Va con `updateMany` a propósito: `update` con un `where` compuesto tiraría, y
+ * lo que hace falta acá es DISTINGUIR "no coincide" de "explotó" para poder
+ * decirle a la persona que alguien más lo cambió.
+ */
+export async function updateProductIfUnchanged(
+  id: string,
+  expectedUpdatedAt: Date,
+  data: UpdateProductData,
+  client: Prisma.TransactionClient = prisma,
+): Promise<Product | null> {
+  const { count } = await client.product.updateMany({
+    where: { id, updatedAt: expectedUpdatedAt },
+    data,
+  });
+  if (count === 0) return null;
+  return client.product.findUnique({ where: { id } });
+}
+
 export async function upsertProvisionalProduct(
   client: Prisma.TransactionClient,
   data: { normalizedName: string; displayName: string },

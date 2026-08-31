@@ -40,6 +40,7 @@ const PRODUCTO: EditableProduct = {
   active: true,
   laboratoryId: "lab-1",
   laboratoryName: "Genfar",
+  updatedAt: "2026-08-31T12:00:00.000Z",
 };
 
 function campo(container: HTMLElement, name: string): HTMLInputElement | null {

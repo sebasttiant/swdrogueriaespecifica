@@ -223,6 +223,10 @@ export async function updateProductAction(
     minStock: formData.get("minStock"),
     reorderQty: formData.get("reorderQty"),
     laboratoryId: formData.get("laboratoryId") ?? undefined,
+    // El texto que quedó ESCRITO en el buscador. Sin leerlo, "escribí Genfar y
+    // guardé" termina quitando el laboratorio con la pantalla mostrando Genfar.
+    laboratoryName: formData.get("laboratoryName") ?? undefined,
+    expectedUpdatedAt: formData.get("expectedUpdatedAt"),
     active: formData.get("active") ?? undefined,
   });
 
@@ -240,33 +244,15 @@ export async function updateProductAction(
     return failed("Revisa los datos del producto.");
   }
 
-  const { id, ...data } = parsed.data;
+  const { id, laboratoryName, expectedUpdatedAt, ...data } = parsed.data;
 
+  let changed;
   try {
-    const changed = await editProduct(id, data);
-    if (!changed) {
-      return failed("Ese producto ya no existe.");
-    }
-
-    // El ANTES y el DESPUÉS, los dos. "El laboratorio ahora es Genfar" no
-    // explica nada; "era Bayer y ahora es Genfar" es lo que permite entender
-    // una decisión seis meses después.
-    await recordAudit({
-      action: AUDIT_ACTIONS.PRODUCT_UPDATE,
-      module: AUDIT_MODULES.PRODUCTOS,
-      entity: "Product",
-      entityId: id,
-      before: {
-        code: changed.before.code,
-        name: changed.before.name,
-        unit: changed.before.unit,
-        minStock: changed.before.minStock,
-        reorderQty: changed.before.reorderQty,
-        laboratoryId: changed.before.laboratoryId,
-        active: changed.before.active,
-      },
-      after: data,
-      context: await auditContextFromHeaders(session.user.id),
+    changed = await editProduct(id, {
+      ...data,
+      laboratoryName,
+      expectedUpdatedAt,
+      actorId: session.user.id,
     });
   } catch (error) {
     if (isDuplicateCodeError(error)) {
@@ -275,6 +261,58 @@ export async function updateProductAction(
     console.error("[productos] No se pudo editar el producto:", error);
     return failed("No se pudo guardar el producto. Intenta de nuevo.");
   }
+
+  if (changed.status === "not_found") {
+    return failed("Ese producto ya no existe.");
+  }
+
+  // Alguien más guardó entre que se abrió el formulario y ahora. No se pisa:
+  // este formulario manda TODOS los campos, así que guardar igual reescribiría
+  // con valores viejos lo que la otra persona acaba de corregir.
+  if (changed.status === "stale") {
+    return failed(
+      "Alguien más actualizó este producto mientras lo editabas. " +
+        "Recarga la pantalla para ver los datos actuales y vuelve a aplicar tus cambios.",
+    );
+  }
+
+  // El nombre escrito devolvió OTRO laboratorio: pegárselo al producto sería
+  // atribuirle una marca que nadie escribió.
+  if (changed.status === "laboratory_unresolved") {
+    return failed(
+      `No se pudo resolver el laboratorio "${changed.name}". ` +
+        "Elige uno de la lista o vuelve a escribirlo.",
+    );
+  }
+
+  // El ANTES y el DESPUÉS, los dos. "El laboratorio ahora es Genfar" no
+  // explica nada; "era Bayer y ahora es Genfar" es lo que permite entender
+  // una decisión seis meses después.
+  await recordAudit({
+    action: AUDIT_ACTIONS.PRODUCT_UPDATE,
+    module: AUDIT_MODULES.PRODUCTOS,
+    entity: "Product",
+    entityId: id,
+    before: {
+      code: changed.before.code,
+      name: changed.before.name,
+      unit: changed.before.unit,
+      minStock: changed.before.minStock,
+      reorderQty: changed.before.reorderQty,
+      laboratoryId: changed.before.laboratoryId,
+      active: changed.before.active,
+    },
+    after: {
+      code: changed.after.code,
+      name: changed.after.name,
+      unit: changed.after.unit,
+      minStock: changed.after.minStock,
+      reorderQty: changed.after.reorderQty,
+      laboratoryId: changed.after.laboratoryId,
+      active: changed.after.active,
+    },
+    context: await auditContextFromHeaders(session.user.id),
+  });
 
   revalidatePath("/productos");
   revalidatePath(`/productos/${id}`);
