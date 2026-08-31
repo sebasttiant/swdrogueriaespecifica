@@ -27,6 +27,33 @@ export type SeedAdmin = {
 const MIN_PASSWORD_LENGTH = 12;
 
 /**
+ * El administrador con el que arranca una instalación que no configura otro.
+ *
+ * Es un email, no una credencial: la contraseña nunca vive en el repositorio.
+ * Cambiarlo mueve el administrador de TODA instalación que no defina el suyo,
+ * así que se cambia solo con una migración de datos pensada, no de pasada.
+ */
+export const DEFAULT_ADMIN_EMAIL = "admin@ilasesorias.com";
+
+/**
+ * Qué administrador va a buscar el seed.
+ *
+ * Existe como función —y no como un `??` en el ejecutable— por la forma en que
+ * Docker Compose pasa las variables. `SEED_ADMIN_EMAIL: "${SEED_ADMIN_EMAIL:-}"`
+ * es la convención del proyecto para "pasala si está, vacía si no", y deja la
+ * variable DEFINIDA con cadena vacía cuando no está en el `.env`.
+ *
+ * Contra eso, `process.env.SEED_ADMIN_EMAIL ?? DEFAULT` no alcanza: `??` solo
+ * atrapa `undefined`, no `""`. El seed habría salido a buscar un usuario con
+ * email vacío y, al no encontrarlo, habría intentado CREAR un SUPERADMIN sin
+ * email. Por eso lo que decide es "tiene contenido", no "está definida".
+ */
+export function resolveAdminEmail(raw: string | undefined | null): string {
+  const trimmed = raw?.trim();
+  return trimmed ? trimmed : DEFAULT_ADMIN_EMAIL;
+}
+
+/**
  * Deja existiendo y habilitado al primer SUPERADMIN. Devuelve `true` si ya
  * existía.
  *

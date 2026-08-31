@@ -7,11 +7,11 @@
 import { PrismaPg } from "@prisma/adapter-pg";
 
 import { PrismaClient } from "../lib/generated/prisma/client";
-import { runSeed } from "./seed-bootstrap";
+import { resolveAdminEmail, runSeed } from "./seed-bootstrap";
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL ?? "" });
 const prisma = new PrismaClient({ adapter });
-const email = process.env.SEED_ADMIN_EMAIL ?? "admin@ilasesorias.com";
+const email = resolveAdminEmail(process.env.SEED_ADMIN_EMAIL);
 
 runSeed(prisma, { email, password: process.env.SEED_ADMIN_PASSWORD ?? "" })
   .then((existed) => {

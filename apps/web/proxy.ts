@@ -52,10 +52,16 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
 }
 
 export const config = {
-  // Excluye assets internos de Next, el healthcheck y los archivos estáticos de
-  // /public (rutas de un solo segmento con extensión: /logo-especifica.webp,
-  // /favicon.ico, ...). Las rutas de app son sin extensión y siguen protegidas.
+  // Excluye assets internos de Next, las sondas de infraestructura y los
+  // archivos estáticos de /public (rutas de un solo segmento con extensión:
+  // /logo-especifica.webp, /favicon.ico, ...). Las rutas de app son sin
+  // extensión y siguen protegidas.
+  //
+  // `api/ready` va acá por el mismo motivo que `api/health`: quien consulta una
+  // sonda no tiene sesión, y una respuesta que es un redirect a /login no
+  // informa nada sobre la base —peor: es un 307 sin error, con toda la pinta de
+  // estar funcionando—. La respuesta de la sonda no dice nada del negocio.
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|api/health|[^/]+\\.[^/]+$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|api/health|api/ready|[^/]+\\.[^/]+$).*)",
   ],
 };

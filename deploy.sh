@@ -270,6 +270,28 @@ else
   docker compose logs --tail=40 "$WEB_SERVICE"
 fi
 
+# --------------------------------------------------------------------------
+# Readiness: ¿la web LLEGA a la base?
+#
+# El healthcheck de Docker mira `/api/health`, que no toca la base a propósito.
+# Eso deja un hueco: un despliegue con la `DATABASE_URL` mal escrita queda
+# `healthy` y se ve perfecto hasta que alguien intenta cargar un pendiente.
+#
+# INFORMATIVO, como los dos chequeos de arriba: nunca aborta un despliegue que
+# ya está healthy. Solo lo dice fuerte, que es lo que faltaba.
+# --------------------------------------------------------------------------
+echo "==> Post-deploy: verificando que la web alcance la base..."
+if ready_status="$(docker compose exec -T "$WEB_SERVICE" node -e \
+     "fetch('http://127.0.0.1:3000/api/ready').then(r=>{console.log(r.status);process.exit(r.ok?0:1)}).catch(()=>{console.log('sin-respuesta');process.exit(1)})" \
+     2>/dev/null)"; then
+  echo "    ✓ La web consulta PostgreSQL correctamente (HTTP $ready_status)."
+else
+  echo "    ⚠ La web NO alcanza la base (HTTP ${ready_status:-sin-respuesta})."
+  echo "      El contenedor está healthy igual: /api/health no consulta la base."
+  echo "      Revisá DATABASE_URL en el .env y los logs de '$WEB_SERVICE'."
+  docker compose logs --tail=40 "$WEB_SERVICE"
+fi
+
 echo "==> Final container status:"
 docker compose ps
 

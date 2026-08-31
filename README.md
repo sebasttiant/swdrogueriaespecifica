@@ -127,7 +127,11 @@ Orden garantizado por healthchecks:
 `postgres (healthy)` → `migrate (corre y termina)` → `seed (corre y termina)` → `web (arranca)`.
 
 - Web: http://localhost:3132 (puerto externo 3132 -> interno 3000)
-- Healthcheck: http://localhost:3132/api/health
+- Healthcheck (liveness, NO toca la base): http://localhost:3132/api/health
+- Readiness (¿la app llega a PostgreSQL?): http://localhost:3132/api/ready
+  — responde `200 ready` o `503 unavailable`. Son dos preguntas distintas: el
+  healthcheck de Docker mira solo el primero, porque un corte momentáneo de la
+  base no debe reiniciar la web.
 
 Validar la configuración del compose sin levantar nada:
 
@@ -182,7 +186,8 @@ apps/web/
   app/
     (auth)/login/            # login real (form + server action)
     (dashboard)/             # dashboard + módulos; productos: listado + detalle [id]
-    api/health/              # healthcheck (no toca la DB)
+    api/health/              # liveness: responde aunque la DB esté caída
+    api/ready/               # readiness: prueba que la DB responda
     _components/
       app-shell/             # Sidebar, Topbar (logout), MobileNav, PageHeader, BrandLogo
       ui/                    # Button, Card, Badge, StatusPill, KpiCard, QuickAction
