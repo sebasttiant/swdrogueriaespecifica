@@ -64,6 +64,22 @@ export function ProductEditForm({ product }: { product: EditableProduct }) {
   // lado, un error cerraría el formulario junto con el remonte.
   const [open, setOpen] = useState(false);
 
+  // Qué respuesta había cuando se abrió este ciclo.
+  //
+  // El estado de la acción sobrevive al plegado, así que "Cancelar" no lo
+  // borra. Sin esta marca, al reabrir se mostraba el eco de la sesión anterior
+  // —valores y testigo viejos— tapando las props actuales, y el siguiente
+  // guardado se rechazaba por obsoleto con el formulario recién abierto.
+  //
+  // Al abrir, la respuesta que ya estaba pasa a ser el punto de partida y se
+  // ignora; solo cuenta el eco de las respuestas de ESTE ciclo.
+  const [baseline, setBaseline] = useState<string | null>(null);
+
+  // Basta con que la respuesta sea DISTINTA de la que había al abrir. Exigir
+  // además que traiga `submissionId` descartaba el eco de cualquier respuesta
+  // que no lo trajera, y el eco es justamente lo que evita perder lo escrito.
+  const previous = state.submissionId !== baseline ? state.values : undefined;
+
   if (!open) {
     return (
       <Card className="flex flex-wrap items-center justify-between gap-3">
@@ -73,7 +89,14 @@ export function ProductEditForm({ product }: { product: EditableProduct }) {
             Nombre, código, presentación, mínimos y laboratorio.
           </p>
         </div>
-        <Button type="button" variant="secondary" onClick={() => setOpen(true)}>
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={() => {
+            setBaseline(state.submissionId ?? null);
+            setOpen(true);
+          }}
+        >
           Editar producto
         </Button>
       </Card>
@@ -106,8 +129,9 @@ export function ProductEditForm({ product }: { product: EditableProduct }) {
       // Los campos no necesitan las props frescas porque la respuesta ya trae
       // lo que corresponde mostrar: el eco de lo enviado si falló, y el eco de
       // lo GUARDADO si salió bien.
-      key={state.submissionId ?? "initial"}
+      key={`${baseline ?? "initial"}:${state.submissionId ?? "initial"}`}
       product={product}
+      previous={previous}
       state={state}
       formAction={formAction}
       isPending={isPending}
@@ -118,21 +142,20 @@ export function ProductEditForm({ product }: { product: EditableProduct }) {
 
 function ProductEditFields({
   product,
+  previous,
   state,
   formAction,
   isPending,
   onClose,
 }: {
   product: EditableProduct;
+  /** El eco de la última respuesta de ESTE ciclo de apertura, si la hubo. */
+  previous: ProductFormState["values"];
   state: ProductFormState;
   formAction: (formData: FormData) => void;
   isPending: boolean;
   onClose: () => void;
 }) {
-  // El eco de la última respuesta: lo enviado si falló, lo guardado si salió
-  // bien. Ausente solo al abrir el formulario por primera vez.
-  const previous = state.values;
-
   // EL TESTIGO SE FIJA AL MONTAR, no se lee de las props en cada render.
   //
   // `router.refresh()` de este proyecto corre ante cualquier respuesta y

@@ -450,3 +450,54 @@ describe("editar producto · el testigo se fija al abrir", () => {
     );
   });
 });
+
+describe("editar producto · cerrar y volver a abrir", () => {
+  // El estado de la acción vive en el componente que sobrevive al plegado, así
+  // que "Cancelar" no lo borra. Al reabrir, el eco viejo tapaba las props
+  // actuales: el formulario mostraba datos anteriores y su testigo vencido, y
+  // el siguiente guardado se rechazaba por obsoleto recién abierto.
+  it("al reabrir muestra el producto ACTUAL, no el eco de antes", async () => {
+    mocks.updateProductAction.mockReturnValue({
+      error: null,
+      ok: true,
+      submissionId: "exito-4",
+      values: {
+        code: "MED-001",
+        name: "Guardado antes",
+        unit: "Frasco",
+        minStock: "5",
+        reorderQty: "20",
+        laboratoryId: "lab-1",
+        laboratoryName: "Genfar",
+        active: "on",
+        expectedUpdatedAt: "2026-09-01T09:00:00.000Z",
+      },
+    });
+
+    const user = userEvent.setup();
+    const view = render(createElement(ProductEditForm, { product: PRODUCTO }));
+    await user.click(screen.getByRole("button", { name: "Editar producto" }));
+    await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    await screen.findByRole("status");
+
+    await user.click(screen.getByRole("button", { name: "Cancelar" }));
+
+    // Entre medio alguien vincula el SKU: el producto avanza otra vez.
+    view.rerender(
+      createElement(ProductEditForm, {
+        product: {
+          ...PRODUCTO,
+          name: "Nombre al día",
+          updatedAt: "2026-09-01T13:00:00.000Z",
+        },
+      }),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Editar producto" }));
+
+    expect(campo(view.container, "name")?.value).toBe("Nombre al día");
+    expect(campo(view.container, "expectedUpdatedAt")?.value).toBe(
+      "2026-09-01T13:00:00.000Z",
+    );
+  });
+});
