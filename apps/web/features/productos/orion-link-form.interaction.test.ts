@@ -26,7 +26,7 @@ describe("OrionLinkForm · authorization rejection", () => {
     });
     const user = userEvent.setup();
     render(createElement(OrionLinkForm, PROPS));
-    const input = screen.getByRole("textbox", { name: "Código de Orion" }) as HTMLInputElement;
+    const input = screen.getByRole("textbox", { name: "Código de Orión" }) as HTMLInputElement;
 
     await user.type(input, "ORION-RETRY-7702-A");
     await user.click(screen.getByRole("button", { name: "Vincular" }));
@@ -46,7 +46,7 @@ describe("OrionLinkForm · successful link", () => {
     mocks.linkOrionCodeAction.mockResolvedValue({ error: null, ok: true });
     const user = userEvent.setup();
     render(createElement(OrionLinkForm, PROPS));
-    const input = screen.getByRole("textbox", { name: "Código de Orion" }) as HTMLInputElement;
+    const input = screen.getByRole("textbox", { name: "Código de Orión" }) as HTMLInputElement;
 
     await user.type(input, "ORION-SUCCESS-7702-A");
     await user.click(screen.getByRole("button", { name: "Vincular" }));

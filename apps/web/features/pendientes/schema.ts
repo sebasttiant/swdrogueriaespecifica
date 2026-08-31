@@ -214,7 +214,7 @@ export const pendingCreateSchema = z
           ctx.addIssue({
             code: "custom",
             message:
-              "El SKU (código de Orion) no puede llevar espacios y va hasta 80 caracteres.",
+              "El SKU (código de Orión) no puede llevar espacios y va hasta 80 caracteres.",
           });
           return z.NEVER;
         }
@@ -313,7 +313,7 @@ export const pendingCreateSchema = z
         code: "custom",
         path: ["orionCode"],
         message:
-          "O cargás el SKU (código de Orion) o continuás sin él, no las dos cosas.",
+          "O cargás el SKU (código de Orión) o continuás sin él, no las dos cosas.",
       });
     }
 
@@ -331,7 +331,7 @@ export const pendingCreateSchema = z
     // Acá NO se exige que la identidad venga, y no es un olvido.
     //
     // Que este envío pueda venir sin identidad depende de un dato que este
-    // módulo no tiene: si el producto elegido YA tiene su código de Orion. Eso
+    // módulo no tiene: si el producto elegido YA tiene su código de Orión. Eso
     // solo lo sabe la base, y solo en el momento del envío. Un `required` acá
     // rechazaría toda captura de un producto ya identificado —la mayoría— por
     // no repetir un dato que el sistema ya sabe.

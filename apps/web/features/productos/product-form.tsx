@@ -52,11 +52,11 @@ export function ProductForm({ laboratories = [] }: { laboratories?: Laboratory[]
 
             Opcional, porque el producto nuevo sin código todavía existe y
             exigirlo cerraría un alta legítima. */}
-        <Field label="SKU (código de Orion)" htmlFor="orionCode">
+        <Field label="SKU (código de Orión)" htmlFor="orionCode">
           <Input
             id="orionCode"
             name="orionCode"
-            placeholder="Como figura en Orion"
+            placeholder="Como figura en Orión"
           />
           <p className="mt-1 text-xs text-muted-foreground">
             Si todavía no lo tenés, dejalo vacío y completalo después.

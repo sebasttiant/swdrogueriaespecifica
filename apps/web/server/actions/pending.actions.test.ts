@@ -540,7 +540,7 @@ describe("createPendingAction", () => {
       const result = await createPendingAction(PREV, createCatalogFormData());
 
       expect(result.ok).toBe(false);
-      expect(result.error).toMatch(/código de Orion/i);
+      expect(result.error).toMatch(/código de Orión/i);
       expect(mocks.registerPending).not.toHaveBeenCalled();
       expect(mocks.linkOrionCodeAtCapture).not.toHaveBeenCalled();
       // La salida es elegir una de las dos, no volver a cargar el pedido.

@@ -79,7 +79,7 @@ export type ProductOption = {
 };
 
 // De 30 referencias de Eucerin, el nombre no distingue ninguna. Lo que las
-// distingue es el código de Orion, así que va en la etiqueta y no escondido.
+// distingue es el código de Orión, así que va en la etiqueta y no escondido.
 // Cuando falta se dice: un producto sin identidad es trabajo pendiente, no un
 // detalle que convenga tapar.
 export function optionLabel(product: ProductOption): string {
@@ -410,7 +410,7 @@ function PendingFormFields({
         )}
 
         {/* Presentación del producto del CATÁLOGO: se muestra, no se edita.
-            Es el mismo bloque de solo lectura que el código de Orion de abajo,
+            Es el mismo bloque de solo lectura que el código de Orión de abajo,
             a propósito: los dos son datos del producto que el vendedor consulta
             para decidir, y ninguno de los dos se toca desde esta pantalla.
 
@@ -438,7 +438,7 @@ function PendingFormFields({
             por qué). Nunca dos a la vez. */}
         {!manual && selectedProduct?.orionCode ? (
           <div className="sm:col-span-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
-            <span className="text-muted-foreground">Código de Orion: </span>
+            <span className="text-muted-foreground">Código de Orión: </span>
             <span className="font-medium text-text">{selectedProduct.orionCode}</span>
           </div>
         ) : null}
@@ -447,7 +447,7 @@ function PendingFormFields({
           <div className="sm:col-span-2 grid gap-3">
             {deferred ? null : (
               <Field
-                label="Código de Orion"
+                label="Código de Orión"
                 htmlFor="orionCode"
                 hint="El que ves en la pantalla de Orion para este producto."
               >
@@ -497,7 +497,7 @@ function PendingFormFields({
                 }}
                 className="h-4 w-4 rounded border-border accent-primary"
               />
-              Continuar sin SKU (código de Orion)
+              Continuar sin SKU (código de Orión)
             </label>
 
             {deferred ? (

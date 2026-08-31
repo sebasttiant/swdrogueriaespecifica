@@ -18,7 +18,7 @@ type OrionLinkFormProps = {
   identityVersion: number;
 };
 
-// Vincular el producto con su código de Orion.
+// Vincular el producto con su código de Orión.
 //
 // `identityVersion` viaja escondido porque es el corazón del asunto: el
 // servidor solo escribe si la versión que mandamos sigue siendo la vigente. Si
@@ -48,7 +48,7 @@ export function OrionLinkForm({ productId, identityVersion }: OrionLinkFormProps
       <input type="hidden" name="expectedVersion" value={identityVersion} />
 
       <label htmlFor={inputId} className="text-sm font-medium text-text">
-        Código de Orion
+        Código de Orión
       </label>
       <div className="flex items-start gap-2">
         <Input
@@ -56,7 +56,7 @@ export function OrionLinkForm({ productId, identityVersion }: OrionLinkFormProps
           name="orionCode"
           value={orionCode}
           onChange={(event) => setOrionCode(event.target.value)}
-          // Sin `autoCapitalize` ni corrección: se copia y pega desde Orion tal
+          // Sin `autoCapitalize` ni corrección: se copia y pega desde Orión tal
           // cual, y cualquier ayuda del teclado acá sería un error de datos.
           autoCapitalize="off"
           autoCorrect="off"
@@ -64,7 +64,7 @@ export function OrionLinkForm({ productId, identityVersion }: OrionLinkFormProps
           maxLength={80}
           required
           disabled={isPending}
-          placeholder="Pegalo desde Orion"
+          placeholder="Pegalo desde Orión"
         />
         <Button type="submit" className="shrink-0" disabled={isPending}>
           {isPending ? "Vinculando…" : "Vincular"}

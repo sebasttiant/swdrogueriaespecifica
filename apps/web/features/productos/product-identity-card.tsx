@@ -4,7 +4,7 @@ import { OrionLinkForm } from "@/features/productos/orion-link-form";
 
 type ProductIdentityCardProps = {
   productId: string;
-  /** Código de Orion ya vinculado, o `null` si el producto todavía no tiene. */
+  /** Código de Orión ya vinculado, o `null` si el producto todavía no tiene. */
   orionCode: string | null;
   /** SKU interno que acuñó el servidor, cuando existe. */
   internalSku: string | null;
@@ -44,7 +44,7 @@ export function ProductIdentityCard({
 
       {orionCode ? (
         <div className="space-y-1">
-          <p className="text-sm text-muted-foreground">Código de Orion</p>
+          <p className="text-sm text-muted-foreground">Código de Orión</p>
           <p className="break-words font-mono text-lg font-medium text-text">
             {orionCode}
           </p>
@@ -63,7 +63,7 @@ export function ProductIdentityCard({
       ) : (
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            Este producto todavía no tiene su SKU (código de Orion). Sin él no se
+            Este producto todavía no tiene su SKU (código de Orión). Sin él no se
             puede cuadrar el inventario.
           </p>
           {canLink ? (

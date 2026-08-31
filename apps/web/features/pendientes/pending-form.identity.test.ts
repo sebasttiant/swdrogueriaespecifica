@@ -118,7 +118,7 @@ function expectFreshIdentityDraft() {
 
 function conflictState(holder: { productId: string; productName: string }): PendingFormState {
   return {
-    error: `Ese código de Orion ya es de "${holder.productName}".`,
+    error: `Ese código de Orión ya es de "${holder.productName}".`,
     ok: false,
     orionConflict: { holder },
     values: {
@@ -361,7 +361,7 @@ describe("PendingForm · identidad Orion", () => {
 
   it("tras un fallo vuelve el código tipeado, no un campo en blanco", async () => {
     renderForm({
-      error: "Ese código de Orion ya es de otro producto.",
+      error: "Ese código de Orión ya es de otro producto.",
       ok: false,
       values: {
         productId: "p2",

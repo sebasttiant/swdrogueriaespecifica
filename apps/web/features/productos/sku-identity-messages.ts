@@ -17,13 +17,13 @@ export const SKU_IDENTITY_MESSAGES: Record<SkuIdentityCode, string> = {
     "Llegaron dos formas de identificar el producto a la vez y no se puede elegir por vos. Volvé a entrar desde el producto.",
   FORBIDDEN_ACTOR: "Tu perfil no puede asignar la identidad de un producto.",
   MISSING_EXACT_IDENTITY:
-    "El SKU (código de Orion) no es válido: máximo 80 caracteres, no vacío y sin espacios.",
+    "El SKU (código de Orión) no es válido: máximo 80 caracteres, no vacío y sin espacios.",
   UNKNOWN_SKU:
     "Ese producto ya no está en el catálogo. Refrescá la pantalla y volvé a intentar.",
   ID_SKU_MISMATCH:
     "Los datos del formulario apuntan a dos productos distintos. Refrescá la pantalla y volvé a intentar.",
   ORION_CONFLICT:
-    "Ese SKU (código de Orion) ya está en uso por otro producto, o este producto ya tiene uno. El código no se pisa: mudarlo es una decisión aparte.",
+    "Ese SKU (código de Orión) ya está en uso por otro producto, o este producto ya tiene uno. El código no se pisa: mudarlo es una decisión aparte.",
   GENERATION_EXHAUSTED:
     "El sistema no pudo acuñar un código interno tras varios intentos. Probá de nuevo en un momento.",
 };

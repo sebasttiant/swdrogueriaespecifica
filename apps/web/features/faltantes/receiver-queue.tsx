@@ -84,7 +84,7 @@ export function ReceiverQueue({
             <thead className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
                 <th className="px-3 py-2 font-medium">Producto</th>
-                <th className="px-3 py-2 font-medium">SKU (código de Orion)</th>
+                <th className="px-3 py-2 font-medium">SKU (código de Orión)</th>
                 <th className="px-3 py-2 font-medium">Laboratorio</th>
                 <th className="px-3 py-2 font-medium">Falta recibir</th>
                 <th className="px-3 py-2 font-medium">Acción</th>

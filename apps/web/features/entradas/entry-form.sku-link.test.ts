@@ -39,7 +39,7 @@ import { EntryForm } from "./entry-form";
 // --------------------------------------------------------------------------
 
 const RECHAZO =
-  '"Gel Caliente Muscular" todavía no tiene SKU (código de Orion). Completalo y volvé a registrar la entrada.';
+  '"Gel Caliente Muscular" todavía no tiene SKU (código de Orión). Completalo y volvé a registrar la entrada.';
 
 const montar = () =>
   render(
