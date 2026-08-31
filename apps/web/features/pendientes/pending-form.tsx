@@ -25,6 +25,12 @@ import {
 import { ORION_CODE_MAX_CHARS } from "@/server/domain/catalog/sku-identity";
 import { MAX_ZONE_LENGTH } from "@/features/pendientes/zone";
 import { MAX_PHONE_INPUT_LENGTH } from "@/features/pendientes/phone";
+import {
+  PRESENTATION_LABEL,
+  hasPresentation,
+  presentationLabel,
+} from "@/features/pendientes/presentation";
+import { cn } from "@/lib/utils/cn";
 import { formatCop, parseCopInput } from "@/lib/format/currency";
 import {
   createPendingAction,
@@ -61,6 +67,15 @@ export type ProductOption = {
    * abierta. El `code` interno (`PROV-…`, `MED-001`) no existe del otro lado.
    */
   orionCode: string | null;
+  /**
+   * La presentación guardada en el catálogo: frasco, sobre, caja, ampolla.
+   *
+   * Viaja para MOSTRARSE, nunca para editarse desde acá. El catálogo es
+   * información compartida y esta es una pantalla de captura: un vendedor que
+   * corrige la presentación de un producto se la cambia a todos, en todos los
+   * pedidos, incluidos los que ya están cargados.
+   */
+  unit: string;
 };
 
 // De 30 referencias de Eucerin, el nombre no distingue ninguna. Lo que las
@@ -356,16 +371,21 @@ function PendingFormFields({
                 defaultValue={previous.manualName ?? ""}
               />
             </Field>
+            {/* Presentación de un producto que NO está en el catálogo: acá SÍ
+                se escribe, porque el producto se está creando en este mismo
+                gesto y todavía no hay dato compartido que pisar. Sigue siendo
+                opcional; `schema.ts` completa "unidad" cuando queda vacía. */}
             <Field
-              label="Unidad (opcional)"
+              label={`${PRESENTATION_LABEL} (opcional)`}
               htmlFor="manualUnit"
               className="sm:col-span-2"
+              hint="Cómo viene el producto: Frasco, Sobre, Caja, Blíster, Ampolla."
             >
               <Input
                 id="manualUnit"
                 name="manualUnit"
                 maxLength={40}
-                placeholder="unidad"
+                placeholder="Frasco"
                 defaultValue={previous.manualUnit ?? ""}
               />
             </Field>
@@ -388,6 +408,30 @@ function PendingFormFields({
             </Select>
           </Field>
         )}
+
+        {/* Presentación del producto del CATÁLOGO: se muestra, no se edita.
+            Es el mismo bloque de solo lectura que el código de Orion de abajo,
+            a propósito: los dos son datos del producto que el vendedor consulta
+            para decidir, y ninguno de los dos se toca desde esta pantalla.
+
+            Nunca bloquea la carga del pendiente: un producto sin presentación
+            se puede pedir igual, y por eso dice "Sin presentación" en vez de
+            pedir que se complete algo. */}
+        {!manual && selectedProduct ? (
+          <div className="sm:col-span-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
+            <span className="text-muted-foreground">{PRESENTATION_LABEL}: </span>
+            <span
+              className={cn(
+                "break-words",
+                hasPresentation(selectedProduct.unit)
+                  ? "font-medium text-text"
+                  : "text-muted-foreground",
+              )}
+            >
+              {presentationLabel(selectedProduct.unit)}
+            </span>
+          </div>
+        ) : null}
 
         {/* Identidad Orion. Tres estados EXCLUYENTES: el producto ya la tiene
             (se muestra), hace falta (se pide), o se sigue sin ella (se explica

@@ -63,6 +63,8 @@ export default async function EditarPendientePage({
       name: product.name,
       code: product.code,
       orionCode: product.orionCode,
+      // Se muestra junto al producto elegido; no se edita desde acá.
+      unit: product.unit,
     }));
 
   return (

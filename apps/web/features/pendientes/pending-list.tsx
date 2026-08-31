@@ -20,6 +20,7 @@ import { deliverySummary, remainingQuantity } from "./delivery-rules";
 import { canSetManagementStatus } from "./management-status";
 import { fulfillmentNotice } from "./fulfillment-notice";
 import { identityWarning } from "./identity-warning";
+import { PRESENTATION_LABEL, presentationLabel } from "./presentation";
 import {
   derivePaymentState,
   remainingAmount,
@@ -171,6 +172,19 @@ export function PendingList({
                 <p className="text-sm text-muted-foreground">
                   {pending.quantity} {pending.product.unit} · {pending.product.code}
                   {pending.customerName ? ` · ${pending.customerName}` : ""}
+                </p>
+                {/* La presentación del producto: frasco, sobre, caja. Es
+                    informativa y NO se edita desde acá —el catálogo es
+                    compartido y esta es una pantalla de revisión—. Se muestra
+                    siempre, también cuando falta: "Sin presentación" dice que
+                    el producto no la tiene, y un renglón ausente no distingue
+                    eso de un dato que no llegó a la pantalla.
+
+                    Sirve para los DOS orígenes sin ramificar: lo que el
+                    vendedor escribió como producto manual quedó guardado en
+                    `product.unit` al crearlo. */}
+                <p className="text-sm text-muted-foreground">
+                  {PRESENTATION_LABEL}: {presentationLabel(pending.product.unit)}
                 </p>
                 {/* El laboratorio pedido va con el PRODUCTO, no con el
                     cliente: es lo que decide qué presentación comprar. Los

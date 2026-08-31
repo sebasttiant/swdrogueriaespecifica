@@ -40,18 +40,21 @@ const CODED: ProductOption = {
   name: "Eucerin tono claro",
   code: "EUC-1",
   orionCode: "ORN-500",
+  unit: "Frasco",
 };
 const CODELESS: ProductOption = {
   id: "p2",
   name: "Ibuprofeno jarabe",
   code: "IBU-1",
   orionCode: null,
+  unit: "Frasco",
 };
 const CODELESS_B: ProductOption = {
   id: "p3",
   name: "Acetaminofén gotas",
   code: "ACE-1",
   orionCode: null,
+  unit: "Gotero",
 };
 
 function bogotaNow(wall: string): Date {
