@@ -501,3 +501,47 @@ describe("editar producto · cerrar y volver a abrir", () => {
     );
   });
 });
+
+describe("editar producto · cerrar antes de que llegue el refresco", () => {
+  // La ventana angosta: la acción ya respondió pero `router.refresh()` todavía
+  // no trajo las props nuevas, y en ese instante se cierra el formulario. Al
+  // reabrir, las props siguen siendo las ANTERIORES al guardado.
+  //
+  // Decidir por tiempo no alcanza. La regla pasa a ser de DATOS: si el eco
+  // describe una versión más nueva que las props, las props están atrasadas y
+  // manda el eco.
+  it("al reabrir con props atrasadas, muestra lo guardado y su testigo", async () => {
+    mocks.updateProductAction.mockReturnValue({
+      error: null,
+      ok: true,
+      submissionId: "exito-5",
+      values: {
+        code: "MED-001",
+        name: "Recién guardado",
+        unit: "Frasco",
+        minStock: "5",
+        reorderQty: "20",
+        laboratoryId: "lab-1",
+        laboratoryName: "Genfar",
+        active: "on",
+        expectedUpdatedAt: "2026-09-01T14:00:00.000Z",
+      },
+    });
+
+    const user = userEvent.setup();
+    const view = render(createElement(ProductEditForm, { product: PRODUCTO }));
+    await user.click(screen.getByRole("button", { name: "Editar producto" }));
+    await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    await screen.findByRole("status");
+
+    // Se cierra ANTES de que el refresco actualice las props.
+    await user.click(screen.getByRole("button", { name: "Cancelar" }));
+    // Y se reabre con las props todavía viejas.
+    await user.click(screen.getByRole("button", { name: "Editar producto" }));
+
+    expect(campo(view.container, "name")?.value).toBe("Recién guardado");
+    expect(campo(view.container, "expectedUpdatedAt")?.value).toBe(
+      "2026-09-01T14:00:00.000Z",
+    );
+  });
+});

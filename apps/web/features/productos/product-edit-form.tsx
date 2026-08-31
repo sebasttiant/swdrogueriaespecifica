@@ -68,17 +68,29 @@ export function ProductEditForm({ product }: { product: EditableProduct }) {
   //
   // El estado de la acción sobrevive al plegado, así que "Cancelar" no lo
   // borra. Sin esta marca, al reabrir se mostraba el eco de la sesión anterior
-  // —valores y testigo viejos— tapando las props actuales, y el siguiente
-  // guardado se rechazaba por obsoleto con el formulario recién abierto.
-  //
-  // Al abrir, la respuesta que ya estaba pasa a ser el punto de partida y se
-  // ignora; solo cuenta el eco de las respuestas de ESTE ciclo.
+  // tapando las props actuales, y el siguiente guardado se rechazaba por
+  // obsoleto con el formulario recién abierto.
   const [baseline, setBaseline] = useState<string | null>(null);
 
-  // Basta con que la respuesta sea DISTINTA de la que había al abrir. Exigir
-  // además que traiga `submissionId` descartaba el eco de cualquier respuesta
-  // que no lo trajera, y el eco es justamente lo que evita perder lo escrito.
-  const previous = state.submissionId !== baseline ? state.values : undefined;
+  // De qué fuente salen los campos: del eco de la respuesta o de las props.
+  //
+  // La respuesta de ESTE ciclo siempre manda. Lo que costó acertar es qué
+  // hacer con la de un ciclo anterior, y la regla NO puede ser de tiempo:
+  // `router.refresh()` puede llegar antes o después de que alguien cierre y
+  // reabra, y cualquier criterio basado en "cuándo" falla en la ventana
+  // contraria.
+  //
+  // La regla es de DATOS: si el eco describe una versión MÁS NUEVA que la de
+  // las props, las props están atrasadas —el refresco todavía no llegó— y
+  // manda el eco. Cuando las props alcanzan, describen lo mismo y se usan
+  // ellas. Así el formulario muestra siempre la versión más nueva que conoce,
+  // sin depender de en qué orden ocurrieron las cosas.
+  const echo = state.values;
+  const deEsteCiclo = state.submissionId !== baseline;
+  const propsAtrasadas =
+    echo !== undefined &&
+    Date.parse(echo.expectedUpdatedAt) > Date.parse(product.updatedAt);
+  const previous = deEsteCiclo || propsAtrasadas ? echo : undefined;
 
   if (!open) {
     return (
