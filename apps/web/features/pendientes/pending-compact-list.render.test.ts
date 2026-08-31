@@ -18,6 +18,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import type { PendingListItem } from "@/server/repositories/pending.repository";
+import { IDENTITY_WARNING_LABEL } from "./identity-warning";
 
 import { PendingCompactList } from "./pending-compact-list";
 
@@ -489,7 +490,7 @@ describe("PendingCompactList · identidad pendiente", () => {
 
     // Dos veces: móvil + tabla. Una sola aparición significaría que una de las
     // dos vistas se quedó sin el aviso.
-    expect(countOccurrences(html, "Identidad pendiente")).toBe(2);
+    expect(countOccurrences(html, IDENTITY_WARNING_LABEL)).toBe(2);
   });
 
   it("no avisa en ninguna de las dos vistas si el producto ya tiene código", () => {
@@ -506,18 +507,18 @@ describe("PendingCompactList · identidad pendiente", () => {
       }),
     ]);
 
-    expect(html).not.toContain("Identidad pendiente");
+    expect(html).not.toContain(IDENTITY_WARNING_LABEL);
   });
 
   it("no avisa por un producto sin código que nadie aplazó", () => {
     const html = render([pending()]);
 
-    expect(html).not.toContain("Identidad pendiente");
+    expect(html).not.toContain(IDENTITY_WARNING_LABEL);
   });
 
   it("dice el aviso con texto, no solo con un color", () => {
     const html = render([pending({ identitySkippedReason: "CODE_NOT_FOUND" })]);
 
-    expect(html).toContain(">Identidad pendiente<");
+    expect(html).toContain(`>${IDENTITY_WARNING_LABEL}<`);
   });
 });
