@@ -1,6 +1,6 @@
 import Image from "next/image";
 
-import { APP_NAME } from "@/lib/constants/app";
+import { BUSINESS_NAME } from "@/lib/constants/app";
 
 type BrandLogoProps = {
   className?: string;
@@ -17,7 +17,9 @@ export function BrandLogo({ className, priority = false }: BrandLogoProps) {
   return (
     <Image
       src="/logo-especifica.webp"
-      alt={APP_NAME}
+      // El alt describe LA IMAGEN, y la imagen es el logo del negocio. El
+      // software se llama Específica GO, pero este archivo no lo dibuja a él.
+      alt={BUSINESS_NAME}
       width={698}
       height={128}
       priority={priority}

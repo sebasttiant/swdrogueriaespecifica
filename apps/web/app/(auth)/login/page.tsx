@@ -4,7 +4,7 @@ import { BrandLogo } from "@/app/_components/app-shell/brand-logo";
 import { IlAsesoriasLogo } from "@/app/_components/app-shell/il-asesorias-logo";
 import { Card } from "@/app/_components/ui/card";
 import { LoginForm } from "@/features/auth/login-form";
-import { IL_ASESORIAS } from "@/lib/constants/app";
+import { IL_ASESORIAS, LOGIN_TAGLINE } from "@/lib/constants/app";
 
 export const metadata: Metadata = { title: "Ingresar" };
 
@@ -19,7 +19,7 @@ export default function LoginPage() {
         <div className="text-center">
           <h1 className="text-xl font-bold text-text">Ingresar</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Accedé para gestionar pendientes, faltantes e inventario.
+            {LOGIN_TAGLINE}
           </p>
         </div>
 
