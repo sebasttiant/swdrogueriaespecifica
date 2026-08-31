@@ -3,6 +3,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { pendingReviewListHref } from "@/features/pendientes/pending-anchor";
+
 const mocks = vi.hoisted(() => ({
   countArrivalNotices: vi.fn(),
   getOperationalAlertsCached: vi.fn(),
@@ -76,13 +78,21 @@ describe("aviso de llegada en la barra", () => {
     expect(html).not.toContain("pedidos tuyos");
   });
 
-  it("lleva a los pendientes", async () => {
+  // A REVISIÓN, no a la pantalla de captura. Quien recibe este aviso tiene que
+  // actuar sobre un pedido que YA existe —facturarlo, llamar al cliente—, y
+  // /pendientes es donde se carga uno nuevo: el vendedor hacía clic en "llegó
+  // tu pedido" y le aparecía el formulario en blanco.
+  it("lleva a Revisión de pendientes, que es donde se opera", async () => {
     mocks.countArrivalNotices.mockResolvedValue(1);
 
-    expect(await pintar()).toContain('href="/pendientes"');
+    const html = await pintar();
+
+    expect(html).toContain(`href="${pendingReviewListHref()}"`);
+    expect(html).toContain('href="/revision-pendientes"');
+    expect(html).not.toContain('href="/pendientes"');
   });
 
-  // El detalle vive en /pendientes. En la barra sería ruido, y en el celular
+  // El detalle vive en Revisión. En la barra sería ruido, y en el celular
   // desborda: la barra se ve en todas las pantallas.
   it("NO repite el detalle del pendiente", async () => {
     mocks.countArrivalNotices.mockResolvedValue(1);

@@ -13,6 +13,7 @@ import { computeDeadlineStatus } from "./deadline-status";
 import { derivePaymentState } from "./payment-state";
 import { fulfillmentNotice, isTerminal, outstanding } from "./fulfillment-notice";
 import { identityWarning } from "./identity-warning";
+import { pendingAnchorId } from "./pending-anchor";
 import { PRESENTATION_LABEL, presentationLabel } from "./presentation";
 import {
   isManagementStatus,
@@ -351,7 +352,15 @@ export function PendingCompactList({
             canManageAll,
           });
           return (
-            <Card key={pending.id} className="space-y-2 p-3">
+            <Card
+              key={pending.id}
+              // Destino del enlace "Ver el pendiente" del aviso de llegada.
+              // `scroll-mt-20` deja aire para el topbar sticky (h-16): sin eso
+              // la fila queda TAPADA por la barra y parece que no pasó nada,
+              // que es el mismo síntoma que este arreglo viene a sacar.
+              id={pendingAnchorId(pending.id)}
+              className="scroll-mt-20 space-y-2 p-3"
+            >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="break-words font-medium text-text">
@@ -458,7 +467,11 @@ export function PendingCompactList({
                 canManageAll,
               });
               return (
-                <tr key={pending.id} className="border-b border-border last:border-0">
+                <tr
+                  key={pending.id}
+                  id={pendingAnchorId(pending.id)}
+                  className="scroll-mt-20 border-b border-border last:border-0"
+                >
                   <td className="px-3 py-2 font-medium text-text">
                     {pending.product.name}
                     {identityNotice ? (

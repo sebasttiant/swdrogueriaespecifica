@@ -20,6 +20,7 @@ import { deliverySummary, remainingQuantity } from "./delivery-rules";
 import { canSetManagementStatus } from "./management-status";
 import { fulfillmentNotice } from "./fulfillment-notice";
 import { identityWarning } from "./identity-warning";
+import { pendingAnchorId } from "./pending-anchor";
 import { PRESENTATION_LABEL, presentationLabel } from "./presentation";
 import {
   derivePaymentState,
@@ -163,7 +164,14 @@ export function PendingList({
         const identityNotice = identityWarning(pending);
 
         return (
-          <Card key={pending.id} className="space-y-3">
+          <Card
+            key={pending.id}
+            // Destino del enlace "Ver el pendiente" del aviso de llegada: esta
+            // es la lista de Revisión, la mesa donde se factura. `scroll-mt-20`
+            // deja aire para el topbar sticky (h-16).
+            id={pendingAnchorId(pending.id)}
+            className="scroll-mt-20 space-y-3"
+          >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="break-words font-semibold text-text">
