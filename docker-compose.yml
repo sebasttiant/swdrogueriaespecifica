@@ -77,6 +77,10 @@ services:
       context: .
       dockerfile: apps/web/Dockerfile
       target: runner
+      args:
+        # Mismo SHA que `deploy.sh` exporta. Viaja como ARG —no como env de
+        # runtime— porque el bundle del cliente se marca al compilar.
+        APP_VERSION: ${APP_COMMIT:-unknown}
     restart: unless-stopped
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL es obligatorio}

@@ -52,10 +52,17 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
 }
 
 export const config = {
-  // Excluye assets internos de Next, el healthcheck y los archivos estáticos de
-  // /public (rutas de un solo segmento con extensión: /logo-especifica.webp,
-  // /favicon.ico, ...). Las rutas de app son sin extensión y siguen protegidas.
+  // Excluye assets internos de Next, el healthcheck, el endpoint de versión y
+  // los archivos estáticos de /public (rutas de un solo segmento con extensión:
+  // /logo-especifica.webp, /favicon.ico, ...). Las rutas de app son sin
+  // extensión y siguen protegidas.
+  //
+  // `api/version` va afuera por la misma razón que el healthcheck: lo consulta
+  // una pestaña que puede haber perdido la sesión durante el despliegue, y ese
+  // es justamente el caso que tiene que detectar. Detrás del guard devolvería
+  // un redirect al login en vez de la versión, y el desfase quedaría invisible.
+  // No expone nada: solo el SHA del build, que ya viaja en cada asset.
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|api/health|[^/]+\\.[^/]+$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|api/health|api/version|[^/]+\\.[^/]+$).*)",
   ],
 };

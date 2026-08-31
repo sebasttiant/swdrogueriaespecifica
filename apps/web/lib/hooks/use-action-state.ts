@@ -7,6 +7,8 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 
+import { useDeployment } from "@/features/deployment/deployment-guard";
+
 // --------------------------------------------------------------------------
 // `useActionState` del proyecto: el mismo de React, pero que además REFRESCA la
 // pantalla cuando la Server Action responde.
@@ -73,20 +75,60 @@ function solicitarRefresco(router: Refrescador): void {
   });
 }
 
+/**
+ * Opciones del envoltorio.
+ *
+ * `mutation` marca las acciones que ESCRIBEN. Solo esas se frenan cuando el
+ * servidor cambió de versión: una búsqueda o un autocomplete pueden fallar y
+ * reintentarse sin consecuencia, pero Facturar, Entregar o Cancelar mandados
+ * con un id de Server Action viejo dejan el botón girando para siempre — y lo
+ * que sigue es alguien apretando de nuevo sobre dinero y stock.
+ *
+ * Es opt-in y no al revés a propósito: si alguien agrega una mutación y se
+ * olvida de marcarla, el peor caso es que quede como está hoy. Al revés,
+ * bloquear por defecto rompería las lecturas sin que nadie lo pidiera.
+ */
+export type ActionStateOptions = {
+  mutation?: boolean;
+};
+
 export function useActionState<State, Payload>(
   action: (state: Awaited<State>, payload: Payload) => State | Promise<State>,
   initialState: Awaited<State>,
-  permalink?: string,
+  permalinkOrOptions?: string | ActionStateOptions,
 ): [
   state: Awaited<State>,
   dispatch: (payload: Payload) => void,
   isPending: boolean,
 ] {
+  const options =
+    typeof permalinkOrOptions === "object" ? permalinkOrOptions : undefined;
+  const permalink =
+    typeof permalinkOrOptions === "string" ? permalinkOrOptions : undefined;
+
   const [state, dispatch, isPending] = useReactActionState(
     action,
     initialState,
     permalink,
   );
+
+  // El guard puede no estar montado —pruebas de render, o un árbol sin layout—:
+  // el contexto tiene un valor por defecto que nunca marca desfase, así que la
+  // ausencia no bloquea nada.
+  const deployment = useDeployment();
+
+  /**
+   * Despacho protegido.
+   *
+   * Cuando hay desfase, la mutación NO se despacha y `isPending` nunca se
+   * enciende: el botón no queda girando y los datos del formulario siguen
+   * donde estaban. El cartel del guard ya explica qué hacer.
+   *
+   * No se reintenta ni se guarda el envío para después. La persona actualiza y
+   * vuelve a confirmar: es la única forma de que la segunda vez sea deliberada.
+   */
+  const guardedDispatch =
+    options?.mutation && deployment.isStale ? () => {} : dispatch;
 
   // `useRouter` LANZA fuera del App Router —"invariant expected app router to
   // be mounted"—, y hay renders legítimos sin él: las pruebas de render usan
@@ -121,5 +163,5 @@ export function useActionState<State, Payload>(
     if (router) solicitarRefresco(router);
   }, [state, router]);
 
-  return [state, dispatch, isPending];
+  return [state, guardedDispatch, isPending];
 }

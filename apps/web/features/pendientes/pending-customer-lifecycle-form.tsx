@@ -47,6 +47,8 @@ export function PendingCustomerLifecycleForm({
   const [state, invoiceAction, invoicing] = useActionState(
     invoicePendingAction,
     INITIAL_STATE,
+    // Escribe: no se despacha sobre un build viejo.
+    { mutation: true },
   );
 
   const remainingToInvoice = Math.max(quantity - invoicedQuantity, 0);

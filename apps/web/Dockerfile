@@ -40,6 +40,14 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/web/node_modules ./apps/web/node_modules
 COPY . .
 # build = `prisma generate && next build` (ver apps/web/package.json)
+# La versión se incrusta ANTES de compilar: `NEXT_PUBLIC_*` se resuelve en
+# tiempo de build, así que el bundle del cliente queda marcado con el commit que
+# lo generó. Pasarla en runtime no serviría — el cliente ya está compilado.
+#
+# No se lee de `.git`: la imagen final no lo tiene, y depender de él ataría el
+# build a que el contexto sea un repositorio.
+ARG APP_VERSION=unknown
+ENV NEXT_PUBLIC_APP_VERSION=$APP_VERSION
 RUN pnpm --filter @drogueria/web build
 
 # ---------- migrate ----------
