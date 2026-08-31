@@ -1,5 +1,7 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
+
 import { revalidatePath } from "next/cache";
 
 import { requireCapability } from "@/lib/auth/require-role";
@@ -35,7 +37,51 @@ export type ProductFormState = {
    * repite el problema que la identidad exacta existe para cerrar.
    */
   conflictingProductId?: string;
+  /**
+   * Eco EXACTO de lo enviado, presente SOLO cuando el guardado falla.
+   *
+   * React limpia los campos no controlados de un `<form action>` en cuanto la
+   * acción RESUELVE —y un error devuelto es una resolución—, así que sin este
+   * eco cada campo vuelve a su valor GUARDADO y se pierde la corrección. Es el
+   * mismo incidente que ya golpeó al alta de pendientes, y acá duele más:
+   * quien edita un producto está corrigiendo varios campos a la vez contra la
+   * caja que tiene en la mano.
+   */
+  values?: ProductSubmittedValues;
+  /**
+   * Identidad de esta respuesta. El formulario se remonta con ella, que es lo
+   * que hace que los campos vuelvan a leer su `defaultValue`: del eco si
+   * falló, del producto guardado si salió bien.
+   */
+  submissionId?: string;
 };
+
+/** Lo que el formulario de edición envía, tal cual, para poder devolverlo. */
+export type ProductSubmittedValues = {
+  code: string;
+  name: string;
+  unit: string;
+  minStock: string;
+  reorderQty: string;
+  laboratoryId: string;
+  laboratoryName: string;
+  active: string;
+};
+
+/** El eco: lo que vino en el FormData, sin interpretar. */
+function submittedValues(formData: FormData): ProductSubmittedValues {
+  const text = (key: string) => String(formData.get(key) ?? "");
+  return {
+    code: text("code"),
+    name: text("name"),
+    unit: text("unit"),
+    minStock: text("minStock"),
+    reorderQty: text("reorderQty"),
+    laboratoryId: text("laboratoryId"),
+    laboratoryName: text("laboratoryName"),
+    active: formData.get("active") === "on" ? "on" : "",
+  };
+}
 
 // P2002 (unique violation) sobre `code`. `meta.target` puede ser el array de
 // campos (["code"]) o el nombre de constraint (products_code_key) según el
@@ -180,8 +226,18 @@ export async function updateProductAction(
     active: formData.get("active") ?? undefined,
   });
 
+  // El eco se arma ANTES de validar: si el guardado falla, lo que la persona
+  // escribió tiene que volver tal cual, incluso lo que no pasó la validación.
+  const echo = submittedValues(formData);
+  const failed = (error: string): ProductFormState => ({
+    error,
+    ok: false,
+    values: echo,
+    submissionId: randomUUID(),
+  });
+
   if (!parsed.success) {
-    return { error: "Revisá los datos del producto.", ok: false };
+    return failed("Revisa los datos del producto.");
   }
 
   const { id, ...data } = parsed.data;
@@ -189,7 +245,7 @@ export async function updateProductAction(
   try {
     const changed = await editProduct(id, data);
     if (!changed) {
-      return { error: "Ese producto ya no existe.", ok: false };
+      return failed("Ese producto ya no existe.");
     }
 
     // El ANTES y el DESPUÉS, los dos. "El laboratorio ahora es Genfar" no
@@ -214,13 +270,15 @@ export async function updateProductAction(
     });
   } catch (error) {
     if (isDuplicateCodeError(error)) {
-      return { error: "Ya existe otro producto con ese código.", ok: false };
+      return failed("Ya existe otro producto con ese código.");
     }
     console.error("[productos] No se pudo editar el producto:", error);
-    return { error: "No se pudo guardar el producto. Intentá de nuevo.", ok: false };
+    return failed("No se pudo guardar el producto. Intenta de nuevo.");
   }
 
   revalidatePath("/productos");
   revalidatePath(`/productos/${id}`);
-  return { error: null, ok: true };
+  // Sin `values`: al remontar, los campos vuelven a leer el producto ya
+  // guardado, que es exactamente lo que se acaba de escribir.
+  return { error: null, ok: true, submissionId: randomUUID() };
 }

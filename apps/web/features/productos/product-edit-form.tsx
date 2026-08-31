@@ -54,6 +54,8 @@ export function ProductEditForm({ product }: { product: EditableProduct }) {
     updateProductAction,
     INITIAL_STATE,
   );
+  // El plegado vive ACÁ, en el componente que sobrevive: si viviera del otro
+  // lado, un error cerraría el formulario junto con el remonte.
   const [open, setOpen] = useState(false);
 
   if (!open) {
@@ -73,6 +75,47 @@ export function ProductEditForm({ product }: { product: EditableProduct }) {
   }
 
   return (
+    <ProductEditFields
+      // CONTRATO ÉXITO/ERROR, la razón por la que esto está partido en dos:
+      //
+      // React limpia los campos no controlados de un `<form action>` en cuanto
+      // la acción RESUELVE, sin mirar qué devolvió — y un error devuelto es una
+      // resolución. Sin esto, cada campo volvía a su valor GUARDADO y la
+      // corrección se perdía entera. Es el mismo incidente que ya golpeó al
+      // alta de pendientes.
+      //
+      // Al remontar con cada respuesta, cada campo relee su `defaultValue`:
+      //   falló  -> del eco de lo enviado  -> vuelven llenos.
+      //   salió  -> del producto guardado  -> muestran lo que se acaba de
+      //                                       guardar.
+      key={state.submissionId ?? "initial"}
+      product={product}
+      state={state}
+      formAction={formAction}
+      isPending={isPending}
+      onClose={() => setOpen(false)}
+    />
+  );
+}
+
+function ProductEditFields({
+  product,
+  state,
+  formAction,
+  isPending,
+  onClose,
+}: {
+  product: EditableProduct;
+  state: ProductFormState;
+  formAction: (formData: FormData) => void;
+  isPending: boolean;
+  onClose: () => void;
+}) {
+  // El eco del intento anterior cuando falló; ausente al entrar o tras un
+  // éxito, y ahí manda el producto guardado.
+  const previous = state.values;
+
+  return (
     <Card className="space-y-4">
       <CardTitle>Editar producto</CardTitle>
 
@@ -86,7 +129,7 @@ export function ProductEditForm({ product }: { product: EditableProduct }) {
               name="name"
               required
               maxLength={120}
-              defaultValue={product.name}
+              defaultValue={previous?.name ?? product.name}
             />
           </Field>
 
@@ -103,7 +146,7 @@ export function ProductEditForm({ product }: { product: EditableProduct }) {
               name="code"
               required
               maxLength={40}
-              defaultValue={product.code}
+              defaultValue={previous?.code ?? product.code}
             />
           </Field>
 
@@ -117,7 +160,7 @@ export function ProductEditForm({ product }: { product: EditableProduct }) {
               name="unit"
               required
               maxLength={20}
-              defaultValue={product.unit}
+              defaultValue={previous?.unit ?? product.unit}
             />
           </Field>
 
@@ -131,7 +174,7 @@ export function ProductEditForm({ product }: { product: EditableProduct }) {
               name="minStock"
               type="number"
               min={0}
-              defaultValue={product.minStock}
+              defaultValue={previous?.minStock ?? product.minStock}
             />
           </Field>
 
@@ -145,7 +188,7 @@ export function ProductEditForm({ product }: { product: EditableProduct }) {
               name="reorderQty"
               type="number"
               min={0}
-              defaultValue={product.reorderQty}
+              defaultValue={previous?.reorderQty ?? product.reorderQty}
             />
           </Field>
 
@@ -157,9 +200,14 @@ export function ProductEditForm({ product }: { product: EditableProduct }) {
               name="laboratoryId"
               nameForLabel="laboratoryName"
               label="Laboratorio del catálogo"
-              hint="Buscá uno existente o creá uno nuevo. Vacío = sin laboratorio."
-              defaultSelectedId={product.laboratoryId ?? undefined}
-              defaultSelectedName={product.laboratoryName ?? undefined}
+              hint="Busca uno existente o crea uno nuevo. Vacío = sin laboratorio."
+              // El placeholder se pasa explícito para que el campo no mezcle
+              // registros: el componente compartido trae uno en voseo y este
+              // formulario habla en español neutral. Se cambia el USO, no el
+              // componente, que lo usan otras pantallas de este PR afuera.
+              placeholder="Busca o crea un laboratorio"
+              defaultSelectedId={previous?.laboratoryId || (product.laboratoryId ?? undefined)}
+              defaultSelectedName={previous?.laboratoryName || (product.laboratoryName ?? undefined)}
             />
           </div>
 
@@ -174,7 +222,7 @@ export function ProductEditForm({ product }: { product: EditableProduct }) {
               id="edit-active"
               type="checkbox"
               name="active"
-              defaultChecked={product.active}
+              defaultChecked={previous ? previous.active === "on" : product.active}
               className="h-4 w-4 rounded border-border accent-primary"
             />
             Producto activo
@@ -204,7 +252,7 @@ export function ProductEditForm({ product }: { product: EditableProduct }) {
           <Button type="submit" disabled={isPending}>
             {isPending ? "Guardando…" : "Guardar cambios"}
           </Button>
-          <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
+          <Button type="button" variant="ghost" onClick={onClose}>
             Cancelar
           </Button>
         </div>
