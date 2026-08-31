@@ -29,7 +29,7 @@ import { PendingForm, type ProductOption } from "./pending-form";
 // navegador y el incidente se reportó sobre Enter.
 // --------------------------------------------------------------------------
 
-// El producto que estos tests cargan YA tiene su código de Orion, y eso es
+// El producto que estos tests cargan YA tiene su código de Orión, y eso es
 // deliberado: desde que la identidad es obligatoria, un producto sin código
 // frena el envío hasta resolverla, y este archivo no viene a hablar de eso
 // sino del eco de los valores tras un fallo. Con uno ya identificado la
@@ -87,9 +87,33 @@ async function fillForm(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByLabelText("Nota (opcional)"), CARGA.note);
 }
 
+// --------------------------------------------------------------------------
+// Por qué los dos envíos terminan con `act`.
+//
+// `useActionState` resuelve la acción y aplica la respuesta dentro de una
+// TRANSICIÓN de React. Sin vaciar esa cola, la única forma de esperarla es un
+// `findBy*`, que sondea el DOM contra un presupuesto de RELOJ DE PARED (1 s por
+// omisión). Ese presupuesto no dice nada sobre la aplicación: en una máquina
+// cargada —CI con varios workers, o un portátil compilando— la transición
+// simplemente no llega a tiempo y el test falla sin que nada esté roto.
+//
+// Medido: con la máquina saturada al doble de sus núcleos, este archivo fallaba
+// alrededor de 1 de cada 4 corridas, siempre con "Unable to find role=..." —
+// nunca con una aserción de comportamiento.
+//
+// `await act(async () => {})` vacía esa cola y deja el DOM asentado ANTES de
+// cualquier aserción. No es una espera arbitraria ni un reintento: no agrega
+// tiempo, lo QUITA de la ecuación. Un fallo real sigue fallando igual de rápido,
+// y ahora falla diciendo qué esperaba en vez de "no encontré el cartel".
+// --------------------------------------------------------------------------
+async function settle() {
+  await act(async () => {});
+}
+
 /** Enter dentro de un campo de texto: el submit implícito del navegador. */
 async function submitWithEnter(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByLabelText("Cliente"), "{Enter}");
+  await settle();
 }
 
 /**
@@ -101,6 +125,7 @@ async function submitWithClick(user: ReturnType<typeof userEvent.setup>) {
   const button = document.querySelector('button[type="submit"]');
   if (!button) throw new Error("no hay botón de envío");
   await user.click(button);
+  await settle();
 }
 
 /**
@@ -215,7 +240,7 @@ describe("PendingForm · un fallo NUNCA borra lo cargado", () => {
     await user.type(screen.getByLabelText("Presentación (opcional)"), "tubo");
     // Un producto manual no existe todavía, así que nunca tiene código: su
     // identidad es obligatoria y sin ella el envío ni sale.
-    await user.type(screen.getByLabelText("Código de Orion"), "ORN-7788");
+    await user.type(screen.getByLabelText("Código de Orión"), "ORN-7788");
     await user.type(screen.getByLabelText("Cliente"), CARGA.customerName);
     await user.type(screen.getByLabelText("Teléfono"), CARGA.customerPhone);
     await submitWithEnter(user);
