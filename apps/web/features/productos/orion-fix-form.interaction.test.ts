@@ -37,7 +37,7 @@ describe("OrionFixForm · corrección operativa", () => {
   it("abre el formulario con código anterior, identidad y control de envío", async () => {
     const { container } = await openForm();
 
-    expect(screen.getByRole("textbox", { name: "Código correcto de Orion" })).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: "Código correcto de Orión" })).toBeTruthy();
     expect(screen.getByText("ORION-OLD")).toBeTruthy();
     expect(container.querySelector('input[name="productId"]')?.getAttribute("value")).toBe(
       "prod-17",
@@ -53,7 +53,7 @@ describe("OrionFixForm · corrección operativa", () => {
     const { user } = await openForm();
 
     await user.type(
-      screen.getByRole("textbox", { name: "Código correcto de Orion" }),
+      screen.getByRole("textbox", { name: "Código correcto de Orión" }),
       "ORION-NEW",
     );
     await user.click(screen.getByRole("button", { name: "Guardar" }));
@@ -71,7 +71,7 @@ describe("OrionFixForm · corrección operativa", () => {
     });
     const { user } = await openForm();
     const input = screen.getByRole("textbox", {
-      name: "Código correcto de Orion",
+      name: "Código correcto de Orión",
     }) as HTMLInputElement;
 
     await user.type(input, "ORION-RETRY");
@@ -86,7 +86,7 @@ describe("OrionFixForm · corrección operativa", () => {
     const { user } = await openForm();
 
     await user.type(
-      screen.getByRole("textbox", { name: "Código correcto de Orion" }),
+      screen.getByRole("textbox", { name: "Código correcto de Orión" }),
       "ORION-NEW",
     );
     await user.click(screen.getByRole("button", { name: "Guardar" }));

@@ -201,6 +201,56 @@ function axisWhere(axes: PendingAxisFilters | undefined): Prisma.PendingWhereInp
   };
 }
 
+/** Qué filas contiene una vista: su scope, su dueño y sus ejes. */
+type PendingViewParams = {
+  scope?: PendingScope;
+  ownerId?: string;
+  axes?: PendingAxisFilters;
+};
+
+/**
+ * El `where` de una vista de pendientes, en UN solo lugar.
+ *
+ * Lo comparten el listado paginado y la búsqueda de una fila concreta. Que sea
+ * el mismo no es prolijidad: si la búsqueda por id armara su propia condición,
+ * un filtro nuevo la dejaría atrás y esa consulta devolvería filas que la vista
+ * no contiene —incluidas, si se olvidara el `ownerId`, las de otro vendedor—.
+ * Es exactamente el mismo motivo por el que la validación del cursor, más
+ * abajo, se hace contra este `where` y no contra una copia.
+ */
+function viewWhere(params: PendingViewParams): Prisma.PendingWhereInput {
+  return {
+    status: { in: params.scope === "history" ? HISTORY_STATUSES : OPEN_STATUSES },
+    ...(params.ownerId ? { createdById: params.ownerId } : {}),
+    ...axisWhere(params.axes),
+  };
+}
+
+/**
+ * UNA fila concreta de una vista, buscada por id.
+ *
+ * Existe porque el listado está paginado: un enlace a un pendiente que quedó
+ * fuera de la primera página apunta a un ancla que no está en el DOM, y el
+ * navegador no hace nada. Traer todas las filas para que el ancla exista
+ * arruinaría la pantalla con la cola de un día entero.
+ *
+ * Devuelve `null` cuando la fila no pertenece a la vista —de otro dueño, de
+ * otro scope, excluida por un filtro, o inexistente—. Todos esos casos son el
+ * mismo para quien pregunta: acá no hay nada para vos. No se distingue "no
+ * existe" de "no es tuyo", porque distinguirlos ya diría de quién es.
+ */
+export async function findPendingInView(
+  params: PendingViewParams & { id: string },
+): Promise<PendingListItem | null> {
+  const { id, ...view } = params;
+  if (!id) return null;
+
+  return prisma.pending.findFirst({
+    where: { ...viewWhere(view), id },
+    select: view.scope === "history" ? HISTORY_SELECT : LIST_SELECT,
+  });
+}
+
 export async function listPendings(params: {
   cursor?: string | null;
   take?: number;
@@ -211,11 +261,7 @@ export async function listPendings(params: {
   const take = clampTake(params.take);
   let cursorId = params.cursor ? decodeCursor(params.cursor) : null;
 
-  const where: Prisma.PendingWhereInput = {
-    status: { in: params.scope === "history" ? HISTORY_STATUSES : OPEN_STATUSES },
-    ...(params.ownerId ? { createdById: params.ownerId } : {}),
-    ...axisWhere(params.axes),
-  };
+  const where: Prisma.PendingWhereInput = viewWhere(params);
 
   // El cursor es input controlado por el usuario. `decodeCursor` ya descarta la
   // basura (round-trip), pero un cursor bien formado puede apuntar a una fila

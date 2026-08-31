@@ -24,6 +24,14 @@ function view(overrides: Partial<PendingIdentityView> = {}): PendingIdentityView
 }
 
 describe("identityWarning", () => {
+  // El ÚNICO lugar donde el texto se fija literal. El resto de las pruebas usa
+  // la constante, así que un renombre rompe acá y en ningún otro lado: se ve
+  // como lo que es —una decisión de redacción— en vez de como ocho fallos
+  // repartidos por pantallas que no cambiaron de comportamiento.
+  it("dice la falta con las palabras del mostrador", () => {
+    expect(IDENTITY_WARNING_LABEL).toBe("Sin SKU (Sin Código de Orión)");
+  });
+
   it("avisa cuando se aplazó la identidad y el producto sigue sin código", () => {
     const item = view({
       identitySkippedReason: "ORION_UNAVAILABLE",

@@ -21,7 +21,7 @@ type OrionFixFormProps = {
 };
 
 // --------------------------------------------------------------------------
-// Corregir un código de Orion mal cargado.
+// Corregir un código de Orión mal cargado.
 //
 // Arranca PLEGADO, detrás de un botón. Corregir identidad no es una tarea
 // cotidiana: es la excepción. Un campo de texto siempre abierto al lado de un
@@ -57,7 +57,7 @@ export function OrionFixForm({
       <input type="hidden" name="expectedVersion" value={identityVersion} />
 
       <label htmlFor={inputId} className="text-sm font-medium text-text">
-        Código correcto de Orion
+        Código correcto de Orión
       </label>
       <div className="flex items-start gap-2">
         <Input
@@ -65,7 +65,7 @@ export function OrionFixForm({
           name="orionCode"
           value={orionCode}
           onChange={(event) => setOrionCode(event.target.value)}
-          // Sin ayuda del teclado: se copia y pega desde Orion tal cual, y
+          // Sin ayuda del teclado: se copia y pega desde Orión tal cual, y
           // cualquier autocorrección acá sería un error de datos.
           autoCapitalize="off"
           autoCorrect="off"
@@ -73,7 +73,7 @@ export function OrionFixForm({
           maxLength={80}
           required
           disabled={isPending}
-          placeholder="Pegalo desde Orion"
+          placeholder="Pegalo desde Orión"
         />
         <Button type="submit" className="shrink-0" disabled={isPending}>
           {isPending ? "Corrigiendo…" : "Guardar"}

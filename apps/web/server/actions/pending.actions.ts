@@ -262,21 +262,21 @@ const FORBIDDEN_MESSAGE =
 const IDEMPOTENCY_CONFLICT_MESSAGE =
   "Este intento ya fue usado con datos distintos. Recargá el formulario antes de registrar otro pendiente.";
 const LINK_FORBIDDEN_MESSAGE =
-  "Tu usuario no puede cargar códigos de Orion. Seguí sin el código indicando el motivo, o pedile a un administrador que te habilite.";
+  "Tu usuario no puede cargar códigos de Orión. Seguí sin el código indicando el motivo, o pedile a un administrador que te habilite.";
 // El producto elegido ya tiene OTRO código. Cambiárselo sería una corrección
 // de identidad, una decisión explícita y auditada que la captura no toma.
 const LINK_REJECTED_MESSAGE =
-  "Ese producto ya tiene otro código de Orion cargado. Corregirlo se hace desde la ficha del producto; acá podés seguir sin el código indicando el motivo.";
+  "Ese producto ya tiene otro código de Orión cargado. Corregirlo se hace desde la ficha del producto; acá podés seguir sin el código indicando el motivo.";
 // Ni código ni aplazamiento. El mensaje nombra las DOS salidas porque decir
 // solo "falta el código" a alguien que justamente no lo tiene es un callejón:
 // la exigencia siempre viene con su puerta.
 const IDENTITY_REQUIRED_MESSAGE =
-  "Falta el código de Orion de este producto. Cargalo, o seguí sin él indicando el motivo.";
+  "Falta el código de Orión de este producto. Cargalo, o seguí sin él indicando el motivo.";
 // Aplazamiento sobre un producto que YA tiene código. No se pide corregir
 // nada: el pendiente ya se puede registrar tal cual, solo hay que recargar
 // para que la pantalla muestre la identidad que el producto tiene ahora.
 const DEFERRAL_NOT_APPLICABLE_MESSAGE =
-  "Ese producto ya tiene su código de Orion cargado, así que no hace falta aplazar nada. Recargá la pantalla y volvé a enviar el pendiente.";
+  "Ese producto ya tiene su código de Orión cargado, así que no hace falta aplazar nada. Recargá la pantalla y volvé a enviar el pendiente.";
 
 /**
  * El código ya es de otro producto.
@@ -287,7 +287,7 @@ const DEFERRAL_NOT_APPLICABLE_MESSAGE =
  * mueve de un producto a otro por esta vía.
  */
 function conflictMessage(holderName: string): string {
-  return `Ese código de Orion ya es de "${holderName}". Elegí ese producto, o seguí sin el código indicando el motivo.`;
+  return `Ese código de Orión ya es de "${holderName}". Elegí ese producto, o seguí sin el código indicando el motivo.`;
 }
 
 export async function createPendingAction(
@@ -1465,7 +1465,7 @@ export async function updatePendingAction(
 // --------------------------------------------------------------------------
 // Resolver un producto de la cola de identidad pendiente (S2b · 2-B2).
 //
-// Vincula el código de Orion de un producto que quedó sin identidad porque
+// Vincula el código de Orión de un producto que quedó sin identidad porque
 // alguien usó la salida con motivo al capturar. Es la misma operación que el
 // vínculo del catálogo, pero con otra autoridad: `canFixProductIdentity` en
 // vez de `canManageProducts`. SUPERVISOR entra; OPERADOR no.

@@ -23,6 +23,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import type { PendingListItem } from "@/server/repositories/pending.repository";
+import { IDENTITY_WARNING_LABEL } from "./identity-warning";
 
 import { PendingList } from "./pending-list";
 import { reviewPageHref, type ReviewAxes } from "./review-axes";
@@ -544,7 +545,7 @@ describe("PendingList · identidad pendiente", () => {
       items: [pending({ identitySkippedReason: "ORION_UNAVAILABLE" })],
     });
 
-    expect(html).toContain("Identidad pendiente");
+    expect(html).toContain(IDENTITY_WARNING_LABEL);
   });
 
   it("no avisa una vez que el producto recibió su código", () => {
@@ -563,13 +564,13 @@ describe("PendingList · identidad pendiente", () => {
       ],
     });
 
-    expect(html).not.toContain("Identidad pendiente");
+    expect(html).not.toContain(IDENTITY_WARNING_LABEL);
   });
 
   it("no avisa por un producto sin código que nadie aplazó", () => {
     const html = renderList({ items: [pending()] });
 
-    expect(html).not.toContain("Identidad pendiente");
+    expect(html).not.toContain(IDENTITY_WARNING_LABEL);
   });
 
   // El aviso tiene que LEERSE, no adivinarse por el color. Estas filas se
@@ -580,6 +581,6 @@ describe("PendingList · identidad pendiente", () => {
     });
 
     // El texto viaja en el DOM, así que un lector de pantalla lo anuncia.
-    expect(html).toContain(">Identidad pendiente<");
+    expect(html).toContain(`>${IDENTITY_WARNING_LABEL}<`);
   });
 });

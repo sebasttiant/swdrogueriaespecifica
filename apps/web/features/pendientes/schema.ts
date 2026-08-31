@@ -2,6 +2,7 @@ import { z } from "zod";
 
 
 import { compactCopInput } from "@/lib/format/currency";
+import { MANUAL_UNIT_FALLBACK } from "./presentation";
 import { parseBogotaWallTime } from "@/lib/datetime/bogota";
 import {
   MANAGEMENT_ELIGIBLE_STATUSES,
@@ -33,8 +34,9 @@ const optionalText = (max: number) =>
     .optional()
     .transform((value) => (value && value.length > 0 ? value : undefined));
 
-// Unidad por defecto de un producto manual cuando el operador no la especifica.
-const MANUAL_UNIT_FALLBACK = "unidad";
+// El relleno de presentación de un producto manual, definido en un solo lugar:
+// lo escribe este esquema y lo reconoce `presentationLabel` para NO mostrarlo
+// como si fuera un dato que alguien cargó.
 
 // Cota de cordura de un monto: cien millones de pesos. No es un límite
 // comercial, frena un tipeo accidental (ej. un código de barras en el campo).
@@ -214,7 +216,7 @@ export const pendingCreateSchema = z
           ctx.addIssue({
             code: "custom",
             message:
-              "El SKU (código de Orion) no puede llevar espacios y va hasta 80 caracteres.",
+              "El SKU (código de Orión) no puede llevar espacios y va hasta 80 caracteres.",
           });
           return z.NEVER;
         }
@@ -313,7 +315,7 @@ export const pendingCreateSchema = z
         code: "custom",
         path: ["orionCode"],
         message:
-          "O cargás el SKU (código de Orion) o continuás sin él, no las dos cosas.",
+          "O cargás el SKU (código de Orión) o continuás sin él, no las dos cosas.",
       });
     }
 
@@ -331,7 +333,7 @@ export const pendingCreateSchema = z
     // Acá NO se exige que la identidad venga, y no es un olvido.
     //
     // Que este envío pueda venir sin identidad depende de un dato que este
-    // módulo no tiene: si el producto elegido YA tiene su código de Orion. Eso
+    // módulo no tiene: si el producto elegido YA tiene su código de Orión. Eso
     // solo lo sabe la base, y solo en el momento del envío. Un `required` acá
     // rechazaría toda captura de un producto ya identificado —la mayoría— por
     // no repetir un dato que el sistema ya sabe.

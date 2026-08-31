@@ -4,6 +4,7 @@ import { Alert, type AlertTone } from "@/app/_components/ui/alert";
 import { alertSignature, type AlertCounts } from "@/lib/alertas/signature";
 import { can, seesAllPendings } from "@/lib/auth/permissions";
 import type { SessionRole } from "@/lib/auth/session";
+import { pendingReviewListHref } from "@/features/pendientes/pending-anchor";
 import { cn } from "@/lib/utils/cn";
 import { countArrivalNotices } from "@/server/services/arrival-notice.service";
 import {
@@ -212,9 +213,12 @@ function ArrivalNoticeAlert({ total }: { total: number }) {
             ? "Llegó 1 pedido tuyo"
             : `Llegaron ${total} pedidos tuyos`}
         </span>
+        {/* A Revisión de pendientes, no a la pantalla de captura: quien
+            recibe este aviso tiene que ACTUAR sobre un pedido que ya existe
+            —facturarlo, contactar al cliente—, no cargar uno nuevo. */}
         <Link
           prefetch={false}
-          href="/pendientes"
+          href={pendingReviewListHref()}
           className="inline-flex min-h-11 items-center rounded-full border border-success/30 px-3 text-sm font-semibold"
         >
           Ver

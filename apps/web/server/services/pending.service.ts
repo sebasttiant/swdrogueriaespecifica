@@ -25,6 +25,7 @@ import {
   createPending,
   createPendingDelivery,
   findPendingByIdempotencyKey,
+  findPendingInView,
   lockPendingForUpdate,
   listPendings,
   listPendingIdentityQueue,
@@ -198,6 +199,32 @@ export async function getPendings(params: {
   const { canViewCustomerIdentity, ...listParams } = params;
   const { items, nextCursor } = await listPendings(listParams);
   return { items: minimizeCustomerIdentity(items, canViewCustomerIdentity), nextCursor };
+}
+
+/**
+ * UN pendiente de la vista, buscado por id, con la MISMA autorización que el
+ * listado: recorte por dueño y minimización de identidad del cliente.
+ *
+ * Lo usa Revisión de pendientes para poder mostrar la fila que alguien vino a
+ * ver cuando quedó fuera de la página cargada. Sin esto, el enlace del aviso de
+ * llegada apunta a un ancla inexistente en cuanto el pendiente baja del puesto
+ * veinte, y el navegador no hace nada — el mismo síntoma que ya arreglamos una
+ * vez, reapareciendo solo con los pedidos más viejos.
+ *
+ * `canViewCustomerIdentity` es obligatorio por el mismo motivo que en
+ * `getPendings`: que falte tiene que ser un error de tipos, nunca una fuga.
+ */
+export async function getPendingInView(params: {
+  id: string;
+  canViewCustomerIdentity: boolean;
+  scope?: PendingScope;
+  ownerId?: string;
+  axes?: PendingAxisFilters;
+}): Promise<PendingListItem | null> {
+  const { canViewCustomerIdentity, ...viewParams } = params;
+  const found = await findPendingInView(viewParams);
+  if (!found) return null;
+  return minimizeCustomerIdentity([found], canViewCustomerIdentity)[0] ?? null;
 }
 
 /**

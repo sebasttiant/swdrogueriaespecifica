@@ -36,8 +36,15 @@ export type PendingIdentityView = {
 /**
  * Se nombra el estado del PRODUCTO, no el del pendiente: lo que falta es el
  * código, y quien lea esto tiene que saber qué ir a buscar.
+ *
+ * Dice "Sin SKU" y no "Identidad pendiente" porque nombra la FALTA concreta y
+ * con las palabras que se usan en el mostrador. "Identidad pendiente" describía
+ * un estado del sistema —correcto, pero ilegible para quien tiene que ir a
+ * Orion a buscar el código—, y encima se confundía con el estado "Pendiente"
+ * del propio pedido, que es otra cosa. El paréntesis nombra el campo tal como
+ * aparece en el formulario de captura.
  */
-export const IDENTITY_WARNING_LABEL = "Identidad pendiente";
+export const IDENTITY_WARNING_LABEL = "Sin SKU (Sin Código de Orión)";
 
 /**
  * El aviso, o `null` cuando no hay nada que avisar.

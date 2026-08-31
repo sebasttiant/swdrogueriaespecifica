@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { Alert } from "@/app/_components/ui/alert";
 import type { ArrivalNotice } from "@/server/services/arrival-notice.service";
+import { pendingReviewHref } from "./pending-anchor";
 
 // --------------------------------------------------------------------------
 // "Ya llegó": lo primero que el vendedor tiene que ver al abrir Pendientes.
@@ -55,8 +56,13 @@ export function ArrivalNotices({
                     ) : null}
                   </div>
 
-                  <Link prefetch={false}
-                    href={`/pendientes?view=listado#pendiente-${notice.pendingId}`}
+                  {/* A Revisión de pendientes, señalando ESTA fila. Antes
+                      apuntaba a `/pendientes` —la pantalla de captura— con un
+                      ancla que ningún componente escribía: el vendedor hacía
+                      clic y le aparecía el formulario de cargar uno nuevo. */}
+                  <Link
+                    prefetch={false}
+                    href={pendingReviewHref(notice.pendingId)}
                     className="shrink-0 text-sm font-semibold underline underline-offset-2"
                   >
                     Ver el pendiente

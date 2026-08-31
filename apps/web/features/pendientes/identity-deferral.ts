@@ -1,5 +1,5 @@
 // --------------------------------------------------------------------------
-// Motivos por los que un pendiente se capturó SIN el código de Orion (D7).
+// Motivos por los que un pendiente se capturó SIN el código de Orión (D7).
 //
 // Lista CERRADA a propósito: con texto libre la cola de revisión no se puede
 // contar, y sin contarla nadie sabe si la exigencia estorba o si Orion se cae
@@ -42,7 +42,7 @@ export const PENDING_IDENTITY_DEFERRAL_LABELS: Record<
   string
 > = {
   NEW_PRODUCT: "Producto nuevo, aún sin SKU",
-  ORION_UNAVAILABLE: "Orion no responde",
+  ORION_UNAVAILABLE: "Orión no responde",
   CODE_NOT_FOUND: "No encuentro el código",
   CODE_ALREADY_ASSIGNED: "El código ya está en otro producto",
   OTHER: "Otro motivo",

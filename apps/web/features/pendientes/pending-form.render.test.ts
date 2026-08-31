@@ -17,7 +17,9 @@ import { parseBogotaWallTime } from "@/lib/datetime/bogota";
 
 import { PendingForm, type ProductOption } from "./pending-form";
 
-const PRODUCTS: ProductOption[] = [{ id: "p1", name: "Acetaminofén", code: "ACE-1", orionCode: null }];
+const PRODUCTS: ProductOption[] = [
+  { id: "p1", name: "Acetaminofén", code: "ACE-1", orionCode: null, unit: "Caja" },
+];
 
 function bogotaNow(wall: string): Date {
   const parsed = parseBogotaWallTime(wall);
@@ -240,7 +242,7 @@ describe("PendingForm · identidad del producto al elegirlo", () => {
   it("muestra el código de Orion del producto que ya lo tiene", () => {
     const html = render({
       products: [
-        { id: "p1", name: "Eucerin tono medio", code: "PROV-euc", orionCode: "7702001234567" },
+        { id: "p1", name: "Eucerin tono medio", code: "PROV-euc", orionCode: "7702001234567", unit: "Frasco" },
       ],
     });
 
@@ -249,7 +251,9 @@ describe("PendingForm · identidad del producto al elegirlo", () => {
 
   it("avisa cuando el producto todavía no tiene SKU", () => {
     const html = render({
-      products: [{ id: "p1", name: "Eucerin tono claro", code: "PROV-euc2", orionCode: null }],
+      products: [
+        { id: "p1", name: "Eucerin tono claro", code: "PROV-euc2", orionCode: null, unit: "Frasco" },
+      ],
     });
 
     // "SKU" es la palabra que usa gerencia; en la opción del selector, donde
@@ -262,7 +266,7 @@ describe("PendingForm · identidad del producto al elegirlo", () => {
   it("deja de mostrar el código interno del catálogo", () => {
     const html = render({
       products: [
-        { id: "p1", name: "Eucerin tono medio", code: "PROV-euc", orionCode: "7702001234567" },
+        { id: "p1", name: "Eucerin tono medio", code: "PROV-euc", orionCode: "7702001234567", unit: "Frasco" },
       ],
     });
 

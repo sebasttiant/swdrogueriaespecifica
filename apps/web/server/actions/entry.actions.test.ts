@@ -235,7 +235,7 @@ describe("createInventoryEntryAction · identidad obligatoria", () => {
 
     expect(result.ok).toBe(false);
     expect(result.error).toContain("Gel Caliente Muscular");
-    expect(result.error).toMatch(/SKU \(código de Orion\)/);
+    expect(result.error).toMatch(/SKU \(código de Orión\)/);
   });
 
   // El mensaje decía "completalo en Productos" y ahí terminaba: bodega quedaba

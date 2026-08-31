@@ -99,6 +99,9 @@ export default async function PendientesPage({
       name: product.name,
       code: product.code,
       orionCode: product.orionCode,
+      // La presentación viaja para MOSTRARSE junto al producto elegido. El
+      // formulario no la edita: el catálogo es compartido.
+      unit: product.unit,
     }));
 
   return (

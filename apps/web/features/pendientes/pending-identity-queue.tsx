@@ -15,7 +15,7 @@ type PendingIdentityQueueProps = {
 };
 
 // --------------------------------------------------------------------------
-// La cola de productos que todavía esperan su código de Orion (S2b · 2-B1+B2).
+// La cola de productos que todavía esperan su código de Orión (S2b · 2-B1+B2).
 //
 // Presentacional y nada más. NO ordena, NO agrupa, NO cuenta y NO recorta:
 // todo eso llega resuelto desde `listPendingIdentityQueue`, que agrupa por
@@ -45,7 +45,7 @@ export function PendingIdentityQueue({
         <EmptyState
           icon={ScanBarcode}
           title="Sin identidades pendientes"
-          description="Todos los productos con pendientes abiertos ya tienen su SKU (código de Orion)."
+          description="Todos los productos con pendientes abiertos ya tienen su SKU (código de Orión)."
         />
       </Card>
     );
@@ -58,7 +58,7 @@ export function PendingIdentityQueue({
           {/* La tabla se anuncia sola con lector de pantalla: sin esto, quien
               la escucha entra a una grilla de números sin saber qué cuenta. */}
           <caption className="sr-only">
-            Productos sin SKU (código de Orion), del que más pendientes acumula al que
+            Productos sin SKU (código de Orión), del que más pendientes acumula al que
             menos. Cada fila incluye un formulario para vincular el código.
           </caption>
           <thead className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">

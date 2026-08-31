@@ -8,6 +8,7 @@ import { ReviewTabs } from "@/features/pendientes/review-tabs";
 import { resolveReviewTab } from "@/features/pendientes/review-tab";
 import { PendingReviewFilters } from "@/features/pendientes/pending-review-filters";
 import { parseReviewAxes, reviewPageHref } from "@/features/pendientes/review-axes";
+import { resolveFocusedPendingId } from "@/features/pendientes/pending-anchor";
 import { can, seesAllPendings } from "@/lib/auth/permissions";
 import { requireCapability } from "@/lib/auth/require-role";
 import type { PendingScope } from "@/server/repositories/pending.repository";
@@ -16,7 +17,7 @@ import {
   listPendingReception,
 } from "@/server/services/pending-reception.service";
 import { listStockoutProducts } from "@/server/services/stockout.service";
-import { getPendings } from "@/server/services/pending.service";
+import { getPendingInView, getPendings } from "@/server/services/pending.service";
 
 export const metadata: Metadata = { title: "Revisión de pendientes" };
 
@@ -55,6 +56,14 @@ export default async function RevisionPendientesPage({
     customer?: string;
     /** Qué mitad de la pantalla: seguimiento o abastecimiento. */
     tab?: string;
+    /**
+     * El pendiente que hay que GARANTIZAR en la página, por id.
+     *
+     * Viaja por la query y no solo en el `#` porque el fragmento de una URL
+     * nunca llega al servidor: sin este parámetro, un pendiente que quedó fuera
+     * de la página cargada no se renderiza y el ancla del enlace no existe.
+     */
+    focus?: string;
   }>;
 }) {
   const session = await requireCapability("canReviewPendings");
@@ -78,7 +87,7 @@ export default async function RevisionPendientesPage({
   // capability que pedir un faltante, no la de cancelar.
   const canManageStatus = can(session.user.role, "canOrderMissingItems");
 
-  const { cursor, scope: rawScope, tab: rawTab, ...rawAxes } = await searchParams;
+  const { cursor, scope: rawScope, tab: rawTab, focus: rawFocus, ...rawAxes } = await searchParams;
 
   // --------------------------------------------------------------------------
   // ABASTECIMIENTO: la mitad FÍSICA del pendiente.
@@ -127,6 +136,8 @@ export default async function RevisionPendientesPage({
   // Solo se consulta la mitad que se está mirando. La otra no se pinta, así
   // que traerla sería pagar una consulta cara —con identidad de cliente— para
   // descartarla.
+  const ownerId = canSeeAll ? undefined : session.user.id;
+
   const pendings = showingSupply
     ? null
     : await getPendings({
@@ -134,8 +145,43 @@ export default async function RevisionPendientesPage({
         scope,
         axes,
         canViewCustomerIdentity,
-        ownerId: canSeeAll ? undefined : session.user.id,
+        ownerId,
       });
+
+  // --------------------------------------------------------------------------
+  // La fila que alguien vino a ver.
+  //
+  // El listado trae 20. Un enlace a un pendiente más viejo apunta a un ancla
+  // que no está en el DOM y el navegador no hace nada: el mismo síntoma que ya
+  // arreglamos una vez, reapareciendo solo con los pedidos que bajaron en la
+  // cola.
+  //
+  // Se resuelve con UNA consulta acotada por id, no trayendo más filas: la cola
+  // de un día entero no entra en una pantalla y traerla para que exista un
+  // ancla es pagar carísimo por un salto.
+  //
+  // Va con la MISMA vista que el listado —scope, ejes y recorte por dueño—, así
+  // que no puede mostrar una fila que esta pantalla no mostraría. Si no
+  // pertenece a la vista, `getPendingInView` devuelve null y no se pinta nada.
+  // --------------------------------------------------------------------------
+  const focusId = resolveFocusedPendingId(rawFocus);
+  const focused =
+    focusId && !showingSupply
+      ? await getPendingInView({
+          id: focusId,
+          scope,
+          axes,
+          canViewCustomerIdentity,
+          ownerId,
+        })
+      : null;
+
+  // Solo se destaca aparte si NO vino en la página. Pintarlo dos veces dejaría
+  // dos elementos con el mismo `id`, que es justamente lo que rompe el salto.
+  const focusedOutOfPage =
+    focused && !pendings!.items.some((item) => item.id === focused.id)
+      ? focused
+      : null;
 
   return (
     <div className="space-y-4">
@@ -166,6 +212,30 @@ export default async function RevisionPendientesPage({
             view="detalle"
             basePath={BASE_PATH}
           />
+
+          {/* Fuera de la página cargada: se muestra aparte y se dice por qué,
+              en vez de dejar al vendedor mirando una lista donde su pendiente
+              no aparece. Lleva el ancla, así el salto del enlace funciona. */}
+          {focusedOutOfPage ? (
+            <section aria-labelledby="pendiente-buscado" className="space-y-2">
+              <h2 id="pendiente-buscado" className="text-sm font-semibold text-foreground">
+                El pendiente que buscabas
+              </h2>
+              <p className="text-xs text-muted-foreground">
+                No está en esta página de la lista, así que se muestra acá.
+              </p>
+              <PendingList
+                items={[focusedOutOfPage]}
+                nextCursor={null}
+                canDeliver={canDeliver}
+                canCancel={canCancel}
+                canManageStatus={canManageStatus}
+                canContactOrInvoice={canContactOrInvoice}
+                scope={scope}
+                pageHref={() => ""}
+              />
+            </section>
+          ) : null}
 
           <PendingList
             items={pendings!.items}

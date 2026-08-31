@@ -13,6 +13,7 @@ import { computeDeadlineStatus } from "./deadline-status";
 import { derivePaymentState } from "./payment-state";
 import { fulfillmentNotice, isTerminal, outstanding } from "./fulfillment-notice";
 import { identityWarning } from "./identity-warning";
+import { PRESENTATION_LABEL, presentationLabel } from "./presentation";
 import {
   isManagementStatus,
   MANAGEMENT_STATUS_LABELS,
@@ -137,6 +138,25 @@ function LaboratoryLine({ item }: { item: PendingListItem }) {
   return (
     <p className="break-words text-xs text-muted-foreground">
       Lab: {item.requestedLaboratory.name}
+    </p>
+  );
+}
+
+// La presentación —frasco, sobre, caja— va pegada al producto por el mismo
+// motivo que el laboratorio: es un dato del producto, y es parte de lo que se
+// mira para decidir qué comprar y qué entregar.
+//
+// Como LÍNEA y no como columna nueva, igual que todo lo demás en esta lista:
+// una columna más obliga a scroll horizontal y esto se mira desde el celular.
+// Se muestra SIEMPRE, incluso vacía: "Sin presentación" es información —el
+// producto no la tiene cargada—, mientras que un renglón ausente no distingue
+// eso de un dato que no llegó a la pantalla.
+//
+// Informativa: acá no se edita. El catálogo es compartido.
+function PresentationLine({ item }: { item: PendingListItem }) {
+  return (
+    <p className="break-words text-xs text-muted-foreground">
+      {PRESENTATION_LABEL}: {presentationLabel(item.product.unit)}
     </p>
   );
 }
@@ -331,6 +351,16 @@ export function PendingCompactList({
             canManageAll,
           });
           return (
+            // SIN ancla, a propósito. Esta lista pinta las DOS vistas —tarjetas
+            // y tabla— en el MISMO documento, ocultando una con CSS
+            // (`lg:hidden` / `hidden lg:block`). Poner el `id` en las dos deja
+            // dos elementos con el mismo identificador: HTML inválido, y el
+            // navegador salta al PRIMERO, que en escritorio es la tarjeta
+            // oculta. Saltar a un elemento `display:none` no hace nada —el
+            // mismo síntoma que el defecto original.
+            //
+            // El ancla vive solo en `PendingList` (Revisión de pendientes), que
+            // pinta una sola variante por fila. Nada enlaza acá con fragmento.
             <Card key={pending.id} className="space-y-2 p-3">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
@@ -343,6 +373,7 @@ export function PendingCompactList({
                   {identityNotice ? (
                     <Badge tone="warning">{identityNotice}</Badge>
                   ) : null}
+                  <PresentationLine item={pending} />
                   <LaboratoryLine item={pending} />
                   <p className="break-words text-xs text-muted-foreground">
                     {pending.createdBy?.name ?? "Sin vendedor"}
@@ -445,6 +476,7 @@ export function PendingCompactList({
                         {identityNotice}
                       </Badge>
                     ) : null}
+                    <PresentationLine item={pending} />
                     <LaboratoryLine item={pending} />
                     {canFollowUp ? <FollowUpLine item={pending} /> : null}
                   </td>

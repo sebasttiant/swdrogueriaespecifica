@@ -50,7 +50,7 @@ export function PendingIdentityResolveForm({
       <input type="hidden" name="expectedVersion" value={identityVersion} />
 
       <label htmlFor={inputId} className="text-sm font-medium text-text">
-        Código de Orion
+        Código de Orión
       </label>
       <div className="flex items-start gap-2">
         <Input
@@ -64,7 +64,7 @@ export function PendingIdentityResolveForm({
           maxLength={80}
           required
           disabled={isPending}
-          placeholder="Pegalo desde Orion"
+          placeholder="Pegalo desde Orión"
         />
         <Button type="submit" className="shrink-0" disabled={isPending}>
           {isPending ? "Vinculando…" : "Vincular"}
@@ -72,7 +72,7 @@ export function PendingIdentityResolveForm({
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Copialo exacto desde Orion. Si queda mal, se puede corregir, pero queda registrado.
+        Copialo exacto desde Orión. Si queda mal, se puede corregir, pero queda registrado.
       </p>
 
       {state.error ? (

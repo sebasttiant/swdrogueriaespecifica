@@ -126,7 +126,7 @@ export async function createInventoryEntryAction(
     // código impreso encima y puede completarlo ahora mismo.
     if (error instanceof ProductIdentityRequiredError) {
       return {
-        error: `"${error.productName}" todavía no tiene SKU (código de Orion). Completalo y volvé a registrar la entrada.`,
+        error: `"${error.productName}" todavía no tiene SKU (código de Orión). Completalo y volvé a registrar la entrada.`,
         ok: false,
         resolveSkuForProductId: error.productId,
       };

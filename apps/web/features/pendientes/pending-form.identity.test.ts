@@ -40,18 +40,21 @@ const CODED: ProductOption = {
   name: "Eucerin tono claro",
   code: "EUC-1",
   orionCode: "ORN-500",
+  unit: "Frasco",
 };
 const CODELESS: ProductOption = {
   id: "p2",
   name: "Ibuprofeno jarabe",
   code: "IBU-1",
   orionCode: null,
+  unit: "Frasco",
 };
 const CODELESS_B: ProductOption = {
   id: "p3",
   name: "Acetaminofén gotas",
   code: "ACE-1",
   orionCode: null,
+  unit: "Gotero",
 };
 
 function bogotaNow(wall: string): Date {
@@ -115,7 +118,7 @@ function expectFreshIdentityDraft() {
 
 function conflictState(holder: { productId: string; productName: string }): PendingFormState {
   return {
-    error: `Ese código de Orion ya es de "${holder.productName}".`,
+    error: `Ese código de Orión ya es de "${holder.productName}".`,
     ok: false,
     orionConflict: { holder },
     values: {
@@ -358,7 +361,7 @@ describe("PendingForm · identidad Orion", () => {
 
   it("tras un fallo vuelve el código tipeado, no un campo en blanco", async () => {
     renderForm({
-      error: "Ese código de Orion ya es de otro producto.",
+      error: "Ese código de Orión ya es de otro producto.",
       ok: false,
       values: {
         productId: "p2",

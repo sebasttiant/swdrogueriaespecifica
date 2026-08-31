@@ -20,6 +20,8 @@ import { deliverySummary, remainingQuantity } from "./delivery-rules";
 import { canSetManagementStatus } from "./management-status";
 import { fulfillmentNotice } from "./fulfillment-notice";
 import { identityWarning } from "./identity-warning";
+import { pendingAnchorId } from "./pending-anchor";
+import { PRESENTATION_LABEL, presentationLabel } from "./presentation";
 import {
   derivePaymentState,
   remainingAmount,
@@ -162,7 +164,14 @@ export function PendingList({
         const identityNotice = identityWarning(pending);
 
         return (
-          <Card key={pending.id} className="space-y-3">
+          <Card
+            key={pending.id}
+            // Destino del enlace "Ver el pendiente" del aviso de llegada: esta
+            // es la lista de Revisión, la mesa donde se factura. `scroll-mt-20`
+            // deja aire para el topbar sticky (h-16).
+            id={pendingAnchorId(pending.id)}
+            className="scroll-mt-20 space-y-3"
+          >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="break-words font-semibold text-text">
@@ -171,6 +180,19 @@ export function PendingList({
                 <p className="text-sm text-muted-foreground">
                   {pending.quantity} {pending.product.unit} · {pending.product.code}
                   {pending.customerName ? ` · ${pending.customerName}` : ""}
+                </p>
+                {/* La presentación del producto: frasco, sobre, caja. Es
+                    informativa y NO se edita desde acá —el catálogo es
+                    compartido y esta es una pantalla de revisión—. Se muestra
+                    siempre, también cuando falta: "Sin presentación" dice que
+                    el producto no la tiene, y un renglón ausente no distingue
+                    eso de un dato que no llegó a la pantalla.
+
+                    Sirve para los DOS orígenes sin ramificar: lo que el
+                    vendedor escribió como producto manual quedó guardado en
+                    `product.unit` al crearlo. */}
+                <p className="text-sm text-muted-foreground">
+                  {PRESENTATION_LABEL}: {presentationLabel(pending.product.unit)}
                 </p>
                 {/* El laboratorio pedido va con el PRODUCTO, no con el
                     cliente: es lo que decide qué presentación comprar. Los
