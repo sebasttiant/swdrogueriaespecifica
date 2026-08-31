@@ -66,6 +66,18 @@ export type ProductSubmittedValues = {
   laboratoryId: string;
   laboratoryName: string;
   active: string;
+  /**
+   * El testigo que se envió en ESTE intento.
+   *
+   * Viaja con el eco por una razón que no es obvia: `useActionState` de este
+   * proyecto llama a `router.refresh()` ante CUALQUIER respuesta, también ante
+   * un rechazo por concurrencia. O sea que tras el rechazo el componente
+   * recibe el `updatedAt` NUEVO. Si el campo oculto lo leyera del producto, el
+   * reintento mandaría los valores viejos del formulario con un testigo
+   * fresco, pasaría el control y pisaría igual la edición ajena — justo lo que
+   * el control existe para impedir.
+   */
+  expectedUpdatedAt: string;
 };
 
 /** El eco: lo que vino en el FormData, sin interpretar. */
@@ -80,6 +92,7 @@ function submittedValues(formData: FormData): ProductSubmittedValues {
     laboratoryId: text("laboratoryId"),
     laboratoryName: text("laboratoryName"),
     active: formData.get("active") === "on" ? "on" : "",
+    expectedUpdatedAt: text("expectedUpdatedAt"),
   };
 }
 

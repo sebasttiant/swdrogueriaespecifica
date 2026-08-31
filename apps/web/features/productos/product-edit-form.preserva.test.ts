@@ -63,6 +63,9 @@ describe("editar producto · un fallo no borra lo cargado", () => {
           minStock: String(formData.get("minStock") ?? ""),
           reorderQty: String(formData.get("reorderQty") ?? ""),
           active: formData.get("active") === "on" ? "on" : "",
+          laboratoryId: String(formData.get("laboratoryId") ?? ""),
+          laboratoryName: String(formData.get("laboratoryName") ?? ""),
+          expectedUpdatedAt: String(formData.get("expectedUpdatedAt") ?? ""),
         },
       }),
     );
@@ -106,5 +109,96 @@ describe("editar producto · un fallo no borra lo cargado", () => {
     await screen.findByRole("alert");
 
     expect(campo(container, "name")).not.toBeNull();
+  });
+});
+
+// --------------------------------------------------------------------------
+// Las dos regresiones que encontró la revisión sobre este HEAD.
+//
+// Las dos nacen del mismo lugar: `useActionState` de este proyecto llama a
+// `router.refresh()` ante CUALQUIER respuesta, también ante un rechazo. Así
+// que después de un error el componente recibe datos FRESCOS del servidor
+// mientras el formulario sigue mostrando lo que la persona escribió. Mezclar
+// esas dos fuentes es lo que abre los dos agujeros.
+// --------------------------------------------------------------------------
+describe("editar producto · el testigo de concurrencia no se puede esquivar", () => {
+  it("tras un rechazo, el reintento manda el testigo VIEJO aunque llegue uno nuevo", async () => {
+    mocks.updateProductAction.mockImplementation(
+      (_prev: unknown, formData: FormData) => ({
+        error: "Alguien más actualizó este producto mientras lo editabas.",
+        ok: false,
+        submissionId: "fallo-1",
+        values: {
+          code: String(formData.get("code") ?? ""),
+          name: String(formData.get("name") ?? ""),
+          unit: String(formData.get("unit") ?? ""),
+          minStock: String(formData.get("minStock") ?? ""),
+          reorderQty: String(formData.get("reorderQty") ?? ""),
+          laboratoryId: String(formData.get("laboratoryId") ?? ""),
+          laboratoryName: String(formData.get("laboratoryName") ?? ""),
+          active: "on",
+          expectedUpdatedAt: String(formData.get("expectedUpdatedAt") ?? ""),
+        },
+      }),
+    );
+
+    const user = userEvent.setup();
+    const view = render(createElement(ProductEditForm, { product: PRODUCTO }));
+    await user.click(screen.getByRole("button", { name: "Editar producto" }));
+    await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    await screen.findByRole("alert");
+
+    // Esto es lo que hace `router.refresh()`: el componente recibe el producto
+    // ya modificado por la otra persona, con un `updatedAt` NUEVO.
+    view.rerender(
+      createElement(ProductEditForm, {
+        product: { ...PRODUCTO, updatedAt: "2026-09-01T09:00:00.000Z" },
+      }),
+    );
+
+    // El campo oculto tiene que seguir mandando el testigo del intento
+    // fallido. Con el fresco, el reintento pasaría el control y pisaría la
+    // edición ajena — el agujero que esto cierra.
+    expect(campo(view.container, "expectedUpdatedAt")?.value).toBe(
+      "2026-08-31T12:00:00.000Z",
+    );
+  });
+});
+
+describe("editar producto · el laboratorio escrito no recupera el id viejo", () => {
+  it("tras un error, un nombre escrito NO vuelve pegado al laboratorio anterior", async () => {
+    mocks.updateProductAction.mockImplementation(
+      (_prev: unknown, formData: FormData) => ({
+        error: "Revisa los datos del producto.",
+        ok: false,
+        submissionId: "fallo-2",
+        values: {
+          code: String(formData.get("code") ?? ""),
+          name: String(formData.get("name") ?? ""),
+          unit: String(formData.get("unit") ?? ""),
+          minStock: String(formData.get("minStock") ?? ""),
+          reorderQty: String(formData.get("reorderQty") ?? ""),
+          // La persona escribió otro laboratorio sin elegirlo de la lista: el
+          // buscador soltó la selección y mandó el id VACÍO.
+          laboratoryId: "",
+          laboratoryName: "Genfar",
+          active: "on",
+          expectedUpdatedAt: String(formData.get("expectedUpdatedAt") ?? ""),
+        },
+      }),
+    );
+
+    const user = userEvent.setup();
+    const { container } = render(
+      createElement(ProductEditForm, { product: PRODUCTO }),
+    );
+    await user.click(screen.getByRole("button", { name: "Editar producto" }));
+    await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    await screen.findByRole("alert");
+
+    // Con `||`, el vacío intencional se leía como "no vino" y volvía "lab-1":
+    // el buscador quedaba mostrando "Genfar" pegado al id de Bayer, y el
+    // reintento guardaba el laboratorio equivocado en silencio.
+    expect(campo(container, "laboratoryId")?.value).toBe("");
   });
 });

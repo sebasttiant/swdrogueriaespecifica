@@ -127,10 +127,20 @@ function ProductEditFields({
 
       <form action={formAction} className="space-y-4">
         <input type="hidden" name="id" value={product.id} />
-        {/* El producto tal como se leyó. No sale del eco: si volviera el del
-            intento fallido, el segundo intento chocaría contra el mismo
-            desfasaje para siempre. */}
-        <input type="hidden" name="expectedUpdatedAt" value={product.updatedAt} />
+        {/* El testigo del intento anterior cuando falló, no el del producto.
+            `useActionState` de este proyecto llama a `router.refresh()` ante
+            CUALQUIER respuesta —también ante un rechazo por concurrencia—, así
+            que tras el rechazo este componente ya recibió el `updatedAt` NUEVO.
+            Leerlo del producto haría que el reintento mandara los valores
+            viejos del formulario con un testigo fresco: pasaría el control y
+            pisaría la edición ajena, que es exactamente lo que el control
+            existe para impedir. Con el testigo del eco, el reintento vuelve a
+            chocar y la única salida es recargar — que es la correcta. */}
+        <input
+          type="hidden"
+          name="expectedUpdatedAt"
+          value={previous?.expectedUpdatedAt ?? product.updatedAt}
+        />
 
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Nombre" htmlFor="edit-name" className="sm:col-span-2">
@@ -216,8 +226,21 @@ function ProductEditFields({
               // formulario habla en español neutral. Se cambia el USO, no el
               // componente, que lo usan otras pantallas de este PR afuera.
               placeholder="Busca o crea un laboratorio"
-              defaultSelectedId={previous?.laboratoryId || (product.laboratoryId ?? undefined)}
-              defaultSelectedName={previous?.laboratoryName || (product.laboratoryName ?? undefined)}
+              // Se distingue "no hay eco" de "el eco trae vacío". Con `||`, un
+              // laboratorio que la persona QUITÓ o reemplazó por un nombre
+              // escrito volvía con el id VIEJO: el buscador quedaba mostrando
+              // el nombre nuevo pegado al id anterior, y el reintento guardaba
+              // el laboratorio equivocado en silencio.
+              defaultSelectedId={
+                previous
+                  ? previous.laboratoryId || undefined
+                  : (product.laboratoryId ?? undefined)
+              }
+              defaultSelectedName={
+                previous
+                  ? previous.laboratoryName || undefined
+                  : (product.laboratoryName ?? undefined)
+              }
             />
           </div>
 
