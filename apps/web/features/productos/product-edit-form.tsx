@@ -85,6 +85,18 @@ export function ProductEditForm({ product }: { product: EditableProduct }) {
   // manda el eco. Cuando las props alcanzan, describen lo mismo y se usan
   // ellas. Así el formulario muestra siempre la versión más nueva que conoce,
   // sin depender de en qué orden ocurrieron las cosas.
+  // La comparación se apoya en que `updatedAt` avance entre escrituras.
+  // Medido contra PostgreSQL real en `tests/postgres/updated-at-monotonic.pg.test.ts`:
+  // 40 escrituras consecutivas dieron 0 colisiones y 0 retrocesos, y dos
+  // escrituras en la misma transacción salieron con 1 ms de diferencia. Esa
+  // prueba deja la suposición GUARDADA: si algún día la secuencia retrocede,
+  // se pone roja acá y no en producción.
+  //
+  // Riesgo residual conocido: un ajuste de reloj hacia atrás podría producir
+  // dos versiones iguales. No se pudo reproducir, y su consecuencia exige
+  // además cerrar y reabrir dentro de la ventana del refresco. Queda anotado
+  // en vez de resolverse con un contador propio, que sería una columna nueva y
+  // una migración para un caso que no se demostró.
   const echo = state.values;
   const deEsteCiclo = state.submissionId !== baseline;
   const propsAtrasadas =
