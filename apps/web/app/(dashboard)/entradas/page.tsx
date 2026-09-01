@@ -53,6 +53,11 @@ export default async function EntradasPage({
       code: product.code,
       orionCode: product.orionCode,
       laboratoryName: product.laboratory?.name ?? null,
+      unit: product.unit,
+      // Las dos versiones viajan a la pantalla para que el formulario pueda
+      // declarar contra qué fotografía se registró la entrada.
+      identityVersion: product.identityVersion,
+      catalogVersion: product.catalogVersion,
     }));
 
   // Cuando la entrada viene de un faltante, el producto queda FIJO. Se busca

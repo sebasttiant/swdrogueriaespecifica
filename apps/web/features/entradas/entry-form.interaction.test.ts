@@ -49,6 +49,9 @@ describe("EntryForm · idempotency", () => {
           code: "ACE-1",
           orionCode: "ORN-1",
           laboratoryName: "Genfar",
+          unit: "caja",
+          identityVersion: 0,
+          catalogVersion: 0,
         },
       ],
     }));

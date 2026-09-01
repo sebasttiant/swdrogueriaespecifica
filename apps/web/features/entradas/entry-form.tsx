@@ -4,6 +4,10 @@ import Link from "next/link";
 import { useState } from "react";
 import { useActionState } from "@/lib/hooks/use-action-state";
 import { LaboratorySearch } from "@/features/productos/laboratory-search";
+import {
+  PRESENTATION_LABEL,
+  presentationLabel,
+} from "@/features/pendientes/presentation";
 
 import { Button } from "@/app/_components/ui/button";
 import { Field } from "@/app/_components/ui/field";
@@ -36,6 +40,17 @@ export type ProductOption = {
   orionCode: string | null;
   /** Lo que termina de desempatar cuando dos productos se llaman parecido. */
   laboratoryName: string | null;
+  /**
+   * La PRESENTACION: frasco, sobre, caja, blister, ampolla. Es `product.unit`.
+   *
+   * Dos filas del mismo medicamento con la misma marca se diferencian por acá.
+   * Sin ella, quien recibe una caja de 30 sobres y una de 1 frasco ve el mismo
+   * renglón dos veces.
+   */
+  unit: string;
+  /** Los dos contadores que se declaran al registrar. Ver `schema.ts`. */
+  identityVersion: number;
+  catalogVersion: number;
 };
 
 type EntryFormProps = {
@@ -70,7 +85,7 @@ type EntryFormProps = {
 function productLabel(product: ProductOption): string {
   const sku = product.orionCode ?? "sin SKU";
   const lab = product.laboratoryName ? ` · ${product.laboratoryName}` : "";
-  return `${product.name} — ${sku}${lab}`;
+  return `${product.name} — ${sku} · ${presentationLabel(product.unit)}${lab}`;
 }
 
 // Alta de entrada de inventario. Único client component del slice (necesita
@@ -83,11 +98,60 @@ export function EntryForm({
   missingItemId,
 }: EntryFormProps) {
   const [operationId, setOperationId] = useState(() => crypto.randomUUID());
+  // ------------------------------------------------------------------------
+  // El catálogo queda FIJADO al montar.
+  //
+  // `useActionState` de este repo llama a `router.refresh()` ante cualquier
+  // respuesta, y también ante acciones ajenas de la misma pantalla: `products`
+  // puede llegar con versiones nuevas mientras el formulario está abierto. Si
+  // las versiones se leyeran de ese `products` fresco, el formulario declararía
+  // una fotografía que nadie miró y el compare-and-set dejaría pasar
+  // exactamente la entrada que tiene que frenar.
+  //
+  // La selección SÍ se sigue: se elige de esta fotografía, no de la de hoy.
+  // ------------------------------------------------------------------------
+  const [catalog] = useState(() => products);
+  const [locked] = useState(() => lockedProduct);
+  const [selectedId, setSelectedId] = useState(() => selectedProductId ?? "");
+  // Lo que la persona decidió adoptar DESPUÉS de ver que el producto cambió.
+  // Nunca se llena solo: adoptarlo en silencio dejaría pasar el reintento sin
+  // que nadie haya vuelto a mirar la caja.
+  const [adopted, setAdopted] = useState<
+    NonNullable<EntryFormState["conflict"]> | null
+  >(null);
   const [state, formAction, isPending] = useActionState(async (previousState: EntryFormState, formData: FormData) => {
     const result = await createInventoryEntryAction(previousState, formData);
     if (result.ok) setOperationId(crypto.randomUUID());
     return result;
   }, INITIAL_STATE);
+
+  const chosen = locked ?? catalog.find((option) => option.id === selectedId);
+
+  /**
+   * La identidad adoptada pisa a la de la fotografía, en TODA la pantalla.
+   *
+   * Aplicarla solo al resumen dejaba la etiqueta del selector diciendo el SKU y
+   * la presentación viejos mientras el renglón de abajo decía los nuevos: la
+   * misma fila afirmando dos identidades a la vez. Quien tiene que cotejar
+   * contra la caja no tiene forma de saber cuál de las dos es la buena, y ese
+   * es exactamente el error que este slice viene a cerrar.
+   */
+  const withAdopted = (option: ProductOption): ProductOption =>
+    adopted && option.id === chosen?.id
+      ? {
+          ...option,
+          name: adopted.name,
+          orionCode: adopted.sku,
+          unit: adopted.presentation,
+        }
+      : option;
+
+  const shown = chosen ? withAdopted(chosen) : undefined;
+  const shownSku = shown?.orionCode ?? null;
+  // Pasa SIEMPRE por `presentationLabel`, venga de la fotografía o del
+  // servidor: si no, un `unit` de "unidad" —relleno técnico, no un dato— se
+  // mostraría como presentación real solo en el camino adoptado.
+  const shownPresentation = presentationLabel(shown?.unit);
 
   if (products.length === 0) {
     return (
@@ -100,25 +164,49 @@ export function EntryForm({
   return (
     <form action={formAction} className="space-y-4">
       <input type="hidden" name="idempotencyKey" value={operationId} />
+      {/* El contrato con el servidor: contra QUÉ fotografía se registra. Las
+          versiones deciden; el SKU y la presentación son lo que se vio. */}
+      {chosen ? (
+        <>
+          <input
+            type="hidden"
+            name="expectedIdentityVersion"
+            value={adopted ? adopted.identityVersion : chosen.identityVersion}
+          />
+          <input
+            type="hidden"
+            name="expectedCatalogVersion"
+            value={adopted ? adopted.catalogVersion : chosen.catalogVersion}
+          />
+          <input type="hidden" name="displayedSku" value={shownSku ?? ""} />
+          <input
+            type="hidden"
+            name="displayedPresentation"
+            value={shownPresentation}
+          />
+        </>
+      ) : null}
       <div className="grid gap-4 sm:grid-cols-2">
-        {lockedProduct ? (
+        {locked ? (
           <Field label="Producto" className="sm:col-span-2">
             {/* Hidden y no `disabled`: un campo deshabilitado NO entra en el
                 FormData, y la entrada se enviaría sin producto. */}
-            <input type="hidden" name="productId" value={lockedProduct.id} />
+            <input type="hidden" name="productId" value={locked.id} />
             {missingItemId ? (
               <input type="hidden" name="missingItemId" value={missingItemId} />
             ) : null}
             <div className="rounded-lg border border-border bg-muted px-3 py-2">
-              <p className="font-medium text-text">{lockedProduct.name}</p>
+              <p className="font-medium text-text">{shown?.name ?? locked.name}</p>
               <p className="text-xs text-muted-foreground">
                 SKU (código de Orion):{" "}
-                <span className="font-mono">
-                  {lockedProduct.orionCode ?? "sin asignar"}
-                </span>
-                {lockedProduct.laboratoryName
-                  ? ` · ${lockedProduct.laboratoryName}`
-                  : ""}
+                <span className="font-mono">{shownSku ?? "sin asignar"}</span>
+                {locked.laboratoryName ? ` · ${locked.laboratoryName}` : ""}
+              </p>
+              {/* La presentación va en su propio renglón y con su rótulo: es lo
+                  que distingue un frasco de una caja de 30 sobres del mismo
+                  medicamento, y leerla pegada al SKU la vuelve invisible. */}
+              <p className="text-xs text-muted-foreground">
+                {PRESENTATION_LABEL}: {shownPresentation}
               </p>
               {/* Se dice POR QUÉ no se puede cambiar. Un campo bloqueado sin
                   explicación se lee como una falla de la pantalla. */}
@@ -129,14 +217,31 @@ export function EntryForm({
           </Field>
         ) : (
           <Field label="Producto" htmlFor="productId" className="sm:col-span-2">
-            <Select id="productId" name="productId" required defaultValue={selectedProductId}>
+            <Select
+              id="productId"
+              name="productId"
+              required
+              value={selectedId}
+              onChange={(event) => {
+                setSelectedId(event.target.value);
+                // Cambiar de producto tira la adopción: pertenecía al anterior.
+                setAdopted(null);
+              }}
+            >
               <option value="">Elegí un producto…</option>
               {products.map((product) => (
                 <option key={product.id} value={product.id}>
-                  {productLabel(product)}
+                  {productLabel(withAdopted(product))}
                 </option>
               ))}
             </Select>
+            {chosen ? (
+              <p className="mt-2 text-xs text-muted-foreground">
+                SKU: <span className="font-mono">{shownSku ?? "sin asignar"}</span>
+                {" · "}
+                {PRESENTATION_LABEL}: {shownPresentation}
+              </p>
+            ) : null}
           </Field>
         )}
         <Field label="Cantidad" htmlFor="quantity">
@@ -214,6 +319,24 @@ export function EntryForm({
           >
             Ir a completar el SKU
           </Link>
+        </p>
+      ) : null}
+      {state.conflict && !adopted ? (
+        /* El borrador NO se toca: cantidad, lote y vencimiento siguen escritos.
+           Lo único obsoleto es la referencia al producto, y adoptarla es una
+           decisión que toma la persona después de mirar la caja. */
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={() => setAdopted(state.conflict ?? null)}
+        >
+          Usar los datos actualizados
+        </Button>
+      ) : null}
+      {adopted ? (
+        <p role="status" className="text-sm text-muted-foreground">
+          Datos actualizados. Verifica el SKU y la presentación, y confirma la
+          entrada.
         </p>
       ) : null}
       {state.ok ? (
