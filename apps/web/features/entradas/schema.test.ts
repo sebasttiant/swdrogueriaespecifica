@@ -12,6 +12,9 @@ const BASE = {
   batchCode: "LOTE-001",
   expiresAt: "2027-01-01T10:00",
   idempotencyKey: "00000000-0000-4000-8000-000000000001",
+  // Toda entrada declara la fotografía del producto que la pantalla mostró.
+  expectedIdentityVersion: "0",
+  expectedCatalogVersion: "0",
 };
 
 describe("inventoryEntryCreateSchema · laboratorio recibido", () => {
