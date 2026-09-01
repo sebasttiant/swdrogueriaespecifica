@@ -11,6 +11,7 @@ import {
   type Paginated,
 } from "@/lib/pagination";
 import type { Prisma, UserRole } from "@/lib/generated/prisma/client";
+import type { UserStatusFilter } from "@/features/admin/filters";
 
 // Forma mínima que auth necesita: credenciales + datos de sesión.
 export type UserCredentials = {
@@ -77,13 +78,58 @@ const LIST_SELECT = {
   createdAt: true,
 } as const;
 
+/**
+ * El filtro se arma en el WHERE, no en memoria.
+ *
+ * Traer todos los usuarios y filtrarlos en JavaScript funciona con veinte y
+ * deja de funcionar sin avisar: la pagina sigue respondiendo, cada vez mas
+ * lenta, hasta que un dia el listado tarda lo suficiente como para que nadie
+ * lo use.
+ *
+ * `archived` son DOS VISTAS SEPARADAS, no una suma. Antes `includeArchived`
+ * traia todos —activos y archivados juntos— bajo una etiqueta que decia "Ver
+ * archivados". Un archivado es alguien que ya no opera: verlo mezclado entre
+ * los activos reabre la confusion que el archivado existe para cerrar.
+ *
+ * La busqueda usa `contains` con `mode: "insensitive"`, que Prisma traduce a
+ * `ILIKE`. Con decenas de usuarios el planificador resuelve por escaneo
+ * secuencial y responde en microsegundos; un indice funcional para `name`
+ * seria una migracion que hoy no compra nada. Cuando el padron crezca a miles,
+ * ahi si, y con el plan de consulta delante.
+ */
+function buildWhere(params: {
+  q?: string;
+  role?: UserRole;
+  status?: UserStatusFilter;
+  archived?: boolean;
+}): Prisma.UserWhereInput {
+  const search = params.q?.trim();
+  return {
+    ...(params.archived ? { archivedAt: { not: null } } : { archivedAt: null }),
+    ...(params.role ? { role: params.role } : {}),
+    ...(params.status ? { active: params.status === "activos" } : {}),
+    ...(search
+      ? {
+          OR: [
+            { name: { contains: search, mode: "insensitive" as const } },
+            { email: { contains: search, mode: "insensitive" as const } },
+          ],
+        }
+      : {}),
+  };
+}
+
 export async function listUsers(params: {
   cursor?: string | null;
   take?: number;
-  includeArchived?: boolean;
+  q?: string;
+  role?: UserRole;
+  status?: UserStatusFilter;
+  /** `true` = solo archivados. Ausente o `false` = solo la vista operativa. */
+  archived?: boolean;
 }): Promise<Paginated<UserListItem>> {
   const take = clampTake(params.take);
-  const includeArchived = params.includeArchived ?? false;
+  const where = buildWhere(params);
   let cursorId = params.cursor ? decodeCursor(params.cursor) : null;
 
   // Cursor controlado por el usuario: si apunta a un id inexistente, lo
@@ -99,9 +145,10 @@ export async function listUsers(params: {
   const rows = await prisma.user.findMany({
     take: take + 1,
     ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
-    // Por defecto ocultamos los usuarios archivados; includeArchived=true los
-    // trae todos (la UI distingue con badge "Archivado").
-    ...(!includeArchived ? { where: { archivedAt: null } } : {}),
+    where,
+    // Orden estable: `createdAt` puede repetirse entre dos altas del mismo
+    // segundo, y ahi el `id` desempata. Sin el desempate, la misma consulta
+    // puede devolver dos ordenes distintos y el cursor saltea o repite filas.
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     select: LIST_SELECT,
   });

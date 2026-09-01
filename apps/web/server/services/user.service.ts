@@ -22,6 +22,7 @@ import {
 import type { SessionRole } from "@/lib/auth/session";
 import { prisma } from "@/lib/db/prisma";
 import type { UserRole } from "@/lib/generated/prisma/client";
+import type { UserStatusFilter } from "@/features/admin/filters";
 import type { Paginated } from "@/lib/pagination";
 import {
   archiveUser as archiveUserRow,
@@ -64,7 +65,10 @@ export class UserRuleError extends Error {
 export function getUsers(params: {
   cursor?: string | null;
   take?: number;
-  includeArchived?: boolean;
+  q?: string;
+  role?: UserRole;
+  status?: UserStatusFilter;
+  archived?: boolean;
 }): Promise<Paginated<UserListItem>> {
   return listUsers(params);
 }

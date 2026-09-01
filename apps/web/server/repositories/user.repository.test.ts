@@ -128,10 +128,10 @@ describe("unarchiveUser", () => {
 });
 
 // ---------------------------------------------------------------------------
-// listUsers — includeArchived flag
+// listUsers — separacion entre la vista operativa y la de archivados
 // ---------------------------------------------------------------------------
 
-describe("listUsers · includeArchived", () => {
+describe("listUsers · archived", () => {
   it("excludes archived users by default (archivedAt: null filter)", async () => {
     prismaMock.user.findMany.mockResolvedValue([activeUser]);
 
@@ -141,31 +141,35 @@ describe("listUsers · includeArchived", () => {
     expect(args.where).toEqual(expect.objectContaining({ archivedAt: null }));
   });
 
-  it("excludes archived users when includeArchived=false", async () => {
+  it("excludes archived users when archived=false", async () => {
     prismaMock.user.findMany.mockResolvedValue([activeUser]);
 
-    await listUsers({ includeArchived: false });
+    await listUsers({ archived: false });
 
     const args = prismaMock.user.findMany.mock.calls[0]![0];
     expect(args.where).toEqual(expect.objectContaining({ archivedAt: null }));
   });
 
-  it("returns all users (no archivedAt filter) when includeArchived=true", async () => {
-    prismaMock.user.findMany.mockResolvedValue([activeUser, archivedUser]);
+  // CAMBIO DELIBERADO DE SEMÁNTICA. Antes `includeArchived: true` traía TODOS
+  // —activos y archivados juntos— bajo una etiqueta que decía "Ver archivados".
+  // Un archivado es alguien que ya no opera: verlo mezclado entre los activos
+  // reabre la confusión que el archivado existe para cerrar. Ahora son dos
+  // vistas separadas.
+  it("returns ONLY archived users when archived=true", async () => {
+    prismaMock.user.findMany.mockResolvedValue([archivedUser]);
 
-    await listUsers({ includeArchived: true });
+    await listUsers({ archived: true });
 
     const args = prismaMock.user.findMany.mock.calls[0]![0];
-    // when includeArchived=true, where should be undefined OR not contain archivedAt
-    const where = args.where as Record<string, unknown> | undefined;
-    const hasArchivedAtFilter = where !== undefined && "archivedAt" in where;
-    expect(hasArchivedAtFilter).toBe(false);
+    expect(args.where).toEqual(
+      expect.objectContaining({ archivedAt: { not: null } }),
+    );
   });
 
   it("includes archivedAt in returned UserListItem", async () => {
     prismaMock.user.findMany.mockResolvedValue([archivedUser]);
 
-    const result = await listUsers({ includeArchived: true });
+    const result = await listUsers({ archived: true });
 
     expect(result.items[0]).toHaveProperty("archivedAt");
   });
