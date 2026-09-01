@@ -19,7 +19,7 @@ const BASE = {
   unit: "Frasco",
   minStock: "5",
   reorderQty: "20",
-  expectedUpdatedAt: "2026-08-31T12:00:00.000Z",
+  expectedVersion: "3",
 };
 
 describe("edición de producto · lo que se puede cambiar", () => {
@@ -149,7 +149,7 @@ describe("edición de producto · lo que NO se puede tocar desde acá", () => {
       [
         "active",
         "code",
-        "expectedUpdatedAt",
+        "expectedVersion",
         "id",
         "laboratoryId",
         "laboratoryName",
@@ -189,29 +189,42 @@ describe("edición de producto · el laboratorio escrito a mano", () => {
 });
 
 // --------------------------------------------------------------------------
-// El testigo de concurrencia.
+// El testigo del compare-and-set.
 //
 // Este formulario manda TODOS los campos, así que dos personas editando cosas
 // distintas del mismo producto se pisan: la última en guardar reescribe con
 // los valores viejos de su propia pantalla lo que la otra acababa de corregir.
+//
+// Es un ENTERO y no una fecha, y esa es la corrección de fondo: `updatedAt`
+// dice cuándo pasó algo, no en qué orden. `TIMESTAMP(3)` tiene resolución de
+// milisegundo y PostgreSQL no promete que dos escrituras rápidas caigan en
+// milisegundos distintos; con marcas iguales, un control que las compara deja
+// pasar la escritura que debía rechazar.
 // --------------------------------------------------------------------------
-describe("edición de producto · el testigo de concurrencia", () => {
-  it("lo convierte en fecha", () => {
+describe("edición de producto · la versión de catálogo", () => {
+  it("llega como número, no como fecha", () => {
     const parsed = productUpdateSchema.parse(BASE);
 
-    expect(parsed.expectedUpdatedAt).toBeInstanceOf(Date);
-    expect(parsed.expectedUpdatedAt.toISOString()).toBe("2026-08-31T12:00:00.000Z");
+    expect(parsed.expectedVersion).toBe(3);
+    expect(typeof parsed.expectedVersion).toBe("number");
   });
 
-  it("es obligatorio: sin él no se puede detectar un pisotón", () => {
-    const { expectedUpdatedAt: _quitado, ...sinTestigo } = BASE;
-    expect(productUpdateSchema.safeParse(sinTestigo).success).toBe(false);
+  it("acepta el cero: un producto que nunca se editó", () => {
+    expect(productUpdateSchema.parse({ ...BASE, expectedVersion: "0" }).expectedVersion)
+      .toBe(0);
   });
 
-  it("rechaza una fecha que no es fecha", () => {
-    expect(productUpdateSchema.safeParse({ ...BASE, expectedUpdatedAt: "ayer" }).success)
-      .toBe(false);
-    expect(productUpdateSchema.safeParse({ ...BASE, expectedUpdatedAt: "" }).success)
-      .toBe(false);
+  it("es obligatoria: sin ella no se puede detectar un pisotón", () => {
+    const { expectedVersion: _quitada, ...sinVersion } = BASE;
+    expect(productUpdateSchema.safeParse(sinVersion).success).toBe(false);
+  });
+
+  it("rechaza lo que no es un entero", () => {
+    for (const basura of ["ayer", "", "3.5", "-1", "N", "2026-08-31T12:00:00.000Z"]) {
+      expect(
+        productUpdateSchema.safeParse({ ...BASE, expectedVersion: basura }).success,
+        basura,
+      ).toBe(false);
+    }
   });
 });

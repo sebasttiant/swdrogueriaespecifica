@@ -56,18 +56,18 @@ function datos(overrides: Record<string, unknown> = {}) {
   };
 }
 
-async function leerActualizadoAt(): Promise<Date> {
+async function leerVersion(): Promise<number> {
   const row = await prisma.product.findUniqueOrThrow({ where: { id: productId } });
-  return row.updatedAt;
+  return row.catalogVersion;
 }
 
 describe("editar producto · el camino feliz", () => {
   it("guarda y devuelve el antes y el después", async () => {
-    const testigo = await leerActualizadoAt();
+    const version = await leerVersion();
 
     const result = await editProduct(productId, {
       ...datos(),
-      expectedUpdatedAt: testigo,
+      expectedVersion: version,
     });
 
     expect(result.status).toBe("saved");
@@ -80,7 +80,7 @@ describe("editar producto · el camino feliz", () => {
   it("devuelve not_found para un producto que no existe", async () => {
     const result = await editProduct("no-existe", {
       ...datos(),
-      expectedUpdatedAt: new Date(),
+      expectedVersion: 0,
     });
 
     expect(result.status).toBe("not_found");
@@ -96,34 +96,34 @@ describe("editar producto · el camino feliz", () => {
 // --------------------------------------------------------------------------
 describe("editar producto · concurrencia", () => {
   it("rechaza el segundo guardado con un testigo viejo", async () => {
-    const testigo = await leerActualizadoAt();
+    const version = await leerVersion();
 
     // Bodega guarda primero.
     const primero = await editProduct(productId, {
       ...datos({ name: "Dolex Niños Jarabe" }),
-      expectedUpdatedAt: testigo,
+      expectedVersion: version,
     });
     expect(primero.status).toBe("saved");
 
     // Gerencia tenía la pantalla abierta desde antes y guarda con SU testigo.
     const segundo = await editProduct(productId, {
       ...datos({ minStock: 99 }),
-      expectedUpdatedAt: testigo,
+      expectedVersion: version,
     });
 
     expect(segundo.status).toBe("stale");
   });
 
   it("el rechazo NO pisa lo que había guardado el primero", async () => {
-    const testigo = await leerActualizadoAt();
+    const version = await leerVersion();
 
     await editProduct(productId, {
       ...datos({ name: "Dolex Niños Jarabe" }),
-      expectedUpdatedAt: testigo,
+      expectedVersion: version,
     });
     await editProduct(productId, {
       ...datos({ name: "Otro nombre", minStock: 99 }),
-      expectedUpdatedAt: testigo,
+      expectedVersion: version,
     });
 
     const fila = await prisma.product.findUniqueOrThrow({ where: { id: productId } });
@@ -134,13 +134,13 @@ describe("editar producto · concurrencia", () => {
   it("con el testigo fresco, el segundo guardado sí entra", async () => {
     const primero = await editProduct(productId, {
       ...datos({ name: "Primero" }),
-      expectedUpdatedAt: await leerActualizadoAt(),
+      expectedVersion: await leerVersion(),
     });
     expect(primero.status).toBe("saved");
 
     const segundo = await editProduct(productId, {
       ...datos({ name: "Segundo" }),
-      expectedUpdatedAt: await leerActualizadoAt(),
+      expectedVersion: await leerVersion(),
     });
 
     expect(segundo.status).toBe("saved");
@@ -161,7 +161,7 @@ describe("editar producto · el laboratorio escrito a mano", () => {
     const result = await editProduct(productId, {
       ...datos({ laboratoryId: null }),
       laboratoryName: `Genfar ${sufijo}`,
-      expectedUpdatedAt: await leerActualizadoAt(),
+      expectedVersion: await leerVersion(),
     });
 
     expect(result.status).toBe("saved");
@@ -185,7 +185,7 @@ describe("editar producto · el laboratorio escrito a mano", () => {
     const result = await editProduct(productId, {
       ...datos({ laboratoryId: null }),
       laboratoryName: `Genfar ${sufijo}`,
-      expectedUpdatedAt: await leerActualizadoAt(),
+      expectedVersion: await leerVersion(),
     });
 
     expect(result.status).toBe("saved");
@@ -201,7 +201,7 @@ describe("editar producto · el laboratorio escrito a mano", () => {
     const result = await editProduct(productId, {
       ...datos({ laboratoryId: null }),
       laboratoryName: `  GENFAR ${sufijo}  `,
-      expectedUpdatedAt: await leerActualizadoAt(),
+      expectedVersion: await leerVersion(),
     });
 
     expect(result.status).toBe("saved");
@@ -222,7 +222,7 @@ describe("editar producto · el laboratorio escrito a mano", () => {
 
     const result = await editProduct(productId, {
       ...datos({ laboratoryId: null }),
-      expectedUpdatedAt: await leerActualizadoAt(),
+      expectedVersion: await leerVersion(),
     });
 
     expect(result.status).toBe("saved");
@@ -233,16 +233,16 @@ describe("editar producto · el laboratorio escrito a mano", () => {
   // Atomicidad: si el guardado se rechaza por concurrencia, no puede quedar un
   // laboratorio suelto que nadie pidió.
   it("un rechazo por concurrencia NO deja el laboratorio creado", async () => {
-    const testigo = await leerActualizadoAt();
+    const version = await leerVersion();
     await editProduct(productId, {
       ...datos({ name: "Alguien más" }),
-      expectedUpdatedAt: testigo,
+      expectedVersion: version,
     });
 
     const result = await editProduct(productId, {
       ...datos({ laboratoryId: null }),
       laboratoryName: `Huerfano ${sufijo}`,
-      expectedUpdatedAt: testigo,
+      expectedVersion: version,
     });
 
     expect(result.status).toBe("stale");
@@ -250,5 +250,177 @@ describe("editar producto · el laboratorio escrito a mano", () => {
       where: { name: { contains: `Huerfano ${sufijo}` } },
     });
     expect(cuantos).toBe(0);
+  });
+});
+
+// --------------------------------------------------------------------------
+// El compare-and-set, sobre la versión ENTERA.
+//
+// Antes el testigo era `updatedAt`, y eso confundía dos cosas: una marca de
+// tiempo dice CUÁNDO pasó algo, no en qué ORDEN. `TIMESTAMP(3)` tiene
+// resolución de milisegundo y PostgreSQL no promete que dos escrituras rápidas
+// caigan en milisegundos distintos. Medirlo tampoco alcanzaba como garantía:
+// cuarenta escrituras sin colisión son una muestra, no una promesa del motor.
+//
+// Estas pruebas fuerzan la colisión a mano en vez de esperarla.
+// --------------------------------------------------------------------------
+describe("editar producto · el CAS no depende del reloj", () => {
+  it("dos escrituras con la MISMA marca temporal no lo rompen", async () => {
+    const version = await leerVersion();
+
+    // Se fija `updatedAt` a un valor conocido y se guarda; después se vuelve a
+    // fijar al MISMO valor. Con un control basado en fechas, el segundo intento
+    // con el testigo viejo pasaría. Con la versión entera, no.
+    const congelado = new Date("2026-09-01T10:00:00.000Z");
+    await prisma.$executeRaw`
+      UPDATE products SET "updatedAt" = ${congelado} WHERE id = ${productId}
+    `;
+
+    const primero = await editProduct(productId, {
+      ...datos({ name: "Primera escritura" }),
+      expectedVersion: version,
+    });
+    expect(primero.status).toBe("saved");
+
+    await prisma.$executeRaw`
+      UPDATE products SET "updatedAt" = ${congelado} WHERE id = ${productId}
+    `;
+
+    // Misma marca temporal que antes del primer guardado: un control por fecha
+    // no vería diferencia. El de versión sí.
+    const segundo = await editProduct(productId, {
+      ...datos({ name: "Segunda escritura" }),
+      expectedVersion: version,
+    });
+
+    expect(segundo.status).toBe("stale");
+    const fila = await prisma.product.findUniqueOrThrow({ where: { id: productId } });
+    expect(fila.name).toBe("Primera escritura");
+  });
+
+  it("la versión avanza de a uno en cada guardado", async () => {
+    const inicial = await leerVersion();
+
+    await editProduct(productId, { ...datos({ name: "A" }), expectedVersion: inicial });
+    expect(await leerVersion()).toBe(inicial + 1);
+
+    await editProduct(productId, { ...datos({ name: "B" }), expectedVersion: inicial + 1 });
+    expect(await leerVersion()).toBe(inicial + 2);
+  });
+
+  it("dos sesiones desde N: la primera produce N+1, la segunda es rechazada", async () => {
+    const n = await leerVersion();
+
+    const sesionA = await editProduct(productId, {
+      ...datos({ name: "Sesión A" }),
+      expectedVersion: n,
+    });
+    const sesionB = await editProduct(productId, {
+      ...datos({ minStock: 99 }),
+      expectedVersion: n,
+    });
+
+    expect(sesionA.status).toBe("saved");
+    expect(sesionB.status).toBe("stale");
+    expect(await leerVersion()).toBe(n + 1);
+
+    const fila = await prisma.product.findUniqueOrThrow({ where: { id: productId } });
+    expect(fila.name).toBe("Sesión A");
+    expect(fila.minStock).toBe(5);
+  });
+
+  it("el rechazo no avanza la versión: nada se escribió", async () => {
+    const n = await leerVersion();
+    await editProduct(productId, { ...datos(), expectedVersion: n + 7 });
+
+    expect(await leerVersion()).toBe(n);
+  });
+
+  // Concurrencia de verdad: dos guardados disparados a la vez sobre la misma
+  // versión. Exactamente uno tiene que ganar.
+  it("dos guardados simultáneos desde la misma versión: gana UNO", async () => {
+    const n = await leerVersion();
+
+    const [a, b] = await Promise.all([
+      editProduct(productId, { ...datos({ name: "Simultáneo A" }), expectedVersion: n }),
+      editProduct(productId, { ...datos({ name: "Simultáneo B" }), expectedVersion: n }),
+    ]);
+
+    const estados = [a.status, b.status].sort();
+    expect(estados).toEqual(["saved", "stale"]);
+    expect(await leerVersion()).toBe(n + 1);
+  });
+
+  it("seis guardados simultáneos: uno gana, cinco son rechazados", async () => {
+    const n = await leerVersion();
+
+    const resultados = await Promise.all(
+      Array.from({ length: 6 }, (_, i) =>
+        editProduct(productId, {
+          ...datos({ name: `Concurrente ${i}` }),
+          expectedVersion: n,
+        }),
+      ),
+    );
+
+    expect(resultados.filter((r) => r.status === "saved")).toHaveLength(1);
+    expect(resultados.filter((r) => r.status === "stale")).toHaveLength(5);
+    expect(await leerVersion()).toBe(n + 1);
+  });
+});
+
+// --------------------------------------------------------------------------
+// Dos ciclos independientes: identidad y catálogo.
+//
+// `identityVersion` protege el vínculo con el código de Orion; `catalogVersion`
+// protege la edición de catálogo. Compartir contador acoplaría dos decisiones
+// que ocurren en pantallas distintas: vincular un SKU invalidaría una
+// corrección de nombre a medio escribir, y al revés.
+// --------------------------------------------------------------------------
+describe("editar producto · identidad y catálogo no se pisan", () => {
+  it("editar el catálogo NO mueve identityVersion", async () => {
+    const antes = await prisma.product.findUniqueOrThrow({ where: { id: productId } });
+
+    await editProduct(productId, {
+      ...datos({ name: "Editado" }),
+      expectedVersion: antes.catalogVersion,
+    });
+
+    const despues = await prisma.product.findUniqueOrThrow({ where: { id: productId } });
+    expect(despues.identityVersion).toBe(antes.identityVersion);
+    expect(despues.catalogVersion).toBe(antes.catalogVersion + 1);
+  });
+
+  it("mover identityVersion NO invalida una edición de catálogo en curso", async () => {
+    const version = await leerVersion();
+
+    // Alguien vincula el SKU: avanza la identidad, no el catálogo.
+    await prisma.product.update({
+      where: { id: productId },
+      data: { orionCode: `ORN-${sufijo}`, identityVersion: { increment: 1 } },
+    });
+
+    // La edición de catálogo que estaba abierta sigue siendo válida.
+    const result = await editProduct(productId, {
+      ...datos({ name: "Editado igual" }),
+      expectedVersion: version,
+    });
+
+    expect(result.status).toBe("saved");
+  });
+
+  it("editar el catálogo no toca el código de Orion", async () => {
+    await prisma.product.update({
+      where: { id: productId },
+      data: { orionCode: `ORN2-${sufijo}` },
+    });
+
+    await editProduct(productId, {
+      ...datos({ name: "Otro nombre" }),
+      expectedVersion: await leerVersion(),
+    });
+
+    const fila = await prisma.product.findUniqueOrThrow({ where: { id: productId } });
+    expect(fila.orionCode).toBe(`ORN2-${sufijo}`);
   });
 });

@@ -73,7 +73,7 @@ export default async function ProductDetailPage({
             active: product.active,
             laboratoryId: product.laboratoryId,
             laboratoryName: laboratory?.name ?? null,
-            updatedAt: product.updatedAt.toISOString(),
+            catalogVersion: product.catalogVersion,
           }}
         />
       ) : null}

@@ -35,7 +35,7 @@ const PRODUCTO: EditableProduct = {
   active: true,
   laboratoryId: "lab-1",
   laboratoryName: "Genfar",
-  updatedAt: "2026-08-31T12:00:00.000Z",
+  catalogVersion: 3,
 };
 
 async function abrir(product: EditableProduct = PRODUCTO) {

@@ -12,7 +12,7 @@ import type { Product } from "@/lib/generated/prisma/client";
 import {
   createProduct,
   updateProduct,
-  updateProductIfUnchanged,
+  updateProductIfVersionMatches,
   type UpdateProductData,
   findProductById,
   listProducts,
@@ -80,8 +80,12 @@ export type EditProductResult =
 export type EditProductInput = UpdateProductData & {
   /** El texto que quedó escrito en el buscador, si no se eligió de la lista. */
   laboratoryName?: string;
-  /** Cuándo se leyó el producto. Testigo de concurrencia. */
-  expectedUpdatedAt: Date;
+  /**
+   * La versión de catálogo que el formulario le MOSTRÓ a la persona.
+   *
+   * Entero, no fecha: ver `updateProductIfVersionMatches`.
+   */
+  expectedVersion: number;
   /** Quién edita: entra en la clave del comando al crear un laboratorio. */
   actorId: string;
 };
@@ -116,7 +120,7 @@ export async function editProduct(
   id: string,
   input: EditProductInput,
 ): Promise<EditProductResult> {
-  const { laboratoryName, expectedUpdatedAt, actorId, ...data } = input;
+  const { laboratoryName, expectedVersion, actorId, ...data } = input;
 
   try {
     return await prisma.$transaction(async (tx) => {
@@ -144,9 +148,9 @@ export async function editProduct(
       laboratoryId = resolved.laboratory.id;
     }
 
-    const after = await updateProductIfUnchanged(
+    const after = await updateProductIfVersionMatches(
       id,
-      expectedUpdatedAt,
+      expectedVersion,
       { ...data, laboratoryId },
       tx,
     );

@@ -170,25 +170,32 @@ export async function updateProduct(
 }
 
 /**
- * Actualiza SOLO si el producto sigue como se leyó. Devuelve `null` si no.
+ * Actualiza SOLO si nadie tocó el catálogo desde que se leyó. Devuelve `null`
+ * si alguien llegó antes.
  *
- * `updatedAt` alcanza como testigo y evita una columna nueva: Prisma lo mueve
- * en cada escritura (`@updatedAt`), así que si alguien guardó en el medio, el
- * `where` no encuentra la fila y el `count` vuelve en 0.
+ * El testigo es `catalogVersion`, un ENTERO, y no `updatedAt`. Una marca de
+ * tiempo dice cuándo pasó algo, no en qué orden: `TIMESTAMP(3)` tiene
+ * resolución de milisegundo y PostgreSQL no promete que dos escrituras rápidas
+ * caigan en milisegundos distintos. Con fechas iguales, un control basado en
+ * compararlas concluye que nada cambió y deja pasar la escritura que debía
+ * rechazar.
+ *
+ * El incremento va en la MISMA sentencia que la escritura que protege, así que
+ * no hay ventana entre comprobar y avanzar.
  *
  * Va con `updateMany` a propósito: `update` con un `where` compuesto tiraría, y
- * lo que hace falta acá es DISTINGUIR "no coincide" de "explotó" para poder
+ * acá hace falta DISTINGUIR "no coincide la versión" de "explotó" para poder
  * decirle a la persona que alguien más lo cambió.
  */
-export async function updateProductIfUnchanged(
+export async function updateProductIfVersionMatches(
   id: string,
-  expectedUpdatedAt: Date,
+  expectedVersion: number,
   data: UpdateProductData,
   client: Prisma.TransactionClient = prisma,
 ): Promise<Product | null> {
   const { count } = await client.product.updateMany({
-    where: { id, updatedAt: expectedUpdatedAt },
-    data,
+    where: { id, catalogVersion: expectedVersion },
+    data: { ...data, catalogVersion: { increment: 1 } },
   });
   if (count === 0) return null;
   return client.product.findUnique({ where: { id } });

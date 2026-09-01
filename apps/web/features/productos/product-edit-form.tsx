@@ -28,11 +28,16 @@ export type EditableProduct = {
   laboratoryId: string | null;
   laboratoryName: string | null;
   /**
-   * Cuándo se leyó este producto, en ISO. Viaja al servidor como testigo de
-   * concurrencia: si alguien guardó en el medio, el guardado se rechaza en vez
-   * de pisar su corrección con los valores viejos de esta pantalla.
+   * La versión de catálogo con la que se leyó este producto.
+   *
+   * Viaja al servidor como testigo del compare-and-set: si alguien guardó en el
+   * medio, el guardado se rechaza en vez de pisar su corrección con los valores
+   * viejos de esta pantalla.
+   *
+   * Es un ENTERO y no una marca de tiempo: `updatedAt` dice cuándo pasó algo,
+   * no en qué orden, y dos escrituras rápidas pueden compartir milisegundo.
    */
-  updatedAt: string;
+  catalogVersion: number;
 };
 
 // --------------------------------------------------------------------------
@@ -85,23 +90,23 @@ export function ProductEditForm({ product }: { product: EditableProduct }) {
   // manda el eco. Cuando las props alcanzan, describen lo mismo y se usan
   // ellas. Así el formulario muestra siempre la versión más nueva que conoce,
   // sin depender de en qué orden ocurrieron las cosas.
-  // La comparación se apoya en que `updatedAt` avance entre escrituras.
-  // Medido contra PostgreSQL real en `tests/postgres/updated-at-monotonic.pg.test.ts`:
-  // 40 escrituras consecutivas dieron 0 colisiones y 0 retrocesos, y dos
-  // escrituras en la misma transacción salieron con 1 ms de diferencia. Esa
-  // prueba deja la suposición GUARDADA: si algún día la secuencia retrocede,
-  // se pone roja acá y no en producción.
+  // La comparación es entre ENTEROS, y por eso vale.
   //
-  // Riesgo residual conocido: un ajuste de reloj hacia atrás podría producir
-  // dos versiones iguales. No se pudo reproducir, y su consecuencia exige
-  // además cerrar y reabrir dentro de la ventana del refresco. Queda anotado
-  // en vez de resolverse con un contador propio, que sería una columna nueva y
-  // una migración para un caso que no se demostró.
+  // Antes se comparaban marcas de `updatedAt`, y eso era un error de fondo: una
+  // fecha dice cuándo pasó algo, no en qué orden. `TIMESTAMP(3)` tiene
+  // resolución de milisegundo y PostgreSQL no promete que dos escrituras
+  // rápidas caigan en milisegundos distintos; con marcas iguales, la
+  // comparación concluía que las props ya habían alcanzado al eco cuando
+  // todavía no. Medirlo tampoco alcanzaba: cuarenta escrituras sin colisión son
+  // una muestra, no una garantía del motor.
+  //
+  // `catalogVersion` se incrementa en la misma sentencia del UPDATE, así que
+  // crece estrictamente y "el eco es más nuevo que las props" es una pregunta
+  // con respuesta exacta.
   const echo = state.values;
   const deEsteCiclo = state.submissionId !== baseline;
   const propsAtrasadas =
-    echo !== undefined &&
-    Date.parse(echo.expectedUpdatedAt) > Date.parse(product.updatedAt);
+    echo !== undefined && Number(echo.expectedVersion) > product.catalogVersion;
   const previous = deEsteCiclo || propsAtrasadas ? echo : undefined;
 
   if (!open) {
@@ -185,7 +190,7 @@ function ProductEditFields({
   // `router.refresh()` de este proyecto corre ante cualquier respuesta y
   // también ante acciones AJENAS de esta misma pantalla —vincular el SKU desde
   // la tarjeta de identidad, por ejemplo—. Leyendo `product.updatedAt` en vivo,
-  // ese refresco le daba al borrador un testigo FRESCO mientras los campos
+  // ese refresco le daba al borrador una versión FRESCA mientras los campos
   // seguían mostrando lo escrito sobre la versión anterior: al enviar, esa
   // mezcla pasaba el control de concurrencia y sobrescribía en silencio la
   // edición de otra persona.
@@ -193,7 +198,9 @@ function ProductEditFields({
   // Este componente se remonta con cada respuesta, así que "al montar" es
   // exactamente "al abrir el formulario o al recibir una respuesta", que es
   // cuando el testigo debe renovarse — y solo entonces.
-  const [witness] = useState(() => previous?.expectedUpdatedAt ?? product.updatedAt);
+  const [witness] = useState(
+    () => previous?.expectedVersion ?? String(product.catalogVersion),
+  );
 
   return (
     <Card className="space-y-4">
@@ -210,7 +217,7 @@ function ProductEditFields({
             pisaría la edición ajena, que es exactamente lo que el control
             existe para impedir. Con el testigo del eco, el reintento vuelve a
             chocar y la única salida es recargar — que es la correcta. */}
-        <input type="hidden" name="expectedUpdatedAt" value={witness} />
+        <input type="hidden" name="expectedVersion" value={witness} />
 
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Nombre" htmlFor="edit-name" className="sm:col-span-2">

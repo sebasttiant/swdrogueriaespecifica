@@ -80,22 +80,22 @@ export const productUpdateSchema = z.object({
    */
   laboratoryName: z.string().trim().max(120).optional(),
   /**
-   * Cuándo se leyó el producto que se está editando.
+   * La versión de catálogo que el formulario le MOSTRÓ a la persona.
    *
-   * Es el testigo de concurrencia. Este formulario manda TODOS los campos, así
-   * que dos personas editando cosas distintas del mismo producto se pisan: la
-   * última en guardar reescribe con los valores viejos de su propia pantalla lo
-   * que la otra acababa de corregir, y encima el `before` de la auditoría no
-   * describe lo que realmente reemplazó.
+   * Es el testigo del compare-and-set. Un ENTERO, no una fecha: `updatedAt`
+   * dice cuándo pasó algo, no en qué orden, y dos escrituras rápidas pueden
+   * compartir milisegundo. Con fechas iguales, el control concluye que nada
+   * cambió y deja pasar la escritura que debía rechazar.
+   *
+   * Este formulario manda TODOS los campos, así que sin control dos personas
+   * editando cosas distintas se pisan: la última reescribe con los valores
+   * viejos de su pantalla lo que la otra acababa de corregir.
    */
-  expectedUpdatedAt: z
+  expectedVersion: z
     .string()
     .trim()
-    .min(1, { error: "Falta la versión del producto." })
-    .refine((value) => !Number.isNaN(Date.parse(value)), {
-      error: "La versión del producto no es válida.",
-    })
-    .transform((value) => new Date(value)),
+    .regex(/^\d+$/, { error: "La versión del producto no es válida." })
+    .transform(Number),
   // Una casilla no marcada NO viaja en el FormData: por eso el default es
   // `false` y no `true`. Leerlo al revés desactivaría productos en silencio.
   active: z

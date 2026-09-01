@@ -67,17 +67,18 @@ export type ProductSubmittedValues = {
   laboratoryName: string;
   active: string;
   /**
-   * El testigo que se envió en ESTE intento.
+   * La versión de catálogo que corresponde a estos valores.
    *
-   * Viaja con el eco por una razón que no es obvia: `useActionState` de este
-   * proyecto llama a `router.refresh()` ante CUALQUIER respuesta, también ante
-   * un rechazo por concurrencia. O sea que tras el rechazo el componente
-   * recibe el `updatedAt` NUEVO. Si el campo oculto lo leyera del producto, el
-   * reintento mandaría los valores viejos del formulario con un testigo
-   * fresco, pasaría el control y pisaría igual la edición ajena — justo lo que
-   * el control existe para impedir.
+   * Tras un FALLO es la que se envió: el reintento tiene que volver a chocar,
+   * no adoptar la nueva. Tras un ÉXITO es la que quedó persistida, para que la
+   * siguiente edición desde el mismo formulario use N+1.
+   *
+   * Viaja con el eco porque `useActionState` de este proyecto llama a
+   * `router.refresh()` ante cualquier respuesta: si el campo oculto leyera la
+   * versión de las props, el reintento mandaría valores viejos con un testigo
+   * fresco y pasaría el control.
    */
-  expectedUpdatedAt: string;
+  expectedVersion: string;
 };
 
 /** El eco: lo que vino en el FormData, sin interpretar. */
@@ -92,7 +93,7 @@ function submittedValues(formData: FormData): ProductSubmittedValues {
     laboratoryId: text("laboratoryId"),
     laboratoryName: text("laboratoryName"),
     active: formData.get("active") === "on" ? "on" : "",
-    expectedUpdatedAt: text("expectedUpdatedAt"),
+    expectedVersion: text("expectedVersion"),
   };
 }
 
@@ -239,7 +240,7 @@ export async function updateProductAction(
     // El texto que quedó ESCRITO en el buscador. Sin leerlo, "escribí Genfar y
     // guardé" termina quitando el laboratorio con la pantalla mostrando Genfar.
     laboratoryName: formData.get("laboratoryName") ?? undefined,
-    expectedUpdatedAt: formData.get("expectedUpdatedAt"),
+    expectedVersion: formData.get("expectedVersion"),
     active: formData.get("active") ?? undefined,
   });
 
@@ -257,14 +258,14 @@ export async function updateProductAction(
     return failed("Revisa los datos del producto.");
   }
 
-  const { id, laboratoryName, expectedUpdatedAt, ...data } = parsed.data;
+  const { id, laboratoryName, expectedVersion, ...data } = parsed.data;
 
   let changed;
   try {
     changed = await editProduct(id, {
       ...data,
       laboratoryName,
-      expectedUpdatedAt,
+      expectedVersion,
       actorId: session.user.id,
     });
   } catch (error) {
@@ -357,7 +358,9 @@ export async function updateProductAction(
       // para que el buscador siga mostrando el laboratorio elegido.
       laboratoryName: echo.laboratoryName,
       active: changed.after.active ? "on" : "",
-      expectedUpdatedAt: changed.after.updatedAt.toISOString(),
+      // La versión YA INCREMENTADA: la siguiente edición desde este mismo
+      // formulario declara N+1 y no vuelve a chocar contra su propio guardado.
+      expectedVersion: String(changed.after.catalogVersion),
     },
   };
 }

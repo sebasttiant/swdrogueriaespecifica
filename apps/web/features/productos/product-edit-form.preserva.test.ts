@@ -40,7 +40,7 @@ const PRODUCTO: EditableProduct = {
   active: true,
   laboratoryId: "lab-1",
   laboratoryName: "Genfar",
-  updatedAt: "2026-08-31T12:00:00.000Z",
+  catalogVersion: 3,
 };
 
 function campo(container: HTMLElement, name: string): HTMLInputElement | null {
@@ -65,7 +65,7 @@ describe("editar producto · un fallo no borra lo cargado", () => {
           active: formData.get("active") === "on" ? "on" : "",
           laboratoryId: String(formData.get("laboratoryId") ?? ""),
           laboratoryName: String(formData.get("laboratoryName") ?? ""),
-          expectedUpdatedAt: String(formData.get("expectedUpdatedAt") ?? ""),
+          expectedVersion: String(formData.get("expectedVersion") ?? ""),
         },
       }),
     );
@@ -137,7 +137,7 @@ describe("editar producto · el testigo de concurrencia no se puede esquivar", (
           laboratoryId: String(formData.get("laboratoryId") ?? ""),
           laboratoryName: String(formData.get("laboratoryName") ?? ""),
           active: "on",
-          expectedUpdatedAt: String(formData.get("expectedUpdatedAt") ?? ""),
+          expectedVersion: String(formData.get("expectedVersion") ?? ""),
         },
       }),
     );
@@ -152,16 +152,14 @@ describe("editar producto · el testigo de concurrencia no se puede esquivar", (
     // ya modificado por la otra persona, con un `updatedAt` NUEVO.
     view.rerender(
       createElement(ProductEditForm, {
-        product: { ...PRODUCTO, updatedAt: "2026-09-01T09:00:00.000Z" },
+        product: { ...PRODUCTO, catalogVersion: 4 },
       }),
     );
 
     // El campo oculto tiene que seguir mandando el testigo del intento
     // fallido. Con el fresco, el reintento pasaría el control y pisaría la
     // edición ajena — el agujero que esto cierra.
-    expect(campo(view.container, "expectedUpdatedAt")?.value).toBe(
-      "2026-08-31T12:00:00.000Z",
-    );
+    expect(campo(view.container, "expectedVersion")?.value).toBe("3");
   });
 });
 
@@ -183,7 +181,7 @@ describe("editar producto · el laboratorio escrito no recupera el id viejo", ()
           laboratoryId: "",
           laboratoryName: "Genfar",
           active: "on",
-          expectedUpdatedAt: String(formData.get("expectedUpdatedAt") ?? ""),
+          expectedVersion: String(formData.get("expectedVersion") ?? ""),
         },
       }),
     );
@@ -234,7 +232,7 @@ describe("editar producto · tras un guardado exitoso", () => {
         laboratoryId: "lab-1",
         laboratoryName: "Genfar",
         active: "on",
-        expectedUpdatedAt: "2026-09-01T09:00:00.000Z",
+        expectedVersion: "4",
       },
     });
 
@@ -254,7 +252,7 @@ describe("editar producto · tras un guardado exitoso", () => {
         product: {
           ...PRODUCTO,
           name: "Dolex Niños Jarabe",
-          updatedAt: "2026-09-01T09:00:00.000Z",
+          catalogVersion: 4,
         },
       }),
     );
@@ -276,7 +274,7 @@ describe("editar producto · tras un guardado exitoso", () => {
         laboratoryId: "lab-1",
         laboratoryName: "Genfar",
         active: "on",
-        expectedUpdatedAt: "2026-09-01T09:00:00.000Z",
+        expectedVersion: "4",
       },
     });
 
@@ -288,15 +286,13 @@ describe("editar producto · tras un guardado exitoso", () => {
 
     view.rerender(
       createElement(ProductEditForm, {
-        product: { ...PRODUCTO, minStock: 42, updatedAt: "2026-09-01T09:00:00.000Z" },
+        product: { ...PRODUCTO, minStock: 42, catalogVersion: 4 },
       }),
     );
 
     // Si el testigo es el nuevo pero los campos son los viejos, reenviar
     // revierte el guardado que acaba de ocurrir.
-    expect(campo(view.container, "expectedUpdatedAt")?.value).toBe(
-      "2026-09-01T09:00:00.000Z",
-    );
+    expect(campo(view.container, "expectedVersion")?.value).toBe("4");
     expect(campo(view.container, "minStock")?.value).toBe("42");
   });
 });
@@ -332,7 +328,7 @@ describe("editar producto · un refresco ajeno no borra el borrador", () => {
     // `router.refresh()` trae la versión nueva. NO hubo envío de este form.
     view.rerender(
       createElement(ProductEditForm, {
-        product: { ...PRODUCTO, updatedAt: "2026-09-01T10:00:00.000Z" },
+        product: { ...PRODUCTO, catalogVersion: 5 },
       }),
     );
 
@@ -354,7 +350,7 @@ describe("editar producto · un refresco ajeno no borra el borrador", () => {
         laboratoryId: "lab-1",
         laboratoryName: "Genfar",
         active: "on",
-        expectedUpdatedAt: "2026-08-31T12:00:00.000Z",
+        expectedVersion: "3",
       },
     });
 
@@ -366,7 +362,7 @@ describe("editar producto · un refresco ajeno no borra el borrador", () => {
 
     view.rerender(
       createElement(ProductEditForm, {
-        product: { ...PRODUCTO, updatedAt: "2026-09-01T10:00:00.000Z" },
+        product: { ...PRODUCTO, catalogVersion: 5 },
       }),
     );
 
@@ -393,7 +389,7 @@ describe("editar producto · un SEGUNDO borrador tras un guardado exitoso", () =
         laboratoryId: "lab-1",
         laboratoryName: "Genfar",
         active: "on",
-        expectedUpdatedAt: "2026-09-01T09:00:00.000Z",
+        expectedVersion: "4",
       },
     });
 
@@ -411,7 +407,7 @@ describe("editar producto · un SEGUNDO borrador tras un guardado exitoso", () =
     // Alguien vincula el SKU desde la tarjeta de identidad: refresco ajeno.
     view.rerender(
       createElement(ProductEditForm, {
-        product: { ...PRODUCTO, updatedAt: "2026-09-01T11:00:00.000Z" },
+        product: { ...PRODUCTO, catalogVersion: 5 },
       }),
     );
 
@@ -438,16 +434,14 @@ describe("editar producto · el testigo se fija al abrir", () => {
     // nueva por refresco.
     view.rerender(
       createElement(ProductEditForm, {
-        product: { ...PRODUCTO, updatedAt: "2026-09-01T12:00:00.000Z" },
+        product: { ...PRODUCTO, catalogVersion: 5 },
       }),
     );
 
     // El borrador sigue, y el testigo tiene que seguir siendo el de cuando se
     // abrió: enviarlo con el fresco pisaría la edición de la otra persona.
     expect(campo(view.container, "name")?.value).toBe("Primer borrador");
-    expect(campo(view.container, "expectedUpdatedAt")?.value).toBe(
-      "2026-08-31T12:00:00.000Z",
-    );
+    expect(campo(view.container, "expectedVersion")?.value).toBe("3");
   });
 });
 
@@ -470,7 +464,7 @@ describe("editar producto · cerrar y volver a abrir", () => {
         laboratoryId: "lab-1",
         laboratoryName: "Genfar",
         active: "on",
-        expectedUpdatedAt: "2026-09-01T09:00:00.000Z",
+        expectedVersion: "4",
       },
     });
 
@@ -488,7 +482,7 @@ describe("editar producto · cerrar y volver a abrir", () => {
         product: {
           ...PRODUCTO,
           name: "Nombre al día",
-          updatedAt: "2026-09-01T13:00:00.000Z",
+          catalogVersion: 5,
         },
       }),
     );
@@ -496,9 +490,7 @@ describe("editar producto · cerrar y volver a abrir", () => {
     await user.click(screen.getByRole("button", { name: "Editar producto" }));
 
     expect(campo(view.container, "name")?.value).toBe("Nombre al día");
-    expect(campo(view.container, "expectedUpdatedAt")?.value).toBe(
-      "2026-09-01T13:00:00.000Z",
-    );
+    expect(campo(view.container, "expectedVersion")?.value).toBe("5");
   });
 });
 
@@ -524,7 +516,7 @@ describe("editar producto · cerrar antes de que llegue el refresco", () => {
         laboratoryId: "lab-1",
         laboratoryName: "Genfar",
         active: "on",
-        expectedUpdatedAt: "2026-09-01T14:00:00.000Z",
+        expectedVersion: "4",
       },
     });
 
@@ -540,8 +532,85 @@ describe("editar producto · cerrar antes de que llegue el refresco", () => {
     await user.click(screen.getByRole("button", { name: "Editar producto" }));
 
     expect(campo(view.container, "name")?.value).toBe("Recién guardado");
-    expect(campo(view.container, "expectedUpdatedAt")?.value).toBe(
-      "2026-09-01T14:00:00.000Z",
+    expect(campo(view.container, "expectedVersion")?.value).toBe("4");
+  });
+});
+
+describe("editar producto · el segundo guardado usa N+1", () => {
+  // Tras guardar, el eco trae la versión YA INCREMENTADA. Sin eso, el segundo
+  // guardado desde el mismo formulario declararía N y chocaría contra su
+  // propio guardado anterior.
+  it("después de guardar, el formulario declara la versión nueva", async () => {
+    mocks.updateProductAction.mockReturnValue({
+      error: null,
+      ok: true,
+      submissionId: "exito-n1",
+      values: {
+        code: "MED-001",
+        name: "Guardado",
+        unit: "Frasco",
+        minStock: "5",
+        reorderQty: "20",
+        laboratoryId: "lab-1",
+        laboratoryName: "Genfar",
+        active: "on",
+        expectedVersion: "4",
+      },
+    });
+
+    const user = userEvent.setup();
+    const view = render(createElement(ProductEditForm, { product: PRODUCTO }));
+    await user.click(screen.getByRole("button", { name: "Editar producto" }));
+
+    // Antes de guardar declara la versión con la que se abrió.
+    expect(campo(view.container, "expectedVersion")?.value).toBe("3");
+
+    await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    await screen.findByRole("status");
+
+    // Después declara la que quedó persistida.
+    expect(campo(view.container, "expectedVersion")?.value).toBe("4");
+  });
+
+  // Un conflicto NO adopta la versión nueva: si la adoptara, el reintento
+  // pasaría el control y pisaría la edición ajena.
+  it("un conflicto conserva la versión vieja, no adopta la nueva", async () => {
+    mocks.updateProductAction.mockImplementation(
+      (_prev: unknown, formData: FormData) => ({
+        error: "Alguien más actualizó este producto mientras lo editabas.",
+        ok: false,
+        submissionId: "conflicto-1",
+        values: {
+          code: String(formData.get("code") ?? ""),
+          name: String(formData.get("name") ?? ""),
+          unit: String(formData.get("unit") ?? ""),
+          minStock: String(formData.get("minStock") ?? ""),
+          reorderQty: String(formData.get("reorderQty") ?? ""),
+          laboratoryId: String(formData.get("laboratoryId") ?? ""),
+          laboratoryName: String(formData.get("laboratoryName") ?? ""),
+          active: "on",
+          expectedVersion: String(formData.get("expectedVersion") ?? ""),
+        },
+      }),
     );
+
+    const user = userEvent.setup();
+    const view = render(createElement(ProductEditForm, { product: PRODUCTO }));
+    await user.click(screen.getByRole("button", { name: "Editar producto" }));
+
+    const nombre = campo(view.container, "name")!;
+    await user.clear(nombre);
+    await user.type(nombre, "Mi corrección");
+
+    await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    await screen.findByRole("alert");
+
+    // Llega el refresco con la versión que dejó la otra persona.
+    view.rerender(
+      createElement(ProductEditForm, { product: { ...PRODUCTO, catalogVersion: 9 } }),
+    );
+
+    expect(campo(view.container, "expectedVersion")?.value).toBe("3");
+    expect(campo(view.container, "name")?.value).toBe("Mi corrección");
   });
 });

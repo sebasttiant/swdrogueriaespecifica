@@ -36,8 +36,8 @@ const ANTES = {
   reorderQty: 0,
   laboratoryId: null,
   active: true,
-  // El éxito devuelve el eco de lo guardado, y su testigo sale de acá.
-  updatedAt: new Date("2026-09-01T09:00:00.000Z"),
+  // El éxito devuelve el eco de lo guardado, y su versión sale de acá.
+  catalogVersion: 4,
 };
 
 function formData(overrides: Record<string, string> = {}): FormData {
@@ -50,7 +50,7 @@ function formData(overrides: Record<string, string> = {}): FormData {
     minStock: "5",
     reorderQty: "20",
     active: "on",
-    expectedUpdatedAt: "2026-08-31T12:00:00.000Z",
+    expectedVersion: "3",
     ...overrides,
   };
   for (const [k, v] of Object.entries(base)) fd.set(k, v);
@@ -100,7 +100,7 @@ describe("updateProductAction · lo que deja pasar al servicio", () => {
         "actorId",
         "active",
         "code",
-        "expectedUpdatedAt",
+        "expectedVersion",
         "laboratoryId",
         "laboratoryName",
         "minStock",
@@ -227,7 +227,7 @@ describe("updateProductAction · el laboratorio escrito no resuelve", () => {
     const [, data] = editProduct.mock.calls[0]!;
     expect(data.laboratoryName).toBe("Genfar");
     expect(data.laboratoryId).toBeNull();
-    expect(data.expectedUpdatedAt).toBeInstanceOf(Date);
+    expect(data.expectedVersion).toBe(3);
     expect(data.actorId).toBe("user-1");
   });
 });
@@ -250,10 +250,10 @@ describe("updateProductAction · el éxito devuelve lo GUARDADO", () => {
     expect(state.values?.minStock).toBe("42");
   });
 
-  it("el testigo del eco es el de la fila guardada", async () => {
+  it("la versión del eco es la YA INCREMENTADA de la fila guardada", async () => {
     const state = await updateProductAction({ error: null, ok: false }, formData());
 
-    expect(state.values?.expectedUpdatedAt).toBe("2026-09-01T09:00:00.000Z");
+    expect(state.values?.expectedVersion).toBe("4");
   });
 
   it("cada respuesta trae una identidad distinta, para poder remontar", async () => {
