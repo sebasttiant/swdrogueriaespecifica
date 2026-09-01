@@ -39,6 +39,9 @@ vi.mock("@/server/repositories/missing-item.repository", () => ({
   closeMissingItemsByEntry: vi.fn(),
   listArrivedMissingItems: vi.fn(),
 }));
+vi.mock("@/server/repositories/product.repository", () => ({
+  lockProductForEntry: vi.fn(),
+}));
 vi.mock("@/server/repositories/missing-report.repository", () => ({
   markReportsReceivedByMissingItemIds: vi.fn(),
 }));
@@ -46,6 +49,7 @@ vi.mock("@/server/services/notification-outbox.service", () => ({
   enqueuePendingAvailabilityNotification: vi.fn().mockResolvedValue({ id: "outbox-1" }),
 }));
 
+import { lockProductForEntry } from "@/server/repositories/product.repository";
 import {
   lockBatchLaboratoryEvidence,
   reserveReceivedBatchQuantity,
@@ -80,11 +84,15 @@ beforeEach(() => {
     (fn: (client: typeof tx) => unknown) => fn(tx),
   );
   // Producto identificado por defecto: sin SKU la entrada se rechaza antes de
-  // escribir, y estos casos vienen a probar la transacción.
-  tx.product.findUnique.mockResolvedValue({
+  // escribir, y estos casos vienen a probar la transacción. La lectura va
+  // BLOQUEADA (`FOR UPDATE`): es la misma que valida las versiones declaradas.
+  vi.mocked(lockProductForEntry).mockResolvedValue({
     id: "prod_1",
     name: "Acetaminofén",
     orionCode: "ORN-1",
+    unit: "caja",
+    identityVersion: 0,
+    catalogVersion: 0,
   });
   vi.mocked(upsertBatchQuantity).mockResolvedValue({ id: "batch_1" } as never);
   // Por defecto el lote no existe todavía: la entrada lo crea.

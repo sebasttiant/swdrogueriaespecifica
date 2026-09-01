@@ -25,6 +25,10 @@ import {
 import type { Prisma } from "@/lib/generated/prisma/client";
 import { laboratoryCreateCommandKey } from "@/server/domain/laboratory/identity";
 import {
+  lockProductForEntry,
+  type EntryProductSnapshot,
+} from "@/server/repositories/product.repository";
+import {
   lockBatchLaboratoryEvidence,
   reserveReceivedBatchQuantity,
   reserveBatchForPending,
@@ -71,6 +75,21 @@ export type RegisterInventoryEntryInput = {
    * específico que escribir el nombre.
    */
   receivedLaboratoryName?: string;
+  /**
+   * Las versiones del producto que el formulario le MOSTRO a la persona.
+   *
+   * Van OPCIONALES a proposito. El compare-and-set protege la decision de una
+   * persona que leyo una pantalla y despues mando: existe una fotografia contra
+   * la cual comparar. Un llamador programatico —el verificador de invariantes,
+   * un test de reconciliacion— no leyo ninguna pantalla y no tiene nada que
+   * declarar; exigirle un numero lo obligaria a inventarlo, y un numero
+   * inventado que siempre coincide es un control que no controla nada.
+   *
+   * El unico camino que una persona usa es la Server Action, y ahi el esquema
+   * las exige: la proteccion no es opcional donde importa.
+   */
+  expectedIdentityVersion?: number;
+  expectedCatalogVersion?: number;
 };
 
 export type RegisterInventoryEntryResult = {
@@ -79,6 +98,13 @@ export type RegisterInventoryEntryResult = {
   /** @deprecated compatibility alias; counts allocation recipients. */
   closedMissingCount: number;
   idempotent: boolean;
+  /**
+   * El producto AUTORITATIVO contra el que se escribio.
+   *
+   * Ausente en un reintento idempotente: ahi no se escribio nada nuevo, y por
+   * lo tanto no hay nada nuevo que auditar.
+   */
+  product?: EntryProductSnapshot;
 };
 
 export class IdempotencyPayloadConflictError extends Error {
@@ -140,6 +166,41 @@ export class ProductIdentityRequiredError extends Error {
     super("product has no Orion code");
     this.productId = params.productId;
     this.productName = params.productName;
+  }
+}
+
+/**
+ * El `productId` no corresponde a ninguna fila.
+ *
+ * Antes esto no se distinguia: la lectura devolvia `null`, el codigo seguia, y
+ * la entrada moria mas adelante contra la clave foranea del lote con un error
+ * generico. Quien recibia la caja leia "no se pudo registrar la entrada" y no
+ * tenia forma de saber que el producto habia dejado de existir.
+ */
+export class ProductNotFoundError extends Error {
+  readonly productId: string;
+
+  constructor(productId: string) {
+    super("product not found");
+    this.productId = productId;
+  }
+}
+
+/**
+ * El producto cambio entre que la persona lo vio y que mando la entrada.
+ *
+ * Los DOS contadores viajan en el mismo error porque el desenlace es el mismo
+ * —la entrada no se registra— y lo unico que cambia es QUE cambio. `kind` lo
+ * dice; el resto del producto viaja entero para que el mensaje pueda nombrar el
+ * SKU y la presentacion que la fila tiene AHORA, que es lo que la persona
+ * necesita cotejar contra la caja que tiene en la mano.
+ */
+export class ProductVersionConflictError extends Error {
+  constructor(
+    readonly kind: "identity" | "catalog",
+    readonly product: EntryProductSnapshot,
+  ) {
+    super(`product ${kind} version changed`);
   }
 }
 
@@ -229,21 +290,6 @@ export async function registerInventoryEntry(
     // misma entrada produce el mismo fingerprint aunque el nombre se haya
     // escrito con otras mayúsculas, y cualquier fallo posterior revierte
     // también el laboratorio.
-    // El SKU se exige ANTES de escribir nada. Va dentro de la transacción para
-    // que la lectura sea la misma que verá el resto de la operación: si alguien
-    // completa la identidad mientras esta entrada corre, la que manda es la que
-    // esta transacción vio.
-    const product = await tx.product.findUnique({
-      where: { id: data.productId },
-      select: { id: true, name: true, orionCode: true },
-    });
-    if (product && !product.orionCode) {
-      throw new ProductIdentityRequiredError({
-        productId: product.id,
-        productName: product.name,
-      });
-    }
-
     const resolvedData = await resolveLaboratoryName(data, tx);
     const fingerprint = requestFingerprint(resolvedData);
     data = resolvedData;
@@ -255,6 +301,43 @@ export async function registerInventoryEntry(
       }
     }
     const idempotencyKey = data.idempotencyKey ?? crypto.randomUUID();
+
+    // ----------------------------------------------------------------------
+    // La fotografia del producto, bloqueada, ANTES de escribir una sola fila.
+    //
+    // Va DESPUES del chequeo de idempotencia a proposito. Un reintento de una
+    // entrada YA confirmada no es una decision nueva: es la misma, que ya se
+    // tomo y ya se escribio. Validarle las versiones contra el producto de hoy
+    // convertiria un reintento legitimo —el navegador que reenvia, la red que
+    // se corto— en un conflicto inventado, y la persona vería un error por una
+    // entrada que en realidad esta registrada.
+    //
+    // Y va ANTES de tocar el lote porque comprobar despues de escribir no
+    // comprueba nada: para cuando se detectara el conflicto, el stock ya
+    // existiria. El `FOR UPDATE` cierra la ventana entre la comprobacion y la
+    // escritura; el `throw` revierte la transaccion entera.
+    // ----------------------------------------------------------------------
+    const product = await lockProductForEntry(tx, data.productId);
+    if (!product) throw new ProductNotFoundError(data.productId);
+    if (!product.orionCode) {
+      throw new ProductIdentityRequiredError({
+        productId: product.id,
+        productName: product.name,
+      });
+    }
+    // La identidad primero: si cambio el SKU, eso es lo que hay que nombrar.
+    if (
+      data.expectedIdentityVersion !== undefined &&
+      data.expectedIdentityVersion !== product.identityVersion
+    ) {
+      throw new ProductVersionConflictError("identity", product);
+    }
+    if (
+      data.expectedCatalogVersion !== undefined &&
+      data.expectedCatalogVersion !== product.catalogVersion
+    ) {
+      throw new ProductVersionConflictError("catalog", product);
+    }
 
     // La evidencia de laboratorio se decide ANTES de tocar el lote. El lock es
     // lo que hace que la comparación signifique algo bajo concurrencia.
@@ -299,7 +382,7 @@ export async function registerInventoryEntry(
     if (!data.idempotencyKey) {
       const closedIds = await closeMissingItemsByEntry(tx, { productId: data.productId, availableQuantity: data.quantity });
       await markReportsReceivedByMissingItemIds(tx, closedIds);
-      return { entry, allocatedMissingCount: closedIds.length, closedMissingCount: closedIds.length, idempotent: false };
+      return { entry, allocatedMissingCount: closedIds.length, closedMissingCount: closedIds.length, idempotent: false, product };
     }
     // FIFO cuantitativo: se bloquean los faltantes del producto y cada unidad de
     // esta entrada queda ligada a exactamente un faltante. Los parciales quedan
@@ -361,7 +444,7 @@ export async function registerInventoryEntry(
       await reserveReceivedBatchQuantity(tx, batch.id, reservedQuantity);
     }
     await markReportsReceivedByMissingItemIds(tx, closedMissingIds);
-    return { entry, allocatedMissingCount, closedMissingCount: allocatedMissingCount, idempotent: false };
+    return { entry, allocatedMissingCount, closedMissingCount: allocatedMissingCount, idempotent: false, product };
     });
   } catch (error) {
     // A simultaneous retry can pass the preflight read in both transactions.

@@ -19,6 +19,8 @@ const {
   LaboratoryEvidenceConflictError,
   LaboratoryNameResolutionError,
   ProductIdentityRequiredError,
+  ProductNotFoundError,
+  ProductVersionConflictError,
 } = vi.hoisted(() => ({
   requireCapability: vi.fn(),
   registerInventoryEntry: vi.fn(),
@@ -41,6 +43,26 @@ const {
       this.requestedName = requestedName;
     }
   },
+  ProductNotFoundError: class extends Error {
+    constructor(readonly productId: string) {
+      super("product not found");
+    }
+  },
+  ProductVersionConflictError: class extends Error {
+    constructor(
+      readonly kind: "identity" | "catalog",
+      readonly product: {
+        id: string;
+        name: string;
+        orionCode: string | null;
+        unit: string;
+        identityVersion: number;
+        catalogVersion: number;
+      },
+    ) {
+      super(`product ${kind} version changed`);
+    }
+  },
   LaboratoryEvidenceConflictError: class extends Error {
     readonly batchCode: string;
     readonly existingLaboratoryName: string | null;
@@ -59,6 +81,8 @@ vi.mock("@/server/services/inventory-entry.service", () => ({
   LaboratoryEvidenceConflictError,
   LaboratoryNameResolutionError,
   ProductIdentityRequiredError,
+  ProductNotFoundError,
+  ProductVersionConflictError,
 }));
 vi.mock("@/server/services/audit.service", () => ({
   recordAudit,
@@ -68,6 +92,15 @@ vi.mock("@/server/services/audit.service", () => ({
 import { createInventoryEntryAction } from "./entry.actions";
 
 const PREV = { error: null, ok: false };
+/** Lo que la FILA dice, que no es lo mismo que lo que mandó el formulario. */
+const PRODUCTO = {
+  id: "prod-1",
+  name: "Amoxicilina",
+  orionCode: "ORN-REAL",
+  unit: "frasco",
+  identityVersion: 3,
+  catalogVersion: 7,
+};
 const session = { user: { id: "u1", email: "b@x.com", name: "Bodega", role: "BODEGA" } };
 
 function formData(overrides: Record<string, string> = {}) {
@@ -78,6 +111,8 @@ function formData(overrides: Record<string, string> = {}) {
     batchCode: "LOTE-001",
     expiresAt: "2027-01-01T10:00",
     idempotencyKey: "00000000-0000-4000-8000-000000000001",
+    expectedIdentityVersion: "3",
+    expectedCatalogVersion: "7",
     ...overrides,
   };
   for (const [key, value] of Object.entries(fields)) data.append(key, value);
@@ -91,6 +126,8 @@ beforeEach(() => {
   registerInventoryEntry.mockResolvedValue({
     entry: { id: "entry-1" },
     allocatedMissingCount: 0,
+    idempotent: false,
+    product: PRODUCTO,
   });
 });
 
@@ -288,5 +325,126 @@ describe("createInventoryEntryAction · identidad obligatoria", () => {
     await createInventoryEntryAction(PREV, formData());
 
     expect(revalidatePath).not.toHaveBeenCalled();
+  });
+});
+
+describe("createInventoryEntryAction · la fotografía declarada", () => {
+  it("le pasa al servicio las dos versiones que la pantalla mostró", async () => {
+    await createInventoryEntryAction(PREV, formData());
+
+    expect(registerInventoryEntry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expectedIdentityVersion: 3,
+        expectedCatalogVersion: 7,
+      }),
+    );
+  });
+
+  it("rechaza la entrada que no declara ninguna versión", async () => {
+    const data = formData();
+    data.delete("expectedCatalogVersion");
+
+    const result = await createInventoryEntryAction(PREV, data);
+
+    expect(result.ok).toBe(false);
+    expect(registerInventoryEntry).not.toHaveBeenCalled();
+  });
+
+  // El SKU y la presentación que viajan son lo que la persona VIO. No deciden
+  // nada: el servicio lee los suyos de la fila bajo lock.
+  it("NO le pasa al servicio el SKU ni la presentación del cliente", async () => {
+    await createInventoryEntryAction(
+      PREV,
+      formData({ displayedSku: "ORN-INVENTADO", displayedPresentation: "ampolla" }),
+    );
+
+    expect(registerInventoryEntry).toHaveBeenCalledWith(
+      expect.not.objectContaining({ displayedSku: expect.anything() }),
+    );
+  });
+});
+
+describe("createInventoryEntryAction · el producto cambió en el medio", () => {
+  it("traduce el conflicto de identidad nombrando el SKU nuevo", async () => {
+    registerInventoryEntry.mockRejectedValue(
+      new ProductVersionConflictError("identity", { ...PRODUCTO, orionCode: "ORN-NUEVO" }),
+    );
+
+    const result = await createInventoryEntryAction(PREV, formData());
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("El SKU");
+    expect(result.error).toContain("ORN-NUEVO");
+    expect(result.conflict).toMatchObject({ identityVersion: 3, catalogVersion: 7 });
+  });
+
+  it("traduce el conflicto de catálogo nombrando la presentación nueva", async () => {
+    registerInventoryEntry.mockRejectedValue(
+      new ProductVersionConflictError("catalog", { ...PRODUCTO, unit: "caja" }),
+    );
+
+    const result = await createInventoryEntryAction(PREV, formData());
+
+    expect(result.error).toContain("caja");
+    expect(result.conflict?.presentation).toBe("caja");
+  });
+
+  // Un rechazo NO es un éxito a medias: no se audita nada.
+  it("un conflicto no escribe auditoría", async () => {
+    registerInventoryEntry.mockRejectedValue(
+      new ProductVersionConflictError("catalog", PRODUCTO),
+    );
+
+    await createInventoryEntryAction(PREV, formData());
+
+    expect(recordAudit).not.toHaveBeenCalled();
+  });
+
+  it("distingue el producto que ya no existe", async () => {
+    registerInventoryEntry.mockRejectedValue(new ProductNotFoundError("prod-1"));
+
+    const result = await createInventoryEntryAction(PREV, formData());
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("ya no está disponible");
+  });
+});
+
+describe("createInventoryEntryAction · auditoría", () => {
+  it("registra el SKU, la presentación y las versiones AUTORITATIVAS", async () => {
+    await createInventoryEntryAction(
+      PREV,
+      formData({ displayedSku: "ORN-VIEJO", displayedPresentation: "sobre" }),
+    );
+
+    expect(recordAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        after: expect.objectContaining({
+          sku: "ORN-REAL",
+          presentation: "frasco",
+          identityVersion: 3,
+          catalogVersion: 7,
+          // Y lo que la persona tenía delante, que es otra pregunta.
+          displayedSku: "ORN-VIEJO",
+          displayedPresentation: "sobre",
+        }),
+      }),
+    );
+  });
+
+  // Una segunda fila de ENTRY_CREATE afirmaría dos creaciones del mismo
+  // registro, y quien cuadre el inventario contaría dos veces una caja que
+  // entró una sola.
+  it("un reintento idempotente NO vuelve a auditar", async () => {
+    registerInventoryEntry.mockResolvedValue({
+      entry: { id: "entry-1" },
+      allocatedMissingCount: 0,
+      idempotent: true,
+    });
+
+    const result = await createInventoryEntryAction(PREV, formData());
+
+    expect(result.ok).toBe(true);
+    expect(recordAudit).not.toHaveBeenCalled();
   });
 });

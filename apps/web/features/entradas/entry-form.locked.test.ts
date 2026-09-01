@@ -31,6 +31,9 @@ const GEL_A: ProductOption = {
   code: "PROV-a",
   orionCode: "ORN-111",
   laboratoryName: "MK",
+  unit: "frasco",
+  identityVersion: 0,
+  catalogVersion: 0,
 };
 const GEL_B: ProductOption = {
   id: "prod-b",
@@ -38,6 +41,9 @@ const GEL_B: ProductOption = {
   code: "PROV-b",
   orionCode: "ORN-222",
   laboratoryName: "Genfar",
+  unit: "caja",
+  identityVersion: 0,
+  catalogVersion: 0,
 };
 
 function renderForm(props: Partial<Parameters<typeof EntryForm>[0]> = {}) {
@@ -113,12 +119,18 @@ describe("EntryForm · entrada suelta", () => {
   });
 
   // Lo que hacía indistinguibles a los tres "Gel": la opción mostraba el código
-  // INTERNO, que no significa nada del otro lado del mostrador.
-  it("distingue productos parecidos por SKU y laboratorio", () => {
+  // INTERNO, que no significa nada del otro lado del mostrador. Ahora lleva
+  // también la presentación, que es lo que separa un frasco de una caja de 30
+  // sobres del mismo medicamento y la misma marca.
+  it("distingue productos parecidos por SKU, presentación y laboratorio", () => {
     renderForm();
 
-    expect(screen.getByRole("option", { name: /Gel Caliente Muscular — ORN-111 · MK/ })).toBeDefined();
-    expect(screen.getByRole("option", { name: /Gel Muscular Caliente — ORN-222 · Genfar/ })).toBeDefined();
+    expect(
+      screen.getByRole("option", { name: /Gel Caliente Muscular — ORN-111 · frasco · MK/ }),
+    ).toBeDefined();
+    expect(
+      screen.getByRole("option", { name: /Gel Muscular Caliente — ORN-222 · caja · Genfar/ }),
+    ).toBeDefined();
   });
 
   it("no muestra el código interno, que no identifica nada", () => {

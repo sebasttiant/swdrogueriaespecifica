@@ -26,6 +26,12 @@ export type ProductListItem = Pick<
   // un pendiente necesita cotejarlo contra Orion, y el `code` interno no existe
   // del otro lado.
   | "orionCode"
+  // Los DOS contadores que protegen al producto. Viajan al listado porque la
+  // pantalla que deja elegir un producto es la que despues tiene que declarar
+  // contra que fotografia se escribio: sin ellos, quien registra una entrada no
+  // puede decir que fue lo que vio.
+  | "identityVersion"
+  | "catalogVersion"
 > & {
   // Earliest expiry among batches with quantity > 0. Null if no active batches.
   // Used to compute per-product worst expiry tier in the catalog list (S3).
@@ -66,6 +72,8 @@ const LIST_SELECT = {
   minStock: true,
   reorderQty: true,
   active: true,
+  identityVersion: true,
+  catalogVersion: true,
   createdAt: true,
   // El laboratorio desempata cuando dos productos se llaman parecido. Sin él,
   // la lista de entradas obliga a elegir entre nombres casi idénticos.
@@ -127,6 +135,47 @@ export async function listProducts(params: {
   });
 
   return { items, nextCursor };
+}
+
+/**
+ * La fotografia AUTORITATIVA del producto para registrar una entrada.
+ *
+ * Es lo que la fila dice, no lo que el formulario mando.
+ */
+export type EntryProductSnapshot = {
+  id: string;
+  name: string;
+  orionCode: string | null;
+  /** `unit` es la PRESENTACION: frasco, sobre, caja, blister, ampolla. */
+  unit: string;
+  identityVersion: number;
+  catalogVersion: number;
+};
+
+/**
+ * Bloquea la fila del producto y devuelve su estado autoritativo.
+ *
+ * `FOR UPDATE` es lo que hace que la comparacion de versiones signifique algo.
+ * Sin el lock quedaria una ventana entre leer la version y escribir el lote: en
+ * ese hueco alguien edita el producto, la comprobacion ya paso, y la entrada se
+ * registra contra una identidad que dejo de existir. Con el lock, una edicion
+ * simultanea espera a que esta transaccion termine, y esta transaccion ve un
+ * valor que no puede cambiar debajo suyo.
+ *
+ * DEBE llamarse dentro de una transaccion, y DESPUES de resolver el
+ * laboratorio: `editProduct` toma `laboratories` y luego `products`, asi que
+ * tomarlos al reves aca cruzaria las esperas y PostgreSQL matarial una de las
+ * dos con 40P01. El orden es unico para todo el sistema.
+ */
+export async function lockProductForEntry(
+  tx: Prisma.TransactionClient,
+  id: string,
+): Promise<EntryProductSnapshot | null> {
+  const rows = await tx.$queryRaw<EntryProductSnapshot[]>`
+    SELECT id, name, "orionCode", unit, "identityVersion", "catalogVersion"
+    FROM products WHERE id = ${id} FOR UPDATE
+  `;
+  return rows[0] ?? null;
 }
 
 export async function findProductById(id: string): Promise<Product | null> {

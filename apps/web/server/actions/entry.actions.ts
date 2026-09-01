@@ -12,6 +12,8 @@ import {
   LaboratoryEvidenceConflictError,
   LaboratoryNameResolutionError,
   ProductIdentityRequiredError,
+  ProductNotFoundError,
+  ProductVersionConflictError,
   registerInventoryEntry,
 } from "@/server/services/inventory-entry.service";
 import { inventoryEntryCreateSchema } from "@/features/entradas/schema";
@@ -37,7 +39,46 @@ export type EntryFormState = {
    * idénticos repite el problema que hizo elegir el equivocado.
    */
   resolveSkuForProductId?: string;
+  /**
+   * La fotografia ACTUAL del producto, cuando la entrada se rechazo porque
+   * cambio en el medio.
+   *
+   * Viaja para que la pantalla pueda mostrar lo que el producto dice ahora y
+   * ofrecer adoptarlo como UN ACTO EXPLICITO de la persona. Adoptarlo solo
+   * dejaria pasar el reintento sin que nadie haya vuelto a mirar la caja, que
+   * es el mismo agujero que el control de versiones cierra.
+   */
+  conflict?: {
+    /**
+     * A QUE producto pertenece este conflicto.
+     *
+     * Sin el, la pantalla no puede distinguir "cambio el producto que estoy
+     * cargando" de "cambio otro". La identidad que vuelve aca describe UNA fila
+     * concreta; aplicarla sobre otra afirmaria algo que esa otra fila no dice.
+     */
+    productId: string;
+    /** El nombre tambien es catalogo: una edicion pudo cambiarlo. */
+    name: string;
+    sku: string | null;
+    presentation: string;
+    identityVersion: number;
+    catalogVersion: number;
+  };
 };
+
+/**
+ * El mensaje del conflicto, en español neutral.
+ *
+ * Nombra QUE cambio y CUANTO vale ahora. "El producto cambió, intenta de
+ * nuevo" manda a reintentar a ciegas contra un dato que no se leyo.
+ */
+function conflictMessage(error: ProductVersionConflictError): string {
+  const { product } = error;
+  if (error.kind === "identity") {
+    return `El SKU de "${product.name}" cambió mientras registrabas la entrada. Ahora es ${product.orionCode ?? "ninguno"}. Verifica el SKU y la presentación contra la caja antes de confirmar.`;
+  }
+  return `Los datos de "${product.name}" cambiaron mientras registrabas la entrada. Presentación actual: ${product.unit}. Verifica el SKU y la presentación contra la caja antes de confirmar.`;
+}
 
 export async function createInventoryEntryAction(
   _prev: EntryFormState,
@@ -56,6 +97,10 @@ export async function createInventoryEntryAction(
     receivedLaboratoryId: formData.get("receivedLaboratoryId") ?? undefined,
     receivedLaboratoryName: formData.get("receivedLaboratoryName") ?? undefined,
     idempotencyKey: formData.get("idempotencyKey"),
+    expectedIdentityVersion: formData.get("expectedIdentityVersion"),
+    expectedCatalogVersion: formData.get("expectedCatalogVersion"),
+    displayedSku: formData.get("displayedSku") ?? undefined,
+    displayedPresentation: formData.get("displayedPresentation") ?? undefined,
   });
 
   if (!parsed.success) {
@@ -70,7 +115,7 @@ export async function createInventoryEntryAction(
   // —payload de idempotencia distinto, evidencia en conflicto— dejaba en el
   // catálogo un laboratorio que nadie pidió. Resolver adentro es lo que hace
   // que el rollback también se lo lleve.
-  const entryData = parsed.data;
+  const { displayedSku, displayedPresentation, ...entryData } = parsed.data;
 
   let allocatedMissingCount = 0;
 
@@ -81,6 +126,15 @@ export async function createInventoryEntryAction(
     });
 
     allocatedMissingCount = result.allocatedMissingCount;
+
+    // Un reintento idempotente NO se audita. La entrada ya tiene su fila de
+    // ENTRY_CREATE; escribir una segunda afirmaria dos creaciones del mismo
+    // registro, y quien despues lea la auditoria para cuadrar el inventario
+    // contaria dos veces una mercaderia que entro una sola.
+    if (result.idempotent) {
+      revalidatePath("/entradas");
+      return { error: null, ok: true, closedMissingCount: 0 };
+    }
 
     const context = await auditContextFromHeaders(session.user.id);
 
@@ -94,6 +148,17 @@ export async function createInventoryEntryAction(
         quantity: entryData.quantity,
         batchCode: entryData.batchCode,
         expiresAt: entryData.expiresAt.toISOString(),
+        // La identidad AUTORITATIVA contra la que se escribio, con las dos
+        // versiones que se validaron: es lo que permite reconstruir despues
+        // contra que producto entro esta caja.
+        sku: result.product?.orionCode ?? null,
+        presentation: result.product?.unit ?? null,
+        identityVersion: result.product?.identityVersion ?? null,
+        catalogVersion: result.product?.catalogVersion ?? null,
+        // Y lo que la persona tenia DELANTE al confirmar, que es una pregunta
+        // distinta de lo que decia el catalogo.
+        displayedSku: displayedSku ?? null,
+        displayedPresentation: displayedPresentation ?? null,
         // Lo que la persona pidió, que es lo que hay que poder auditar. El id
         // resuelto lo decide el servicio y ya queda en el lote.
         receivedLaboratoryId: entryData.receivedLaboratoryId ?? null,
@@ -124,6 +189,28 @@ export async function createInventoryEntryAction(
     // crea inventario que después nadie puede cuadrar contra Orion. El mensaje
     // nombra el producto y dice DÓNDE resolverlo — quien recibe la caja tiene el
     // código impreso encima y puede completarlo ahora mismo.
+    if (error instanceof ProductNotFoundError) {
+      return {
+        error: "El producto ya no está disponible. Actualiza la pantalla y vuelve a elegirlo.",
+        ok: false,
+      };
+    }
+    // El producto cambio mientras la caja estaba sobre el mostrador. No se
+    // registra contra la fotografia vieja: se le dice a la persona QUE cambio.
+    if (error instanceof ProductVersionConflictError) {
+      return {
+        error: conflictMessage(error),
+        ok: false,
+        conflict: {
+          productId: error.product.id,
+          name: error.product.name,
+          sku: error.product.orionCode,
+          presentation: error.product.unit,
+          identityVersion: error.product.identityVersion,
+          catalogVersion: error.product.catalogVersion,
+        },
+      };
+    }
     if (error instanceof ProductIdentityRequiredError) {
       return {
         error: `"${error.productName}" todavía no tiene SKU (código de Orión). Completalo y volvé a registrar la entrada.`,

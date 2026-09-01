@@ -12,6 +12,24 @@ const optionalText = (max: number) =>
     .optional()
     .transform((value) => (value && value.length > 0 ? value : undefined));
 
+/**
+ * Una versión declarada por el formulario.
+ *
+ * NO se usa `z.coerce.number()`. `FormData.get` devuelve `null` cuando el campo
+ * no viaja, y `Number(null)` es `0` —un valor perfectamente válido, y además la
+ * versión que tiene todo producto que nadie editó nunca—. Es decir: un
+ * formulario al que le falte el campo declararía "vi la versión 0", el
+ * compare-and-set coincidiría, y la entrada pasaría sin que nadie haya
+ * declarado nada. Un control que se satisface solo no controla.
+ *
+ * Exigir una cadena de dígitos hace que la ausencia sea un rechazo, no un cero.
+ */
+const declaredVersion = z
+  .string({ error: "Falta la versión del producto" })
+  .trim()
+  .regex(/^\d+$/, "La versión del producto no es válida")
+  .transform(Number);
+
 // Validación del alta de una entrada de inventario. La cantidad llega como
 // string desde el FormData, por eso se coerciona. `productId` y `batchCode`
 // son obligatorios; `expiresAt` es REQUERIDO (ProductBatch.expiresAt NOT NULL).
@@ -46,6 +64,25 @@ export const inventoryEntryCreateSchema = z.object({
   receivedLaboratoryId: optionalText(64),
   receivedLaboratoryName: optionalText(120),
   idempotencyKey: z.string().uuid(),
+  // ------------------------------------------------------------------------
+  // La fotografia del producto que la pantalla le MOSTRO a la persona.
+  //
+  // OBLIGATORIAS. Este es el unico camino por el que una persona registra una
+  // entrada, y una entrada sin fotografia declarada es exactamente lo que este
+  // slice viene a impedir: mercaderia cargada contra una identidad que ya
+  // cambio y que nadie puede reconstruir despues.
+  //
+  // Enteras, no fechas. `updatedAt` dice CUANDO paso algo, no en que ORDEN, y
+  // dos escrituras rapidas pueden compartir milisegundo.
+  // ------------------------------------------------------------------------
+  expectedIdentityVersion: declaredVersion,
+  expectedCatalogVersion: declaredVersion,
+  // El SKU y la presentacion TAL COMO SE VIERON. No deciden nada: el servidor
+  // lee los suyos de la fila bajo lock. Viajan para que la auditoria pueda
+  // decir que tenia delante la persona cuando confirmo, que es una pregunta
+  // distinta de que decia el catalogo.
+  displayedSku: optionalText(64),
+  displayedPresentation: optionalText(40),
 });
 
 export type InventoryEntryCreateInput = z.infer<

@@ -18,7 +18,11 @@ const { prismaMock, tx } = vi.hoisted(() => {
 });
 
 vi.mock("@/lib/db/prisma", () => ({ prisma: prismaMock }));
+vi.mock("@/server/repositories/product.repository", () => ({
+  lockProductForEntry: vi.fn(),
+}));
 
+import { lockProductForEntry } from "@/server/repositories/product.repository";
 import { registerInventoryEntry } from "./inventory-entry.service";
 
 type MissingItemState = {
@@ -41,10 +45,13 @@ let missingItems: MissingItemState[];
 let missingReports: MissingReportState[];
 
 beforeEach(() => {
-  tx.product.findUnique.mockResolvedValue({
+vi.mocked(lockProductForEntry).mockResolvedValue({
     id: "prod_1",
     name: "Acetaminofén",
     orionCode: "ORN-1",
+    unit: "caja",
+    identityVersion: 0,
+    catalogVersion: 0,
   });
   vi.clearAllMocks();
   missingItems = [
