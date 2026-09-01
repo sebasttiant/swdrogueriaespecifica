@@ -1,8 +1,16 @@
-import { adminPageHref, type UserFilters } from "@/features/admin/filters";
+import { ArchiveX, SearchX, UserRoundX } from "lucide-react";
+
+import {
+  adminPageHref,
+  hasActiveFilters,
+  type UserFilters,
+} from "@/features/admin/filters";
 import Link from "next/link";
 
 import { Badge } from "@/app/_components/ui/badge";
 import { Card } from "@/app/_components/ui/card";
+import { cn } from "@/lib/utils/cn";
+import { EmptyState } from "@/app/_components/ui/empty-state";
 import { canManageUserWithRole } from "@/lib/auth/permissions";
 import type { UserRole } from "@/lib/generated/prisma/client";
 import type { UserListItem } from "@/server/repositories/user.repository";
@@ -24,6 +32,13 @@ type UserListProps = {
   /** When true the list includes archived rows with their restore controls. */
   showArchived: boolean;
 };
+
+/**
+ * Altura táctil del proyecto: 44 px. El área interactiva puede ser más alta que
+ * el texto; lo que no puede es ser más chica que un dedo adulto.
+ */
+const ACCION_TACTIL =
+  "inline-flex min-h-11 min-w-11 items-center justify-center font-semibold text-primary underline-offset-2 hover:underline";
 
 const ROLE_TONE: Record<UserRole, "primary" | "warning" | "neutral"> = {
   SUPERADMIN: "primary",
@@ -49,8 +64,62 @@ function archivedBadge() {
   return <Badge tone="danger">Archivado</Badge>;
 }
 
-// Listado de usuarios. Mobile-first (tarjetas) y, en desktop (lg+), tabla
-// compacta para escanear. Acciones grandes y tocables para el gerente.
+/**
+ * Por qué esta lista está vacía, y qué hacer al respecto.
+ *
+ * Son cuatro situaciones distintas y decir la equivocada desinforma. "No hay
+ * usuarios archivados" cuando en realidad hay muchos y lo que no coincide es el
+ * filtro no es un mensaje incompleto: es una afirmación falsa. Quien la lee
+ * concluye que no hay a quién restaurar y se va.
+ *
+ * Cada estado ofrece la salida que corresponde: limpiar los filtros cuando el
+ * problema son los filtros, y volver a la lista operativa cuando se está
+ * mirando la otra.
+ */
+function VaciaPorque({ filters }: { filters: UserFilters }) {
+  const conFiltros = hasActiveFilters(filters);
+
+  if (filters.archived) {
+    return (
+      <div className="space-y-3">
+        <EmptyState
+          icon={ArchiveX}
+          title={
+            conFiltros
+              ? "No hay usuarios archivados con estos filtros."
+              : "No hay usuarios archivados."
+          }
+          description={
+            conFiltros
+              ? "Puede haber usuarios archivados que no coinciden con la búsqueda."
+              : "Los usuarios que archives van a aparecer acá."
+          }
+        />
+      </div>
+    );
+  }
+
+  if (conFiltros) {
+    return (
+      <EmptyState
+        icon={SearchX}
+        title="Sin coincidencias"
+        description="Ningún usuario coincide con la búsqueda o los filtros aplicados."
+      />
+    );
+  }
+
+  return (
+    <EmptyState
+      icon={UserRoundX}
+      title="Todavía no hay usuarios"
+      description="Creá la primera cuenta desde el formulario de arriba."
+    />
+  );
+}
+
+// Listado de usuarios. Mobile-first (tarjetas) y, desde 1.400 px, tabla compacta
+// para escanear. Acciones grandes y tocables para el gerente.
 export function UserList({
   items,
   nextCursor,
@@ -64,19 +133,17 @@ export function UserList({
   if (items.length === 0) {
     return (
       <Card>
-        <p className="text-base text-muted-foreground">
-          {showArchived
-            ? "No hay usuarios archivados."
-            : "Todavía no hay usuarios. Creá el primero arriba."}
-        </p>
+        <VaciaPorque filters={filters} />
       </Card>
     );
   }
 
   return (
     <div className="space-y-3">
-      {/* Mobile / tablet: tarjetas apiladas. */}
-      <div className="space-y-3 lg:hidden">
+      {/* La tabla necesita al menos 1.080 px útiles. Con el sidebar y el padding
+          del shell, a 1.280 px solo quedan 960 px: ahí se conservan las tarjetas
+          para que ninguna acción dependa de un scroll lateral oculto. */}
+      <div className="space-y-3 min-[1400px]:hidden">
         {items.map((user) => {
           const isArchived = user.archivedAt !== null;
           const isSelf = user.id === currentUserId;
@@ -91,7 +158,7 @@ export function UserList({
                 <div className="min-w-0">
                   <p className="break-words font-semibold text-text">{user.name}</p>
                   <p className="break-words text-sm text-muted-foreground">
-                    {user.email}
+                    <span className="break-all">{user.email}</span>
                   </p>
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1.5">
@@ -103,7 +170,7 @@ export function UserList({
                 {!isArchived && canManage ? (
                   <Link prefetch={false}
                     href={`/admin/${user.id}`}
-                    className="text-sm font-semibold text-primary hover:underline"
+                    className={cn(ACCION_TACTIL, "text-sm")}
                   >
                     Editar
                   </Link>
@@ -133,9 +200,10 @@ export function UserList({
         })}
       </div>
 
-      {/* Desktop: tabla compacta. */}
-      <Card className="hidden overflow-x-auto p-0 lg:block">
-        <table className="w-full min-w-[44rem] text-left text-sm">
+      {/* Escritorios con ancho útil suficiente: tabla compacta. Las acciones
+          envuelven y el correo puede cortarse para tolerar contenido largo. */}
+      <Card className="hidden overflow-x-auto p-0 min-[1400px]:block">
+        <table className="w-full text-left text-sm">
           <thead className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
             <tr>
               <th className="px-4 py-3 font-medium">Nombre</th>
@@ -164,7 +232,7 @@ export function UserList({
                     {user.name}
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
-                    {user.email}
+                    <span className="break-all">{user.email}</span>
                   </td>
                   <td className="px-4 py-3">{roleBadge(user.role)}</td>
                   <td className="px-4 py-3">
@@ -178,11 +246,11 @@ export function UserList({
                         <span className="text-xs text-muted-foreground">—</span>
                       )
                     ) : canManage || (isSuperAdmin && !isSelf) ? (
-                      <div className="flex items-center gap-4">
+                      <div className="flex flex-wrap items-center justify-end gap-2">
                         {canManage ? (
                           <Link prefetch={false}
                             href={`/admin/${user.id}`}
-                            className="font-semibold text-primary hover:underline"
+                            className={ACCION_TACTIL}
                           >
                             Editar
                           </Link>
@@ -215,7 +283,7 @@ export function UserList({
         <div className="pt-1 text-center">
           <Link prefetch={false}
             href={adminPageHref(filters, { cursor: nextCursor })}
-            className="text-sm font-semibold text-primary hover:underline"
+            className={cn(ACCION_TACTIL, "text-sm")}
           >
             Ver más
           </Link>

@@ -64,8 +64,24 @@ function parseStatus(value: string | undefined): UserStatusFilter | undefined {
     : undefined;
 }
 
+/**
+ * Estado y archivados no se combinan.
+ *
+ * `archiveUser` escribe `archivedAt` y `active: false` en la misma operacion:
+ * TODO archivado esta inactivo. Entonces "archivados + activos" es un conjunto
+ * vacio por construccion, y una pantalla que lo ofrece promete resultados que
+ * no pueden existir; el mensaje de lista vacia terminaria diciendo "no hay
+ * archivados" cuando lo que no coincide es el filtro.
+ *
+ * La regla vive ACA y no en la barra de filtros porque tambien tiene que valer
+ * para una URL escrita a mano.
+ */
+function normalize(filters: UserFilters): UserFilters {
+  return filters.archived ? { ...filters, status: undefined } : filters;
+}
+
 export function parseUserFilters(params: RawSearchParams): UserFilters {
-  return {
+  return normalize({
     q: normalizeQuery(single(params.q)),
     role: parseRole(single(params.role)),
     status: parseStatus(single(params.status)),
@@ -73,7 +89,7 @@ export function parseUserFilters(params: RawSearchParams): UserFilters {
     // deja la operativa, que es la que se espera al entrar.
     archived: single(params.archived) === "true",
     cursor: single(params.cursor),
-  };
+  });
 }
 
 /** Orden estable: dos URLs con los mismos filtros son la misma cadena. */
@@ -106,6 +122,18 @@ export function adminPageHref(
     ...changes,
     ...(cursorChanged ? {} : { cursor: undefined }),
   };
-  const query = serializeUserFilters(next);
+  const query = serializeUserFilters(normalize(next));
   return query ? `/admin?${query}` : "/admin";
+}
+
+/**
+ * Si hay algun filtro de BUSQUEDA aplicado.
+ *
+ * `archived` no cuenta: no es un filtro sobre una lista, es en cual de las dos
+ * listas se esta parado. Esa diferencia es la que permite decir "no hay
+ * archivados" cuando de verdad no hay ninguno, y "no hay archivados con estos
+ * filtros" cuando lo que no coincide es la busqueda.
+ */
+export function hasActiveFilters(filters: UserFilters): boolean {
+  return Boolean(filters.q || filters.role || filters.status);
 }

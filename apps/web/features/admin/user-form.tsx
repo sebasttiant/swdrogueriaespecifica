@@ -1,33 +1,22 @@
-"use client";
-
-import { useActionState } from "@/lib/hooks/use-action-state";
-
 import { Button } from "@/app/_components/ui/button";
 import { Field } from "@/app/_components/ui/field";
 import { Input } from "@/app/_components/ui/input";
 import { Select } from "@/app/_components/ui/select";
 import { assignableRolesFor } from "@/lib/auth/permissions";
 import type { SessionRole } from "@/lib/auth/session";
-import {
-  createUserAction,
-  type UserFormState,
-} from "@/server/actions/user.actions";
+import type { UserFormState } from "@/server/actions/user.actions";
 import { ROLE_LABELS } from "./schema";
-
-const INITIAL_STATE: UserFormState = { error: null, ok: false };
 
 type UserFormProps = {
   actorRole: SessionRole;
+  state: UserFormState;
+  formAction: (formData: FormData) => void;
+  isPending: boolean;
 };
 
 // Alta de usuario. Solo se monta dentro del módulo Admin (la página es ADMIN).
 // El actor solo puede asignar roles a su altura o por debajo (techo por rango).
-export function UserForm({ actorRole }: UserFormProps) {
-  const [state, formAction, isPending] = useActionState(
-    createUserAction,
-    INITIAL_STATE,
-  );
-
+export function UserForm({ actorRole, state, formAction, isPending }: UserFormProps) {
   const assignableRoles = assignableRolesFor(actorRole);
 
   return (
@@ -56,8 +45,13 @@ export function UserForm({ actorRole }: UserFormProps) {
             placeholder="mínimo 8 caracteres"
           />
         </Field>
-        <Field label="Rol" htmlFor="role">
-          <Select id="role" name="role" required defaultValue="OPERADOR">
+        <Field label="Rol" htmlFor="create-user-role">
+          <Select
+            id="create-user-role"
+            name="role"
+            required
+            defaultValue="OPERADOR"
+          >
             {assignableRoles.map((role) => (
               <option key={role} value={role}>
                 {ROLE_LABELS[role]}

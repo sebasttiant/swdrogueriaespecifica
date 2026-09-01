@@ -46,7 +46,28 @@ const RULE_MESSAGES: Record<UserRuleCode, string> = {
     "No podés modificar un usuario con un rol superior al tuyo.",
 };
 
-// P2002 (unique) sobre `email`: cubrimos target como array o string de constraint.
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isUsersEmailConstraint(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+
+  const fields = value.fields;
+  if (Array.isArray(fields)) {
+    return fields.length === 1 && fields[0] === "email";
+  }
+
+  return value.index === "users_email_key";
+}
+
+// P2002 (unique) SOLO sobre `users.email`.
+//
+// Prisma clásico expone `meta.target`. Prisma 7 con `@prisma/adapter-pg`
+// guarda la causa mapeada en
+// `meta.driverAdapterError.cause.constraint.fields`. No se interpreta el texto
+// del error ni se acepta cualquier P2002: otra restricción conserva el mensaje
+// genérico para no señalar el campo equivocado.
 function isDuplicateEmailError(error: unknown): boolean {
   if (
     !(error instanceof Prisma.PrismaClientKnownRequestError) ||
@@ -55,9 +76,23 @@ function isDuplicateEmailError(error: unknown): boolean {
     return false;
   }
   const target = error.meta?.target;
-  if (Array.isArray(target)) return target.includes("email");
-  if (typeof target === "string") return target.includes("email");
-  return false;
+  if (Array.isArray(target)) {
+    return target.length === 1 && target[0] === "email";
+  }
+  if (typeof target === "string") {
+    return target === "email" || target === "users_email_key";
+  }
+
+  const meta = error.meta;
+  if (!isRecord(meta)) return false;
+  const driverAdapterError = meta.driverAdapterError;
+  if (!isRecord(driverAdapterError)) return false;
+  const cause = driverAdapterError.cause;
+  return (
+    isRecord(cause) &&
+    cause.kind === "UniqueConstraintViolation" &&
+    isUsersEmailConstraint(cause.constraint)
+  );
 }
 
 export async function createUserAction(
