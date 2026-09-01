@@ -142,6 +142,65 @@ export async function createProduct(
   return client.product.create({ data });
 }
 
+/** Los campos de catálogo que la edición puede tocar. Nada de cantidades. */
+export type UpdateProductData = {
+  code: string;
+  name: string;
+  unit: string;
+  minStock: number;
+  reorderQty: number;
+  laboratoryId: string | null;
+  active: boolean;
+};
+
+/**
+ * Actualiza los datos de CATÁLOGO de un producto.
+ *
+ * El tipo es la garantía: `UpdateProductData` no tiene `orionCode`, ni
+ * `internalSku`, ni `identityVersion`, ni ninguna cantidad. Un llamador no
+ * puede colar por acá un cambio de identidad ni un stock escrito a mano,
+ * aunque lo intente — no compila.
+ */
+export async function updateProduct(
+  id: string,
+  data: UpdateProductData,
+  client: Prisma.TransactionClient = prisma,
+): Promise<Product> {
+  return client.product.update({ where: { id }, data });
+}
+
+/**
+ * Actualiza SOLO si nadie tocó el catálogo desde que se leyó. Devuelve `null`
+ * si alguien llegó antes.
+ *
+ * El testigo es `catalogVersion`, un ENTERO, y no `updatedAt`. Una marca de
+ * tiempo dice cuándo pasó algo, no en qué orden: `TIMESTAMP(3)` tiene
+ * resolución de milisegundo y PostgreSQL no promete que dos escrituras rápidas
+ * caigan en milisegundos distintos. Con fechas iguales, un control basado en
+ * compararlas concluye que nada cambió y deja pasar la escritura que debía
+ * rechazar.
+ *
+ * El incremento va en la MISMA sentencia que la escritura que protege, así que
+ * no hay ventana entre comprobar y avanzar.
+ *
+ * Va con `updateMany` a propósito: `update` con un `where` compuesto tiraría, y
+ * acá hace falta DISTINGUIR "no coincide la versión" de "explotó" para poder
+ * decirle a la persona que alguien más lo cambió.
+ */
+export async function updateProductIfVersionMatches(
+  id: string,
+  expectedVersion: number,
+  data: UpdateProductData,
+  client: Prisma.TransactionClient = prisma,
+): Promise<Product | null> {
+  const { count } = await client.product.updateMany({
+    where: { id, catalogVersion: expectedVersion },
+    data: { ...data, catalogVersion: { increment: 1 } },
+  });
+  if (count === 0) return null;
+  return client.product.findUnique({ where: { id } });
+}
+
 export async function upsertProvisionalProduct(
   client: Prisma.TransactionClient,
   data: { normalizedName: string; displayName: string },

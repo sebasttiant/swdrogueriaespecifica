@@ -257,6 +257,20 @@ model Product {
   // Contador del compare-and-set que protege el vínculo con el código Orion:
   // quien escribe declara la versión que observó y pierde si otro llegó antes.
   identityVersion            Int        @default(0)
+  // Contador del compare-and-set que protege la EDICIÓN DE CATÁLOGO: nombre,
+  // código interno, presentación, mínimos, laboratorio y estado activo.
+  //
+  // Va aparte de `identityVersion` porque los dos ciclos son independientes:
+  // vincular un código de Orion no debería invalidar una corrección de nombre
+  // a medio escribir, ni al revés. Compartir el contador acoplaría dos
+  // decisiones que ocurren en pantallas distintas y por motivos distintos.
+  //
+  // Y va como ENTERO, no como marca de tiempo: `updatedAt` dice cuándo pasó
+  // algo, no en qué orden. Dos escrituras rápidas pueden compartir milisegundo
+  // —`TIMESTAMP(3)` no garantiza lo contrario—, y ahí un control de
+  // concurrencia basado en comparar fechas deja pasar la segunda. Un contador
+  // que se incrementa en la misma sentencia del UPDATE no tiene ese problema.
+  catalogVersion             Int        @default(0)
   // Clave del INTENTO que acuñó la identidad: un reintento del operador
   // devuelve el mismo producto en lugar de acuñar otro.
   identityCommandKey         String?    @unique

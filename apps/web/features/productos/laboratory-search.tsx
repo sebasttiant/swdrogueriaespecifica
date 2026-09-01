@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { Button } from "@/app/_components/ui/button";
 import { Field } from "@/app/_components/ui/field";
@@ -52,6 +52,20 @@ export function LaboratorySearch({
   const inputId = useId();
   const resultsId = useId();
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // El debounce se cancela AL DESMONTAR, no solo con la siguiente tecla.
+  //
+  // Sin esto, cerrar el formulario dentro de los 200 ms de la última tecla
+  // dejaba el temporizador vivo: disparaba `search()` sobre un componente que
+  // ya no existe, escribiendo estado y pidiendo a la red para nadie. En las
+  // pruebas revienta después de desmontar el entorno —"window is not
+  // defined"— y ahí se hizo visible; en producción es trabajo tirado y una
+  // consulta que ya no le importa a nadie.
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, []);
 
   const [query, setQuery] = useState(defaultSelectedName ?? "");
   const [selected, setSelected] = useState<LaboratoryOption | null>(
