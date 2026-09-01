@@ -1,3 +1,4 @@
+import { adminPageHref, type UserFilters } from "@/features/admin/filters";
 import Link from "next/link";
 
 import { Badge } from "@/app/_components/ui/badge";
@@ -14,6 +15,8 @@ import { UserRestoreButton } from "./user-restore-button";
 type UserListProps = {
   items: UserListItem[];
   nextCursor: string | null;
+  /** Los filtros vigentes, para que paginar no los pierda. */
+  filters: UserFilters;
   /** Role of the current viewer — drives which action controls render. */
   currentUserRole: UserRole;
   /** Id of the current viewer — prevents self-archive button from showing. */
@@ -51,6 +54,7 @@ function archivedBadge() {
 export function UserList({
   items,
   nextCursor,
+  filters,
   currentUserRole,
   currentUserId,
   showArchived,
@@ -210,7 +214,7 @@ export function UserList({
       {nextCursor ? (
         <div className="pt-1 text-center">
           <Link prefetch={false}
-            href={`/admin?cursor=${encodeURIComponent(nextCursor)}`}
+            href={adminPageHref(filters, { cursor: nextCursor })}
             className="text-sm font-semibold text-primary hover:underline"
           >
             Ver más

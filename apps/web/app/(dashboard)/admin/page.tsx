@@ -7,6 +7,7 @@ import { requireCapability } from "@/lib/auth/require-role";
 import { AdminOverview } from "@/features/admin/admin-overview";
 import { UserForm } from "@/features/admin/user-form";
 import { UserList } from "@/features/admin/user-list";
+import { adminPageHref, parseUserFilters } from "@/features/admin/filters";
 import { getUsers } from "@/server/services/user.service";
 
 export const metadata: Metadata = { title: "Administración" };
@@ -22,18 +23,20 @@ export const dynamic = "force-dynamic";
 export default async function AdminPage({
   searchParams,
 }: {
-  searchParams: Promise<{ cursor?: string; archived?: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const session = await requireCapability("canManageUsers");
 
-  const { cursor, archived } = await searchParams;
+  // Los parámetros se interpretan en UN solo lugar. Lo inválido se descarta y
+  // cae al valor por defecto: una URL escrita a mano nunca rompe la pantalla.
+  const requested = parseUserFilters(await searchParams);
   const isSuperAdmin = session.user.role === "SUPERADMIN";
-  const showArchived = isSuperAdmin && archived === "true";
+  // La vista de archivados sigue siendo de SUPERADMIN. Quien no lo sea y
+  // escriba `archived=true` a mano ve la operativa, no un error.
+  const filters = { ...requested, archived: isSuperAdmin && requested.archived };
+  const showArchived = filters.archived;
 
-  const { items, nextCursor } = await getUsers({
-    cursor,
-    includeArchived: showArchived,
-  });
+  const { items, nextCursor } = await getUsers(filters);
 
   return (
     <div className="space-y-6">
@@ -49,14 +52,14 @@ export default async function AdminPage({
         <div className="flex items-center gap-3">
           {showArchived ? (
             <Link prefetch={false}
-              href="/admin"
+              href={adminPageHref(filters, { archived: false })}
               className="text-sm font-semibold text-primary hover:underline"
             >
               ← Ver activos
             </Link>
           ) : (
             <Link prefetch={false}
-              href="/admin?archived=true"
+              href={adminPageHref(filters, { archived: true })}
               className="text-sm font-semibold text-muted-foreground hover:underline"
             >
               Ver archivados
@@ -94,6 +97,7 @@ export default async function AdminPage({
         <UserList
           items={items}
           nextCursor={nextCursor}
+          filters={filters}
           currentUserRole={session.user.role}
           currentUserId={session.user.id}
           showArchived={showArchived}
