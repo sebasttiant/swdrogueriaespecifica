@@ -49,6 +49,14 @@ export type EntryFormState = {
    * es el mismo agujero que el control de versiones cierra.
    */
   conflict?: {
+    /**
+     * A QUE producto pertenece este conflicto.
+     *
+     * Sin el, la pantalla no puede distinguir "cambio el producto que estoy
+     * cargando" de "cambio otro". La identidad que vuelve aca describe UNA fila
+     * concreta; aplicarla sobre otra afirmaria algo que esa otra fila no dice.
+     */
+    productId: string;
     /** El nombre tambien es catalogo: una edicion pudo cambiarlo. */
     name: string;
     sku: string | null;
@@ -194,6 +202,7 @@ export async function createInventoryEntryAction(
         error: conflictMessage(error),
         ok: false,
         conflict: {
+          productId: error.product.id,
           name: error.product.name,
           sku: error.product.orionCode,
           presentation: error.product.unit,

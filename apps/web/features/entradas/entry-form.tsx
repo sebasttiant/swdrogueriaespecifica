@@ -109,6 +109,12 @@ export function EntryForm({
   // exactamente la entrada que tiene que frenar.
   //
   // La selección SÍ se sigue: se elige de esta fotografía, no de la de hoy.
+  //
+  // Y la lista de opciones se pinta de ACÁ, no del prop. Pintarla del prop vivo
+  // dejaba la etiqueta diciendo lo nuevo y el resumen lo viejo —la misma fila
+  // afirmando dos identidades—, y permitía elegir un producto recién creado que
+  // la fotografía no tiene: sin él, no hay versiones que declarar y la entrada
+  // moría en un error de validación que no explicaba nada.
   // ------------------------------------------------------------------------
   const [catalog] = useState(() => products);
   const [locked] = useState(() => lockedProduct);
@@ -137,7 +143,13 @@ export function EntryForm({
    * es exactamente el error que este slice viene a cerrar.
    */
   const withAdopted = (option: ProductOption): ProductOption =>
-    adopted && option.id === chosen?.id
+    // La comparacion es contra el producto DEL CONFLICTO, no contra el elegido.
+    // Con `option.id === chosen?.id`, un conflicto de A adoptado mientras estaba
+    // elegido B le pegaba a B la identidad de A: la pantalla mostraba A y la
+    // escritura iba a B. Y cuando los dos estan en las mismas versiones —0/0 es
+    // lo normal en el catalogo que nadie edito— el compare-and-set coincide y la
+    // entrada entra igual.
+    adopted && adopted.productId === option.id
       ? {
           ...option,
           name: adopted.name,
@@ -153,7 +165,7 @@ export function EntryForm({
   // mostraría como presentación real solo en el camino adoptado.
   const shownPresentation = presentationLabel(shown?.unit);
 
-  if (products.length === 0) {
+  if (catalog.length === 0) {
     return (
       <p className="text-base text-muted-foreground">
         Cargá al menos un producto en el catálogo para registrar entradas.
@@ -229,7 +241,7 @@ export function EntryForm({
               }}
             >
               <option value="">Elegí un producto…</option>
-              {products.map((product) => (
+              {catalog.map((product) => (
                 <option key={product.id} value={product.id}>
                   {productLabel(withAdopted(product))}
                 </option>
@@ -321,7 +333,7 @@ export function EntryForm({
           </Link>
         </p>
       ) : null}
-      {state.conflict && !adopted ? (
+      {state.conflict && state.conflict.productId === chosen?.id && !adopted ? (
         /* El borrador NO se toca: cantidad, lote y vencimiento siguen escritos.
            Lo único obsoleto es la referencia al producto, y adoptarla es una
            decisión que toma la persona después de mirar la caja. */

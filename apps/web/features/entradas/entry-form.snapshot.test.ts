@@ -160,6 +160,8 @@ describe("EntryForm · el contrato que se le manda al servidor", () => {
 
 describe("EntryForm · después de adoptar los datos actualizados", () => {
   const CONFLICTO = {
+    // El conflicto describe UNA fila: sin decir cuál, no se puede adoptar.
+    productId: "prod-frasco",
     name: "Amoxicilina forte",
     sku: "ORN-NUEVO",
     presentation: "caja",
@@ -253,5 +255,156 @@ describe("EntryForm · después de adoptar los datos actualizados", () => {
 
     expect(payload(form).get("expectedCatalogVersion")).toBe("7");
     expect(screen.getByRole("option", { name: /ORN-111 · frasco/ })).toBeTruthy();
+  });
+});
+
+// --------------------------------------------------------------------------
+// La identidad adoptada pertenece a UN producto, y solo a ese.
+//
+// El conflicto vuelve del servidor describiendo el producto que cambió. Si esa
+// descripción puede caer sobre otro producto, la pantalla afirma una identidad
+// que no es la de la fila que se va a escribir — y cuando los dos productos
+// están en las mismas versiones (0/0 es lo normal en el catálogo que nadie
+// editó), el compare-and-set coincide y la entrada entra igual. Es exactamente
+// el error que este slice existe para cerrar, entrando por otra puerta.
+// --------------------------------------------------------------------------
+describe("EntryForm · el conflicto está atado a su producto", () => {
+  const CONFLICTO_DE_FRASCO = {
+    productId: "prod-frasco",
+    name: "Amoxicilina forte",
+    sku: "ORN-NUEVO",
+    presentation: "caja",
+    identityVersion: 9,
+    catalogVersion: 12,
+  };
+
+  async function conflictoDeFrascoYElegirSobre() {
+    mocks.estado = {
+      error: "El producto cambió mientras registrabas la entrada.",
+      ok: false,
+      conflict: CONFLICTO_DE_FRASCO,
+    };
+    const { container } = render(
+      createElement(EntryForm, { products: [FRASCO, SOBRE] }),
+    );
+    const form = container.querySelector("form") as HTMLFormElement;
+    // El conflicto es del frasco; la persona pasa a otro producto.
+    await userEvent.selectOptions(screen.getByLabelText("Producto"), "prod-sobre");
+    return form;
+  }
+
+  it("no ofrece adoptar la identidad de otro producto", async () => {
+    await conflictoDeFrascoYElegirSobre();
+
+    expect(
+      screen.queryByRole("button", { name: "Usar los datos actualizados" }),
+    ).toBeNull();
+  });
+
+  // Esconder el botón no alcanza: la aplicación interna también valida el
+  // producto. Si el botón llegara a existir y alguien lo apretara, la identidad
+  // del frasco NO puede caer sobre el sobre.
+  it("aunque se invoque la adopción, no se aplica al producto equivocado", async () => {
+    const form = await conflictoDeFrascoYElegirSobre();
+
+    const boton = screen.queryByRole("button", {
+      name: "Usar los datos actualizados",
+    });
+    if (boton) await userEvent.click(boton);
+
+    expect(screen.getByRole("option", { name: /ORN-222 · sobre/ })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: /ORN-NUEVO/ })).toBeNull();
+    const resumen = screen.getByText(/SKU:/).textContent ?? "";
+    expect(resumen).toContain("ORN-222");
+    expect(resumen).not.toContain("ORN-NUEVO");
+    expect(payload(form).get("expectedIdentityVersion")).toBe("1");
+    expect(payload(form).get("expectedCatalogVersion")).toBe("2");
+  });
+
+  it("el flujo válido sobre el MISMO producto sigue funcionando", async () => {
+    mocks.estado = {
+      error: "El producto cambió.",
+      ok: false,
+      conflict: CONFLICTO_DE_FRASCO,
+    };
+    const { container } = render(
+      createElement(EntryForm, { products: [FRASCO, SOBRE] }),
+    );
+    const form = container.querySelector("form") as HTMLFormElement;
+    await userEvent.selectOptions(screen.getByLabelText("Producto"), "prod-frasco");
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Usar los datos actualizados" }),
+    );
+
+    expect(
+      screen.getByRole("option", {
+        name: "Amoxicilina forte — ORN-NUEVO · caja · Genfar",
+      }),
+    ).toBeTruthy();
+    expect(payload(form).get("expectedCatalogVersion")).toBe("12");
+  });
+});
+
+// --------------------------------------------------------------------------
+// UNA sola fotografía manda: etiqueta, resumen, elegido y versiones.
+//
+// El selector se pintaba del prop VIVO mientras las versiones salían de la
+// fotografía congelada. Un refresco ajeno dejaba la etiqueta diciendo lo nuevo
+// y el renglón de abajo lo viejo — la misma fila afirmando dos identidades—, y
+// un producto recién creado se podía elegir aunque la fotografía no lo tuviera,
+// terminando en un error de validación que no explica nada.
+// --------------------------------------------------------------------------
+describe("EntryForm · el selector sale de la misma fotografía", () => {
+  it("un refresco ajeno no cambia la etiqueta del selector", async () => {
+    const { container, rerender } = render(
+      createElement(EntryForm, { products: [FRASCO, SOBRE] }),
+    );
+    const form = container.querySelector("form") as HTMLFormElement;
+    await userEvent.selectOptions(screen.getByLabelText("Producto"), "prod-frasco");
+
+    rerender(
+      createElement(EntryForm, {
+        products: [
+          {
+            ...FRASCO,
+            name: "Amoxicilina renombrada",
+            orionCode: "ORN-OTRO",
+            unit: "ampolla",
+            identityVersion: 88,
+            catalogVersion: 99,
+          },
+          SOBRE,
+        ],
+      }),
+    );
+
+    // Etiqueta, resumen y ocultos: los tres siguen ligados a la fotografía.
+    expect(
+      screen.getByRole("option", { name: "Amoxicilina — ORN-111 · frasco · Genfar" }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("option", { name: /ORN-OTRO/ })).toBeNull();
+    const resumen = screen.getByText(/SKU:/).textContent ?? "";
+    expect(resumen).toContain("ORN-111");
+    expect(payload(form).get("expectedCatalogVersion")).toBe("7");
+  });
+
+  it("un producto que solo existe en las props nuevas no se puede elegir", () => {
+    const { rerender } = render(
+      createElement(EntryForm, { products: [FRASCO, SOBRE] }),
+    );
+
+    rerender(
+      createElement(EntryForm, {
+        products: [
+          FRASCO,
+          SOBRE,
+          { ...FRASCO, id: "prod-recien-creado", orionCode: "ORN-999" },
+        ],
+      }),
+    );
+
+    expect(screen.queryByRole("option", { name: /ORN-999/ })).toBeNull();
+    expect(screen.getAllByRole("option")).toHaveLength(3); // el vacío + los dos
   });
 });
