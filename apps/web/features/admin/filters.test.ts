@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   adminPageHref,
+  normalizeUserFilters,
   parseUserFilters,
   serializeUserFilters,
   type UserFilters,
@@ -187,15 +188,17 @@ describe("adminPageHref · los enlaces conservan los filtros", () => {
 // no pueden existir. El filtro de estado no aplica dentro de archivados.
 // --------------------------------------------------------------------------
 describe("parseUserFilters · estado y archivados", () => {
-  it("dentro de archivados, el filtro de estado no se aplica", () => {
+  it("conserva el estado solicitado hasta resolver la vista autorizada", () => {
     const filtros = parseUserFilters({ archived: "true", status: "activos" });
 
     expect(filtros.archived).toBe(true);
-    expect(filtros.status).toBeUndefined();
+    expect(filtros.status).toBe("activos");
   });
 
-  it("descarta tambien 'inactivos', que seria redundante", () => {
-    expect(parseUserFilters({ archived: "true", status: "inactivos" }).status).toBeUndefined();
+  it("normaliza el estado solo cuando la vista efectiva es archivada", () => {
+    expect(
+      normalizeUserFilters({ archived: true, status: "inactivos" }).status,
+    ).toBeUndefined();
   });
 
   it("los demas filtros sobreviven dentro de archivados", () => {

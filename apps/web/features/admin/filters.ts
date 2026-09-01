@@ -73,15 +73,16 @@ function parseStatus(value: string | undefined): UserStatusFilter | undefined {
  * no pueden existir; el mensaje de lista vacia terminaria diciendo "no hay
  * archivados" cuando lo que no coincide es el filtro.
  *
- * La regla vive ACA y no en la barra de filtros porque tambien tiene que valer
- * para una URL escrita a mano.
+ * Esta regla se aplica después de resolver la vista efectiva autorizada. El
+ * parser conserva la intención válida de la URL porque todavía no conoce los
+ * permisos del actor.
  */
-function normalize(filters: UserFilters): UserFilters {
+export function normalizeUserFilters(filters: UserFilters): UserFilters {
   return filters.archived ? { ...filters, status: undefined } : filters;
 }
 
 export function parseUserFilters(params: RawSearchParams): UserFilters {
-  return normalize({
+  return {
     q: normalizeQuery(single(params.q)),
     role: parseRole(single(params.role)),
     status: parseStatus(single(params.status)),
@@ -89,7 +90,7 @@ export function parseUserFilters(params: RawSearchParams): UserFilters {
     // deja la operativa, que es la que se espera al entrar.
     archived: single(params.archived) === "true",
     cursor: single(params.cursor),
-  });
+  };
 }
 
 /** Orden estable: dos URLs con los mismos filtros son la misma cadena. */
@@ -122,7 +123,7 @@ export function adminPageHref(
     ...changes,
     ...(cursorChanged ? {} : { cursor: undefined }),
   };
-  const query = serializeUserFilters(normalize(next));
+  const query = serializeUserFilters(normalizeUserFilters(next));
   return query ? `/admin?${query}` : "/admin";
 }
 

@@ -3,7 +3,10 @@ import type { Metadata } from "next";
 import { PageHeader } from "@/app/_components/app-shell/page-header";
 import { isUserManager } from "@/lib/auth/permissions";
 import { requireCapability } from "@/lib/auth/require-role";
-import { parseUserFilters } from "@/features/admin/filters";
+import {
+  normalizeUserFilters,
+  parseUserFilters,
+} from "@/features/admin/filters";
 import { UserFilters } from "@/features/admin/user-filters";
 import { UserCreatePanel } from "@/features/admin/user-create-panel";
 import { UserList } from "@/features/admin/user-list";
@@ -41,7 +44,10 @@ export default async function AdminPage({
   // La vista de archivados sigue siendo de SUPERADMIN. Quien no lo sea y
   // escriba `archived=true` a mano ve la operativa, no un error — y los
   // archivados NO se consultan, así que no hay nada que exponer.
-  const filters = { ...requested, archived: isSuperAdmin && requested.archived };
+  const filters = normalizeUserFilters({
+    ...requested,
+    archived: isSuperAdmin && requested.archived,
+  });
   const showArchived = filters.archived;
   const canCreate = isUserManager(session.user.role);
 

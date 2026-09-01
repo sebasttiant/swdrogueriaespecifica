@@ -66,6 +66,32 @@ describe("AdminPage · quién puede ver archivados", () => {
     });
   });
 
+  it("SUPERADMIN normaliza el estado cuando la vista efectiva es archivada", async () => {
+    requireCapability.mockResolvedValue(sesion("SUPERADMIN"));
+
+    await AdminPage({
+      searchParams: Promise.resolve({ archived: "true", status: "activos" }),
+    });
+
+    expect(consultaPedida()).toMatchObject({
+      archived: true,
+      status: undefined,
+    });
+  });
+
+  it("ADMIN conserva el estado cuando se le niega la vista archivada", async () => {
+    requireCapability.mockResolvedValue(sesion("ADMIN"));
+
+    await AdminPage({
+      searchParams: Promise.resolve({ archived: "true", status: "activos" }),
+    });
+
+    expect(consultaPedida()).toMatchObject({
+      archived: false,
+      status: "activos",
+    });
+  });
+
   it("exige la capability antes de consultar nada", async () => {
     requireCapability.mockRejectedValue(new Error("redirect"));
 
