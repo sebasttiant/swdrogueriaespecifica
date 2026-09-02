@@ -5,6 +5,7 @@ import { tablesToTruncate, WIPE_PROTECTED_TABLES } from "./wipe-tables";
 const ALL_TABLES = [
   "users",
   "_prisma_migrations",
+  "inventory_cutovers",
   "products",
   "laboratories",
   "suppliers",
@@ -29,8 +30,12 @@ describe("tablesToTruncate", () => {
     expect(tablesToTruncate(ALL_TABLES)).not.toContain("_prisma_migrations");
   });
 
+  it("never includes the inventory cutover marker", () => {
+    expect(tablesToTruncate(ALL_TABLES)).not.toContain("inventory_cutovers");
+  });
+
   it("keeps every protected table out even if listed first, last or duplicated", () => {
-    const noisy = ["users", ...ALL_TABLES, "_prisma_migrations", "users"];
+    const noisy = ["users", ...ALL_TABLES, "inventory_cutovers", "users"];
     for (const protectedTable of WIPE_PROTECTED_TABLES) {
       expect(tablesToTruncate(noisy)).not.toContain(protectedTable);
     }
@@ -53,6 +58,6 @@ describe("tablesToTruncate", () => {
   });
 
   it("returns nothing when there is nothing but protected tables", () => {
-    expect(tablesToTruncate(["users", "_prisma_migrations"])).toEqual([]);
+    expect(tablesToTruncate(WIPE_PROTECTED_TABLES)).toEqual([]);
   });
 });

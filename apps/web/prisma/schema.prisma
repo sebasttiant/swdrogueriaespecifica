@@ -148,6 +148,12 @@ enum BatchStatus {
   RETENIDO
 }
 
+enum InventoryCutoverState {
+  PREPARED
+  ACTIVATED
+  LOCKED
+}
+
 // --------------------------------------------------------------------------
 // Trazabilidad de laboratorios
 // --------------------------------------------------------------------------
@@ -212,6 +218,7 @@ model User {
   arrivedMissingReports  MissingReport[]      @relation("MissingReportArrivedBy")
   arrivedMissingItems    MissingItem[]        @relation("MissingItemArrivedBy")
   notificationOutbox     NotificationOutbox[]
+  activatedCutovers      InventoryCutover[]   @relation("InventoryCutoverActivatedBy")
 
   @@index([active])
   @@index([archivedAt])
@@ -603,6 +610,7 @@ model Pending {
   zone                      String?
   totalAmount               Int?
   paidAmount                Int                       @default(0)
+  legacyBeta                Boolean                   @default(false)
   createdBy                 User?                     @relation("PendingCreatedBy", fields: [createdById], references: [id])
   createdById               String?
   // --------------------------------------------------------------------
@@ -707,6 +715,7 @@ model MissingItem {
   productId            String
   quantity             Int
   receivedQuantity     Int                   @default(0)
+  legacyBeta           Boolean               @default(false)
   // Cantidad que gerencia efectivamente pidió al proveedor. Distinta de
   // `quantity` (necesidad/déficit histórico): null mientras el faltante sigue
   // abierto, y en registros anteriores a esta columna. Nunca se deriva de
@@ -849,6 +858,25 @@ model PendingInventoryReservation {
   @@index([pendingId])
   @@index([batchId])
   @@map("pending_inventory_reservations")
+}
+
+model InventoryCutover {
+  id                                  Int                   @id @default(1)
+  state                               InventoryCutoverState @default(PREPARED)
+  cutoverAt                           DateTime?
+  activatedBy                         User?                 @relation("InventoryCutoverActivatedBy", fields: [activatedById], references: [id], onDelete: Restrict)
+  activatedById                       String?
+  pendingMarkedCount                  Int                   @default(0)
+  missingItemMarkedCount              Int                   @default(0)
+  productBatchPreservedCount          Int                   @default(0)
+  inventoryEntryPreservedCount        Int                   @default(0)
+  inventoryAllocationPreservedCount   Int                   @default(0)
+  pendingReservationPreservedCount    Int                   @default(0)
+  migrationVersion                    String
+  createdAt                           DateTime              @default(now())
+  lockedAt                            DateTime?
+
+  @@map("inventory_cutovers")
 }
 
 // --------------------------------------------------------------------------
