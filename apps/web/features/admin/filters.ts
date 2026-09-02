@@ -64,6 +64,23 @@ function parseStatus(value: string | undefined): UserStatusFilter | undefined {
     : undefined;
 }
 
+/**
+ * Estado y archivados no se combinan.
+ *
+ * `archiveUser` escribe `archivedAt` y `active: false` en la misma operacion:
+ * TODO archivado esta inactivo. Entonces "archivados + activos" es un conjunto
+ * vacio por construccion, y una pantalla que lo ofrece promete resultados que
+ * no pueden existir; el mensaje de lista vacia terminaria diciendo "no hay
+ * archivados" cuando lo que no coincide es el filtro.
+ *
+ * Esta regla se aplica después de resolver la vista efectiva autorizada. El
+ * parser conserva la intención válida de la URL porque todavía no conoce los
+ * permisos del actor.
+ */
+export function normalizeUserFilters(filters: UserFilters): UserFilters {
+  return filters.archived ? { ...filters, status: undefined } : filters;
+}
+
 export function parseUserFilters(params: RawSearchParams): UserFilters {
   return {
     q: normalizeQuery(single(params.q)),
@@ -106,6 +123,18 @@ export function adminPageHref(
     ...changes,
     ...(cursorChanged ? {} : { cursor: undefined }),
   };
-  const query = serializeUserFilters(next);
+  const query = serializeUserFilters(normalizeUserFilters(next));
   return query ? `/admin?${query}` : "/admin";
+}
+
+/**
+ * Si hay algun filtro de BUSQUEDA aplicado.
+ *
+ * `archived` no cuenta: no es un filtro sobre una lista, es en cual de las dos
+ * listas se esta parado. Esa diferencia es la que permite decir "no hay
+ * archivados" cuando de verdad no hay ninguno, y "no hay archivados con estos
+ * filtros" cuando lo que no coincide es la busqueda.
+ */
+export function hasActiveFilters(filters: UserFilters): boolean {
+  return Boolean(filters.q || filters.role || filters.status);
 }

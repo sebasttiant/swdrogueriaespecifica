@@ -7,6 +7,7 @@ const ROLES = {
 
 const {
   auditContextFromHeaders,
+  createSafeParse,
   createUser,
   KnownRequestError,
   recordAudit,
@@ -21,7 +22,7 @@ const {
 } = vi.hoisted(() => {
   class MockKnownRequestError extends Error {
     code = "";
-    meta?: { target?: string | string[] };
+    meta?: Record<string, unknown>;
   }
 
   class MockUserRuleError extends Error {
@@ -34,6 +35,7 @@ const {
   return {
     archiveUser: vi.fn(),
     auditContextFromHeaders: vi.fn(),
+    createSafeParse: vi.fn(),
     createUser: vi.fn(),
     KnownRequestError: MockKnownRequestError,
     recordAudit: vi.fn(),
@@ -65,12 +67,12 @@ vi.mock("@/server/services/user.service", () => ({
   UserRuleError,
 }));
 vi.mock("@/features/admin/schema", () => ({
-  userCreateSchema: { safeParse: vi.fn() },
+  userCreateSchema: { safeParse: createSafeParse },
   userUpdateSchema: { safeParse },
 }));
 
 import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
-import { updateUserAction } from "./user.actions";
+import { createUserAction, updateUserAction } from "./user.actions";
 
 const PREV = { error: null, ok: false };
 
@@ -85,6 +87,15 @@ function updateFormData(overrides: Record<string, string> = {}) {
     data.set(key, value);
   }
 
+  return data;
+}
+
+function createFormData() {
+  const data = new FormData();
+  data.set("name", "New User");
+  data.set("email", "new@example.com");
+  data.set("password", "safe-password");
+  data.set("role", "OPERADOR");
   return data;
 }
 
@@ -132,6 +143,31 @@ function duplicateEmailError() {
   });
 }
 
+function nestedDuplicateEmailError() {
+  return Object.assign(new KnownRequestError("duplicate email"), {
+    code: "P2002",
+    meta: {
+      driverAdapterError: {
+        name: "DriverAdapterError",
+        cause: {
+          originalCode: "23505",
+          originalMessage:
+            'duplicate key value violates unique constraint "users_email_key"',
+          kind: "UniqueConstraintViolation",
+          constraint: { fields: ["email"] },
+        },
+      },
+    },
+  });
+}
+
+function p2002(meta: Record<string, unknown>) {
+  return Object.assign(new KnownRequestError("unique violation"), {
+    code: "P2002",
+    meta,
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   auditContextFromHeaders.mockResolvedValue({
@@ -139,7 +175,104 @@ beforeEach(() => {
     channel: "web",
   });
   safeParse.mockReturnValue({ success: true, data: parsedUpdate() });
+  createSafeParse.mockReturnValue({
+    success: true,
+    data: {
+      name: "New User",
+      email: "new@example.com",
+      password: "safe-password",
+      role: "OPERADOR",
+    },
+  });
   updateUser.mockResolvedValue(updatedUserResult());
+});
+
+describe("createUserAction", () => {
+  beforeEach(() => {
+    requireActiveRole.mockResolvedValue({
+      user: {
+        id: "actor-1",
+        email: "actor@example.com",
+        name: "Actor",
+        role: ROLES.SUPERADMIN,
+      },
+    });
+  });
+
+  it.each([
+    ["target como campos", duplicateEmailError()],
+    ["target como constraint", p2002({ target: "users_email_key" })],
+    ["adapter-pg anidado", nestedDuplicateEmailError()],
+  ])("clasifica email duplicado con %s", async (_shape, error) => {
+    createUser.mockRejectedValueOnce(error);
+
+    await expect(createUserAction(PREV, createFormData())).resolves.toEqual({
+      error: "Ya existe un usuario con ese email.",
+      ok: false,
+    });
+    expect(recordAudit).not.toHaveBeenCalled();
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["otro campo directo", p2002({ target: ["id"] })],
+    ["constraint con la palabra email", p2002({ target: "products_emailish_key" })],
+    [
+      "otro campo del adapter",
+      p2002({
+        driverAdapterError: {
+          cause: {
+            kind: "UniqueConstraintViolation",
+            constraint: { fields: ["id"] },
+          },
+        },
+      }),
+    ],
+    [
+      "constraint compuesto que también contiene email",
+      p2002({
+        driverAdapterError: {
+          cause: {
+            kind: "UniqueConstraintViolation",
+            constraint: { fields: ["email", "tenantId"] },
+          },
+        },
+      }),
+    ],
+    [
+      "objeto anidado sin tipo de violación",
+      p2002({
+        driverAdapterError: {
+          cause: { constraint: { fields: ["email"] } },
+        },
+      }),
+    ],
+    [
+      "objeto no Prisma con forma parecida",
+      {
+        code: "P2002",
+        meta: {
+          driverAdapterError: {
+            cause: {
+              kind: "UniqueConstraintViolation",
+              constraint: { fields: ["email"] },
+            },
+          },
+        },
+      },
+    ],
+  ])("mantiene genérico un P2002 de %s", async (_shape, error) => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    createUser.mockRejectedValueOnce(error);
+
+    await expect(createUserAction(PREV, createFormData())).resolves.toEqual({
+      error: "No se pudo crear el usuario. Intentá de nuevo.",
+      ok: false,
+    });
+    expect(recordAudit).not.toHaveBeenCalled();
+    expect(revalidatePath).not.toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
 });
 
 describe("updateUserAction", () => {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   adminPageHref,
+  normalizeUserFilters,
   parseUserFilters,
   serializeUserFilters,
   type UserFilters,
@@ -104,10 +105,23 @@ describe("serializeUserFilters", () => {
   });
 
   it("lo que sale de serializar vuelve a entrar igual", () => {
-    const filtros: UserFilters = { q: "ana maria", role: "BODEGA", status: "inactivos", archived: true };
+    const filtros: UserFilters = {
+      q: "ana maria",
+      role: "BODEGA",
+      status: "inactivos",
+      archived: false,
+    };
     const params = Object.fromEntries(new URLSearchParams(serializeUserFilters(filtros)));
 
     expect(parseUserFilters(params)).toEqual(filtros);
+  });
+
+  // La vista archivada no lleva estado: ver `normalize`.
+  it("la ida y vuelta también cierra en la vista archivada", () => {
+    const filtros: UserFilters = { q: "ana", role: "BODEGA", archived: true };
+    const params = Object.fromEntries(new URLSearchParams(serializeUserFilters(filtros)));
+
+    expect(parseUserFilters(params)).toEqual({ ...filtros, status: undefined });
   });
 });
 
@@ -115,7 +129,6 @@ describe("adminPageHref · los enlaces conservan los filtros", () => {
   const VIGENTES: UserFilters = {
     q: "ana",
     role: "ADMIN",
-    status: "activos",
     archived: true,
     cursor: "viejo",
   };
@@ -123,15 +136,25 @@ describe("adminPageHref · los enlaces conservan los filtros", () => {
   // El defecto que este slice corrige: el enlace de paginación armaba
   // `/admin?cursor=…` y tiraba todo lo demás. Paginar en la vista de archivados
   // devolvía a la de activos, con la búsqueda perdida.
-  it("paginar conserva q, role, status y archived, y solo cambia el cursor", () => {
+  it("paginar conserva q, role y archived, y solo cambia el cursor", () => {
     const href = adminPageHref(VIGENTES, { cursor: "nuevo" });
 
     expect(href).toContain("q=ana");
     expect(href).toContain("role=ADMIN");
-    expect(href).toContain("status=activos");
     expect(href).toContain("archived=true");
     expect(href).toContain("cursor=nuevo");
     expect(href).not.toContain("cursor=viejo");
+  });
+
+  // En la vista operativa el estado SÍ viaja: es donde significa algo.
+  it("paginar en la vista operativa conserva también el estado", () => {
+    const href = adminPageHref(
+      { q: "ana", status: "inactivos", archived: false, cursor: "viejo" },
+      { cursor: "nuevo" },
+    );
+
+    expect(href).toContain("status=inactivos");
+    expect(href).toContain("cursor=nuevo");
   });
 
   // Cambiar un filtro cambia el conjunto de resultados: un cursor de la lista
@@ -153,5 +176,44 @@ describe("adminPageHref · los enlaces conservan los filtros", () => {
 
   it("sin filtros ni cursor, el enlace es la vista limpia", () => {
     expect(adminPageHref({ archived: false }, {})).toBe("/admin");
+  });
+});
+
+// --------------------------------------------------------------------------
+// Estado y archivados no se combinan.
+//
+// `archiveUser` escribe `archivedAt` y `active: false` en la misma operacion:
+// TODO archivado esta inactivo. Entonces "archivados + activos" es un conjunto
+// vacio por construccion, y una pantalla que lo ofrece promete resultados que
+// no pueden existir. El filtro de estado no aplica dentro de archivados.
+// --------------------------------------------------------------------------
+describe("parseUserFilters · estado y archivados", () => {
+  it("conserva el estado solicitado hasta resolver la vista autorizada", () => {
+    const filtros = parseUserFilters({ archived: "true", status: "activos" });
+
+    expect(filtros.archived).toBe(true);
+    expect(filtros.status).toBe("activos");
+  });
+
+  it("normaliza el estado solo cuando la vista efectiva es archivada", () => {
+    expect(
+      normalizeUserFilters({ archived: true, status: "inactivos" }).status,
+    ).toBeUndefined();
+  });
+
+  it("los demas filtros sobreviven dentro de archivados", () => {
+    const filtros = parseUserFilters({ archived: "true", status: "activos", q: "ana", role: "BODEGA" });
+
+    expect(filtros).toMatchObject({ archived: true, q: "ana", role: "BODEGA" });
+  });
+
+  it("en la vista operativa el estado sigue valiendo", () => {
+    expect(parseUserFilters({ status: "activos" }).status).toBe("activos");
+  });
+
+  it("pasar a archivados suelta el estado que venia puesto", () => {
+    const vigentes = parseUserFilters({ status: "activos", q: "ana" });
+
+    expect(adminPageHref(vigentes, { archived: true })).not.toContain("status");
   });
 });

@@ -35,11 +35,14 @@ const USUARIO: UserListItem = {
   createdAt: new Date("2026-01-01T10:00:00Z"),
 };
 
+// Vista OPERATIVA: es donde el filtro de estado significa algo. Dentro de
+// archivados no se aplica —todo archivado esta inactivo—, asi que combinarlos
+// aca probaria una URL que el contrato no puede producir.
 const FILTROS_VIGENTES: UserFilters = {
   q: "ana maria",
   role: "ADMIN",
   status: "activos",
-  archived: true,
+  archived: false,
   cursor: "cursor-viejo",
 };
 
@@ -68,7 +71,25 @@ describe("UserList · el enlace de 'Ver más'", () => {
     expect(params.get("q")).toBe("ana maria");
     expect(params.get("role")).toBe("ADMIN");
     expect(params.get("status")).toBe("activos");
-    expect(params.get("archived")).toBe("true");
+  });
+
+  // Y en la vista archivada, la vista misma viaja en el enlace.
+  it("conserva la vista archivada al paginar", () => {
+    render(
+      createElement(UserList, {
+        items: [USUARIO],
+        nextCursor: "cursor-nuevo",
+        filters: { q: "ana", archived: true, cursor: "cursor-viejo" },
+        currentUserRole: "SUPERADMIN",
+        currentUserId: "otro",
+        showArchived: true,
+      }),
+    );
+    const href = screen.getByRole("link", { name: "Ver más" }).getAttribute("href") ?? "";
+
+    expect(href).toContain("archived=true");
+    expect(href).toContain("q=ana");
+    expect(href).toContain("cursor=cursor-nuevo");
   });
 
   // Lo único que cambia es el cursor. Con `adminPageHref(filters, {})` el
