@@ -7,7 +7,7 @@ import { useActionState } from "@/lib/hooks/use-action-state";
 import { Button } from "@/app/_components/ui/button";
 import { Field } from "@/app/_components/ui/field";
 import { Input } from "@/app/_components/ui/input";
-import { Select } from "@/app/_components/ui/select";
+import { LaboratorySearch } from "@/features/productos/laboratory-search";
 import {
   createProductAction,
   type ProductFormState,
@@ -15,10 +15,8 @@ import {
 
 const INITIAL_STATE: ProductFormState = { error: null, ok: false };
 
-type Laboratory = { id: string; name: string };
-
-// Alta de producto. Solo se monta para SUPERADMIN/ADMIN (la página decide).
-export function ProductForm({ laboratories = [] }: { laboratories?: Laboratory[] }) {
+// Alta de producto. La página decide el montaje con canManageProducts.
+export function ProductForm() {
   const [state, formAction, isPending] = useActionState(
     createProductAction,
     INITIAL_STATE,
@@ -65,14 +63,24 @@ export function ProductForm({ laboratories = [] }: { laboratories?: Laboratory[]
         <Field label="Nombre" htmlFor="name">
           <Input id="name" name="name" required />
         </Field>
-        <Field label="Unidad" htmlFor="unit">
+        <Field label="Presentación / unidad" htmlFor="unit">
           <Input
             id="unit"
             name="unit"
             required
-            placeholder="caja, unidad, ml…"
+            placeholder="Ej: Caja x 20 tabletas"
           />
+          <p className="mt-1 text-xs text-muted-foreground">
+            Ejemplos: Caja x 20 tabletas, Frasco x 120 ml, Blíster x 10, Unidad.
+          </p>
         </Field>
+        <div className="sm:col-span-2">
+          <LaboratorySearch
+            name="laboratoryId"
+            label="Laboratorio (opcional)"
+            hint="Buscá uno existente o crealo sin salir del formulario."
+          />
+        </div>
         <Field label="Stock mín." htmlFor="minStock">
           <Input
             id="minStock"
@@ -91,18 +99,6 @@ export function ProductForm({ laboratories = [] }: { laboratories?: Laboratory[]
             defaultValue={0}
           />
         </Field>
-        {laboratories.length > 0 ? (
-          <Field label="Laboratorio" htmlFor="laboratoryId">
-            <Select id="laboratoryId" name="laboratoryId" defaultValue="">
-              <option value="">Sin laboratorio</option>
-              {laboratories.map((lab) => (
-                <option key={lab.id} value={lab.id}>
-                  {lab.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-        ) : null}
       </div>
 
       {state.error ? (

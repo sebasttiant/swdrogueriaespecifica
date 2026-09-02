@@ -7,7 +7,6 @@ import { requireCapability } from "@/lib/auth/require-role";
 import { ProductForm } from "@/features/productos/product-form";
 import { ProductList } from "@/features/productos/product-list";
 import { getProducts } from "@/server/services/product.service";
-import { prisma } from "@/lib/db/prisma";
 
 export const metadata: Metadata = { title: "Productos" };
 
@@ -20,10 +19,7 @@ export default async function ProductosPage({
   const session = await requireCapability("canViewProductos");
   const canManage = can(session.user.role, "canManageProducts");
 
-  const [{ items, nextCursor }, laboratories] = await Promise.all([
-    getProducts({ cursor, q }),
-    prisma.laboratory.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } }),
-  ]);
+  const { items, nextCursor } = await getProducts({ cursor, q });
 
   return (
     <div className="space-y-6">
@@ -35,7 +31,7 @@ export default async function ProductosPage({
       {canManage ? (
         <Card className="space-y-4">
           <CardTitle>Nuevo producto</CardTitle>
-          <ProductForm laboratories={laboratories} />
+          <ProductForm />
         </Card>
       ) : null}
 
