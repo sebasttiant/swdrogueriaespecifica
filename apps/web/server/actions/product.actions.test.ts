@@ -70,6 +70,9 @@ describe("createProductAction · guard DB-authoritative", () => {
     fd.set("laboratoryId", "lab-1");
     await createProductAction(PREV, fd);
 
+    expect(safeParse).toHaveBeenCalledWith(
+      expect.objectContaining({ laboratoryId: "lab-1" }),
+    );
     expect(addProduct).toHaveBeenCalledWith(
       expect.objectContaining({ laboratoryId: "lab-1" }),
     );
