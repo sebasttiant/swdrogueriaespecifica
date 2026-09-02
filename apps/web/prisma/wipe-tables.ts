@@ -9,7 +9,11 @@
 // ("users" jamás entra al truncate) sin tocar la base.
 // --------------------------------------------------------------------------
 
-export const WIPE_PROTECTED_TABLES = ["users", "_prisma_migrations"] as const;
+export const WIPE_PROTECTED_TABLES = [
+  "users",
+  "_prisma_migrations",
+  "inventory_cutovers",
+] as const;
 
 export function tablesToTruncate(allTables: readonly string[]): string[] {
   const protectedTables = new Set<string>(WIPE_PROTECTED_TABLES);
