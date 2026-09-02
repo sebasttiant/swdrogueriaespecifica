@@ -32,6 +32,9 @@ export type NavItem = {
 export const NAV_ITEMS: readonly NavItem[] = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard, primaryMobile: true, capability: "canViewDashboard" },
   { label: "Pendientes", href: "/pendientes", icon: ClipboardList, primaryMobile: true, capability: "canViewPendientes" },
+  // Va pegado a Pendientes porque es su superficie de revisión, y tampoco ocupa
+  // lugar en la barra móvil. La ve también el vendedor, acotada a sus filas.
+  { label: "Revisión de pendientes", href: "/revision-pendientes", icon: ClipboardCheck, capability: "canReviewPendings" },
   { label: "Faltantes", href: "/faltantes", icon: PackageX, primaryMobile: true, capability: "canViewFaltantes" },
   // Sin `primaryMobile`: es una vista de gerencia, no debe ocupar un lugar en
   // la barra inferior del celular del vendedor. La capability es la MÁS DÉBIL
@@ -40,13 +43,6 @@ export const NAV_ITEMS: readonly NavItem[] = [
   // proyección distinta para cada una. Dejar la fuerte acá le escondería a
   // bodega la recepción de estantería, que sí puede usar.
   { label: "Revisión de faltantes", href: "/revision-faltantes", icon: Inbox, capability: "canReceiveMissingItems" },
-  // Va pegado al de faltantes porque son las dos superficies de revisión, y
-  // tampoco ocupa lugar en la barra móvil. La diferencia con el de arriba es a
-  // quién alcanza: esta la ve también el vendedor, acotada a sus propias filas.
-  // Acá vive TAMBIÉN la recepción de los pedidos de clientes. Sigue SIN
-  // `primaryMobile`: la barra inferior está dimensionada para tres accesos y
-  // sumarle uno cuarto parte la fila. Bodega llega por el menú.
-  { label: "Revisión de pendientes", href: "/revision-pendientes", icon: ClipboardCheck, capability: "canReviewPendings" },
   // Va con las otras dos superficies de revisión y tampoco ocupa lugar en la
   // barra móvil. Se gatea con `canFixProductIdentity` —la MISMA capacidad que
   // exige `getPendingIdentityQueue`— porque la cola la lee quien puede

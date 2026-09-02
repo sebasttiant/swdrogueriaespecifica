@@ -7,6 +7,22 @@ function labels(role: Parameters<typeof visibleNavItems>[0]): string[] {
 }
 
 describe("visibleNavItems", () => {
+  it("mantiene el orden operativo explícito del menú", () => {
+    expect(NAV_ITEMS.map((item) => item.label)).toEqual([
+      "Dashboard",
+      "Pendientes",
+      "Revisión de pendientes",
+      "Faltantes",
+      "Revisión de faltantes",
+      "Revisión de identidad",
+      "Entradas",
+      "Productos",
+      "Reportes",
+      "Usuarios",
+      "Auditoría",
+    ]);
+  });
+
   it("muestra los módulos sensibles (Reportes, Usuarios, Auditoría) a SUPERADMIN y ADMIN", () => {
     for (const role of ["SUPERADMIN", "ADMIN"] as const) {
       expect(labels(role)).toContain("Reportes");
@@ -30,10 +46,10 @@ describe("visibleNavItems", () => {
     expect(labels("OPERADOR")).toEqual([
       "Dashboard",
       "Pendientes",
-      "Faltantes",
       // Agregado por T4.2b·A: el vendedor revisa pendientes, acotado a los
       // suyos.
       "Revisión de pendientes",
+      "Faltantes",
     ]);
   });
 
@@ -53,9 +69,9 @@ describe("visibleNavItems", () => {
     expect(supervisor).toEqual([
       "Dashboard",
       "Pendientes",
-      "Faltantes",
       // Agregado por T4.2b·A. No se quitó ninguno de los anteriores.
       "Revisión de pendientes",
+      "Faltantes",
       // Agregado por S2b·2-B1: SUPERVISOR tiene `canFixProductIdentity`.
       "Revisión de identidad",
       "Entradas",

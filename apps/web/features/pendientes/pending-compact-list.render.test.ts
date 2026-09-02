@@ -275,7 +275,7 @@ describe("PendingCompactList", () => {
     expect(countOccurrences(html, "Cargado · podés facturar")).toBe(2);
   });
 
-  it("distingue la llegada parcial de la completa", () => {
+  it("distingue la cobertura parcial de la completa", () => {
     const html = render(
       [pending({ quantity: 10, customerStatus: "CONTACTADO", inventoryReadyQuantity: 6, invoicedQuantity: 0 })],
       false,
@@ -283,7 +283,9 @@ describe("PendingCompactList", () => {
       { canContactOrInvoice: true },
     );
 
-    expect(countOccurrences(html, "Cargado: 6 de 10")).toBe(2);
+    expect(
+      countOccurrences(html, "Sin stock suficiente · 6 de 10 restantes disponibles"),
+    ).toBe(2);
   });
 
   it("no avisa disponibilidad sobre un pendiente ya cerrado", () => {
@@ -332,12 +334,13 @@ describe("PendingCompactList · autoridad de compras", () => {
 //   morado   → no es una unidad, son varias
 // --------------------------------------------------------------------------
 describe("PendingCompactList · señales de la reunión", () => {
-  it("avisa que llegó a la droguería aunque todavía no esté cargado", () => {
+  it("prioriza la falta de stock cuando llegó pero todavía no está cargado", () => {
     const html = render([
       pending({ availabilityStatus: "LLEGO_BODEGA", inventoryReadyQuantity: 0 }),
     ]);
 
-    expect(countOccurrences(html, "Llegó a la droguería")).toBe(2);
+    expect(countOccurrences(html, "Sin stock")).toBe(2);
+    expect(html).not.toContain("Llegó a la droguería");
     expect(html).not.toContain("podés facturar");
   });
 
@@ -350,12 +353,14 @@ describe("PendingCompactList · señales de la reunión", () => {
     expect(html).not.toContain("Llegó a la droguería");
   });
 
-  it("distingue lo cargado parcialmente", () => {
+  it("distingue la cobertura parcial de lo cargado", () => {
     const html = render([
       pending({ quantity: 10, availabilityStatus: "DISPONIBLE_PARCIAL", inventoryReadyQuantity: 6 }),
     ]);
 
-    expect(countOccurrences(html, "Cargado: 6 de 10 · podés facturar")).toBe(2);
+    expect(
+      countOccurrences(html, "Sin stock suficiente · 6 de 10 restantes disponibles"),
+    ).toBe(2);
   });
 
   it("marca cuando se piden varias unidades, no una sola", () => {
