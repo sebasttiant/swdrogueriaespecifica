@@ -487,12 +487,13 @@ describe("PendingList · el nombre no se corta en el celular", () => {
 // sistema (ya se puede).
 // --------------------------------------------------------------------------
 describe("PendingList · aviso de llegada", () => {
-  it("anuncia que la mercancía llegó a la droguería y sigue sin cargar", () => {
+  it("prioriza la falta de stock cuando llegó pero sigue sin cargar", () => {
     const html = renderList({
       items: [pending({ availabilityStatus: "LLEGO_BODEGA", customerStatus: "CONTACTADO" })],
     });
 
-    expect(html).toContain("Llegó a la droguería");
+    expect(html).toContain("Sin stock");
+    expect(html).not.toContain("Llegó a la droguería");
   });
 
   it("anuncia que ya se puede facturar cuando bodega cargó la mercancía", () => {
@@ -505,16 +506,14 @@ describe("PendingList · aviso de llegada", () => {
     expect(html).toContain("Cargado");
   });
 
-  it("dice cuánto llegó cuando bodega cargó solo una parte", () => {
+  it("dice cuánto cubre cuando bodega cargó solo una parte", () => {
     const html = renderList({
       items: [
-        pending({ inventoryReadyQuantity: 4, quantity: 10, customerStatus: "CONTACTADO" }),
+        pending({ inventoryReadyQuantity: 8, quantity: 10, customerStatus: "CONTACTADO" }),
       ],
     });
 
-    // "4 de 10" a secas ya lo imprime la línea "Entregado: 4 de 10 unidad" de
-    // la tarjeta: afirmarlo suelto pasaría sin que el aviso exista.
-    expect(html).toContain("Cargado: 4 de 10");
+    expect(html).toContain("Sin stock suficiente · 4 de 6 restantes disponibles");
   });
 
   it("calla sobre un pendiente ya cerrado: no queda nada que facturar", () => {

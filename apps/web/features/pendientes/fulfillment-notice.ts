@@ -43,11 +43,24 @@ export function outstanding(item: PendingListItem): { toInvoice: number; toDeliv
 // Va como texto además de color porque estas filas se leen en un celular al sol.
 export function fulfillmentNotice(
   item: PendingListItem,
-): { label: string; tone: "success" | "primary" | "warning" } | null {
+): { label: string; tone: "success" | "primary" | "warning" | "danger" } | null {
   if (isTerminal(item)) return null;
 
   const available = item.inventoryReadyQuantity ?? 0;
+  const remaining = item.quantity - item.deliveredQuantity - item.cancelledQuantity;
+  const readyForRemaining = Math.max(available - item.deliveredQuantity, 0);
   const notInvoiced = item.customerStatus !== "FACTURADO";
+
+  if (remaining > 0 && readyForRemaining === 0) {
+    return { label: "Sin stock", tone: "danger" };
+  }
+
+  if (readyForRemaining > 0 && readyForRemaining < remaining) {
+    return {
+      label: `Sin stock suficiente · ${readyForRemaining} de ${remaining} restantes disponibles`,
+      tone: "danger",
+    };
+  }
 
   // AMARILLO — bodega ya lo subió al sistema. Es el aviso que espera el
   // vendedor: "ya te llegó, te lo vamos a mandar".
