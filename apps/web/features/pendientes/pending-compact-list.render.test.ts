@@ -12,6 +12,7 @@ vi.mock("@/server/actions/pending.actions", () => ({
   contactPendingAction: vi.fn(),
   invoicePendingAction: vi.fn(),
   deliverPendingAction: vi.fn(),
+  resolveWaitlistDecisionAction: vi.fn(),
 }));
 
 import { createElement } from "react";
@@ -267,6 +268,70 @@ describe("PendingCompactList", () => {
     expect(countOccurrences(html, "Facturar")).toBe(2);
     expect(html).not.toContain("Facturar el resto");
     expect(html).not.toContain("Ya le facturé");
+  });
+
+  // --------------------------------------------------------------------------
+  // Lista de espera: registrar que el cliente acepta esperar.
+  //
+  // El gesto ya existía, pero atado a la entrega parcial. Ahora aplica a casi
+  // toda la cola abierta, y eso obliga a cuidar la DENSIDAD: lo que antes salía
+  // en filas raras ahora saldría en todas.
+  // --------------------------------------------------------------------------
+  it("ofrece registrar la espera en un pendiente del que no llegó nada", () => {
+    const html = render([pending()], false, null, { canDeliver: true });
+
+    expect(countOccurrences(html, "Lo espera")).toBe(2); // móvil + tabla
+    expect(countOccurrences(html, "Va con otro pedido")).toBe(2);
+  });
+
+  // La forma compacta es el punto: un panel con pregunta en cada fila inflaría
+  // la tarjeta del celular y ensancharía la columna "Acción" en TODAS las filas.
+  it("no mete la pregunta ni el panel cuando no hubo entrega", () => {
+    const html = render([pending()], false, null, { canDeliver: true });
+
+    expect(html).not.toContain("¿Qué hace el cliente?");
+    expect(html).not.toContain("bg-muted/30");
+    // Tampoco ofrece cerrar: un pendiente del que no salió nada se cancela.
+    expect(html).not.toContain("No los espera");
+  });
+
+  // No regresión: la entrega parcial es un EVENTO y conserva su panel completo,
+  // exactamente como estaba en producción.
+  it("conserva el panel completo tras una entrega parcial", () => {
+    const html = render(
+      [pending({ status: "PARCIAL", quantity: 5, deliveredQuantity: 3 })],
+      false,
+      null,
+      { canDeliver: true },
+    );
+
+    expect(countOccurrences(html, "Faltan 2. ¿Qué hace el cliente?")).toBe(2);
+    expect(countOccurrences(html, "Espera el resto")).toBe(2);
+    expect(countOccurrences(html, "No los espera")).toBe(2);
+  });
+
+  it("no ofrece el gesto sobre un pendiente AGOTADO", () => {
+    const html = render([pending({ status: "AGOTADO" })], false, null, { canDeliver: true });
+
+    expect(html).not.toContain("Lo espera");
+  });
+
+  // Respondida la pregunta, el gesto desaparece y la fila muestra la respuesta:
+  // volver a preguntar hacía ver la acción como si no hubiera funcionado.
+  it("cambia el gesto por la respuesta, con las palabras del caso", () => {
+    const sinEntrega = render([pending({ waitlistDecision: "ESPERA" })], false, null, {
+      canDeliver: true,
+    });
+    expect(countOccurrences(sinEntrega, "El cliente lo espera")).toBe(2);
+    expect(sinEntrega).not.toContain("Lo espera</button>");
+
+    const conEntrega = render(
+      [pending({ status: "PARCIAL", deliveredQuantity: 3, waitlistDecision: "ESPERA" })],
+      false,
+      null,
+      { canDeliver: true },
+    );
+    expect(countOccurrences(conEntrega, "El cliente espera el resto")).toBe(2);
   });
 
   it("shows seller delivery actions in the desktop table", () => {

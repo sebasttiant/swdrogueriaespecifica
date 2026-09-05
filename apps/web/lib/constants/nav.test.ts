@@ -12,6 +12,7 @@ describe("visibleNavItems", () => {
       "Dashboard",
       "Pendientes",
       "Revisión de pendientes",
+      "Lista de espera",
       "Faltantes",
       "Revisión de faltantes",
       "Revisión de identidad",
@@ -42,13 +43,16 @@ describe("visibleNavItems", () => {
     expect(operador).not.toContain("Productos");
   });
 
-  it("OPERADOR ve exactamente los cuatro items de su circuito", () => {
+  it("OPERADOR ve exactamente los cinco items de su circuito", () => {
     expect(labels("OPERADOR")).toEqual([
       "Dashboard",
       "Pendientes",
       // Agregado por T4.2b·A: el vendedor revisa pendientes, acotado a los
       // suyos.
       "Revisión de pendientes",
+      // El vendedor VE la lista de espera acotada a sus clientes: son a los que
+      // él tiene que llamar cuando llegue.
+      "Lista de espera",
       "Faltantes",
     ]);
   });
@@ -71,6 +75,7 @@ describe("visibleNavItems", () => {
       "Pendientes",
       // Agregado por T4.2b·A. No se quitó ninguno de los anteriores.
       "Revisión de pendientes",
+      "Lista de espera",
       "Faltantes",
       // Agregado por S2b·2-B1: SUPERVISOR tiene `canFixProductIdentity`.
       "Revisión de identidad",
@@ -140,6 +145,43 @@ describe("visibleNavItems · revisión de pendientes", () => {
     );
     expect(item).toBeDefined();
     expect(item?.primaryMobile).toBeUndefined();
+  });
+});
+
+// --------------------------------------------------------------------------
+// Lista de espera.
+//
+// Es una VISTA más de los pendientes, no una cola aparte, y por eso la ve
+// exactamente quien ve pendientes. El ALCANCE de las filas es otro eje y lo
+// resuelve `seesAllPendings` en la página: el vendedor ve a sus clientes
+// esperando, gerencia los ve todos.
+// --------------------------------------------------------------------------
+describe("Lista de espera", () => {
+  it("la ven todos los roles que ven pendientes", () => {
+    for (const role of ["SUPERADMIN", "ADMIN", "SUPERVISOR", "OPERADOR", "BODEGA"] as const) {
+      expect(labels(role)).toContain("Lista de espera");
+    }
+  });
+
+  it("sin sesión no aparece", () => {
+    expect(labels(null)).not.toContain("Lista de espera");
+  });
+
+  // La barra inferior del celular ya tiene sus cuatro accesos. Esta pantalla se
+  // consulta, no se opera a cada rato: robarle un lugar rompería la fila.
+  it("no ocupa un lugar en la barra inferior móvil", () => {
+    const item = visibleNavItems("OPERADOR").find(
+      (navItem) => navItem.href === "/lista-de-espera",
+    );
+    expect(item).toBeDefined();
+    expect(item?.primaryMobile).toBeUndefined();
+  });
+
+  // Mismo criterio que el resto: el enlace se ofrece con la capacidad EXACTA
+  // que exige el guard de la página.
+  it("usa la capacidad exacta del guard de su página", () => {
+    const item = NAV_ITEMS.find((navItem) => navItem.href === "/lista-de-espera");
+    expect(item?.capability).toBe("canViewPendientes");
   });
 });
 

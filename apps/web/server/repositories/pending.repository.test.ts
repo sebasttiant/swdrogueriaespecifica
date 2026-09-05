@@ -225,6 +225,59 @@ describe("countUpcomingPendings", () => {
 // romper la consulta ni filtrarse a Prisma si apunta a un id inexistente.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Lista de espera: un FILTRO sobre una columna real, no una etapa derivada.
+//
+// La diferencia importa. "¿El cliente aceptó esperar?" no lo contesta ningún
+// cálculo sobre stock ni cantidades: es la respuesta de una persona, y por eso
+// vive en una columna que se puede filtrar e indexar. Derivarla habría exigido
+// inventar una regla de precedencia entre los ejes, que es exactamente lo que
+// `review-axes.ts` advierte que no se haga.
+// ---------------------------------------------------------------------------
+describe("listPendings · lista de espera", () => {
+  it("sin el filtro la vista es exactamente la de siempre", async () => {
+    await listPendings({});
+    await listPendings({ waitlisted: false });
+
+    for (const call of prismaMock.pending.findMany.mock.calls) {
+      expect(call[0]!.where).not.toHaveProperty("waitlistDecision");
+    }
+  });
+
+  it("con el filtro trae solo las filas cuyo cliente respondió", async () => {
+    await listPendings({ waitlisted: true });
+
+    const args = prismaMock.pending.findMany.mock.calls[0]![0];
+    expect(args.where).toEqual({
+      status: {
+        in: ["PENDIENTE", "PARCIAL", "SOLICITADO", "BUSQUEDA", "COTIZANDO", "AGOTADO"],
+      },
+      waitlistDecision: { not: null },
+    });
+  });
+
+  // Las DOS respuestas entran: en las dos hay alguien esperando. "Va con otro
+  // pedido" solo le dice a compras que no lo compre suelto.
+  it("no distingue entre las dos respuestas", async () => {
+    await listPendings({ waitlisted: true });
+
+    const args = prismaMock.pending.findMany.mock.calls[0]![0];
+    expect(args.where.waitlistDecision).toEqual({ not: null });
+  });
+
+  // El recorte por dueño manda igual: la lista de espera no es una puerta
+  // lateral a los clientes de otro vendedor.
+  it("respeta el recorte por dueño", async () => {
+    await listPendings({ waitlisted: true, ownerId: "op-1" });
+
+    const args = prismaMock.pending.findMany.mock.calls[0]![0];
+    expect(args.where).toMatchObject({
+      createdById: "op-1",
+      waitlistDecision: { not: null },
+    });
+  });
+});
+
 describe("listPendings · scope", () => {
   // La vista operativa por defecto muestra lo que todavía requiere atención. Un
   // ENTREGADO/CANCELADO ya no se trabaja: si entra en el listado por defecto,

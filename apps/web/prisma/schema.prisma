@@ -65,9 +65,17 @@ enum PendingIdentityDeferral {
   OTHER
 }
 
-enum PendingPartialDecision {
+// Qué contestó el cliente cuando su pedido todavía no está completo: lo espera,
+// o se lo juntan con otro pedido. Las dos respuestas dejan el pendiente ABIERTO
+// y a una persona esperando, y por eso las dos alimentan la lista de espera.
+enum PendingWaitlistDecision {
   ESPERA
   VA_CON_PEDIDO
+
+  // El tipo en la base conserva el nombre con el que nació, de cuando la
+  // decisión solo existía después de una entrega parcial. Renombrarlo de verdad
+  // sería una migración sobre producción que no cambiaría ni un dato.
+  @@map("PendingPartialDecision")
 }
 
 enum PendingCustomerStatus {
@@ -561,11 +569,17 @@ model Pending {
   // un compromiso con un cliente. Gerencia no tiene ese límite.
   // Null = todavía no lo corrigió. Las ediciones de gerencia NO lo tocan.
   sellerEditedAt            DateTime?
-  // La respuesta del cliente sobre el resto, ya registrada. Sin esto la fila no
-  // sabía que la pregunta ya se había contestado y la volvía a hacer para
+  // La respuesta del cliente sobre lo que falta, ya registrada. Sin esto la fila
+  // no sabía que la pregunta ya se había contestado y la volvía a hacer para
   // siempre: la nota se escribía, pero nada la delataba.
-  partialDecision           PendingPartialDecision?
-  partialDecisionAt         DateTime?
+  //
+  // Se llamaba `partialDecision` porque nació atada a la entrega parcial. El
+  // nombre prometía un alcance que la decisión no tiene —el mismo defecto que
+  // tenía `canInvoiceOwnPendings`—. Las COLUMNAS conservan el nombre viejo vía
+  // `@map`: el dato es idéntico, así que acá no hay absolutamente nada que
+  // migrar, y producción no se entera.
+  waitlistDecision          PendingWaitlistDecision?  @map("partialDecision")
+  waitlistDecisionAt        DateTime?                 @map("partialDecisionAt")
   // Promesa de entrega al cliente: cuándo le respondemos. Obligatoria: en
   // droguería el pendiente es operativo y necesita una fecha/hora comprometida.
   promisedAt                DateTime

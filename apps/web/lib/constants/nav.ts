@@ -3,6 +3,7 @@ import {
   Package,
   ClipboardList,
   ClipboardCheck,
+  Hourglass,
   PackageX,
   PackagePlus,
   BarChart3,
@@ -35,6 +36,15 @@ export const NAV_ITEMS: readonly NavItem[] = [
   // Va pegado a Pendientes porque es su superficie de revisión, y tampoco ocupa
   // lugar en la barra móvil. La ve también el vendedor, acotada a sus filas.
   { label: "Revisión de pendientes", href: "/revision-pendientes", icon: ClipboardCheck, capability: "canReviewPendings" },
+  // Los clientes que aceptaron esperar. Va pegada a las dos superficies de
+  // pendientes porque es una vista MÁS de las mismas filas, no una cola aparte:
+  // el pendiente sigue en `/pendientes` y además aparece acá.
+  //
+  // Sin `primaryMobile`: la barra inferior del celular ya tiene sus cuatro, y
+  // esta se consulta, no se opera a cada rato. La capability es la de ver
+  // pendientes —quien ve la cola ve quién está esperando en ella—; el ALCANCE
+  // de las filas lo pone `seesAllPendings` en la página, que es otro eje.
+  { label: "Lista de espera", href: "/lista-de-espera", icon: Hourglass, capability: "canViewPendientes" },
   { label: "Faltantes", href: "/faltantes", icon: PackageX, primaryMobile: true, capability: "canViewFaltantes" },
   // Sin `primaryMobile`: es una vista de gerencia, no debe ocupar un lugar en
   // la barra inferior del celular del vendedor. La capability es la MÁS DÉBIL

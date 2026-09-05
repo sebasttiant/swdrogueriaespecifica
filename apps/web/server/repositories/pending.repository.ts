@@ -34,7 +34,7 @@ export type PendingListItem = {
   // Qué respondió el cliente sobre lo que faltó, y si el vendedor ya usó su
   // única corrección. La fila los necesita para no volver a ofrecer algo que ya
   // se resolvió.
-  partialDecision?: "ESPERA" | "VA_CON_PEDIDO" | null;
+  waitlistDecision?: "ESPERA" | "VA_CON_PEDIDO" | null;
   sellerEditedAt?: Date | null;
   promisedAt: Date;
   customerName: string | null;
@@ -126,7 +126,7 @@ const LIST_SELECT = {
   invoicedQuantity: true,
   contactedAt: true,
   invoicedAt: true,
-  partialDecision: true,
+  waitlistDecision: true,
   sellerEditedAt: true,
   promisedAt: true,
   customerName: true,
@@ -201,11 +201,22 @@ function axisWhere(axes: PendingAxisFilters | undefined): Prisma.PendingWhereInp
   };
 }
 
-/** Qué filas contiene una vista: su scope, su dueño y sus ejes. */
+/** Qué filas contiene una vista: su scope, su dueño, sus ejes y la espera. */
 type PendingViewParams = {
   scope?: PendingScope;
   ownerId?: string;
   axes?: PendingAxisFilters;
+  // Solo los clientes que ACEPTARON esperar: la lista de espera.
+  //
+  // Es un filtro sobre una columna REAL, no una etapa derivada. La diferencia
+  // importa: "¿el cliente aceptó esperar?" no lo contesta ningún cálculo sobre
+  // stock o cantidades, porque es la respuesta de una persona. Por eso la lista
+  // de espera es esta vista y no un modelo nuevo — y por eso el pendiente no se
+  // mueve: sigue en su cola y ADEMÁS aparece acá.
+  //
+  // Ausente o `false` NO filtra, igual que los ejes: la vista de siempre sigue
+  // siendo exactamente la de siempre.
+  waitlisted?: boolean;
 };
 
 /**
@@ -223,6 +234,11 @@ function viewWhere(params: PendingViewParams): Prisma.PendingWhereInput {
     status: { in: params.scope === "history" ? HISTORY_STATUSES : OPEN_STATUSES },
     ...(params.ownerId ? { createdById: params.ownerId } : {}),
     ...axisWhere(params.axes),
+    // No se acota además por WAITLIST_STATUSES a propósito: un pendiente que ya
+    // tiene respuesta y después se marca AGOTADO tiene que SEGUIR viéndose. Ese
+    // cliente aceptó esperar algo que ahora no se consigue, y avisarle es
+    // justamente la acción que la lista existe para provocar.
+    ...(params.waitlisted ? { waitlistDecision: { not: null } } : {}),
   };
 }
 
@@ -257,6 +273,7 @@ export async function listPendings(params: {
   scope?: PendingScope;
   ownerId?: string;
   axes?: PendingAxisFilters;
+  waitlisted?: boolean;
 }): Promise<Paginated<PendingListItem>> {
   const take = clampTake(params.take);
   let cursorId = params.cursor ? decodeCursor(params.cursor) : null;
@@ -488,6 +505,10 @@ export type PendingForDelivery = {
   inventoryReadyQuantity: number;
   invoicedQuantity: number;
   customerStatus: "POR_CONTACTAR" | "CONTACTADO" | "FACTURADO" | "ENTREGADO" | "CANCELADO";
+  // Si el cliente YA respondió si espera. Va en la fila bloqueada porque la
+  // respuesta se da una sola vez y esa guarda tiene que leerse bajo el lock:
+  // dos pestañas abiertas pisaban la primera respuesta sin que nada lo notara.
+  waitlistDecision: "ESPERA" | "VA_CON_PEDIDO" | null;
 };
 
 /**
@@ -510,7 +531,11 @@ export async function lockPendingForUpdate(
   id: string,
 ): Promise<PendingForDelivery | null> {
   const rows = await client.$queryRaw<PendingForDelivery[]>`
-    SELECT id, quantity, "deliveredQuantity", "cancelledQuantity", status, "createdById", "inventoryReadyQuantity", "invoicedQuantity", "customerStatus"
+    SELECT id, quantity, "deliveredQuantity", "cancelledQuantity", status, "createdById", "inventoryReadyQuantity", "invoicedQuantity", "customerStatus",
+           -- La COLUMNA sigue llamándose como nació; en el modelo el campo se
+           -- llama waitlistDecision vía @map. Prisma traduce ese alias solo,
+           -- pero el SQL crudo no pasa por Prisma: acá se escribe a mano.
+           "partialDecision" AS "waitlistDecision"
     FROM pendings WHERE id = ${id} FOR UPDATE
   `;
   return rows[0] ?? null;

@@ -29,7 +29,8 @@ import { PendingManagementStatusForm } from "./pending-management-status-form";
 import { PendingCustomerLifecycleForm } from "./pending-customer-lifecycle-form";
 import { PendingDeliverForm } from "./pending-deliver-form";
 import { PendingCancelForm } from "./pending-cancel-form";
-import { PendingPartialDecisionForm } from "./pending-partial-decision-form";
+import { PendingWaitlistDecisionForm } from "./pending-waitlist-decision-form";
+import { acceptsWaitlistDecision } from "./waitlist";
 
 // --------------------------------------------------------------------------
 // Vista LISTADO de pendientes — la que pidió el gerente en la reunión del
@@ -126,16 +127,21 @@ function purchaseNote(item: PendingListItem): string | null {
   return isManagementStatus(purchaseStatus) ? MANAGEMENT_STATUS_LABELS[purchaseStatus] : null;
 }
 
-// Lo que el cliente respondió sobre lo que faltó. Se muestra para que la fila
-// diga que la pregunta ya se contestó, en vez de volver a hacerla.
-const PARTIAL_DECISION_LABELS = {
-  ESPERA: "El cliente espera el resto",
-  VA_CON_PEDIDO: "El resto va con otro pedido",
+// Lo que el cliente respondió. Se muestra para que la fila diga que la pregunta
+// ya se contestó, en vez de volver a hacerla.
+//
+// Dos redacciones por respuesta, y no una: si ya se le entregó una parte, lo
+// que el cliente espera es EL RESTO; si no salió nada, espera el pedido entero.
+// Una sola redacción para los dos casos mentiría en uno de los dos.
+const WAITLIST_DECISION_LABELS = {
+  ESPERA: { partial: "El cliente espera el resto", whole: "El cliente lo espera" },
+  VA_CON_PEDIDO: { partial: "El resto va con otro pedido", whole: "Va con otro pedido" },
 } as const;
 
-function partialDecisionLabel(item: PendingListItem): string | null {
-  if (!item.partialDecision) return null;
-  return PARTIAL_DECISION_LABELS[item.partialDecision];
+function waitlistDecisionLabel(item: PendingListItem): string | null {
+  if (!item.waitlistDecision) return null;
+  const shape = item.deliveredQuantity > 0 ? "partial" : "whole";
+  return WAITLIST_DECISION_LABELS[item.waitlistDecision][shape];
 }
 
 // El laboratorio pedido. Va pegado al producto —y NO dentro de la línea de
@@ -261,19 +267,30 @@ function customerActions(item: PendingListItem, ctx: CustomerActionsContext) {
       />
     ) : null;
 
-  // Solo con una entrega parcial en curso: sin ninguna entrega no hay resto
-  // sobre el que el cliente decida, y cerrar de cero es una cancelación.
-  const partialDecision =
+  // Sobre cualquier pendiente abierto al que todavía le falte algo. La
+  // conversación con el cliente pasa en el mostrador, no después de una
+  // entrega: exigir PARCIAL dejaba fuera el caso más común de la operación, que
+  // es que no haya llegado NADA.
+  //
+  // La capability es la MISMA que exige la Server Action a propósito. Si la
+  // pantalla ofreciera el gesto con una y el servidor pidiera otra, el botón
+  // aparecería y fallaría al tocarlo.
+  const waitlistDecision =
     ctx.canDeliver &&
-    item.status === "PARCIAL" &&
+    acceptsWaitlistDecision(item.status) &&
     item.quantity > item.deliveredQuantity &&
     // Ya respondida: preguntar de nuevo hacía ver la acción como si no hubiera
     // funcionado. La respuesta se ve abajo, en el estado de la fila.
-    !item.partialDecision ? (
-      <PendingPartialDecisionForm
-        key="partial-decision"
+    !item.waitlistDecision ? (
+      <PendingWaitlistDecisionForm
+        key="waitlist-decision"
         pendingId={item.id}
         remaining={item.quantity - item.deliveredQuantity}
+        // La MISMA condición que vuelve a aplicar el service para permitir
+        // cerrar. No se deriva de `deliveredQuantity > 0`: aunque hoy sean
+        // equivalentes, el día que dejaran de serlo la pantalla ofrecería un
+        // cierre que el servidor rechaza.
+        hasPartialDelivery={item.status === "PARCIAL"}
       />
     ) : null;
 
@@ -293,8 +310,8 @@ function customerActions(item: PendingListItem, ctx: CustomerActionsContext) {
     </Link>
   ) : null;
 
-  if (!invoice && !deliver && !partialDecision && !edit && !cancel) return null;
-  return [invoice, deliver, partialDecision, edit, cancel];
+  if (!invoice && !deliver && !waitlistDecision && !edit && !cancel) return null;
+  return [invoice, deliver, waitlistDecision, edit, cancel];
 }
 
 // El vendedor puede actuar sobre su pendiente mientras no esté cerrado.
@@ -355,7 +372,7 @@ export function PendingCompactList({
           const identityNotice = identityWarning(pending);
           const lifecycle = lifecycleLabel(pending);
           const purchase = purchaseNote(pending);
-          const decision = partialDecisionLabel(pending);
+          const decision = waitlistDecisionLabel(pending);
           const actions = customerActions(pending, {
             viewer,
             canDeliver,
@@ -472,7 +489,7 @@ export function PendingCompactList({
               const identityNotice = identityWarning(pending);
               const lifecycle = lifecycleLabel(pending);
               const purchase = purchaseNote(pending);
-              const decision = partialDecisionLabel(pending);
+              const decision = waitlistDecisionLabel(pending);
               const actions = customerActions(pending, {
                 viewer,
                 canDeliver,
