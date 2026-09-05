@@ -201,6 +201,9 @@ export async function getPendings(params: {
   // Ejes de revisión: acotan QUÉ se lista, nunca QUIÉN puede verlo. El recorte
   // por dueño y la minimización de identidad siguen mandando igual.
   axes?: PendingAxisFilters;
+  // Lista de espera: solo las filas cuyo cliente aceptó esperar. Mismo carácter
+  // que los ejes — acota QUÉ se lista, no QUIÉN lo ve.
+  waitlisted?: boolean;
 }): Promise<Paginated<PendingListItem>> {
   const { canViewCustomerIdentity, ...listParams } = params;
   const { items, nextCursor } = await listPendings(listParams);

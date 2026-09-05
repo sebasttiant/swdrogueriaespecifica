@@ -201,11 +201,22 @@ function axisWhere(axes: PendingAxisFilters | undefined): Prisma.PendingWhereInp
   };
 }
 
-/** Qué filas contiene una vista: su scope, su dueño y sus ejes. */
+/** Qué filas contiene una vista: su scope, su dueño, sus ejes y la espera. */
 type PendingViewParams = {
   scope?: PendingScope;
   ownerId?: string;
   axes?: PendingAxisFilters;
+  // Solo los clientes que ACEPTARON esperar: la lista de espera.
+  //
+  // Es un filtro sobre una columna REAL, no una etapa derivada. La diferencia
+  // importa: "¿el cliente aceptó esperar?" no lo contesta ningún cálculo sobre
+  // stock o cantidades, porque es la respuesta de una persona. Por eso la lista
+  // de espera es esta vista y no un modelo nuevo — y por eso el pendiente no se
+  // mueve: sigue en su cola y ADEMÁS aparece acá.
+  //
+  // Ausente o `false` NO filtra, igual que los ejes: la vista de siempre sigue
+  // siendo exactamente la de siempre.
+  waitlisted?: boolean;
 };
 
 /**
@@ -223,6 +234,11 @@ function viewWhere(params: PendingViewParams): Prisma.PendingWhereInput {
     status: { in: params.scope === "history" ? HISTORY_STATUSES : OPEN_STATUSES },
     ...(params.ownerId ? { createdById: params.ownerId } : {}),
     ...axisWhere(params.axes),
+    // No se acota además por WAITLIST_STATUSES a propósito: un pendiente que ya
+    // tiene respuesta y después se marca AGOTADO tiene que SEGUIR viéndose. Ese
+    // cliente aceptó esperar algo que ahora no se consigue, y avisarle es
+    // justamente la acción que la lista existe para provocar.
+    ...(params.waitlisted ? { waitlistDecision: { not: null } } : {}),
   };
 }
 
@@ -257,6 +273,7 @@ export async function listPendings(params: {
   scope?: PendingScope;
   ownerId?: string;
   axes?: PendingAxisFilters;
+  waitlisted?: boolean;
 }): Promise<Paginated<PendingListItem>> {
   const take = clampTake(params.take);
   let cursorId = params.cursor ? decodeCursor(params.cursor) : null;
