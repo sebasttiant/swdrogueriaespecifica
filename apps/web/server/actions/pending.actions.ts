@@ -1309,9 +1309,12 @@ export async function invoicePendingAction(
   return { error: null, ok: true };
 }
 
-const WAIT_DECISION_MESSAGES = {
+const WAITLIST_DECISION_MESSAGES = {
   NOT_OWNER: "No podés operar un pendiente creado por otro vendedor.",
-  NOT_PARTIAL: "Este pendiente no tiene una entrega parcial para resolver.",
+  NOT_WAITING: "Este pendiente ya no está esperando nada.",
+  NOTHING_PENDING: "A este pendiente no le falta nada por entregar.",
+  ALREADY_DECIDED: "El cliente ya respondió sobre este pendiente.",
+  NOT_PARTIAL: "Todavía no se entregó nada: para cerrarlo, cancelalo.",
 } as const;
 
 const WAITLIST_DECISIONS = ["espera", "va_con_pedido", "cerrar"] as const;
@@ -1361,7 +1364,7 @@ export async function resolveWaitlistDecisionAction(
       { reason: rejection, decision },
       "FAILURE",
     );
-    return { error: WAIT_DECISION_MESSAGES[rejection], ok: false };
+    return { error: WAITLIST_DECISION_MESSAGES[rejection], ok: false };
   }
 
   await recordPendingLifecycleAudit(

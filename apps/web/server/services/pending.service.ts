@@ -73,6 +73,7 @@ import {
 import {
   type ManagementStatus,
 } from "@/features/pendientes/management-status";
+import { acceptsWaitlistDecision } from "@/features/pendientes/waitlist";
 
 // Producto manual: no está en el catálogo, se crea al vuelo desde el pendiente.
 //
@@ -821,29 +822,45 @@ export type ResolveWaitlistDecisionInput = {
   canManageAll?: boolean;
 };
 
-export type ResolveWaitlistDecisionRejection = "NOT_OWNER" | "NOT_PARTIAL";
+export type ResolveWaitlistDecisionRejection =
+  | "NOT_OWNER"
+  | "NOT_WAITING"
+  | "NOTHING_PENDING"
+  | "ALREADY_DECIDED"
+  | "NOT_PARTIAL";
 
 // Las dos respuestas que el vendedor trae del mostrador, con las palabras que
 // ya usan en su tabla: "cliente espera" y "va con pedido" son NOTAS que el
 // vendedor deja, no estados nuevos del sistema. Se registran igual que siempre.
-const DECISION_NOTE: Record<Exclude<WaitlistDecision, "cerrar">, (remaining: number) => string> = {
-  espera: (remaining) => `Cliente espera los ${remaining} restantes`,
-  va_con_pedido: (remaining) => `Los ${remaining} restantes van con otro pedido`,
+// "Restantes" solo cuando de verdad quedó un resto: si no se entregó nada, lo
+// que el cliente espera es el pedido entero y hablar de un resto lo desmiente.
+const DECISION_NOTE: Record<
+  Exclude<WaitlistDecision, "cerrar">,
+  (remaining: number, delivered: boolean) => string
+> = {
+  espera: (remaining, delivered) =>
+    delivered ? `Cliente espera los ${remaining} restantes` : `Cliente espera los ${remaining}`,
+  va_con_pedido: (remaining, delivered) =>
+    delivered
+      ? `Los ${remaining} restantes van con otro pedido`
+      : `Los ${remaining} van con otro pedido`,
 };
 
 /**
- * Registra qué pasa con lo que faltó cuando solo llegó una parte.
+ * Registra qué hace el cliente con lo que todavía no tiene.
  *
- * El vendedor despacha lo que hay y le pregunta al cliente. Hay tres
- * respuestas, y las tres existían ya en la operación:
+ * El vendedor le pregunta y trae una de tres respuestas, las tres ya existentes
+ * en la operación:
  *
- *   espera         → el cliente aguarda el resto; el pendiente sigue abierto
+ *   espera         → el cliente lo aguarda; el pendiente sigue abierto
  *   va_con_pedido  → se le junta con otro pedido; el pendiente sigue abierto
  *   cerrar         → el cliente no lo espera; se cierra con lo entregado
  *
- * Las dos primeras solo dejan la nota: el pendiente sigue vivo y su necesidad
- * de compra también. La tercera cierra, y ahí sí lo que el cliente ya no espera
- * deja de ser algo que comprar.
+ * Las dos primeras solo dejan la nota: el pendiente sigue vivo, su necesidad de
+ * compra también, y su cliente pasa a estar EN LISTA DE ESPERA. El pendiente no
+ * se mueve ni cambia de estado: la lista de espera es una vista filtrada sobre
+ * estas mismas filas, no una cola aparte. La tercera cierra, y ahí sí lo que el
+ * cliente ya no espera deja de ser algo que comprar.
  */
 export async function resolveWaitlistDecision(
   input: ResolveWaitlistDecisionInput,
@@ -854,14 +871,30 @@ export async function resolveWaitlistDecision(
     if (!current) throw new Error("Pending not found");
     if (!input.canManageAll && current.createdById !== input.actorId) return "NOT_OWNER";
 
-    // Solo desde PARCIAL: sin ninguna entrega no hay resto que decidir, y
-    // cerrar de cero es una cancelación, con su propio flujo y su propio motivo.
-    if (current.status !== "PARCIAL") return "NOT_PARTIAL";
+    // La respuesta se registra sobre CUALQUIER pendiente abierto que todavía
+    // deba algo. Antes esto exigía PARCIAL, y esa guarda era demasiado ancha:
+    // el razonamiento que la justificaba —"sin ninguna entrega no hay resto que
+    // decidir"— vale solo para CERRAR. Que un cliente acepte esperar es una
+    // conversación de mostrador que ocurre igual, y sobre todo ocurre cuando no
+    // llegó NADA, que es el caso más común de toda la operación.
+    if (!acceptsWaitlistDecision(current.status)) return "NOT_WAITING";
 
     const remaining = Math.max(current.quantity - current.deliveredQuantity, 0);
+    if (remaining === 0) return "NOTHING_PENDING";
+
+    // Se responde UNA sola vez. La lista deja de ofrecer el gesto en cuanto hay
+    // respuesta, pero una guarda de pantalla no es una guarda: dos pestañas
+    // abiertas o un doble envío pisaban la respuesta anterior y dejaban la nota
+    // duplicada. El FOR UPDATE de arriba es lo que hace confiable esta lectura.
+    if (current.waitlistDecision) return "ALREADY_DECIDED";
+
+    // Cerrar con lo entregado SÍ exige que se haya entregado algo: cerrar un
+    // pendiente del que no salió nada es una cancelación, con su propio flujo y
+    // su propio motivo. Por eso esta guarda sobrevive, acotada a su decisión.
+    if (input.decision === "cerrar" && current.status !== "PARCIAL") return "NOT_PARTIAL";
 
     if (input.decision !== "cerrar") {
-      const note = DECISION_NOTE[input.decision](remaining);
+      const note = DECISION_NOTE[input.decision](remaining, current.deliveredQuantity > 0);
       const existing = await tx.pending.findUnique({
         where: { id: current.id },
         select: { note: true },

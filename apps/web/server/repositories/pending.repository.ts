@@ -488,6 +488,10 @@ export type PendingForDelivery = {
   inventoryReadyQuantity: number;
   invoicedQuantity: number;
   customerStatus: "POR_CONTACTAR" | "CONTACTADO" | "FACTURADO" | "ENTREGADO" | "CANCELADO";
+  // Si el cliente YA respondió si espera. Va en la fila bloqueada porque la
+  // respuesta se da una sola vez y esa guarda tiene que leerse bajo el lock:
+  // dos pestañas abiertas pisaban la primera respuesta sin que nada lo notara.
+  waitlistDecision: "ESPERA" | "VA_CON_PEDIDO" | null;
 };
 
 /**
@@ -510,7 +514,11 @@ export async function lockPendingForUpdate(
   id: string,
 ): Promise<PendingForDelivery | null> {
   const rows = await client.$queryRaw<PendingForDelivery[]>`
-    SELECT id, quantity, "deliveredQuantity", "cancelledQuantity", status, "createdById", "inventoryReadyQuantity", "invoicedQuantity", "customerStatus"
+    SELECT id, quantity, "deliveredQuantity", "cancelledQuantity", status, "createdById", "inventoryReadyQuantity", "invoicedQuantity", "customerStatus",
+           -- La COLUMNA sigue llamándose como nació; en el modelo el campo se
+           -- llama waitlistDecision vía @map. Prisma traduce ese alias solo,
+           -- pero el SQL crudo no pasa por Prisma: acá se escribe a mano.
+           "partialDecision" AS "waitlistDecision"
     FROM pendings WHERE id = ${id} FOR UPDATE
   `;
   return rows[0] ?? null;

@@ -80,7 +80,10 @@ import {
   registerPending,
   setPendingManagementStatus,
 } from "./pending.service";
-import type { PendingListItem } from "@/server/repositories/pending.repository";
+import type {
+  PendingForDelivery,
+  PendingListItem,
+} from "@/server/repositories/pending.repository";
 import type { SessionRole } from "@/lib/auth/session";
 import { USER_ROLES } from "@/lib/auth/permissions";
 
@@ -328,16 +331,10 @@ describe("registerPending", () => {
   });
 });
 
-type PendingRow = {
-  id: string;
-  quantity: number;
-  deliveredQuantity: number;
-  status: "PENDIENTE" | "PARCIAL" | "ENTREGADO" | "CANCELADO";
-  createdById: string | null;
-  inventoryReadyQuantity: number;
-  invoicedQuantity: number;
-  customerStatus: "POR_CONTACTAR" | "CONTACTADO" | "FACTURADO" | "ENTREGADO" | "CANCELADO";
-};
+// La fila que devuelve el lock, SIN volver a declararla. Antes era una copia a
+// mano y ya había quedado atrás: le faltaban los estados de gestión, así que
+// este doble aceptaba filas que la base no produce y rechazaba las que sí.
+type PendingRow = PendingForDelivery;
 
 function pendingForDelivery(overrides: Partial<PendingRow> = {}): PendingRow {
   return {
@@ -349,6 +346,8 @@ function pendingForDelivery(overrides: Partial<PendingRow> = {}): PendingRow {
     inventoryReadyQuantity: 10,
     invoicedQuantity: 10,
     customerStatus: "FACTURADO",
+    cancelledQuantity: 0,
+    waitlistDecision: null,
     ...overrides,
   };
 }
@@ -1135,6 +1134,80 @@ describe("resolveWaitlistDecision", () => {
     await expect(
       resolveWaitlistDecision({ id: "pend-1", decision: "espera", actorId: "op-1" }, now),
     ).resolves.toBe("NOT_OWNER");
+    expect(tx.pending.update).not.toHaveBeenCalled();
+  });
+
+  // El caso que la guarda vieja dejaba afuera, y que es el MÁS COMÚN de la
+  // operación: no llegó nada y el cliente igual acepta esperarlo. Ahí nace la
+  // lista de espera. La guarda anterior exigía una entrega parcial, así que
+  // este cliente no tenía dónde quedar registrado.
+  it("registra que el cliente espera un pendiente del que no llegó nada", async () => {
+    mockLockedPending(
+      pendingForDelivery({ status: "PENDIENTE", quantity: 4, deliveredQuantity: 0 }),
+    );
+    tx.pending.findUnique.mockResolvedValue({ note: null });
+
+    await expect(
+      resolveWaitlistDecision({ id: "pend-1", decision: "espera", actorId: "op-1" }, now),
+    ).resolves.toBeNull();
+
+    expect(tx.pending.update).toHaveBeenCalledWith({
+      where: { id: "pend-1" },
+      data: {
+        // Sin entrega no hay "restantes": lo que espera es el pedido entero.
+        note: "Cliente espera los 4",
+        waitlistDecision: "ESPERA",
+        waitlistDecisionAt: now,
+      },
+    });
+    // El pendiente NO se mueve ni cambia de estado: sigue en su cola, y ahora
+    // además aparece en la lista de espera. La lista es una vista filtrada
+    // sobre estas mismas filas, no una cola aparte.
+    expect(tx.pending.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("también lo registra sobre un pendiente en gestión de compras", async () => {
+    mockLockedPending(pendingForDelivery({ status: "COTIZANDO", quantity: 2 }));
+    tx.pending.findUnique.mockResolvedValue({ note: null });
+
+    await expect(
+      resolveWaitlistDecision({ id: "pend-1", decision: "va_con_pedido", actorId: "op-1" }, now),
+    ).resolves.toBeNull();
+  });
+
+  // AGOTADO no se consigue: poner a ese cliente a esperar sería prometerle algo
+  // que ya sabemos que no llega. Su salida es que el vendedor le avise.
+  it("no deja registrar espera sobre un pendiente AGOTADO", async () => {
+    mockLockedPending(pendingForDelivery({ status: "AGOTADO" }));
+
+    await expect(
+      resolveWaitlistDecision({ id: "pend-1", decision: "espera", actorId: "op-1" }, now),
+    ).resolves.toBe("NOT_WAITING");
+    expect(tx.pending.update).not.toHaveBeenCalled();
+  });
+
+  // La lista deja de ofrecer el gesto en cuanto hay respuesta, pero una guarda
+  // de pantalla no es una guarda: dos pestañas abiertas pisaban la respuesta
+  // anterior y volvían a concatenar la nota.
+  it("no deja responder dos veces", async () => {
+    mockLockedPending(
+      pendingForDelivery({ status: "PENDIENTE", waitlistDecision: "ESPERA" }),
+    );
+
+    await expect(
+      resolveWaitlistDecision({ id: "pend-1", decision: "va_con_pedido", actorId: "op-1" }, now),
+    ).resolves.toBe("ALREADY_DECIDED");
+    expect(tx.pending.update).not.toHaveBeenCalled();
+  });
+
+  it("no deja registrar espera si no falta nada por entregar", async () => {
+    mockLockedPending(
+      pendingForDelivery({ status: "PARCIAL", quantity: 3, deliveredQuantity: 3 }),
+    );
+
+    await expect(
+      resolveWaitlistDecision({ id: "pend-1", decision: "espera", actorId: "op-1" }, now),
+    ).resolves.toBe("NOTHING_PENDING");
     expect(tx.pending.update).not.toHaveBeenCalled();
   });
 });
