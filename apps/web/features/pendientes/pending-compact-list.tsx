@@ -351,7 +351,7 @@ export function PendingCompactList({
           const urgency = URGENCY[
             computeDeadlineStatus(pending.promisedAt, pending.status, now)
           ];
-          const notice = fulfillmentNotice(pending, viewer);
+          const notice = fulfillmentNotice(pending);
           const identityNotice = identityWarning(pending);
           const lifecycle = lifecycleLabel(pending);
           const purchase = purchaseNote(pending);
@@ -468,7 +468,7 @@ export function PendingCompactList({
               const urgency = URGENCY[
                 computeDeadlineStatus(pending.promisedAt, pending.status, now)
               ];
-              const notice = fulfillmentNotice(pending, viewer);
+              const notice = fulfillmentNotice(pending);
               const identityNotice = identityWarning(pending);
               const lifecycle = lifecycleLabel(pending);
               const purchase = purchaseNote(pending);
