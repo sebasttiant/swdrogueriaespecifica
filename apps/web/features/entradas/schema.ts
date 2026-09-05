@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { parseBogotaWallTime } from "@/lib/datetime/bogota";
+import { parseBogotaExpiry } from "@/lib/datetime/bogota";
 
 // Texto opcional que llega desde FormData: se normaliza vacío/espacios a
 // `undefined` para no persistir cadenas vacías como si fueran datos.
@@ -42,15 +42,17 @@ export const inventoryEntryCreateSchema = z.object({
     .min(1, "La cantidad debe ser al menos 1"),
   batchCode: z.string().trim().min(1, "Ingresá el código de lote"),
   // Fecha de vencimiento obligatoria. Llega como string de un <input
-  // type="datetime-local"> SIN timezone; se interpreta como hora de Colombia.
+  // type="date"> SIN timezone ni hora; se ancla al comienzo de ese día en
+  // Colombia. Un vencimiento es un DÍA, no un instante: pedirle la hora a
+  // bodega era pedirle un dato que el remito no trae y que nadie usa.
   expiresAt: z
     .string({ error: "Indicá la fecha de vencimiento" })
     .transform((value, ctx) => {
-      const parsed = parseBogotaWallTime(value);
+      const parsed = parseBogotaExpiry(value);
       if (parsed === null) {
         ctx.addIssue({
           code: "custom",
-          message: "Indicá una fecha y hora de vencimiento válida",
+          message: "Indicá una fecha de vencimiento válida",
         });
         return z.NEVER;
       }

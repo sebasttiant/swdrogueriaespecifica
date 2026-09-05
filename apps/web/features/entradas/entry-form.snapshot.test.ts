@@ -408,3 +408,22 @@ describe("EntryForm · el selector sale de la misma fotografía", () => {
     expect(screen.getAllByRole("option")).toHaveLength(3); // el vacío + los dos
   });
 });
+
+// --------------------------------------------------------------------------
+// El vencimiento se captura SIN hora (reunión 2026-10-04).
+//
+// El campo era `datetime-local`, así que bodega tenía que completar una hora
+// que el remito no trae y que después nadie lee: `expiryLevel` compara fechas
+// de calendario, nunca horas. Un campo obligatorio que no aporta un dato es un
+// campo que se completa con cualquier cosa.
+// --------------------------------------------------------------------------
+describe("EntryForm · vencimiento sin hora", () => {
+  it("captura la fecha de vencimiento con un campo de solo fecha", () => {
+    render(createElement(EntryForm, { products: [FRASCO, SOBRE] }));
+
+    const campo = screen.getByLabelText(/Fecha de vencimiento/i) as HTMLInputElement;
+
+    expect(campo.type).toBe("date");
+    expect(campo.required).toBe(true);
+  });
+});

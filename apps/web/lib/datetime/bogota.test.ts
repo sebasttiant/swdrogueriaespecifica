@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { formatBogotaDate, parseBogotaWallTime } from "./bogota";
+import {
+  formatBogotaDate,
+  parseBogotaDateOnly,
+  parseBogotaExpiry,
+  parseBogotaWallTime,
+} from "./bogota";
 
 describe("parseBogotaWallTime", () => {
   it("interpreta la hora como Colombia (UTC-5) y devuelve el UTC correcto", () => {
@@ -100,5 +105,58 @@ describe("formatBogotaDate", () => {
     const result = formatBogotaDate(dstBoundaryUtc, { style: "time" });
     // Bogota is always UTC-5; 08:00 UTC → 03:00 Bogota
     expect(result).toBe("03:00");
+  });
+});
+
+// --------------------------------------------------------------------------
+// Vencimiento SIN hora (reunión 2026-10-04).
+//
+// El formulario de entradas pedía fecha Y hora. Un vencimiento es un día —"vence
+// el 31 de diciembre"—, así que la hora era un campo obligatorio que nadie leía
+// y que el remito no trae.
+// --------------------------------------------------------------------------
+describe("parseBogotaDateOnly", () => {
+  it("ancla la fecha al comienzo de ese día en Colombia", () => {
+    // Colombia es UTC-5, así que las 00:00 de Bogotá son las 05:00 UTC.
+    expect(parseBogotaDateOnly("2026-12-31")?.toISOString()).toBe(
+      "2026-12-31T05:00:00.000Z",
+    );
+  });
+
+  // EL caso que importa: el instante guardado tiene que caer en el MISMO día
+  // calendario en Bogotá que el que la persona eligió. Un anclaje ingenuo a UTC
+  // dejaría "2026-12-31" como 31/12 00:00Z, que en Bogotá es el 30 a las 19:00
+  // — un día antes del que se escribió.
+  it("no corre el día por el desfase de zona horaria", () => {
+    const parsed = parseBogotaDateOnly("2026-12-31");
+    expect(formatBogotaDate(parsed!, { style: "date" })).toBe("31/12/2026");
+  });
+
+  it("rechaza una fecha que no existe", () => {
+    expect(parseBogotaDateOnly("2026-02-30")).toBeNull();
+  });
+
+  it("rechaza un formato con hora", () => {
+    expect(parseBogotaDateOnly("2026-12-31T10:00")).toBeNull();
+  });
+});
+
+describe("parseBogotaExpiry", () => {
+  it("acepta la fecha sin hora que manda el formulario", () => {
+    expect(parseBogotaExpiry("2026-12-31")?.toISOString()).toBe(
+      "2026-12-31T05:00:00.000Z",
+    );
+  });
+
+  // Compatibilidad hacia atrás: un envío en vuelo durante el despliegue, o un
+  // registro que llegue por otro camino, sigue siendo válido.
+  it("sigue aceptando el formato viejo con hora", () => {
+    expect(parseBogotaExpiry("2026-12-31T14:30")?.toISOString()).toBe(
+      "2026-12-31T19:30:00.000Z",
+    );
+  });
+
+  it("rechaza basura", () => {
+    expect(parseBogotaExpiry("mañana")).toBeNull();
   });
 });
