@@ -235,18 +235,44 @@ async function main() {
   const registrado = await prisma.pending.findUniqueOrThrow({ where: { id: sinStock.pending.id } });
   assert(registrado.inventoryReadyQuantity === 0, "el pendiente nace sin nada disponible");
 
-  // Este es el caso que fallaba en producción: la restricción exigía
-  // invoicedQuantity <= inventoryReadyQuantity, así que facturar sin stock
-  // cargado reventaba con "No se pudo registrar la factura".
+  // REGLA VIGENTE (reunión 2026-10-04): sin mercadería cargada NO se factura.
+  //
+  // Este escenario afirmaba lo contrario hasta hoy. La migración
+  // `20260731010000_invoice_before_arrival` había sacado el CHECK
+  // `invoicedQuantity <= inventoryReadyQuantity` para que el vendedor pudiera
+  // facturar mirando su propia caja, y este guion lo dejaba fijado. El negocio
+  // revirtió esa decisión: gerencia veía el botón "Facturar" sobre pendientes
+  // sin una sola unidad en bodega, y facturar lo que no llegó descuadra la
+  // entrega. La comprobación vive ahora en `invoicePending`.
   assert(
-    (await invoicePending({ id: sinStock.pending.id, actorId: seller.id, quantity: 5 })) === null,
-    "el vendedor factura 5 aunque el sistema todavía no vea llegar nada",
+    (await invoicePending({
+      id: sinStock.pending.id,
+      actorId: seller.id,
+      scope: "own",
+      quantity: 5,
+    })) === "NO_STOCK",
+    "sin mercadería cargada no se puede facturar",
   );
 
+  // El alcance es parte del contrato: un vendedor sobre un pendiente ajeno se
+  // rechaza por propiedad, no por stock.
   assert(
-    (await invoicePending({ id: sinStock.pending.id, actorId: seller.id, quantity: 1 })) ===
-      "NOT_AVAILABLE",
-    "pero no puede facturar más de lo que el cliente pidió",
+    (await invoicePending({
+      id: sinStock.pending.id,
+      actorId: "otro-vendedor",
+      scope: "own",
+    })) === "NOT_OWNER",
+    "el vendedor no factura el pendiente de otro",
+  );
+
+  // Y un rol sin autoridad se rechaza antes de mirar la fila.
+  assert(
+    (await invoicePending({
+      id: sinStock.pending.id,
+      actorId: seller.id,
+      scope: "none",
+    })) === "NOT_AUTHORIZED",
+    "un rol sin autoridad de facturación no factura ni el pendiente propio",
   );
 
   console.log("\nEscenario: llega solo una parte y el cliente decide");

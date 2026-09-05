@@ -27,6 +27,7 @@ import { IDENTITY_WARNING_LABEL } from "./identity-warning";
 
 import { PendingList } from "./pending-list";
 import { reviewPageHref, type ReviewAxes } from "./review-axes";
+import { noAuthorityViewer } from "./pending-viewer.fixture";
 
 type ActionState = { error: string | null; ok: boolean };
 
@@ -84,6 +85,7 @@ function renderList(
   const axes = props.axes ?? {};
   return renderToStaticMarkup(
     createElement(PendingList, {
+      viewer: noAuthorityViewer,
       items: props.items ?? [pending()],
       nextCursor: props.nextCursor ?? null,
       canDeliver: props.canDeliver ?? true,

@@ -2,7 +2,13 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { PageHeader } from "@/app/_components/app-shell/page-header";
-import { can, seesAllPendings } from "@/lib/auth/permissions";
+import {
+  can,
+  contactScopeFor,
+  invoiceScopeFor,
+  seesAllPendings,
+} from "@/lib/auth/permissions";
+import type { PendingViewer } from "@/features/pendientes/fulfillment-notice";
 import { requireCapability } from "@/lib/auth/require-role";
 import { Card, CardTitle } from "@/app/_components/ui/card";
 import { MAX_PAGE_SIZE } from "@/lib/pagination";
@@ -52,7 +58,14 @@ export default async function PendientesPage({
     : true;
   const canDeliver = can(session.user.role, "canDeliverPendings");
   const canCancel = can(session.user.role, "canCancelPendings");
-  const canContactOrInvoice = can(session.user.role, "canContactOwnPendings") || can(session.user.role, "canInvoiceOwnPendings");
+  // Quién mira la cola. Autoridad y ALCANCE viajan juntos y explícitos: la fila
+  // decide con `invoiceAffordance`, no la pantalla con un booleano de rol. El
+  // `canContactOrInvoice` que había acá unía dos permisos distintos en uno solo.
+  const viewer: PendingViewer = {
+    invoiceScope: invoiceScopeFor(session.user.role),
+    contactScope: contactScopeFor(session.user.role),
+    userId: session.user.id,
+  };
   // Estado de gestión: autoridad de compras (gerencia). Reusa la misma
   // capability que pedir un faltante, no la de cancelar.
   const canManageStatus = can(session.user.role, "canOrderMissingItems");
@@ -194,7 +207,7 @@ export default async function PendientesPage({
           items={pendings.items}
           canOrder={canManageStatus}
           canDeliver={canDeliver}
-          canContactOrInvoice={canContactOrInvoice}
+          viewer={viewer}
           canCancel={canCancel}
           // Corregir: gerencia sobre cualquiera, el vendedor sobre el suyo y una
           // sola vez. El cupo del vendedor lo hace cumplir el servidor; acá solo
@@ -218,7 +231,7 @@ export default async function PendientesPage({
           canDeliver={canDeliver}
           canCancel={canCancel}
           canManageStatus={canManageStatus}
-          canContactOrInvoice={canContactOrInvoice}
+          viewer={viewer}
           scope={scope}
           pageHref={(nextCursor) =>
             reviewPageHref({ scope, view: "detalle", axes, cursor: nextCursor })

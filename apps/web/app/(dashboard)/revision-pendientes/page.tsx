@@ -9,7 +9,13 @@ import { resolveReviewTab } from "@/features/pendientes/review-tab";
 import { PendingReviewFilters } from "@/features/pendientes/pending-review-filters";
 import { parseReviewAxes, reviewPageHref } from "@/features/pendientes/review-axes";
 import { resolveFocusedPendingId } from "@/features/pendientes/pending-anchor";
-import { can, seesAllPendings } from "@/lib/auth/permissions";
+import {
+  can,
+  contactScopeFor,
+  invoiceScopeFor,
+  seesAllPendings,
+} from "@/lib/auth/permissions";
+import type { PendingViewer } from "@/features/pendientes/fulfillment-notice";
 import { requireCapability } from "@/lib/auth/require-role";
 import type { PendingScope } from "@/server/repositories/pending.repository";
 import {
@@ -80,9 +86,13 @@ export default async function RevisionPendientesPage({
     : true;
   const canDeliver = can(session.user.role, "canDeliverPendings");
   const canCancel = can(session.user.role, "canCancelPendings");
-  const canContactOrInvoice =
-    can(session.user.role, "canContactOwnPendings") ||
-    can(session.user.role, "canInvoiceOwnPendings");
+  // Mismo viewer que /pendientes, misma derivación: las dos pantallas muestran
+  // las mismas filas y no pueden discrepar sobre quién factura cuál.
+  const viewer: PendingViewer = {
+    invoiceScope: invoiceScopeFor(session.user.role),
+    contactScope: contactScopeFor(session.user.role),
+    userId: session.user.id,
+  };
   // Estado de gestión: autoridad de compras (gerencia). Reusa la misma
   // capability que pedir un faltante, no la de cancelar.
   const canManageStatus = can(session.user.role, "canOrderMissingItems");
@@ -230,7 +240,7 @@ export default async function RevisionPendientesPage({
                 canDeliver={canDeliver}
                 canCancel={canCancel}
                 canManageStatus={canManageStatus}
-                canContactOrInvoice={canContactOrInvoice}
+                viewer={viewer}
                 scope={scope}
                 pageHref={() => ""}
               />
@@ -243,7 +253,7 @@ export default async function RevisionPendientesPage({
             canDeliver={canDeliver}
             canCancel={canCancel}
             canManageStatus={canManageStatus}
-            canContactOrInvoice={canContactOrInvoice}
+            viewer={viewer}
             scope={scope}
             pageHref={(nextCursor) =>
               reviewPageHref({ scope, view: "detalle", axes, basePath: BASE_PATH, cursor: nextCursor })

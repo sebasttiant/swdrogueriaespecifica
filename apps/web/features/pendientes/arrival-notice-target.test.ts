@@ -21,6 +21,7 @@ import type { PendingListItem } from "@/server/repositories/pending.repository";
 
 import { ArrivalNotices } from "./arrival-notices";
 import { PendingList } from "./pending-list";
+import { noAuthorityViewer } from "./pending-viewer.fixture";
 
 // --------------------------------------------------------------------------
 // El aviso de llegada y la fila a la que lleva, probados JUNTOS.
@@ -98,6 +99,7 @@ function renderNotices(): string {
 function renderList(items: PendingListItem[] = [pending()]): string {
   return renderToStaticMarkup(
     createElement(PendingList, {
+      viewer: noAuthorityViewer,
       items,
       nextCursor: null,
       canDeliver: true,

@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { checkCapability, requireCapability, type CapabilityDenial } from "@/lib/auth/require-role";
-import { can } from "@/lib/auth/permissions";
+import { can, invoiceScopeFor } from "@/lib/auth/permissions";
 import { hashEmail, maskPhone, describeText } from "@/lib/observability/redaction";
 import { newSupportCode } from "@/lib/observability/support-code";
 import {
@@ -1164,6 +1164,21 @@ const CUSTOMER_LIFECYCLE_MESSAGES = {
   ALREADY_TERMINAL: "El pendiente ya está cerrado.",
 } as const;
 
+// Facturar tiene sus propios rechazos porque tiene sus propias reglas: dos de
+// ellos —"no tenés autoridad" y "no llegó la mercadería"— no existen en el
+// resto del ciclo. Mandarlos por el mapa genérico obligaba a decir "no hay
+// disponibilidad suficiente" cuando el problema era el permiso, y a decir
+// "revisá la cantidad" cuando la cantidad estaba perfecta y lo que faltaba era
+// stock. Un mensaje que no nombra la causa real hace que la persona reintente
+// exactamente lo mismo.
+const INVOICE_REJECTION_MESSAGES = {
+  NOT_AUTHORIZED: "Tu perfil no puede facturar pendientes.",
+  NOT_OWNER: "No podés facturar un pendiente creado por otro vendedor.",
+  ALREADY_TERMINAL: "El pendiente ya está cerrado.",
+  INVALID_QUANTITY: "Revisá la cantidad a facturar.",
+  NO_STOCK: "Todavía no hay mercadería cargada para facturar.",
+} as const;
+
 // Auditoría y revalidación ocurren DESPUÉS del commit de negocio. Si alguna de
 // las dos falla, el hecho ya pasó: devolver un error haría que el vendedor
 // reintente una operación que sí quedó registrada, y termine facturando dos
@@ -1205,7 +1220,7 @@ export async function contactPendingAction(
   _prev: PendingFormState,
   formData: FormData,
 ): Promise<PendingFormState> {
-  const session = await requireCapability("canContactOwnPendings");
+  const session = await requireCapability("canContactPendings");
   const id = formData.get("id");
   if (typeof id !== "string" || id.length === 0) {
     return { error: "No se pudo identificar el pendiente.", ok: false };
@@ -1250,7 +1265,7 @@ export async function invoicePendingAction(
   _prev: PendingFormState,
   formData: FormData,
 ): Promise<PendingFormState> {
-  const session = await requireCapability("canInvoiceOwnPendings");
+  const session = await requireCapability("canInvoicePendings");
   const id = formData.get("id");
   const quantity = Number(formData.get("quantity"));
   if (typeof id !== "string" || !Number.isInteger(quantity) || quantity <= 0) {
@@ -1263,7 +1278,10 @@ export async function invoicePendingAction(
       id,
       quantity,
       actorId: session.user.id,
-      canManageAll: can(session.user.role, "canManageAllPendings"),
+      // El alcance se deriva de la matriz de permisos, no de una comparación de
+      // roles suelta acá. El actor que queda auditado es SIEMPRE el de la
+      // sesión: quien factura el pendiente de otro se registra a sí mismo.
+      scope: invoiceScopeFor(session.user.role),
     });
   } catch (error) {
     logPendingError(null, error);
@@ -1278,7 +1296,7 @@ export async function invoicePendingAction(
       { reason: rejection, attemptedQuantity: quantity },
       "FAILURE",
     );
-    return { error: CUSTOMER_LIFECYCLE_MESSAGES[rejection], ok: false };
+    return { error: INVOICE_REJECTION_MESSAGES[rejection], ok: false };
   }
 
   await recordPendingLifecycleAudit(

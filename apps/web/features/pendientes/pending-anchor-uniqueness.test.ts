@@ -23,6 +23,7 @@ import type { PendingListItem } from "@/server/repositories/pending.repository";
 import { PendingCompactList } from "./pending-compact-list";
 import { PendingList } from "./pending-list";
 import { pendingAnchorId } from "./pending-anchor";
+import { noAuthorityViewer } from "./pending-viewer.fixture";
 
 // --------------------------------------------------------------------------
 // Un ancla, UNA sola vez en el documento.
@@ -87,6 +88,7 @@ describe("lista compacta · las dos vistas conviven en el documento", () => {
   const html = () =>
     renderToStaticMarkup(
       createElement(PendingCompactList, {
+      viewer: noAuthorityViewer,
         items: [pending("p1"), pending("p2")],
         canOrder: false,
         nextCursor: null,
@@ -117,6 +119,7 @@ describe("lista de detalle · una variante por fila, el ancla vive acá", () => 
   const html = (items: PendingListItem[]) =>
     renderToStaticMarkup(
       createElement(PendingList, {
+      viewer: noAuthorityViewer,
         items,
         nextCursor: null,
         canDeliver: true,

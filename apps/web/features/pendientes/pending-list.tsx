@@ -18,7 +18,11 @@ import { formatCop } from "@/lib/format/currency";
 import { formatPhone } from "./phone";
 import { deliverySummary, remainingQuantity } from "./delivery-rules";
 import { canSetManagementStatus } from "./management-status";
-import { fulfillmentNotice } from "./fulfillment-notice";
+import {
+  fulfillmentNotice,
+  invoiceAffordance,
+  type PendingViewer,
+} from "./fulfillment-notice";
 import { identityWarning } from "./identity-warning";
 import { pendingAnchorId } from "./pending-anchor";
 import { PRESENTATION_LABEL, presentationLabel } from "./presentation";
@@ -42,7 +46,10 @@ type PendingListProps = {
   // Autoridad de compras (`canOrderMissingItems`): habilita el selector de
   // estado de gestión. El vendedor no lo tiene y solo ve el badge.
   canManageStatus: boolean;
-  canContactOrInvoice?: boolean;
+  // Quién mira. Reemplaza al viejo `canContactOrInvoice`, que era un booleano
+  // de rol: no sabía de quién era la fila, así que no podía distinguir un
+  // pendiente propio de uno ajeno ni un pendiente cargado de uno sin stock.
+  viewer: PendingViewer;
   // El scope decide qué acciones tienen sentido sobre la fila.
   scope: PendingScope;
   // El enlace a la página siguiente lo arma la página, que es la que conoce la
@@ -107,7 +114,7 @@ export function PendingList({
   canDeliver,
   canCancel,
   canManageStatus,
-  canContactOrInvoice = false,
+  viewer,
   scope,
   pageHref,
 }: PendingListProps) {
@@ -160,7 +167,7 @@ export function PendingList({
         const payment = paymentState === "SIN_ABONO" ? null : PAYMENT[paymentState];
         // El aviso de que la mercancía llegó. Es la razón por la que alguien
         // abre esta pantalla: saber sobre cuáles ya se puede actuar.
-        const notice = fulfillmentNotice(pending);
+        const notice = fulfillmentNotice(pending, viewer);
         const identityNotice = identityWarning(pending);
 
         return (
@@ -309,9 +316,11 @@ export function PendingList({
                     currentStatus={pending.purchaseStatus ?? pending.status}
                   />
                  ) : null}
-                {/* Facturar: mismo criterio que el listado. No se le exige al
-                    vendedor esperar a que el sistema vea llegar la mercancía. */}
-                {canContactOrInvoice ? (
+                {/* Facturar: mismo criterio que el listado, y el MISMO que usa
+                    el aviso de la fila. Solo se ofrece si esta persona puede
+                    facturar este pendiente y hay mercadería cargada; el service
+                    vuelve a comprobar las dos cosas. */}
+                {invoiceAffordance(pending, viewer).canInvoice ? (
                   <PendingCustomerLifecycleForm
                     pendingId={pending.id}
                     customerStatus={pending.customerStatus}

@@ -22,6 +22,7 @@ import type { PendingListItem } from "@/server/repositories/pending.repository";
 
 import { PendingCompactList } from "./pending-compact-list";
 import { PendingList } from "./pending-list";
+import { globalViewer } from "./pending-viewer.fixture";
 
 function pending(overrides: Partial<PendingListItem> = {}): PendingListItem {
   return {
@@ -57,6 +58,7 @@ function pending(overrides: Partial<PendingListItem> = {}): PendingListItem {
 function renderDetail(item: PendingListItem): string {
   return renderToStaticMarkup(
     createElement(PendingList, {
+      viewer: globalViewer(),
       items: [item],
       nextCursor: null,
       canDeliver: true,
@@ -71,6 +73,7 @@ function renderDetail(item: PendingListItem): string {
 function renderCompact(item: PendingListItem): string {
   return renderToStaticMarkup(
     createElement(PendingCompactList, {
+      viewer: globalViewer(),
       items: [item],
       canOrder: false,
       nextCursor: null,
