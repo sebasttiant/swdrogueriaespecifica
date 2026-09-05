@@ -5,14 +5,14 @@ import { Clock, Link2, PackageCheck } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 import {
-  resolvePartialPendingAction,
+  resolveWaitlistDecisionAction,
   type PendingFormState,
 } from "@/server/actions/pending.actions";
 import { cn } from "@/lib/utils/cn";
 
 const INITIAL_STATE: PendingFormState = { error: null, ok: false };
 
-type PendingPartialDecisionFormProps = {
+type PendingWaitlistDecisionFormProps = {
   pendingId: string;
   /** Lo que quedó sin entregar. Es el número sobre el que decide el cliente. */
   remaining: number;
@@ -48,12 +48,12 @@ const TONE = {
   close: "border-success/30 bg-success/10 text-success hover:bg-success/20",
 } as const;
 
-export function PendingPartialDecisionForm({
+export function PendingWaitlistDecisionForm({
   pendingId,
   remaining,
-}: PendingPartialDecisionFormProps) {
+}: PendingWaitlistDecisionFormProps) {
   const [state, action, pending] = useActionState(
-    resolvePartialPendingAction,
+    resolveWaitlistDecisionAction,
     INITIAL_STATE,
   );
 

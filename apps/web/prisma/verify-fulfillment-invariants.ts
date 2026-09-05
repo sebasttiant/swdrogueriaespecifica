@@ -227,7 +227,7 @@ async function main() {
   await prisma.pending.deleteMany();
   await prisma.productBatch.deleteMany();
 
-  const { invoicePending, deliverPending, resolvePartialPending } = await import(
+  const { invoicePending, deliverPending, resolveWaitlistDecision } = await import(
     "@/server/services/pending.service"
   );
 
@@ -324,7 +324,7 @@ async function main() {
   assert(parcial.status === "PARCIAL", "el pendiente queda en entrega parcial");
 
   assert(
-    (await resolvePartialPending({
+    (await resolveWaitlistDecision({
       id: sinStock.pending.id,
       decision: "espera",
       actorId: seller.id,
@@ -339,7 +339,7 @@ async function main() {
   );
 
   assert(
-    (await resolvePartialPending({
+    (await resolveWaitlistDecision({
       id: sinStock.pending.id,
       decision: "cerrar",
       actorId: seller.id,

@@ -75,7 +75,7 @@ import {
   getPendingIdentityQueue,
   PendingIdentityQueueForbiddenError,
   invoicePending,
-  resolvePartialPending,
+  resolveWaitlistDecision,
   updatePending,
   registerPending,
   setPendingManagementStatus,
@@ -1054,7 +1054,7 @@ describe("setPendingManagementStatus", () => {
 // respuestas ya existían en la operación —dos son las notas que el vendedor
 // escribe hoy en su tabla ("cliente espera", "va con pedido")—.
 // --------------------------------------------------------------------------
-describe("resolvePartialPending", () => {
+describe("resolveWaitlistDecision", () => {
   const now = new Date("2026-07-09T12:00:00.000Z");
 
   it("si el cliente espera, deja la nota y NO cierra el pendiente", async () => {
@@ -1062,7 +1062,7 @@ describe("resolvePartialPending", () => {
     tx.pending.findUnique.mockResolvedValue({ note: null });
 
     await expect(
-      resolvePartialPending({ id: "pend-1", decision: "espera", actorId: "op-1" }, now),
+      resolveWaitlistDecision({ id: "pend-1", decision: "espera", actorId: "op-1" }, now),
     ).resolves.toBeNull();
 
     // La decisión se PERSISTE, no solo su nota: sin esto la fila no sabía que
@@ -1071,8 +1071,8 @@ describe("resolvePartialPending", () => {
       where: { id: "pend-1" },
       data: {
         note: "Cliente espera los 2 restantes",
-        partialDecision: "ESPERA",
-        partialDecisionAt: now,
+        waitlistDecision: "ESPERA",
+        waitlistDecisionAt: now,
       },
     });
     expect(tx.pending.updateMany).not.toHaveBeenCalled();
@@ -1082,14 +1082,14 @@ describe("resolvePartialPending", () => {
     mockLockedPending(pendingForDelivery({ status: "PARCIAL", quantity: 5, deliveredQuantity: 3 }));
     tx.pending.findUnique.mockResolvedValue({ note: "Va con pedido" });
 
-    await resolvePartialPending({ id: "pend-1", decision: "va_con_pedido", actorId: "op-1" }, now);
+    await resolveWaitlistDecision({ id: "pend-1", decision: "va_con_pedido", actorId: "op-1" }, now);
 
     expect(tx.pending.update).toHaveBeenCalledWith({
       where: { id: "pend-1" },
       data: {
         note: "Va con pedido · Los 2 restantes van con otro pedido",
-        partialDecision: "VA_CON_PEDIDO",
-        partialDecisionAt: now,
+        waitlistDecision: "VA_CON_PEDIDO",
+        waitlistDecisionAt: now,
       },
     });
   });
@@ -1103,7 +1103,7 @@ describe("resolvePartialPending", () => {
     mockCasWrote(1);
 
     await expect(
-      resolvePartialPending({ id: "pend-1", decision: "cerrar", actorId: "op-1" }, now),
+      resolveWaitlistDecision({ id: "pend-1", decision: "cerrar", actorId: "op-1" }, now),
     ).resolves.toBeNull();
 
     expect(tx.pending.updateMany).toHaveBeenCalledWith({
@@ -1125,7 +1125,7 @@ describe("resolvePartialPending", () => {
     mockLockedPending(pendingForDelivery({ status: "PENDIENTE" }));
 
     await expect(
-      resolvePartialPending({ id: "pend-1", decision: "cerrar", actorId: "op-1" }, now),
+      resolveWaitlistDecision({ id: "pend-1", decision: "cerrar", actorId: "op-1" }, now),
     ).resolves.toBe("NOT_PARTIAL");
   });
 
@@ -1133,7 +1133,7 @@ describe("resolvePartialPending", () => {
     mockLockedPending(pendingForDelivery({ status: "PARCIAL", createdById: "otro" }));
 
     await expect(
-      resolvePartialPending({ id: "pend-1", decision: "espera", actorId: "op-1" }, now),
+      resolveWaitlistDecision({ id: "pend-1", decision: "espera", actorId: "op-1" }, now),
     ).resolves.toBe("NOT_OWNER");
     expect(tx.pending.update).not.toHaveBeenCalled();
   });
@@ -1152,14 +1152,14 @@ describe("resolvePartialPending", () => {
 //
 //   CLOSED_PARTIAL  ⟺  delivered > 0 ∧ cancelled > 0 ∧ delivered + cancelled = requested
 // --------------------------------------------------------------------------
-describe("resolvePartialPending · ecuación terminal (T2.2b)", () => {
+describe("resolveWaitlistDecision · ecuación terminal (T2.2b)", () => {
   const now = new Date("2026-08-18T12:00:00.000Z");
 
   it("cierra como CLOSED_PARTIAL, no como ENTREGADO", async () => {
     mockLockedPending(pendingForDelivery({ status: "PARCIAL", deliveredQuantity: 3 }));
     mockCasWrote(1);
 
-    await resolvePartialPending({ id: "pend-1", decision: "cerrar", actorId: "op-1" }, now);
+    await resolveWaitlistDecision({ id: "pend-1", decision: "cerrar", actorId: "op-1" }, now);
 
     expect(tx.pending.updateMany).toHaveBeenCalledWith({
       where: { id: "pend-1", status: "PARCIAL" },
@@ -1171,7 +1171,7 @@ describe("resolvePartialPending · ecuación terminal (T2.2b)", () => {
     mockLockedPending(pendingForDelivery({ status: "PARCIAL", deliveredQuantity: 3 }));
     mockCasWrote(1);
 
-    await resolvePartialPending({ id: "pend-1", decision: "cerrar", actorId: "op-1" }, now);
+    await resolveWaitlistDecision({ id: "pend-1", decision: "cerrar", actorId: "op-1" }, now);
 
     expect(tx.pending.updateMany).toHaveBeenCalledWith({
       where: { id: "pend-1", status: "PARCIAL" },
@@ -1190,7 +1190,7 @@ describe("resolvePartialPending · ecuación terminal (T2.2b)", () => {
     );
     mockCasWrote(1);
 
-    await resolvePartialPending({ id: "pend-1", decision: "cerrar", actorId: "op-1" }, now);
+    await resolveWaitlistDecision({ id: "pend-1", decision: "cerrar", actorId: "op-1" }, now);
 
     const written = tx.pending.updateMany.mock.calls.at(-1)?.[0]?.data as {
       cancelledQuantity?: number;
@@ -1205,7 +1205,7 @@ describe("resolvePartialPending · ecuación terminal (T2.2b)", () => {
     mockLockedPending(pendingForDelivery({ status: "PENDIENTE", deliveredQuantity: 0 }));
 
     await expect(
-      resolvePartialPending({ id: "pend-1", decision: "cerrar", actorId: "op-1" }, now),
+      resolveWaitlistDecision({ id: "pend-1", decision: "cerrar", actorId: "op-1" }, now),
     ).resolves.toBe("NOT_PARTIAL");
     expect(tx.pending.updateMany).not.toHaveBeenCalled();
   });

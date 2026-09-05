@@ -21,7 +21,7 @@ import {
 } from "@/server/services/audit.service";
 import {
   cancelPendingCommitment,
-  resolvePartialPending,
+  resolveWaitlistDecision,
   updatePending,
   deliverPending,
   contactPending,
@@ -1309,18 +1309,18 @@ export async function invoicePendingAction(
   return { error: null, ok: true };
 }
 
-const PARTIAL_DECISION_MESSAGES = {
+const WAIT_DECISION_MESSAGES = {
   NOT_OWNER: "No podés operar un pendiente creado por otro vendedor.",
   NOT_PARTIAL: "Este pendiente no tiene una entrega parcial para resolver.",
 } as const;
 
-const PARTIAL_DECISIONS = ["espera", "va_con_pedido", "cerrar"] as const;
+const WAITLIST_DECISIONS = ["espera", "va_con_pedido", "cerrar"] as const;
 
-type PartialDecisionValue = (typeof PARTIAL_DECISIONS)[number];
+type WaitlistDecisionValue = (typeof WAITLIST_DECISIONS)[number];
 
-function parseDecision(value: FormDataEntryValue | null): PartialDecisionValue | null {
-  return typeof value === "string" && (PARTIAL_DECISIONS as readonly string[]).includes(value)
-    ? (value as PartialDecisionValue)
+function parseDecision(value: FormDataEntryValue | null): WaitlistDecisionValue | null {
+  return typeof value === "string" && (WAITLIST_DECISIONS as readonly string[]).includes(value)
+    ? (value as WaitlistDecisionValue)
     : null;
 }
 
@@ -1329,7 +1329,7 @@ function parseDecision(value: FormDataEntryValue | null): PartialDecisionValue |
  * otro pedido, o ya no lo quiere y el pendiente se cierra con lo entregado.
  * Sin esto un pendiente parcial quedaba abierto para siempre en la cola.
  */
-export async function resolvePartialPendingAction(
+export async function resolveWaitlistDecisionAction(
   _prev: PendingFormState,
   formData: FormData,
 ): Promise<PendingFormState> {
@@ -1340,9 +1340,9 @@ export async function resolvePartialPendingAction(
     return { error: "No se pudo identificar la decisión del cliente.", ok: false };
   }
 
-  let rejection: Awaited<ReturnType<typeof resolvePartialPending>>;
+  let rejection: Awaited<ReturnType<typeof resolveWaitlistDecision>>;
   try {
-    rejection = await resolvePartialPending({
+    rejection = await resolveWaitlistDecision({
       id,
       decision,
       actorId: session.user.id,
@@ -1361,14 +1361,14 @@ export async function resolvePartialPendingAction(
       { reason: rejection, decision },
       "FAILURE",
     );
-    return { error: PARTIAL_DECISION_MESSAGES[rejection], ok: false };
+    return { error: WAIT_DECISION_MESSAGES[rejection], ok: false };
   }
 
   await recordPendingLifecycleAudit(
     AUDIT_ACTIONS.PENDING_DELIVERED,
     id,
     session.user.id,
-    { partialDecision: decision },
+    { waitlistDecision: decision },
   );
   revalidatePendingViews("Decisión sobre la entrega parcial");
   return { error: null, ok: true };

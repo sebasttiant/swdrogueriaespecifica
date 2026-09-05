@@ -812,21 +812,21 @@ export async function cancelPendingCommitment(
 // el cliente ya no espera (la ecuación `entregado + cancelado = pedido` cierra),
 // y `customerStatus` conserva el ENTREGADO para el eje de relación comercial.
 // --------------------------------------------------------------------------
-export type PartialDecision = "espera" | "va_con_pedido" | "cerrar";
+export type WaitlistDecision = "espera" | "va_con_pedido" | "cerrar";
 
-export type ResolvePartialPendingInput = {
+export type ResolveWaitlistDecisionInput = {
   id: string;
-  decision: PartialDecision;
+  decision: WaitlistDecision;
   actorId: string;
   canManageAll?: boolean;
 };
 
-export type ResolvePartialPendingRejection = "NOT_OWNER" | "NOT_PARTIAL";
+export type ResolveWaitlistDecisionRejection = "NOT_OWNER" | "NOT_PARTIAL";
 
 // Las dos respuestas que el vendedor trae del mostrador, con las palabras que
 // ya usan en su tabla: "cliente espera" y "va con pedido" son NOTAS que el
 // vendedor deja, no estados nuevos del sistema. Se registran igual que siempre.
-const DECISION_NOTE: Record<Exclude<PartialDecision, "cerrar">, (remaining: number) => string> = {
+const DECISION_NOTE: Record<Exclude<WaitlistDecision, "cerrar">, (remaining: number) => string> = {
   espera: (remaining) => `Cliente espera los ${remaining} restantes`,
   va_con_pedido: (remaining) => `Los ${remaining} restantes van con otro pedido`,
 };
@@ -845,10 +845,10 @@ const DECISION_NOTE: Record<Exclude<PartialDecision, "cerrar">, (remaining: numb
  * de compra también. La tercera cierra, y ahí sí lo que el cliente ya no espera
  * deja de ser algo que comprar.
  */
-export async function resolvePartialPending(
-  input: ResolvePartialPendingInput,
+export async function resolveWaitlistDecision(
+  input: ResolveWaitlistDecisionInput,
   now: Date = new Date(),
-): Promise<ResolvePartialPendingRejection | null> {
+): Promise<ResolveWaitlistDecisionRejection | null> {
   return prisma.$transaction(async (tx) => {
     const current = await lockPendingForUpdate(tx, input.id);
     if (!current) throw new Error("Pending not found");
@@ -872,8 +872,8 @@ export async function resolvePartialPending(
           note: existing?.note ? `${existing.note} · ${note}` : note,
           // Se guarda la decisión, no solo su nota. Sin esto la fila no sabía
           // que ya se había respondido y volvía a preguntar para siempre.
-          partialDecision: input.decision === "espera" ? "ESPERA" : "VA_CON_PEDIDO",
-          partialDecisionAt: now,
+          waitlistDecision: input.decision === "espera" ? "ESPERA" : "VA_CON_PEDIDO",
+          waitlistDecisionAt: now,
         },
       });
       return null;

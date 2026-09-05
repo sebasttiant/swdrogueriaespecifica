@@ -34,7 +34,7 @@ export type PendingListItem = {
   // Qué respondió el cliente sobre lo que faltó, y si el vendedor ya usó su
   // única corrección. La fila los necesita para no volver a ofrecer algo que ya
   // se resolvió.
-  partialDecision?: "ESPERA" | "VA_CON_PEDIDO" | null;
+  waitlistDecision?: "ESPERA" | "VA_CON_PEDIDO" | null;
   sellerEditedAt?: Date | null;
   promisedAt: Date;
   customerName: string | null;
@@ -126,7 +126,7 @@ const LIST_SELECT = {
   invoicedQuantity: true,
   contactedAt: true,
   invoicedAt: true,
-  partialDecision: true,
+  waitlistDecision: true,
   sellerEditedAt: true,
   promisedAt: true,
   customerName: true,
