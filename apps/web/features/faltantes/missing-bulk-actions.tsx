@@ -33,7 +33,7 @@ type MissingBulkActionsProps = {
  *
  * Ofrece las DOS salidas, en formularios separados y con textos opuestos:
  *
- *   ✓ Marcar como pedido → gerencia ya lo compró; la mercadería viene en camino.
+ *   ✓ Ya lo pedí → gerencia ya lo compró; la mercadería viene en camino.
  *   ✗ Descartar          → nadie lo va a pedir (duplicado o ya no hace falta).
  *
  * Siguen siendo dos acciones distintas, nunca un "OK" ambiguo: esa ambigüedad
@@ -126,14 +126,17 @@ export function MissingBulkActions({ items }: MissingBulkActionsProps) {
         ))}
       </ul>
 
-      {/* Acción principal: "ya los pedí". Es la que el gerente usa decenas de
-          veces por día, así que va primero y no pide ningún dato más. */}
+      {/* Acción principal: "ya lo pedí". Es la que el gerente usa decenas de
+          veces por día, así que va primero y no pide ningún dato más.
+
+          Se llama IGUAL que el botón de la fila y que el del buzón de reportes:
+          es el mismo gesto y no puede tener tres nombres. "Marcar como pedido"
+          además se confundía con la insignia de ESTADO "Pedido" de la misma
+          pantalla. */}
       <form action={orderAction}>
         {selectionFields}
         <Button type="submit" disabled={isOrdering || selected.size === 0}>
-          {isOrdering
-            ? "Marcando…"
-            : `Marcar como pedido ${selected.size || ""}`.trim()}
+          {isOrdering ? "Marcando…" : `Ya lo pedí ${selected.size || ""}`.trim()}
         </Button>
       </form>
 
