@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireCapability: vi.fn(),
   getMissingReportQueue: vi.fn(),
+  getPendingReportGroupCount: vi.fn(),
   listReceiverQueue: vi.fn(),
   getMissingItems: vi.fn(),
   getActionableMissingCount: vi.fn(),
@@ -13,6 +14,7 @@ vi.mock("@/lib/auth/require-role", () => ({
 }));
 vi.mock("@/server/services/missing-report.service", () => ({
   getMissingReportQueue: mocks.getMissingReportQueue,
+  getPendingReportGroupCount: mocks.getPendingReportGroupCount,
 }));
 // La cola de faltantes se mudó a esta pantalla, así que ahora la página la
 // consulta. Sin este doble el import arrastra Prisma y la prueba muere pidiendo

@@ -21,6 +21,7 @@ import type { PendingListItem } from "@/server/repositories/pending.repository";
 import { IDENTITY_WARNING_LABEL } from "./identity-warning";
 
 import { PendingCompactList } from "./pending-compact-list";
+import { globalViewer, noAuthorityViewer } from "./pending-viewer.fixture";
 
 function pending(overrides: Partial<PendingListItem> = {}): PendingListItem {
   return {
@@ -60,7 +61,9 @@ function render(
   nextCursor: string | null = null,
   capabilities: {
     canDeliver?: boolean;
-    canContactOrInvoice?: boolean;
+    // Antes era `canContactOrInvoice`. Ahora la autoridad viaja con su ALCANCE,
+    // porque ofrecer facturar depende también de de quién es la fila.
+    canInvoice?: boolean;
     canFollowUp?: boolean;
   } = {},
 ): string {
@@ -69,7 +72,7 @@ function render(
       items,
       canOrder,
       canDeliver: capabilities.canDeliver,
-      canContactOrInvoice: capabilities.canContactOrInvoice,
+      viewer: capabilities.canInvoice ? globalViewer() : noAuthorityViewer,
       canFollowUp: capabilities.canFollowUp,
       nextCursor,
       pageHref: (cursor) => `/pendientes?cursor=${encodeURIComponent(cursor)}&view=lista`,
@@ -219,15 +222,15 @@ describe("PendingCompactList", () => {
     expect(html).toContain("Ya lo pedí");
   });
 
-  // El vendedor tiene que poder facturar SU pendiente desde el primer momento,
-  // sin autoridad de compras y sin esperar a que llegue mercancía. Antes esta
-  // fila no le ofrecía ninguna acción.
+  // El vendedor factura SU pendiente en las dos vistas —tarjeta y tabla— sin
+  // necesitar autoridad de compras. Lo que sí necesita es que la mercadería
+  // haya llegado: ver el caso de abajo.
   it("le da al vendedor la acción de facturar en las dos vistas", () => {
     const html = render(
-      [pending({ customerStatus: "POR_CONTACTAR", inventoryReadyQuantity: 0, purchaseStatus: "SOLICITADO" })],
+      [pending({ customerStatus: "POR_CONTACTAR", inventoryReadyQuantity: 10, purchaseStatus: "SOLICITADO" })],
       false,
       null,
-      { canContactOrInvoice: true },
+      { canInvoice: true },
     );
 
     // "Facturar" a secas es subcadena de "Facturar el resto", así que contarla
@@ -238,12 +241,27 @@ describe("PendingCompactList", () => {
     expect(html).not.toContain("Ya lo pedí");
   });
 
+  // El defecto que reportó gerencia el 2026-10-04: se ofrecía "Facturar" sobre
+  // pendientes sin una sola unidad en bodega. La autoridad no alcanza; hace
+  // falta mercadería. Antes este caso mostraba el botón igual.
+  it("no ofrece facturar cuando no llegó mercadería, aunque tenga la autoridad", () => {
+    const html = render(
+      [pending({ customerStatus: "POR_CONTACTAR", inventoryReadyQuantity: 0, purchaseStatus: "SOLICITADO" })],
+      false,
+      null,
+      { canInvoice: true },
+    );
+
+    expect(html).not.toContain("Facturar");
+    expect(html).not.toContain("podés facturar");
+  });
+
   it("shows seller invoice actions in the desktop table", () => {
     const html = render(
       [pending({ customerStatus: "CONTACTADO", inventoryReadyQuantity: 10, invoicedQuantity: 0, purchaseStatus: "SOLICITADO" })],
       false,
       null,
-      { canContactOrInvoice: true, canDeliver: true },
+      { canInvoice: true, canDeliver: true },
     );
 
     expect(countOccurrences(html, "Facturar")).toBe(2);
@@ -269,7 +287,7 @@ describe("PendingCompactList", () => {
       [pending({ customerStatus: "CONTACTADO", inventoryReadyQuantity: 10, invoicedQuantity: 0 })],
       false,
       null,
-      { canContactOrInvoice: true },
+      { canInvoice: true },
     );
 
     expect(countOccurrences(html, "Cargado · podés facturar")).toBe(2);
@@ -280,7 +298,7 @@ describe("PendingCompactList", () => {
       [pending({ quantity: 10, customerStatus: "CONTACTADO", inventoryReadyQuantity: 6, invoicedQuantity: 0 })],
       false,
       null,
-      { canContactOrInvoice: true },
+      { canInvoice: true },
     );
 
     expect(
@@ -345,12 +363,28 @@ describe("PendingCompactList · señales de la reunión", () => {
   });
 
   it("cambia el aviso cuando bodega ya lo cargó", () => {
+    const html = render(
+      [pending({ availabilityStatus: "DISPONIBLE_COMPLETO", inventoryReadyQuantity: 10 })],
+      true,
+      null,
+      { canInvoice: true },
+    );
+
+    expect(countOccurrences(html, "Cargado · podés facturar")).toBe(2);
+    expect(html).not.toContain("Llegó a la droguería");
+  });
+
+  // El aviso NO promete lo que el lector no puede hacer. Con la mercadería
+  // cargada pero sin autoridad, el hecho se enuncia y ahí termina. Era la
+  // contradicción exacta de la pantalla de Garzón: la fila decía "podés
+  // facturar" y abajo no había ningún botón.
+  it("dice Cargado sin prometer facturar a quien no puede", () => {
     const html = render([
       pending({ availabilityStatus: "DISPONIBLE_COMPLETO", inventoryReadyQuantity: 10 }),
     ]);
 
-    expect(countOccurrences(html, "Cargado · podés facturar")).toBe(2);
-    expect(html).not.toContain("Llegó a la droguería");
+    expect(countOccurrences(html, "Cargado")).toBe(2);
+    expect(html).not.toContain("podés facturar");
   });
 
   it("distingue la cobertura parcial de lo cargado", () => {
@@ -426,7 +460,7 @@ describe("PendingCompactList · seguimiento", () => {
   });
 
   it("no le muestra datos de cliente a quien no hace seguimiento", () => {
-    const html = render([conCliente()], true, null, { canContactOrInvoice: true });
+    const html = render([conCliente()], true, null, { canInvoice: true });
 
     expect(html).not.toContain("María Gómez");
     expect(html).not.toContain("3001234567");

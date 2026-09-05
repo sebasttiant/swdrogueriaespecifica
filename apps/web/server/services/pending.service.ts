@@ -57,7 +57,12 @@ import {
   type TransactionalAuditWriter,
 } from "@/server/services/transactional-audit.service";
 import type { Paginated } from "@/lib/pagination";
-import { can, seesAllPendings, USER_ROLES } from "@/lib/auth/permissions";
+import {
+  can,
+  seesAllPendings,
+  USER_ROLES,
+  type PendingActionScope,
+} from "@/lib/auth/permissions";
 import type { SessionRole } from "@/lib/auth/session";
 import {
   nextPendingStatus,
@@ -921,38 +926,101 @@ export async function contactPending(input: CustomerLifecycleInput, now = new Da
   });
 }
 
+export type InvoicePendingInput = {
+  id: string;
+  actorId: string;
+  /**
+   * Sobre qué pendientes puede facturar este actor. Se deriva UNA vez, en
+   * `invoiceScopeFor`, y llega acá explícito. Antes viajaba como
+   * `canManageAll?: boolean`, un booleano cuyo significado cambiaba según el
+   * rol que lo mandaba: no distinguía "no tiene autoridad" de "tiene autoridad
+   * acotada a lo suyo", así que un rol sin permiso de facturar y un vendedor
+   * sobre un pendiente ajeno producían exactamente el mismo `false`.
+   */
+  scope: PendingActionScope;
+  quantity?: number;
+};
+
+export type InvoicePendingRejection =
+  | "NOT_AUTHORIZED"
+  | "NOT_OWNER"
+  | "ALREADY_TERMINAL"
+  | "INVALID_QUANTITY"
+  | "NO_STOCK";
+
 /**
- * El vendedor marca que ya le facturó al cliente.
+ * Facturarle al cliente lo que ya llegó de su pendiente.
  *
- * No se le exige haber registrado un contacto previo ni esperar a que el
- * sistema vea stock disponible: quien factura es la persona, mirando su propia
- * caja, y el software se entera después. Exigirle disponibilidad lo dejaba sin
- * ninguna acción sobre su pendiente hasta que bodega cargara la mercancía.
+ * STOCK. Hasta el 2026-10-04 esto no miraba disponibilidad: la migración
+ * `20260731010000_invoice_before_arrival` había sacado a propósito el CHECK
+ * `invoicedQuantity <= inventoryReadyQuantity` con el argumento de que factura
+ * la persona mirando su caja y el software se entera después. En la práctica el
+ * resultado fue el opuesto: gerencia veía el botón "Facturar" en pendientes sin
+ * una sola unidad en bodega, y la pantalla no distinguía un pedido listo de uno
+ * que todavía nadie había recibido. La regla vuelve, y vuelve acá —en el
+ * service, adentro de la transacción— porque es la única capa que ven por igual
+ * la pantalla, la Server Action invocada directo y cualquier futuro cliente.
  *
- * El único techo es lo que el cliente pidió: no se puede facturar de más.
+ * CUÁNTO SE PUEDE FACTURAR. El techo es el menor de dos números, y hay que
+ * respetar los DOS:
+ *
+ *   - lo que el cliente todavía no tiene facturado  (`quantity - invoicedQuantity`)
+ *   - lo que llegó y todavía no se facturó          (`inventoryReadyQuantity - invoicedQuantity`)
+ *
+ * `inventoryReadyQuantity` es la cantidad canónica de stock facturable: es lo
+ * que la recepción de mercadería reserva PARA ESTE PENDIENTE
+ * (`inventory-entry.service.ts`), no el inventario global del producto. Usar el
+ * inventario del catálogo dejaría que dos pendientes del mismo producto
+ * facturaran las mismas unidades.
+ *
+ * CONCURRENCIA. `lockOwnedPending` hace `SELECT ... FOR UPDATE` sobre la fila,
+ * así que dos facturas simultáneas sobre el mismo pendiente se serializan: la
+ * segunda lee el `invoicedQuantity` que dejó la primera y se rechaza sola si ya
+ * no queda stock. Sin ese lock, las dos leerían el mismo cero y facturarían el
+ * doble de lo que llegó.
  */
 export async function invoicePending(
-  input: CustomerLifecycleInput,
+  input: InvoicePendingInput,
   now = new Date(),
-): Promise<CustomerLifecycleRejection | null> {
+): Promise<InvoicePendingRejection | null> {
+  // El rol que no factura se rechaza antes de tocar la base: no hay fila que
+  // mirar ni lock que tomar si la autoridad no existe.
+  if (input.scope === "none") return "NOT_AUTHORIZED";
+
   return prisma.$transaction(async (tx) => {
-    const pending = await lockOwnedPending(tx, input);
-    if (!pending) return "NOT_OWNER";
+    const pending = await lockPendingForUpdate(tx, input.id);
+    if (!pending) throw new Error("Pending not found");
+    if (input.scope === "own" && pending.createdById !== input.actorId) {
+      return "NOT_OWNER";
+    }
     if (pending.customerStatus === "ENTREGADO" || pending.customerStatus === "CANCELADO") {
       return "ALREADY_TERMINAL";
     }
 
-    const quantity = input.quantity ?? pending.quantity - pending.invoicedQuantity;
-    const invoicedQuantity = pending.invoicedQuantity + quantity;
-    if (!Number.isInteger(quantity) || quantity <= 0 || invoicedQuantity > pending.quantity) {
-      return "NOT_AVAILABLE";
+    const pendingToInvoice = Math.max(pending.quantity - pending.invoicedQuantity, 0);
+    const stockToInvoice = Math.max(
+      pending.inventoryReadyQuantity - pending.invoicedQuantity,
+      0,
+    );
+
+    // Sin mercadería cargada no hay nada que facturar, y decirlo con su propio
+    // código evita que la pantalla muestre "revisá la cantidad" cuando la
+    // cantidad estaba bien y lo que falta es el stock.
+    if (stockToInvoice <= 0) return "NO_STOCK";
+
+    // Sin cantidad explícita se factura todo lo facturable, que es el menor de
+    // los dos techos y no "todo lo que el cliente pidió".
+    const quantity = input.quantity ?? Math.min(pendingToInvoice, stockToInvoice);
+    if (!Number.isInteger(quantity) || quantity <= 0 || quantity > pendingToInvoice) {
+      return "INVALID_QUANTITY";
     }
+    if (quantity > stockToInvoice) return "NO_STOCK";
 
     await tx.pending.update({
       where: { id: pending.id },
       data: {
         customerStatus: "FACTURADO",
-        invoicedQuantity,
+        invoicedQuantity: pending.invoicedQuantity + quantity,
         invoicedAt: now,
         invoicedById: input.actorId,
       },

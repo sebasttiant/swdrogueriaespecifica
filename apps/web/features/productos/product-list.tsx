@@ -4,6 +4,7 @@ import { PackageSearch, Package } from "lucide-react";
 import { Badge } from "@/app/_components/ui/badge";
 import { Card } from "@/app/_components/ui/card";
 import { EmptyState } from "@/app/_components/ui/empty-state";
+import { formatBogotaDate } from "@/lib/datetime/bogota";
 import { expiryLevel, type ExpiryLevel } from "@/lib/inventory/batch-status";
 import type { ProductListItem } from "@/server/repositories/product.repository";
 
@@ -80,6 +81,19 @@ export function ProductList({ items, nextCursor, q }: ProductListProps) {
                   <Badge tone={EXPIRY_TONE[worstLevel]}>
                     {EXPIRY_LABEL[worstLevel]}
                   </Badge>
+                ) : null}
+                {/* La FECHA concreta, además del semáforo. "Crítico" dice que
+                    hay que actuar pronto pero no dice cuándo, y decidir qué
+                    lote se mueve primero necesita el día exacto: sin esto había
+                    que abrir el producto para verlo.
+
+                    Solo fecha, sin hora: un vencimiento es un día. Los
+                    productos sin lotes con vencimiento no muestran nada, que es
+                    distinto de mostrar un guion. */}
+                {product.worstExpiresAt ? (
+                  <span className="text-xs tabular-nums text-muted-foreground">
+                    Vence {formatBogotaDate(product.worstExpiresAt, { style: "date" })}
+                  </span>
                 ) : null}
               </div>
             </Card>

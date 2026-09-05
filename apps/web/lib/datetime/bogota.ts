@@ -197,3 +197,43 @@ export function formatBogotaDate(
     minute: "2-digit",
   }).format(date);
 }
+
+// Formato de <input type="date">: YYYY-MM-DD, sin hora.
+const DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/**
+ * Interpreta una fecha SIN hora ("2026-12-31") como el comienzo de ese día en
+ * Colombia. Devuelve `null` si no es una fecha válida.
+ *
+ * POR QUÉ EL COMIENZO DEL DÍA Y NO EL FINAL. Un vencimiento se dice por día:
+ * "vence el 31 de diciembre". Anclarlo a las 00:00 deja el instante guardado
+ * dentro de ESE día calendario en Bogotá, que es lo único que mira
+ * `expiryLevel` —compara fechas de calendario, nunca horas—, así que la
+ * clasificación del semáforo no cambia.
+ *
+ * Donde sí importa es en `isSellable`, que compara instantes: con las 00:00 un
+ * lote deja de venderse al empezar su día de vencimiento. Es lo coherente con
+ * lo que la pantalla ya venía diciendo, porque `expiryLevel` marca "Vencido" a
+ * un lote que vence HOY. Anclarlo al final del día abriría una ventana en la
+ * que la insignia dice "Vencido" y el sistema lo sigue vendiendo igual, que en
+ * una droguería es exactamente la ventana que no puede existir.
+ */
+export function parseBogotaDateOnly(value: string): Date | null {
+  if (!DATE_ONLY_RE.test(value)) return null;
+  // Se delega en el parser de hora de pared para no duplicar el cálculo de
+  // offset ni la validación de round-trip que rechaza un 30 de febrero.
+  return parseBogotaWallTime(`${value}T00:00`);
+}
+
+/**
+ * Acepta una fecha de vencimiento venga sin hora ("2026-12-31") o con ella
+ * ("2026-12-31T00:00").
+ *
+ * El formulario manda solo fecha desde el 2026-10-04 —la hora de vencimiento no
+ * existe como dato de negocio—, pero seguir aceptando el formato viejo mantiene
+ * válido cualquier envío en vuelo durante el despliegue y los registros que
+ * lleguen por otro camino.
+ */
+export function parseBogotaExpiry(value: string): Date | null {
+  return parseBogotaDateOnly(value) ?? parseBogotaWallTime(value);
+}

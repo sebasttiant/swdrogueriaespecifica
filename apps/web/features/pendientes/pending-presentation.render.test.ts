@@ -23,6 +23,7 @@ import type { PendingListItem } from "@/server/repositories/pending.repository";
 import { PendingCompactList } from "./pending-compact-list";
 import { PendingList } from "./pending-list";
 import { NO_PRESENTATION_LABEL } from "./presentation";
+import { noAuthorityViewer } from "./pending-viewer.fixture";
 
 // --------------------------------------------------------------------------
 // La presentación en REVISIÓN DE PENDIENTES.
@@ -90,6 +91,7 @@ function manual(unit: string): PendingListItem {
 function renderCompact(items: PendingListItem[]): string {
   return renderToStaticMarkup(
     createElement(PendingCompactList, {
+      viewer: noAuthorityViewer,
       items,
       canOrder: false,
       nextCursor: null,
@@ -101,6 +103,7 @@ function renderCompact(items: PendingListItem[]): string {
 function renderDetalle(items: PendingListItem[]): string {
   return renderToStaticMarkup(
     createElement(PendingList, {
+      viewer: noAuthorityViewer,
       items,
       nextCursor: null,
       canDeliver: true,

@@ -9,6 +9,8 @@ import {
   isAdminRole,
   isSuperAdminRole,
   isUserManager,
+  contactScopeFor,
+  invoiceScopeFor,
   rolesWithCapability,
   seesAllPendings,
   USER_ROLES,
@@ -416,8 +418,8 @@ describe("canManageAllPendings (alcance de la cola)", () => {
   });
 
   it("el vendedor solo puede contactar y facturar lo suyo", () => {
-    expect(can("OPERADOR", "canContactOwnPendings")).toBe(true);
-    expect(can("OPERADOR", "canInvoiceOwnPendings")).toBe(true);
+    expect(can("OPERADOR", "canContactPendings")).toBe(true);
+    expect(can("OPERADOR", "canInvoicePendings")).toBe(true);
     expect(can("OPERADOR", "canManageAllPendings")).toBe(false);
   });
 });
@@ -443,8 +445,8 @@ describe("BODEGA (matriz de perfil)", () => {
       "canManageProducts",
       "canCreatePendientes",
       "canSubmitMissingReports",
-      "canContactOwnPendings",
-      "canInvoiceOwnPendings",
+      "canContactPendings",
+      "canInvoicePendings",
       "canDeliverPendings",
       "canCancelPendings",
       "canReviewPendings",
@@ -798,4 +800,67 @@ describe("pendientes · quién los crea", () => {
       expect(can(role, "canReviewPendings")).toBe(true);
     },
   );
+});
+
+// --------------------------------------------------------------------------
+// Matriz de facturación (reunión 2026-10-04).
+//
+// AUTORIDAD y ALCANCE son dos ejes. La capacidad dice si el rol factura; el
+// alcance —derivado de `canManageAllPendings`— dice sobre cuáles filas. Esta
+// tabla es la decisión de negocio escrita una sola vez: cambiarla es cambiar
+// `ROLE_CAPABILITIES`, nunca código de pantalla.
+//
+// El defecto que la motivó: SUPERVISOR no tenía la capacidad, así que Garzón
+// veía "Cargado · podés facturar" en la fila y no tenía botón debajo.
+// --------------------------------------------------------------------------
+describe("alcance de facturación por rol", () => {
+  it.each([
+    ["SUPERADMIN", "all"],
+    ["ADMIN", "all"],
+    ["SUPERVISOR", "all"],
+    // El vendedor factura, pero solo lo suyo: no tiene `canManageAllPendings`.
+    ["OPERADOR", "own"],
+    // Bodega opera su propio circuito de vendedor. LEE la cola entera
+    // (`canReadAllPendings`), y por eso el alcance propio es lo único que le
+    // impide facturar las filas ajenas que sí ve.
+    ["BODEGA", "own"],
+  ] as const)("%s factura con alcance %s", (role, scope) => {
+    expect(invoiceScopeFor(role)).toBe(scope);
+  });
+
+  it("la supervisión factura cualquier pendiente, no solo el suyo", () => {
+    expect(can("SUPERVISOR", "canInvoicePendings")).toBe(true);
+    expect(can("SUPERVISOR", "canManageAllPendings")).toBe(true);
+    expect(invoiceScopeFor("SUPERVISOR")).toBe("all");
+  });
+
+  it("ningún rol operativo queda sin autoridad de facturación", () => {
+    expect(rolesWithCapability("canInvoicePendings")).toEqual([
+      "SUPERADMIN",
+      "ADMIN",
+      "SUPERVISOR",
+      "OPERADOR",
+      "BODEGA",
+    ]);
+  });
+
+  // Contacto y facturación son ejes SEPARADOS. Se prueban juntos justamente
+  // para que el día que uno cambie, el otro no se mueva por arrastre: las
+  // pantallas los unían en un solo `canContactOrInvoice`, y con eso el acceso
+  // al teléfono del cliente decidía si aparecía el botón de facturar.
+  it("contacto y facturación son ejes independientes", () => {
+    for (const role of USER_ROLES) {
+      expect(contactScopeFor(role)).toBe(invoiceScopeFor(role));
+    }
+    expect(rolesWithCapability("canContactPendings")).toEqual(
+      rolesWithCapability("canInvoicePendings"),
+    );
+  });
+
+  it("ver toda la cola no es lo mismo que poder facturarla toda", () => {
+    // Bodega es el caso que lo demuestra: ve todos los pendientes y factura
+    // solo los propios.
+    expect(seesAllPendings("BODEGA")).toBe(true);
+    expect(invoiceScopeFor("BODEGA")).toBe("own");
+  });
 });

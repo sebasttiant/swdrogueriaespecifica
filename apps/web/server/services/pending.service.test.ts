@@ -849,40 +849,80 @@ describe("customer lifecycle ownership and incremental invoice", () => {
     expect(tx.pending.update).not.toHaveBeenCalled();
   });
 
-  it("invoices newly available quantity after a partial delivery without leaving FACTURADO", async () => {
+  // ------------------------------------------------------------------
+  // FACTURAR. Dos ejes independientes y los dos obligatorios: el ALCANCE
+  // (sobre qué filas puede este actor) y el STOCK (cuánto llegó de verdad).
+  // Antes no había ninguno de los dos: cualquier rol con la capacidad
+  // facturaba, y facturaba aunque bodega no hubiera recibido una sola unidad.
+  // ------------------------------------------------------------------
+
+  it("factura lo que ya llegó y quedaba por facturar", async () => {
     mockLockedPending(pendingForDelivery({ status: "PARCIAL", deliveredQuantity: 6, inventoryReadyQuantity: 10, invoicedQuantity: 6, customerStatus: "FACTURADO" }));
-    await expect(invoicePending({ id: "pend-1", actorId: "op-1", quantity: 4 }, now)).resolves.toBeNull();
+    await expect(invoicePending({ id: "pend-1", actorId: "op-1", scope: "own", quantity: 4 }, now)).resolves.toBeNull();
     expect(tx.pending.update).toHaveBeenCalledWith({ where: { id: "pend-1" }, data: expect.objectContaining({ customerStatus: "FACTURADO", invoicedQuantity: 10 }) });
   });
 
-  // Quien factura es la persona, mirando su propia caja; el sistema se entera
-  // después. Exigirle un contacto previo, o esperar a que bodega cargara la
-  // mercancía, dejaba al vendedor sin ninguna acción sobre su propio pendiente.
-  it("factura sin contacto previo y sin que el sistema haya visto llegar stock", async () => {
+  // El defecto que reportó gerencia el 2026-10-04: el botón "Facturar" aparecía
+  // sobre pendientes sin una sola unidad en bodega. La regla la aplica el
+  // service, no la pantalla, así que invocar la acción directo tampoco pasa.
+  it("no factura sin mercadería cargada", async () => {
     mockLockedPending(
-      pendingForDelivery({
-        customerStatus: "POR_CONTACTAR",
-        inventoryReadyQuantity: 0,
-        invoicedQuantity: 0,
-        quantity: 10,
-      }),
+      pendingForDelivery({ customerStatus: "POR_CONTACTAR", inventoryReadyQuantity: 0, invoicedQuantity: 0, quantity: 10 }),
     );
 
     await expect(
-      invoicePending({ id: "pend-1", actorId: "op-1", quantity: 10 }, now),
+      invoicePending({ id: "pend-1", actorId: "op-1", scope: "own", quantity: 10 }, now),
+    ).resolves.toBe("NO_STOCK");
+    expect(tx.pending.update).not.toHaveBeenCalled();
+  });
+
+  it("no factura más de lo que llegó, aunque el cliente haya pedido más", async () => {
+    mockLockedPending(
+      pendingForDelivery({ quantity: 10, inventoryReadyQuantity: 3, invoicedQuantity: 0 }),
+    );
+
+    await expect(
+      invoicePending({ id: "pend-1", actorId: "op-1", scope: "own", quantity: 4 }, now),
+    ).resolves.toBe("NO_STOCK");
+    expect(tx.pending.update).not.toHaveBeenCalled();
+  });
+
+  it("factura parcial hasta el tope de lo que llegó", async () => {
+    mockLockedPending(
+      pendingForDelivery({ quantity: 10, inventoryReadyQuantity: 3, invoicedQuantity: 0 }),
+    );
+
+    await expect(
+      invoicePending({ id: "pend-1", actorId: "op-1", scope: "own", quantity: 3 }, now),
     ).resolves.toBeNull();
     expect(tx.pending.update).toHaveBeenCalledWith({
       where: { id: "pend-1" },
-      data: expect.objectContaining({ customerStatus: "FACTURADO", invoicedQuantity: 10 }),
+      data: expect.objectContaining({ invoicedQuantity: 3 }),
+    });
+  });
+
+  // Sin cantidad explícita se factura el MENOR de los dos techos, no todo lo
+  // que el cliente pidió: si llegaron 3 de 10, se facturan 3.
+  it("sin cantidad explícita factura lo facturable, no lo pedido", async () => {
+    mockLockedPending(
+      pendingForDelivery({ quantity: 10, inventoryReadyQuantity: 3, invoicedQuantity: 0 }),
+    );
+
+    await expect(
+      invoicePending({ id: "pend-1", actorId: "op-1", scope: "own" }, now),
+    ).resolves.toBeNull();
+    expect(tx.pending.update).toHaveBeenCalledWith({
+      where: { id: "pend-1" },
+      data: expect.objectContaining({ invoicedQuantity: 3 }),
     });
   });
 
   it("no deja facturar más de lo que el cliente pidió", async () => {
-    mockLockedPending(pendingForDelivery({ quantity: 10, invoicedQuantity: 8 }));
+    mockLockedPending(pendingForDelivery({ quantity: 10, inventoryReadyQuantity: 10, invoicedQuantity: 8 }));
 
     await expect(
-      invoicePending({ id: "pend-1", actorId: "op-1", quantity: 5 }, now),
-    ).resolves.toBe("NOT_AVAILABLE");
+      invoicePending({ id: "pend-1", actorId: "op-1", scope: "own", quantity: 5 }, now),
+    ).resolves.toBe("INVALID_QUANTITY");
     expect(tx.pending.update).not.toHaveBeenCalled();
   });
 
@@ -890,17 +930,57 @@ describe("customer lifecycle ownership and incremental invoice", () => {
     mockLockedPending(pendingForDelivery({ customerStatus: "CANCELADO" }));
 
     await expect(
-      invoicePending({ id: "pend-1", actorId: "op-1", quantity: 1 }, now),
+      invoicePending({ id: "pend-1", actorId: "op-1", scope: "own", quantity: 1 }, now),
     ).resolves.toBe("ALREADY_TERMINAL");
     expect(tx.pending.update).not.toHaveBeenCalled();
   });
 
-  it("rechaza facturar un pendiente ajeno", async () => {
-    mockLockedPending(pendingForDelivery({ createdById: "otro-vendedor" }));
+  // ALCANCE PROPIO: el vendedor y la bodega solo sobre lo suyo.
+  it("con alcance propio rechaza el pendiente ajeno", async () => {
+    mockLockedPending(pendingForDelivery({ createdById: "otro-vendedor", inventoryReadyQuantity: 10 }));
 
     await expect(
-      invoicePending({ id: "pend-1", actorId: "op-1", quantity: 1 }, now),
+      invoicePending({ id: "pend-1", actorId: "op-1", scope: "own", quantity: 1 }, now),
     ).resolves.toBe("NOT_OWNER");
+    expect(tx.pending.update).not.toHaveBeenCalled();
+  });
+
+  // ALCANCE GLOBAL: gerencia y supervisión facturan el pendiente de cualquiera,
+  // y quedan registradas como el actor que facturó. Es el caso del reporte de
+  // Daniel: Garzón (SUPERVISOR) sobre un pendiente que cargó otra persona.
+  it("con alcance global factura el pendiente de otro y queda como actor", async () => {
+    mockLockedPending(
+      pendingForDelivery({ createdById: "otro-vendedor", quantity: 5, inventoryReadyQuantity: 5, invoicedQuantity: 0 }),
+    );
+
+    await expect(
+      invoicePending({ id: "pend-1", actorId: "supervisor-1", scope: "all", quantity: 5 }, now),
+    ).resolves.toBeNull();
+    expect(tx.pending.update).toHaveBeenCalledWith({
+      where: { id: "pend-1" },
+      data: expect.objectContaining({ invoicedQuantity: 5, invoicedById: "supervisor-1" }),
+    });
+  });
+
+  // El alcance global NO saltea el stock: la autoridad dice sobre qué filas, no
+  // sobre mercadería que no existe.
+  it("el alcance global tampoco factura sin stock", async () => {
+    mockLockedPending(
+      pendingForDelivery({ createdById: "otro-vendedor", quantity: 5, inventoryReadyQuantity: 0 }),
+    );
+
+    await expect(
+      invoicePending({ id: "pend-1", actorId: "supervisor-1", scope: "all", quantity: 1 }, now),
+    ).resolves.toBe("NO_STOCK");
+    expect(tx.pending.update).not.toHaveBeenCalled();
+  });
+
+  // SIN AUTORIDAD: se rechaza antes de tocar la base. Ni siquiera se toma el
+  // lock de la fila, porque no hay nada que decidir.
+  it("sin autoridad no factura ni el pendiente propio", async () => {
+    await expect(
+      invoicePending({ id: "pend-1", actorId: "op-1", scope: "none", quantity: 1 }, now),
+    ).resolves.toBe("NOT_AUTHORIZED");
     expect(tx.pending.update).not.toHaveBeenCalled();
   });
 });

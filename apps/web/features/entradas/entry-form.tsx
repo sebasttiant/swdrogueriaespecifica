@@ -282,13 +282,12 @@ export function EntryForm({
             Si el lote ya existe para este producto, se suma la cantidad.
           </p>
         </Field>
+        {/* Solo fecha. Un vencimiento se dice por día —"vence el 31 de
+            diciembre"— y la hora era un campo más que había que completar sin
+            que nadie la leyera después. `expiryLevel` ya compara fechas de
+            calendario, así que sacarla no cambia el semáforo. */}
         <Field label="Fecha de vencimiento" htmlFor="expiresAt">
-          <Input
-            id="expiresAt"
-            name="expiresAt"
-            type="datetime-local"
-            required
-          />
+          <Input id="expiresAt" name="expiresAt" type="date" required />
         </Field>
         {/* Laboratorio de lo que LLEGÓ, que no siempre es el que se pidió.
             Es evidencia de la recepción: el servicio la compara contra el lote

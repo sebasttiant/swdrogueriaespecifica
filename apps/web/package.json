@@ -22,6 +22,7 @@
     "db:verify": "tsx prisma/verify-fulfillment-invariants.ts",
     "db:import:users": "tsx prisma/import-users.ts",
     "db:reconcile": "tsx prisma/reconcile-inventory.ts",
+    "db:backfill:reportes": "tsx prisma/backfill-missing-reports.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {

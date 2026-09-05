@@ -31,7 +31,10 @@ import { can } from "@/lib/auth/permissions";
 import { requireCapability } from "@/lib/auth/require-role";
 import { cn } from "@/lib/utils/cn";
 import { DEFAULT_PAGE_SIZE } from "@/lib/pagination";
-import { getMissingReportQueue } from "@/server/services/missing-report.service";
+import {
+  getMissingReportQueue,
+  getPendingReportGroupCount,
+} from "@/server/services/missing-report.service";
 import {
   listReceiverQueue,
   resolveReceiverScope,
@@ -116,9 +119,14 @@ export default async function RevisionFaltantesPage({
   // --------------------------------------------------------------------------
   const SHELF_ONLY = "shelf" as const;
 
-  // El buzón de reportes es UNA PESTAÑA, no una pantalla aparte. Es un modelo
-  // distinto (`MissingReport`), pero aprobar un reporte es lo que CREA un
-  // faltante: es la puerta de entrada a esta misma cola.
+  // El buzón de reportes es lo QUE QUEDA de un flujo que ya no existe. Hasta el
+  // 2026-10-04 un reporte de vendedor nacía acá y gerencia tenía que aprobarlo
+  // para que recién entonces apareciera en "Por pedir"; en la pantalla eso eran
+  // dos pestañas con el mismo nombre, una adentro de la otra, y el gerente leía
+  // el "Por pedir 0" de arriba mientras veinte solicitudes esperaban detrás.
+  // Ahora el reporte crea su faltante al enviarse (`submitMissingReport`), así
+  // que este buzón solo contiene lo anterior al cambio y se apaga solo cuando
+  // se vacía.
   const showingReports = rawScope === REPORTS_TAB_SCOPE;
   const view = resolveMissingView(rawView);
   const scope = resolveMissingScope(rawScope);
@@ -135,7 +143,7 @@ export default async function RevisionFaltantesPage({
   // Las dos consultas van SIEMPRE: la de la cola alimenta la pestaña activa y
   // la del buzón alimenta su contador. Un contador que solo se calcula al
   // entrar a la pestaña no avisa de nada, que es justo lo que tiene que hacer.
-  const [queue, actionableCount, reports] = await Promise.all([
+  const [queue, actionableCount, reports, pendingReportGroups] = await Promise.all([
     showingReports
       ? Promise.resolve(null)
       : getMissingItems({
@@ -153,6 +161,9 @@ export default async function RevisionFaltantesPage({
       pageSize: DEFAULT_PAGE_SIZE,
       scope: showingReports ? reportScope : "pending",
     }),
+    // GLOBAL y no el largo de la página: decide si el buzón se dibuja, y una
+    // pestaña que aparece según en qué página estás no sirve para nada.
+    getPendingReportGroupCount(),
   ]);
 
   return (
@@ -166,7 +177,7 @@ export default async function RevisionFaltantesPage({
         active={showingReports ? REPORTS_TAB_SCOPE : scope}
         view={view}
         actionableCount={actionableCount}
-        reportsCount={reports.groups.length}
+        reportsCount={pendingReportGroups}
         route={SHELF_BOARD_ROUTE}
         label="Estado de los faltantes"
       />

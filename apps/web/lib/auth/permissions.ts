@@ -238,8 +238,17 @@ export const CAPABILITIES = [
   // que en el futuro un rol pueda supervisar la cola sin mutar pendientes
   // ajenos: un cambio de una línea en `ROLE_CAPABILITIES`, jamás de código.
   "canReadAllPendings",
-  "canContactOwnPendings",
-  "canInvoiceOwnPendings",
+  // Contactar al cliente de un pendiente, y facturárselo. Son AUTORIDAD, no
+  // alcance: dicen si el rol puede hacer el gesto, nunca sobre cuáles filas.
+  //
+  // Se llamaban `canContactOwnPendings` / `canInvoiceOwnPendings`, y ese `Own`
+  // era falso: ADMIN y SUPERADMIN las heredan de `[...CAPABILITIES]` y facturan
+  // pendientes de cualquiera. El nombre prometía un límite que ninguna guarda
+  // aplicaba, y quien leía la matriz creía que la gerencia estaba acotada a
+  // sus propias filas. El alcance real lo pone `canManageAllPendings`, y se
+  // deriva UNA vez en `invoiceScopeFor` / `contactScopeFor`.
+  "canContactPendings",
+  "canInvoicePendings",
   // Gatea el MÓDULO de revisión de pendientes. A diferencia de
   // `canReviewMissingReports` —que es solo de gerencia porque decidir qué se
   // compra lo es—, revisar pendientes lo hace todo el que ya trabaja con ellos:
@@ -291,6 +300,15 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     // redundante con canManageAllPendings en las superficies de lectura, pero
     // declara la intención y deja el eje listo si mañana se le quita la mutación.
     "canReadAllPendings",
+    // Contacta y factura, y por tener `canManageAllPendings` lo hace sobre
+    // CUALQUIER pendiente, no solo los que registró él (reunión 2026-10-04:
+    // "los supervisores todos deben ver los pendientes de todos").
+    //
+    // Sin estas dos, la supervisión veía un pendiente con la mercadería ya
+    // cargada, leía "podés facturar" en la fila, y no tenía botón: la pantalla
+    // prometía una acción que la matriz no autorizaba.
+    "canContactPendings",
+    "canInvoicePendings",
     "canDeliverPendings",
     "canCancelPendings",
     "canReviewPendings",
@@ -313,8 +331,10 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     "canLinkProductIdentity",
     "canCreatePendientes",
     "canSubmitMissingReports",
-    "canContactOwnPendings",
-    "canInvoiceOwnPendings",
+    // Contacta y factura, pero SIN `canManageAllPendings`: el alcance se
+    // deriva en `invoiceScopeFor` y el service rechaza el pendiente ajeno.
+    "canContactPendings",
+    "canInvoicePendings",
     "canDeliverPendings",
     // Cancelar SU pendiente: el cliente que desistió es suyo y la llamada la
     // recibe él. El alcance lo pone `canManageAllPendings`, que el vendedor no
@@ -359,8 +379,10 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     "canLinkProductIdentity",
     "canCreatePendientes",
     "canSubmitMissingReports",
-    "canContactOwnPendings",
-    "canInvoiceOwnPendings",
+    // Contacta y factura, pero SIN `canManageAllPendings`: el alcance se
+    // deriva en `invoiceScopeFor` y el service rechaza el pendiente ajeno.
+    "canContactPendings",
+    "canInvoicePendings",
     "canDeliverPendings",
     "canCancelPendings",
     "canReviewPendings",
@@ -397,4 +419,47 @@ export function rolesWithCapability(
  */
 export function seesAllPendings(role: SessionRole): boolean {
   return can(role, "canManageAllPendings") || can(role, "canReadAllPendings");
+}
+
+/**
+ * Sobre CUÁLES pendientes puede un rol ejercer una acción de cliente.
+ *
+ *   "none" — no tiene la autoridad; ni se le ofrece el control.
+ *   "all"  — cualquier pendiente, sin importar quién lo registró.
+ *   "own"  — únicamente los que él creó.
+ *
+ * Autoridad y alcance son DOS EJES, y confundirlos fue exactamente el defecto
+ * del 2026-10-04: la capacidad se llamaba `canInvoiceOwnPendings` y la gerencia
+ * la usaba para facturar pendientes ajenos, así que el nombre describía un
+ * límite inexistente mientras la supervisión —que sí opera la cola entera— se
+ * quedaba sin el botón. La autoridad la da la capacidad; el alcance lo da
+ * `canManageAllPendings`, el mismo eje que ya decide quién puede mutar una fila
+ * ajena.
+ *
+ * Se deriva ACÁ, una sola vez, por el mismo motivo que `seesAllPendings`: una
+ * regla que decide quién opera el pendiente de quién no puede estar copiada en
+ * cada pantalla y en cada Server Action. La UI la usa para decidir si ofrece el
+ * control; el service la recibe explícita y vuelve a decidir por su cuenta,
+ * porque una guarda de pantalla no es una guarda.
+ */
+export type PendingActionScope = "none" | "all" | "own";
+
+function scopeFor(role: SessionRole, authority: Capability): PendingActionScope {
+  if (!can(role, authority)) return "none";
+  return can(role, "canManageAllPendings") ? "all" : "own";
+}
+
+/** Alcance de facturación. Ver `PendingActionScope`. */
+export function invoiceScopeFor(role: SessionRole): PendingActionScope {
+  return scopeFor(role, "canInvoicePendings");
+}
+
+/**
+ * Alcance de contacto al cliente. Eje SEPARADO del de facturación a propósito:
+ * las pantallas los unían en un solo `canContactOrInvoice`, y con eso tener
+ * teléfono del cliente destapaba o escondía el botón de facturar sin que nadie
+ * lo hubiera decidido.
+ */
+export function contactScopeFor(role: SessionRole): PendingActionScope {
+  return scopeFor(role, "canContactPendings");
 }

@@ -1396,6 +1396,58 @@ describe("contactPendingAction / invoicePendingAction", () => {
     return data;
   }
 
+  // El caso de la reunión 2026-10-04: SUPERVISOR factura el pendiente de otro
+  // y queda auditado como el actor que facturó. La acción no compara roles a
+  // mano: deriva el alcance de la matriz de permisos.
+  it("la supervisión factura con alcance global", async () => {
+    mocks.requireCapability.mockResolvedValue({ user: { id: "sup-1", role: "SUPERVISOR" } });
+    mocks.invoicePending.mockResolvedValue(null);
+
+    const result = await invoicePendingAction(PREV, lifecycleFormData({ quantity: "3" }));
+
+    expect(result).toEqual({ error: null, ok: true });
+    expect(mocks.invoicePending).toHaveBeenCalledWith({
+      id: "pend-1",
+      quantity: 3,
+      actorId: "sup-1",
+      scope: "all",
+    });
+  });
+
+  // Un rechazo de negocio se cuenta con su causa. "No hay disponibilidad
+  // suficiente" sobre una cantidad correcta hacía reintentar lo mismo.
+  it("nombra la falta de stock en vez de un error genérico", async () => {
+    mocks.requireCapability.mockResolvedValue({ user: { id: "sel-1", role: "OPERADOR" } });
+    mocks.invoicePending.mockResolvedValue("NO_STOCK");
+
+    const result = await invoicePendingAction(PREV, lifecycleFormData({ quantity: "2" }));
+
+    expect(result).toEqual({
+      error: "Todavía no hay mercadería cargada para facturar.",
+      ok: false,
+    });
+    // El intento rechazado también deja rastro, con su causa y la cantidad que
+    // se quiso facturar: sin eso, un reclamo de "no me deja" no tiene evidencia.
+    expect(mocks.recordAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: "FAILURE",
+        after: expect.objectContaining({ reason: "NO_STOCK", attemptedQuantity: 2 }),
+      }),
+    );
+  });
+
+  it("rechaza el pendiente ajeno del vendedor con su propio mensaje", async () => {
+    mocks.requireCapability.mockResolvedValue({ user: { id: "sel-1", role: "OPERADOR" } });
+    mocks.invoicePending.mockResolvedValue("NOT_OWNER");
+
+    const result = await invoicePendingAction(PREV, lifecycleFormData({ quantity: "1" }));
+
+    expect(result).toEqual({
+      error: "No podés facturar un pendiente creado por otro vendedor.",
+      ok: false,
+    });
+  });
+
   it("registra la factura con actor, cantidad y estado resultante", async () => {
     mocks.requireCapability.mockResolvedValue({ user: { id: "sel-1", role: "OPERADOR" } });
     mocks.invoicePending.mockResolvedValue(null);
@@ -1407,7 +1459,9 @@ describe("contactPendingAction / invoicePendingAction", () => {
       id: "pend-1",
       quantity: 6,
       actorId: "sel-1",
-      canManageAll: false,
+      // El vendedor manda alcance PROPIO. Antes viajaba `canManageAll: false`,
+      // un booleano que no distinguía "acotado a lo suyo" de "sin autoridad".
+      scope: "own",
     });
     expect(mocks.recordAudit).toHaveBeenCalledWith(
       expect.objectContaining({

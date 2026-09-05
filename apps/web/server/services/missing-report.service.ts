@@ -3,8 +3,13 @@ import type { ReportQueueScope } from "@/features/faltantes/report-queue-scope";
 import { prisma } from "@/lib/db/prisma";
 import { Prisma, type MissingReportStatus } from "@/lib/generated/prisma/client";
 import { clampTake } from "@/lib/pagination";
-import { createMissingItem, markMissingItemArrived } from "@/server/repositories/missing-item.repository";
 import {
+  createMissingItem,
+  findActionableMissingItemByProduct,
+  markMissingItemArrived,
+} from "@/server/repositories/missing-item.repository";
+import {
+  countPendingReportGroups,
   createMissingReport,
   groupPendingReportsByName,
   linkMissingReports,
@@ -40,20 +45,101 @@ export class MissingReportEmptyNameError extends Error {
   }
 }
 
-// Registra un reporte provisional: normaliza el nombre para poder agrupar
-// reportes del mismo producto más adelante, conservando el nombre original.
-// No crea Product ni MissingItem, no maneja cantidades ni proveedores: es solo
-// la observación "esto falta", pendiente de revisión de gerencia.
+// Cantidad con la que nace un faltante reportado. El formulario no la pide —el
+// vendedor informa QUÉ falta, no cuánto comprar— y gerencia fija la compra real
+// en `orderedQuantity` al pedir. No puede ser 0: el cierre FIFO trata
+// `quantity <= disponible` como "cubierto", así que un 0 cerraría el faltante
+// con cualquier entrada de inventario. Es el mismo 1 que usan el alta manual
+// (`MANUAL_MISSING_ITEM_QUANTITY`) y la vinculación al catálogo.
+const REPORTED_MISSING_ITEM_QUANTITY = 1;
+
+const REPORTED_MISSING_ITEM_NOTE = "Reportado por vendedor";
+
+/**
+ * El vendedor reporta que algo falta, y eso aparece DIRECTO en "Por pedir".
+ *
+ * ANTES: esto solo escribía un `MissingReport` en `PENDING_REVIEW`. El faltante
+ * canónico nacía después, cuando gerencia entraba a una cola aparte y aprobaba
+ * el reporte. En la pantalla eso se veía como dos pestañas llamadas igual —
+ * "Por pedir 0" arriba y otro "Por pedir" adentro de "Reportes 20"—, así que
+ * gerencia leía el cero y concluía que no había nada que comprar mientras veinte
+ * solicitudes esperaban detrás. La aprobación tampoco agregaba una decisión: el
+ * vendedor ya había decidido que el producto falta. Era un paso que solo
+ * escondía trabajo (reunión 2026-10-04).
+ *
+ * AHORA: el reporte y su faltante nacen juntos, en UNA transacción.
+ *
+ * PRODUCTO. `MissingItem.productId` es NOT NULL con FK, así que un faltante
+ * necesita un producto sí o sí. `upsertProvisionalProduct` crea uno marcado
+ * `needsReview` sobre el índice único `provisionalNormalizedName`, o devuelve el
+ * que ya existe. No se inventa catálogo curado: queda marcado para que un ADMIN
+ * lo revise, igual que el alta manual de un pendiente.
+ *
+ * DUPLICADOS. Dos vendedores que reportan lo mismo no generan dos filas en la
+ * cola: el segundo se engancha al faltante que abrió el primero. Los dos
+ * reportes se conservan enteros —quién y cuándo— apuntando al mismo faltante.
+ *
+ * CONCURRENCIA. Serializable, igual que `linkReportToProduct`. Dos envíos
+ * simultáneos con el mismo nombre normalizado no pueden crear dos faltantes
+ * equivalentes: el índice único del producto los fuerza a compartir producto, y
+ * el aislamiento hace que el segundo vea el faltante del primero o reintente.
+ *
+ * ATÓMICO. Nunca queda un reporte sin su faltante ni un faltante sin el rastro
+ * de quién lo pidió: si algo falla, no se persiste nada.
+ */
 export async function submitMissingReport(input: SubmitMissingReportInput) {
   const normalizedName = normalizeMissingReportName(input.rawName);
   if (normalizedName === "") throw new MissingReportEmptyNameError();
 
-  return createMissingReport({
-    rawName: input.rawName,
-    normalizedName,
-    sellerCode: input.sellerCode,
-    reporterId: input.reporterId,
-  });
+  return prisma.$transaction(
+    async (tx) => {
+      const product = await upsertProvisionalProduct(tx, {
+        normalizedName,
+        displayName: input.rawName,
+      });
+
+      const existing = await findActionableMissingItemByProduct(product.id, tx);
+      const missingItem =
+        existing ??
+        (await createMissingItem(
+          {
+            productId: product.id,
+            quantity: REPORTED_MISSING_ITEM_QUANTITY,
+            // No nace de un pendiente de cliente: es reposición de estantería.
+            originId: null,
+            createdById: input.reporterId,
+            note: REPORTED_MISSING_ITEM_NOTE,
+            sellerCode: input.sellerCode,
+          },
+          tx,
+        ));
+
+      // El reporte queda LINKED desde el vamos, apuntando al faltante que lo
+      // representa. Es la trazabilidad que después permite responder "¿quién
+      // pidió esto?" sobre una fila de la cola.
+      return createMissingReport(
+        {
+          rawName: input.rawName,
+          normalizedName,
+          sellerCode: input.sellerCode,
+          reporterId: input.reporterId,
+          status: "LINKED",
+          linkedProductId: product.id,
+          linkedMissingItemId: missingItem.id,
+        },
+        tx,
+      );
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+  );
+}
+
+/**
+ * Cuántos grupos históricos quedan en el buzón. Decide si la pestaña "Reportes"
+ * se dibuja: en cero desaparece y la pantalla queda con un solo "Por pedir".
+ */
+export function getPendingReportGroupCount(): Promise<number> {
+  return countPendingReportGroups();
 }
 
 // --------------------------------------------------------------------------

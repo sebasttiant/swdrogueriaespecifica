@@ -11,7 +11,13 @@ import type { PendingListItem } from "@/server/repositories/pending.repository";
 
 import { computeDeadlineStatus } from "./deadline-status";
 import { derivePaymentState } from "./payment-state";
-import { fulfillmentNotice, isTerminal, outstanding } from "./fulfillment-notice";
+import {
+  fulfillmentNotice,
+  invoiceAffordance,
+  isTerminal,
+  outstanding,
+  type PendingViewer,
+} from "./fulfillment-notice";
 import { identityWarning } from "./identity-warning";
 import { PRESENTATION_LABEL, presentationLabel } from "./presentation";
 import {
@@ -55,7 +61,10 @@ type PendingCompactListProps = {
   // La página construye la URL para conservar scope y formato al avanzar.
   pageHref: (cursor: string) => string;
   canDeliver?: boolean;
-  canContactOrInvoice?: boolean;
+  // Quién mira. Reemplaza al viejo `canContactOrInvoice`: aquel booleano no
+  // sabía de quién era la fila ni si había mercadería, así que ofrecía facturar
+  // donde el servidor iba a rechazar.
+  viewer: PendingViewer;
   canCancel?: boolean;
   // Corregir los datos del pedido. Gerencia sobre cualquiera; el vendedor sobre
   // el suyo y una sola vez, límite que hace cumplir el servidor.
@@ -215,7 +224,7 @@ function FollowUpLine({ item }: { item: PendingListItem }) {
 // las dos vistas para que móvil y escritorio no puedan divergir — que fue
 // exactamente el bug que dejó al vendedor sin acciones en el computador.
 type CustomerActionsContext = {
-  canContactOrInvoice: boolean;
+  viewer: PendingViewer;
   canDeliver: boolean;
   canCancel: boolean;
   // Gerencia corrige cualquier pendiente; el vendedor solo el suyo y una vez.
@@ -228,8 +237,12 @@ type CustomerActionsContext = {
 function customerActions(item: PendingListItem, ctx: CustomerActionsContext) {
   if (isTerminal(item)) return null;
 
+  // La MISMA condición que usa el aviso de texto de la fila y que vuelve a
+  // aplicar el service. Móvil y escritorio la comparten porque comparten esta
+  // función: fue la divergencia entre las dos vistas la que dejó al vendedor
+  // sin acciones en el computador.
   const invoice =
-    ctx.canContactOrInvoice && showsCustomerActions(item) ? (
+    invoiceAffordance(item, ctx.viewer).canInvoice && showsCustomerActions(item) ? (
       <PendingCustomerLifecycleForm
         key="invoice"
         pendingId={item.id}
@@ -310,7 +323,7 @@ export function PendingCompactList({
   nextCursor,
   pageHref,
   canDeliver = false,
-  canContactOrInvoice = false,
+  viewer,
   canCancel = false,
   canEdit = false,
   canManageAll = false,
@@ -338,13 +351,13 @@ export function PendingCompactList({
           const urgency = URGENCY[
             computeDeadlineStatus(pending.promisedAt, pending.status, now)
           ];
-          const notice = fulfillmentNotice(pending);
+          const notice = fulfillmentNotice(pending, viewer);
           const identityNotice = identityWarning(pending);
           const lifecycle = lifecycleLabel(pending);
           const purchase = purchaseNote(pending);
           const decision = partialDecisionLabel(pending);
           const actions = customerActions(pending, {
-            canContactOrInvoice,
+            viewer,
             canDeliver,
             canCancel,
             canEdit,
@@ -445,7 +458,7 @@ export function PendingCompactList({
               <th className="px-3 py-2 font-medium">Vendedor</th>
               <th className="px-3 py-2 font-medium">Para</th>
               <th className="px-3 py-2 font-medium">Estado</th>
-              {canOrder || canContactOrInvoice || canDeliver || canCancel || canEdit ? (
+              {canOrder || viewer.invoiceScope !== "none" || canDeliver || canCancel || canEdit ? (
                 <th className="px-3 py-2 text-right font-medium">Acción</th>
               ) : null}
             </tr>
@@ -455,13 +468,13 @@ export function PendingCompactList({
               const urgency = URGENCY[
                 computeDeadlineStatus(pending.promisedAt, pending.status, now)
               ];
-              const notice = fulfillmentNotice(pending);
+              const notice = fulfillmentNotice(pending, viewer);
               const identityNotice = identityWarning(pending);
               const lifecycle = lifecycleLabel(pending);
               const purchase = purchaseNote(pending);
               const decision = partialDecisionLabel(pending);
               const actions = customerActions(pending, {
-                canContactOrInvoice,
+                viewer,
                 canDeliver,
                 canCancel,
                 canEdit,
@@ -508,7 +521,7 @@ export function PendingCompactList({
                       {notice ? <Badge tone={notice.tone}>{notice.label}</Badge> : null}
                     </div>
                   </td>
-                  {canOrder || canContactOrInvoice || canDeliver || canCancel || canEdit ? (
+                  {canOrder || viewer.invoiceScope !== "none" || canDeliver || canCancel || canEdit ? (
                     <td className="px-3 py-2">
                       <div className="flex flex-wrap justify-end gap-2">
                         {/* `canOrder` es autoridad de COMPRAS. Sin este chequeo

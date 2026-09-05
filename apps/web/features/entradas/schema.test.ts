@@ -68,3 +68,37 @@ describe("inventoryEntryCreateSchema · laboratorio recibido", () => {
     }).success).toBe(false);
   });
 });
+
+// --------------------------------------------------------------------------
+// El vencimiento llega SIN hora desde el 2026-10-04. El schema sigue aceptando
+// el formato viejo para no invalidar un envío en vuelo durante el despliegue.
+// --------------------------------------------------------------------------
+describe("inventoryEntryCreateSchema · fecha de vencimiento", () => {
+  it("acepta la fecha sin hora que manda el formulario", () => {
+    const parsed = inventoryEntryCreateSchema.safeParse({
+      ...BASE,
+      expiresAt: "2027-01-01",
+    });
+
+    expect(parsed.success).toBe(true);
+    // 00:00 en Bogotá (UTC-5) es 05:00 UTC: el instante cae dentro del día que
+    // la persona eligió, que es lo que después lee `expiryLevel`.
+    expect(parsed.data?.expiresAt.toISOString()).toBe("2027-01-01T05:00:00.000Z");
+  });
+
+  it("sigue aceptando el formato viejo con hora", () => {
+    const parsed = inventoryEntryCreateSchema.safeParse(BASE);
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.expiresAt.toISOString()).toBe("2027-01-01T15:00:00.000Z");
+  });
+
+  it("rechaza una fecha que no existe", () => {
+    const parsed = inventoryEntryCreateSchema.safeParse({
+      ...BASE,
+      expiresAt: "2027-02-30",
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+});
