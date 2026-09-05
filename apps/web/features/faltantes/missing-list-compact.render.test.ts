@@ -160,7 +160,9 @@ describe("MissingListCompact · acciones de un toque", () => {
   it("ofrece pedir y descartar a la autoridad de compras", () => {
     const out = render([item({})], null, true);
 
-    expect(out).toContain("Pedido");
+    // "Ya lo pedí" y no "Pedido": la acción se llama igual que en el buzón de
+    // reportes, y así no se confunde con la insignia de ESTADO de la misma fila.
+    expect(out).toContain("Ya lo pedí");
     expect(out).toContain("Descartar");
   });
 

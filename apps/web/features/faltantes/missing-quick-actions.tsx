@@ -69,7 +69,7 @@ export function MissingQuickActions({
             type="submit"
             disabled={busy}
             // El nombre del producto va en el rótulo accesible: con decenas de
-            // filas, "Pedido" a secas no dice cuál se está marcando.
+            // filas, la etiqueta sola no dice cuál se está marcando.
             aria-label={`Marcar ${productName} como pedido`}
             className={cn(
               ACTION_BASE,
@@ -77,7 +77,12 @@ export function MissingQuickActions({
             )}
           >
             <Check className="size-4" aria-hidden />
-            {isOrdering ? "…" : "Pedido"}
+            {/* "Ya lo pedí" y no "Pedido": es la ACCIÓN que hace gerencia, y
+                así se llamaba en el buzón de reportes. Con las dos colas
+                fundidas en una sola, dos nombres para el mismo gesto obligaban
+                a aprenderlo dos veces. "Pedido" a secas además se confunde con
+                la insignia de ESTADO que está en la misma fila. */}
+            {isOrdering ? "…" : "Ya lo pedí"}
           </button>
         </form>
 
