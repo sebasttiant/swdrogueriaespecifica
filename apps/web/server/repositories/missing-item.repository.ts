@@ -571,6 +571,34 @@ export async function createMissingItem(
 }
 
 /**
+ * El faltante ACCIONABLE vivo de un producto, si existe.
+ *
+ * Es lo que permite que dos vendedores que reportan lo mismo no generen dos
+ * filas en "Por pedir": el segundo reporte se engancha al faltante que abrió el
+ * primero. Se busca por producto y no por nombre porque el producto provisional
+ * ya está canonizado por `provisionalNormalizedName`, que es un índice único: si
+ * dos reportes normalizan igual, comparten producto por construcción.
+ *
+ * Solo ACCIONABLE (`FALTANTE`): un faltante ya PEDIDO es una compra en curso, y
+ * un reporte nuevo sobre ese producto sí merece su propia fila —significa que
+ * volvió a faltar—.
+ *
+ * `ORDER BY createdAt` para que dos reportes simultáneos elijan el MISMO
+ * faltante cuando ya hay varios: sin orden estable, cada transacción podría
+ * quedarse con uno distinto.
+ */
+export async function findActionableMissingItemByProduct(
+  productId: string,
+  client: Prisma.TransactionClient = prisma,
+) {
+  return client.missingItem.findFirst({
+    where: { productId, status: { in: ACTIONABLE_STATUSES } },
+    orderBy: { createdAt: "asc" },
+    select: { id: true },
+  });
+}
+
+/**
  * Los estados desde los que se puede marcar la llegada física.
  *
  * PEDIDO es el de siempre: la reposición de estantería se compra y después

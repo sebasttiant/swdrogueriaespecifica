@@ -18,17 +18,53 @@ export type CreateMissingReportData = {
   normalizedName: string;
   sellerCode?: string;
   reporterId: string;
+  // Desde 2026-10-04 el reporte NACE vinculado: al enviarlo se crea (o se
+  // reusa) el faltante accionable en la misma transacción, así que el reporte
+  // se guarda en LINKED apuntando a él. Opcionales porque el estado por defecto
+  // del modelo sigue siendo PENDING_REVIEW, que es lo que conservan las filas
+  // históricas.
+  status?: MissingReportStatus;
+  linkedProductId?: string;
+  linkedMissingItemId?: string;
 };
 
-export function createMissingReport(data: CreateMissingReportData) {
-  return prisma.missingReport.create({
+export function createMissingReport(
+  data: CreateMissingReportData,
+  client: Prisma.TransactionClient = prisma,
+) {
+  return client.missingReport.create({
     data: {
       rawName: data.rawName,
       normalizedName: data.normalizedName,
       sellerCode: data.sellerCode,
       reporterId: data.reporterId,
+      ...(data.status ? { status: data.status } : {}),
+      linkedProductId: data.linkedProductId ?? null,
+      linkedMissingItemId: data.linkedMissingItemId ?? null,
     },
   });
+}
+
+/**
+ * Cuántos GRUPOS históricos siguen esperando decisión en el buzón.
+ *
+ * Cuenta nombres normalizados distintos y no reportes, porque el buzón muestra
+ * un grupo por producto: contar reportes diría "20" donde hay cuatro productos
+ * y sembraría una urgencia falsa.
+ *
+ * Es GLOBAL, no de la página actual: decide si la pestaña "Reportes" se dibuja,
+ * y una pestaña que aparece o desaparece según en qué página estás no sirve
+ * para nada. Desde el 2026-10-04 este número solo puede bajar —los reportes
+ * nuevos nacen vinculados—, y al llegar a cero el buzón desaparece.
+ */
+export async function countPendingReportGroups(
+  client: Prisma.TransactionClient = prisma,
+): Promise<number> {
+  const groups = await client.missingReport.groupBy({
+    by: ["normalizedName"],
+    where: { status: "PENDING_REVIEW" },
+  });
+  return groups.length;
 }
 
 // --------------------------------------------------------------------------

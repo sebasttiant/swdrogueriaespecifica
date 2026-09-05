@@ -49,9 +49,15 @@ type MissingBoardTabsProps = {
   /** "Cuánto me falta por pedir", global y no de la página actual. */
   actionableCount: number;
   /**
-   * Cuántos reportes esperan decisión. `null` cuando la pantalla no tiene
-   * buzón: el abastecimiento de un pedido de cliente no nace de un reporte de
-   * vendedor, así que ahí la pestaña no existe en vez de mostrarse en cero.
+   * Cuántos reportes HISTÓRICOS esperan decisión. `null` cuando la pantalla no
+   * tiene buzón: el abastecimiento de un pedido de cliente no nace de un
+   * reporte de vendedor, así que ahí la pestaña no existe en vez de mostrarse
+   * en cero.
+   *
+   * En cero la pestaña TAMPOCO se muestra, y eso es deliberado: desde el
+   * 2026-10-04 un reporte nuevo crea su faltante directo en "Por pedir", así
+   * que el buzón solo puede contener lo anterior a ese cambio. Cuando se vacía,
+   * el buzón desaparece solo y queda un único "Por pedir" en la pantalla.
    */
   reportsCount: number | null;
   /** Ruta y nombres de parámetros del tablero. Ver `missing-scope.ts`. */
@@ -90,7 +96,12 @@ export function MissingBoardTabs({
         </Link>
       ))}
 
-      {reportsCount === null ? null : (
+      {/* El buzón solo existe mientras quede algo histórico adentro. Vacío no
+          se dibuja: una pestaña "Reportes 0" al lado de "Por pedir" son dos
+          entradas para el mismo trabajo, y esa duplicación es exactamente la
+          que hacía que gerencia leyera el cero de arriba y no viera las 20
+          solicitudes que esperaban debajo. */}
+      {reportsCount !== null && reportsCount > 0 ? (
         <Link
           prefetch={false}
           href={`?scope=${REPORTS_TAB_SCOPE}`}
@@ -98,13 +109,9 @@ export function MissingBoardTabs({
           className={tabClasses(active === REPORTS_TAB_SCOPE)}
         >
           <span>Reportes</span>
-          {/* El contador solo aparece cuando hay algo esperando decisión: un "0"
-              permanente entrena a no mirar el número. */}
-          {reportsCount > 0 ? (
-            <span className="tabular-nums">{reportsCount}</span>
-          ) : null}
+          <span className="tabular-nums">{reportsCount}</span>
         </Link>
-      )}
+      ) : null}
     </nav>
   );
 }

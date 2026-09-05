@@ -43,12 +43,16 @@ describe("createMissingReport", () => {
       reporterId: "user-1",
     });
 
+    // Los vínculos van explícitos en null cuando no se pasan: un reporte
+    // creado sin faltante asociado es el caso histórico, no un descuido.
     expect(prismaMock.missingReport.create).toHaveBeenCalledWith({
       data: {
         rawName: "Acetaminofén 500",
         normalizedName: "acetaminofén 500",
         sellerCode: "VEN-12",
         reporterId: "user-1",
+        linkedProductId: null,
+        linkedMissingItemId: null,
       },
     });
   });

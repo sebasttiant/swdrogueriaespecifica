@@ -23,12 +23,15 @@ const { repo } = vi.hoisted(() => ({
 vi.mock("@/server/repositories/missing-report.repository", () => repo);
 
 const { productRepo } = vi.hoisted(() => ({
-  productRepo: { findProductById: vi.fn() },
+  productRepo: { findProductById: vi.fn(), upsertProvisionalProduct: vi.fn() },
 }));
 vi.mock("@/server/repositories/product.repository", () => productRepo);
 
 const { missingItemRepo } = vi.hoisted(() => ({
-  missingItemRepo: { createMissingItem: vi.fn() },
+  missingItemRepo: {
+    createMissingItem: vi.fn(),
+    findActionableMissingItemByProduct: vi.fn(),
+  },
 }));
 vi.mock("@/server/repositories/missing-item.repository", () => missingItemRepo);
 
@@ -49,6 +52,9 @@ beforeEach(() => {
     ...(data as object),
   }));
   productRepo.findProductById.mockResolvedValue({ id: "prod-1", active: true });
+  productRepo.upsertProvisionalProduct.mockResolvedValue({ id: "prod-prov-1" });
+  // Por defecto NO hay faltante accionable previo: el reporte abre el suyo.
+  missingItemRepo.findActionableMissingItemByProduct.mockResolvedValue(null);
   missingItemRepo.createMissingItem.mockResolvedValue({ id: "missing-1", productId: "prod-1" });
   repo.linkMissingReports.mockResolvedValue(["r1", "r2"]);
   repo.resolveMissingReports.mockResolvedValue(["r1", "r2"]);
@@ -100,12 +106,15 @@ describe("submitMissingReport", () => {
       reporterId: "user-1",
     });
 
-    expect(repo.createMissingReport).toHaveBeenCalledWith({
-      rawName: "  Acetaminofén   500  ",
-      normalizedName: "acetaminofén 500",
-      sellerCode: "VEN-12",
-      reporterId: "user-1",
-    });
+    expect(repo.createMissingReport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rawName: "  Acetaminofén   500  ",
+        normalizedName: "acetaminofén 500",
+        sellerCode: "VEN-12",
+        reporterId: "user-1",
+      }),
+      tx,
+    );
   });
 
   it("takes the reporterId straight through to persistence", async () => {
@@ -115,14 +124,65 @@ describe("submitMissingReport", () => {
     expect(arg.reporterId).toBe("seller-9");
   });
 
-  // Dos nombres que normalizan igual se guardan como reportes independientes:
-  // el service no deduplica ni suma nada (MissingReport no tiene cantidad).
+  // Lo que pidió gerencia el 2026-10-04: el reporte YA ES el faltante. Nace en
+  // la cola accionable, sin paso intermedio de revisión.
+  it("crea el faltante accionable en la misma transacción, no un reporte a revisar", async () => {
+    missingItemRepo.createMissingItem.mockResolvedValue({ id: "missing-9" });
+
+    await submitMissingReport({ rawName: "Tiamina", sellerCode: "VEN-3", reporterId: "user-1" });
+
+    expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
+    expect(productRepo.upsertProvisionalProduct).toHaveBeenCalledWith(tx, {
+      normalizedName: "tiamina",
+      displayName: "Tiamina",
+    });
+    expect(missingItemRepo.createMissingItem).toHaveBeenCalledWith(
+      expect.objectContaining({
+        productId: "prod-prov-1",
+        // Default de negocio: el formulario no pide cantidad.
+        quantity: 1,
+        originId: null,
+        createdById: "user-1",
+        sellerCode: "VEN-3",
+      }),
+      tx,
+    );
+    // El reporte queda LINKED y apuntando: es la trazabilidad reportante→faltante.
+    expect(repo.createMissingReport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "LINKED",
+        linkedProductId: "prod-prov-1",
+        linkedMissingItemId: "missing-9",
+      }),
+      tx,
+    );
+  });
+
+  // Dos vendedores que reportan lo mismo NO generan dos filas en "Por pedir":
+  // el segundo se engancha al faltante que abrió el primero. Los dos reportes
+  // se conservan enteros.
+  it("engancha el reporte al faltante accionable que ya existe, sin duplicarlo", async () => {
+    missingItemRepo.findActionableMissingItemByProduct.mockResolvedValue({ id: "missing-existente" });
+
+    await submitMissingReport({ rawName: "Acetaminofén", reporterId: "user-2" });
+
+    expect(missingItemRepo.createMissingItem).not.toHaveBeenCalled();
+    expect(repo.createMissingReport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reporterId: "user-2",
+        linkedMissingItemId: "missing-existente",
+      }),
+      tx,
+    );
+  });
+
+  // Cada reporte sigue siendo su propia fila —quién y cuándo no se pierde—
+  // aunque compartan el faltante.
   it("persists each report independently for names that normalize equal", async () => {
     await submitMissingReport({ rawName: "Acetaminofén", reporterId: "user-1" });
     await submitMissingReport({ rawName: "acetaminofen", reporterId: "user-2" });
 
     expect(repo.createMissingReport).toHaveBeenCalledTimes(2);
-    // Mismo normalizedName base ("acetaminof..") pero dos filas distintas.
     expect(repo.createMissingReport.mock.calls[0]![0]).toMatchObject({ reporterId: "user-1" });
     expect(repo.createMissingReport.mock.calls[1]![0]).toMatchObject({ reporterId: "user-2" });
   });
@@ -137,6 +197,8 @@ describe("submitMissingReport", () => {
     ).rejects.toBeInstanceOf(MissingReportEmptyNameError);
 
     expect(repo.createMissingReport).not.toHaveBeenCalled();
+    // Ni siquiera se abre la transacción: no queda producto provisional huérfano.
+    expect(productRepo.upsertProvisionalProduct).not.toHaveBeenCalled();
   });
 
   // Un nombre de solo espacios también normaliza a vacío y se rechaza (defensa
