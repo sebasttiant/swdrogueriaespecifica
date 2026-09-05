@@ -31,6 +31,7 @@ const { missingItemRepo } = vi.hoisted(() => ({
   missingItemRepo: {
     createMissingItem: vi.fn(),
     findActionableMissingItemByProduct: vi.fn(),
+    fillMissingItemLaboratory: vi.fn(),
   },
 }));
 vi.mock("@/server/repositories/missing-item.repository", () => missingItemRepo);
@@ -56,6 +57,7 @@ beforeEach(() => {
   // Por defecto NO hay faltante accionable previo: el reporte abre el suyo.
   missingItemRepo.findActionableMissingItemByProduct.mockResolvedValue(null);
   missingItemRepo.createMissingItem.mockResolvedValue({ id: "missing-1", productId: "prod-1" });
+  missingItemRepo.fillMissingItemLaboratory.mockResolvedValue(true);
   repo.linkMissingReports.mockResolvedValue(["r1", "r2"]);
   repo.resolveMissingReports.mockResolvedValue(["r1", "r2"]);
   repo.groupPendingReportsByName.mockResolvedValue([]);
@@ -95,6 +97,102 @@ describe("resolveReports · atomicity", () => {
       expect.objectContaining({ normalizedName: "tiamina" }),
       tx,
     );
+  });
+});
+
+// --------------------------------------------------------------------------
+// Presentación y laboratorio: lo que el vendedor PUEDA aportar.
+//
+// Los dos son opcionales de verdad. El vendedor reporta desde el mostrador con
+// un cliente adelante: exigirle datos que a veces no conoce convierte un
+// reporte de diez segundos en una fricción que termina en NO reportar, y un
+// faltante sin laboratorio vale muchísimo más que un faltante que nadie cargó.
+// --------------------------------------------------------------------------
+describe("submitMissingReport · presentación y laboratorio", () => {
+  it("lleva la presentación al producto que crea", async () => {
+    await submitMissingReport({
+      rawName: "Losartán 50",
+      reporterId: "user-1",
+      presentation: "caja x 30",
+    });
+
+    expect(productRepo.upsertProvisionalProduct).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({ presentation: "caja x 30" }),
+    );
+  });
+
+  it("sin presentación no inventa ninguna", async () => {
+    await submitMissingReport({ rawName: "Losartán 50", reporterId: "user-1" });
+
+    expect(productRepo.upsertProvisionalProduct).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({ presentation: undefined }),
+    );
+  });
+
+  it("lleva el laboratorio al faltante que abre", async () => {
+    await submitMissingReport({
+      rawName: "Losartán 50",
+      reporterId: "user-1",
+      requestedLaboratoryId: "lab-genfar",
+    });
+
+    expect(missingItemRepo.createMissingItem).toHaveBeenCalledWith(
+      expect.objectContaining({ requestedLaboratoryId: "lab-genfar" }),
+      tx,
+    );
+  });
+
+  // Dos vendedores reportan lo mismo y comparten faltante. Si el primero no
+  // sabía el laboratorio y el segundo sí, ese dato es información nueva.
+  it("COMPLETA el laboratorio de un faltante que no lo tenía", async () => {
+    missingItemRepo.findActionableMissingItemByProduct.mockResolvedValueOnce({
+      id: "missing-existente",
+      requestedLaboratoryId: null,
+    });
+
+    await submitMissingReport({
+      rawName: "Losartán 50",
+      reporterId: "user-2",
+      requestedLaboratoryId: "lab-genfar",
+    });
+
+    expect(missingItemRepo.fillMissingItemLaboratory).toHaveBeenCalledWith(
+      "missing-existente",
+      "lab-genfar",
+      tx,
+    );
+    // Se enganchó al faltante que ya estaba: no abre una segunda fila.
+    expect(missingItemRepo.createMissingItem).not.toHaveBeenCalled();
+  });
+
+  // Pero si ya estaba informado, NO se toca: quien decide una compra vio un
+  // laboratorio, y que se le mueva por debajo es peor que no tenerlo.
+  it("NO pisa el laboratorio que otro vendedor ya había informado", async () => {
+    missingItemRepo.findActionableMissingItemByProduct.mockResolvedValueOnce({
+      id: "missing-existente",
+      requestedLaboratoryId: "lab-la-santé",
+    });
+
+    await submitMissingReport({
+      rawName: "Losartán 50",
+      reporterId: "user-2",
+      requestedLaboratoryId: "lab-genfar",
+    });
+
+    expect(missingItemRepo.fillMissingItemLaboratory).not.toHaveBeenCalled();
+  });
+
+  it("no toca nada cuando el reporte no trae laboratorio", async () => {
+    missingItemRepo.findActionableMissingItemByProduct.mockResolvedValueOnce({
+      id: "missing-existente",
+      requestedLaboratoryId: null,
+    });
+
+    await submitMissingReport({ rawName: "Losartán 50", reporterId: "user-2" });
+
+    expect(missingItemRepo.fillMissingItemLaboratory).not.toHaveBeenCalled();
   });
 });
 

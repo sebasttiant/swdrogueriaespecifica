@@ -110,6 +110,9 @@ export type ManualMissingItemCreateInput = z.infer<
 // presencia y longitud de `rawName`, que se conserva tal cual para mostrar.
 export const MAX_MISSING_REPORT_NAME_LENGTH = 200;
 export const MAX_MISSING_REPORT_SELLER_CODE_LENGTH = 40;
+// Mismo tope que `manualUnit` en el formulario de pendientes: es el mismo dato
+// —la presentación del producto— capturado desde otra pantalla.
+export const MAX_MISSING_REPORT_PRESENTATION_LENGTH = 40;
 
 export const missingReportSubmitSchema = z.object({
   rawName: z
@@ -123,6 +126,33 @@ export const missingReportSubmitSchema = z.object({
     .string()
     .trim()
     .max(MAX_MISSING_REPORT_SELLER_CODE_LENGTH)
+    .optional()
+    .transform((value) => (value && value.length > 0 ? value : undefined)),
+  // Presentación y laboratorio: OPCIONALES los dos, y no por comodidad. El
+  // vendedor reporta desde el mostrador con lo que tiene a la vista; exigirle
+  // datos que a veces no conoce convierte un reporte de diez segundos en una
+  // fricción que termina en no reportar. Vacío significa "no lo sé", que es
+  // información honesta, y no se inventa nada en su lugar.
+  presentation: z
+    .string()
+    .trim()
+    .max(MAX_MISSING_REPORT_PRESENTATION_LENGTH, {
+      error: "La presentación es demasiado larga.",
+    })
+    .optional()
+    .transform((value) => (value && value.length > 0 ? value : undefined)),
+  // El selector manda el ID; si el vendedor escribió un laboratorio que todavía
+  // no existe, manda el NOMBRE y el servidor lo resuelve. Mismo contrato que el
+  // formulario de pendientes, con el mismo componente.
+  requestedLaboratoryId: z
+    .string()
+    .trim()
+    .optional()
+    .transform((value) => (value && value.length > 0 ? value : undefined)),
+  requestedLaboratoryName: z
+    .string()
+    .trim()
+    .max(MAX_MISSING_REPORT_NAME_LENGTH)
     .optional()
     .transform((value) => (value && value.length > 0 ? value : undefined)),
 });

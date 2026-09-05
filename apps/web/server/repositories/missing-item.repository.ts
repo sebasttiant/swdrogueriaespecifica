@@ -594,8 +594,34 @@ export async function findActionableMissingItemByProduct(
   return client.missingItem.findFirst({
     where: { productId, status: { in: ACTIONABLE_STATUSES } },
     orderBy: { createdAt: "asc" },
-    select: { id: true },
+    // El laboratorio viaja porque quien se engancha a este faltante necesita
+    // saber si ya está informado: un reporte posterior COMPLETA el dato cuando
+    // falta, pero nunca pisa el que ya está.
+    select: { id: true, requestedLaboratoryId: true },
   });
+}
+
+/**
+ * Completa el laboratorio de un faltante, SOLO si todavía no tiene uno.
+ *
+ * El `requestedLaboratoryId: null` del `where` es la guarda de verdad, no una
+ * comprobación previa en JavaScript: dos reportes simultáneos sobre el mismo
+ * faltante leerían los dos un null y el segundo pisaría al primero. Acá el
+ * segundo simplemente afecta cero filas.
+ *
+ * Devuelve si se completó, para que quien llame pueda distinguir "lo puse yo"
+ * de "ya estaba".
+ */
+export async function fillMissingItemLaboratory(
+  id: string,
+  requestedLaboratoryId: string,
+  client: Prisma.TransactionClient = prisma,
+): Promise<boolean> {
+  const { count } = await client.missingItem.updateMany({
+    where: { id, requestedLaboratoryId: null },
+    data: { requestedLaboratoryId },
+  });
+  return count === 1;
 }
 
 /**

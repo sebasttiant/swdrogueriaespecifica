@@ -11,6 +11,9 @@ import {
   type Paginated,
 } from "@/lib/pagination";
 import type { Prisma, Product } from "@/lib/generated/prisma/client";
+// Módulo PURO (sin Prisma ni reloj): la presentación tiene una sola
+// definición y su fallback vive ahí, no copiado acá.
+import { MANUAL_UNIT_FALLBACK } from "@/features/pendientes/presentation";
 
 export type ProductListItem = Pick<
   Product,
@@ -250,9 +253,18 @@ export async function updateProductIfVersionMatches(
   return client.product.findUnique({ where: { id } });
 }
 
+/**
+ * El producto provisional de un reporte de faltante.
+ *
+ * `update: {}` NO es un descuido: si el producto ya existe, este camino no le
+ * toca NADA. La presentación que informa un vendedor solo se usa al CREARLO.
+ * Pisar la del catálogo desde una pantalla de captura sería dejar que un
+ * reporte rápido reescriba información compartida —y `presentation.ts` es
+ * explícito en que ninguna pantalla que no sea de captura la edita—.
+ */
 export async function upsertProvisionalProduct(
   client: Prisma.TransactionClient,
-  data: { normalizedName: string; displayName: string },
+  data: { normalizedName: string; displayName: string; presentation?: string },
 ): Promise<Product> {
   return client.product.upsert({
     where: { provisionalNormalizedName: data.normalizedName },
@@ -260,7 +272,9 @@ export async function upsertProvisionalProduct(
     create: {
       code: `PROV-${data.normalizedName}`,
       name: data.displayName.trim(),
-      unit: "unidad",
+      // Sin presentación informada cae en el mismo valor de siempre, que
+      // `presentation.ts` ya sabe leer como "sin presentación".
+      unit: data.presentation ?? MANUAL_UNIT_FALLBACK,
       minStock: 0,
       reorderQty: 0,
       needsReview: true,
