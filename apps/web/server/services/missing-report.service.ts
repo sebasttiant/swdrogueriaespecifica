@@ -5,6 +5,7 @@ import { Prisma, type MissingReportStatus } from "@/lib/generated/prisma/client"
 import { clampTake } from "@/lib/pagination";
 import {
   createMissingItem,
+  fillMissingItemLaboratory,
   findActionableMissingItemByProduct,
   markMissingItemArrived,
 } from "@/server/repositories/missing-item.repository";
@@ -32,6 +33,12 @@ export type SubmitMissingReportInput = {
   sellerCode?: string;
   // Siempre desde la sesión en la capa de acción; el service no lo deriva.
   reporterId: string;
+  // Presentación del producto, si el vendedor la sabe. Se usa SOLO al crear el
+  // producto provisional: ver `upsertProvisionalProduct`.
+  presentation?: string;
+  // Laboratorio, si el vendedor lo sabe. Llega ya resuelto a un ID por la capa
+  // de acción; el service no crea laboratorios.
+  requestedLaboratoryId?: string;
 };
 
 // El nombre pasó la validación de Zod (presencia + longitud) pero al normalizar
@@ -96,6 +103,7 @@ export async function submitMissingReport(input: SubmitMissingReportInput) {
       const product = await upsertProvisionalProduct(tx, {
         normalizedName,
         displayName: input.rawName,
+        presentation: input.presentation,
       });
 
       const existing = await findActionableMissingItemByProduct(product.id, tx);
@@ -110,9 +118,22 @@ export async function submitMissingReport(input: SubmitMissingReportInput) {
             createdById: input.reporterId,
             note: REPORTED_MISSING_ITEM_NOTE,
             sellerCode: input.sellerCode,
+            requestedLaboratoryId: input.requestedLaboratoryId,
           },
           tx,
         ));
+
+      // El segundo reporte COMPLETA, nunca pisa.
+      //
+      // Dos vendedores reportan el mismo producto y comparten faltante. Si el
+      // primero no sabía el laboratorio y el segundo sí, ese dato es información
+      // nueva y vale guardarla. Pero si el primero ya lo informó, el segundo NO
+      // lo cambia: quien decide una compra vio un laboratorio, y que se le mueva
+      // por debajo es peor que no tenerlo. Corregirlo es una edición explícita,
+      // no un efecto colateral de reportar.
+      if (existing && !existing.requestedLaboratoryId && input.requestedLaboratoryId) {
+        await fillMissingItemLaboratory(existing.id, input.requestedLaboratoryId, tx);
+      }
 
       // El reporte queda LINKED desde el vamos, apuntando al faltante que lo
       // representa. Es la trazabilidad que después permite responder "¿quién

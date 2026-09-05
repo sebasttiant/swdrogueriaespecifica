@@ -10,6 +10,8 @@ import {
 import { REVIEW_QUEUE_PATH } from "@/features/faltantes/report-queue-paging";
 import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
 import { requireCapability } from "@/lib/auth/require-role";
+import { findOrCreateLaboratory } from "@/server/repositories/laboratory.repository";
+import { laboratoryCreateCommandKey } from "@/server/domain/laboratory/identity";
 import {
   auditContextFromHeaders,
   recordAudit,
@@ -41,12 +43,41 @@ export async function createMissingReportAction(
   const parsed = missingReportSubmitSchema.safeParse({
     rawName: formData.get("rawName"),
     sellerCode: formData.get("sellerCode") ?? undefined,
+    presentation: formData.get("presentation") ?? undefined,
+    requestedLaboratoryId: formData.get("requestedLaboratoryId") ?? undefined,
+    requestedLaboratoryName: formData.get("requestedLaboratoryName") ?? undefined,
   });
   if (!parsed.success) {
     // Surface the schema's specific message (empty vs too long), como
     // `orderMissingItemAction`, con un fallback estable.
     const message = parsed.error.issues[0]?.message ?? INVALID_NAME_MESSAGE;
     return { error: message, ok: false };
+  }
+
+  // Laboratorio: el selector manda el ID si el vendedor eligió uno de la lista.
+  // Si escribió un nombre y envió sin clickear "Crear", llega solo el nombre y
+  // se resuelve acá. Mismo camino que el formulario de pendientes, con el mismo
+  // componente: dos pantallas que piden el mismo dato no pueden pedirlo de dos
+  // maneras distintas.
+  //
+  // El laboratorio es OPCIONAL, así que un fallo al resolverlo NO puede tumbar
+  // el reporte: el faltante es lo que importa, y perderlo por un dato accesorio
+  // sería cambiar algo que sirve por algo que adorna. Se sigue sin laboratorio.
+  let resolvedLaboratoryId = parsed.data.requestedLaboratoryId;
+  if (!resolvedLaboratoryId && parsed.data.requestedLaboratoryName) {
+    try {
+      const lab = await findOrCreateLaboratory({
+        name: parsed.data.requestedLaboratoryName,
+        commandKey: laboratoryCreateCommandKey(
+          "auto",
+          session.user.id,
+          parsed.data.requestedLaboratoryName,
+        ),
+      });
+      resolvedLaboratoryId = lab.laboratory.id;
+    } catch (error) {
+      console.error("[faltantes] No se pudo resolver el laboratorio:", error);
+    }
   }
 
   // El reporterId SIEMPRE sale de la sesión: cualquier `reporterId` que venga
@@ -57,6 +88,8 @@ export async function createMissingReportAction(
       rawName: parsed.data.rawName,
       sellerCode: parsed.data.sellerCode,
       reporterId: session.user.id,
+      presentation: parsed.data.presentation,
+      requestedLaboratoryId: resolvedLaboratoryId,
     });
   } catch (error) {
     // Nombre que normaliza a vacío (solo control chars): error de validación,
