@@ -118,13 +118,13 @@ describe("Revisión de pendientes · cobertura del remanente", () => {
     const html = renderDetail(pending({ inventoryReadyQuantity: 4 }));
 
     expect(html).toContain("Sin stock suficiente · 4 de 10 restantes disponibles");
-    expect(html).not.toContain("Cargado: 4 de 10");
+    expect(html).not.toContain("Listo para facturar: 4 de 10");
   });
 
   it("conserva el aviso actual cuando hay cobertura suficiente", () => {
     const html = renderDetail(pending({ inventoryReadyQuantity: 10 }));
 
-    expect(html).toContain("Cargado · podés facturar");
+    expect(html).toContain("Listo para facturar");
     expect(html).not.toContain("Sin stock");
   });
 

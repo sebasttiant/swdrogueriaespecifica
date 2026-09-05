@@ -167,7 +167,7 @@ export function PendingList({
         const payment = paymentState === "SIN_ABONO" ? null : PAYMENT[paymentState];
         // El aviso de que la mercancía llegó. Es la razón por la que alguien
         // abre esta pantalla: saber sobre cuáles ya se puede actuar.
-        const notice = fulfillmentNotice(pending, viewer);
+        const notice = fulfillmentNotice(pending);
         const identityNotice = identityWarning(pending);
 
         return (

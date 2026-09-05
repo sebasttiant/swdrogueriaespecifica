@@ -505,7 +505,8 @@ describe("PendingList · aviso de llegada", () => {
       ],
     });
 
-    expect(html).toContain("Cargado");
+    // Mismo molde que "Listo para entregar", el peldaño siguiente del ciclo.
+    expect(html).toContain("Listo para facturar");
   });
 
   it("dice cuánto cubre cuando bodega cargó solo una parte", () => {

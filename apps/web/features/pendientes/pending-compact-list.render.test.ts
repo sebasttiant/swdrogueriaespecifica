@@ -290,7 +290,7 @@ describe("PendingCompactList", () => {
       { canInvoice: true },
     );
 
-    expect(countOccurrences(html, "Cargado · podés facturar")).toBe(2);
+    expect(countOccurrences(html, "Listo para facturar")).toBe(2);
   });
 
   it("distingue la cobertura parcial de la completa", () => {
@@ -370,21 +370,31 @@ describe("PendingCompactList · señales de la reunión", () => {
       { canInvoice: true },
     );
 
-    expect(countOccurrences(html, "Cargado · podés facturar")).toBe(2);
+    expect(countOccurrences(html, "Listo para facturar")).toBe(2);
     expect(html).not.toContain("Llegó a la droguería");
   });
 
-  // El aviso NO promete lo que el lector no puede hacer. Con la mercadería
-  // cargada pero sin autoridad, el hecho se enuncia y ahí termina. Era la
-  // contradicción exacta de la pantalla de Garzón: la fila decía "podés
-  // facturar" y abajo no había ningún botón.
-  it("dice Cargado sin prometer facturar a quien no puede", () => {
-    const html = render([
-      pending({ availabilityStatus: "DISPONIBLE_COMPLETO", inventoryReadyQuantity: 10 }),
-    ]);
+  // El aviso describe el PENDIENTE, no a quien lo lee: dice lo mismo tenga o no
+  // autoridad el lector, y por eso no puede contradecir a los controles de
+  // abajo. Era la contradicción exacta de la pantalla de Garzón, donde la fila
+  // decía "podés facturar" y no había ningún botón.
+  //
+  // Se compara CON y SIN autoridad en el mismo test a propósito: el día que
+  // alguien vuelva a meterle el lector al texto, esto falla.
+  it("da el mismo aviso tenga o no autoridad quien mira", () => {
+    const fila = pending({
+      availabilityStatus: "DISPONIBLE_COMPLETO",
+      inventoryReadyQuantity: 10,
+    });
 
-    expect(countOccurrences(html, "Cargado")).toBe(2);
-    expect(html).not.toContain("podés facturar");
+    const sinAutoridad = render([fila]);
+    const conAutoridad = render([fila], true, null, { canInvoice: true });
+
+    expect(countOccurrences(sinAutoridad, "Listo para facturar")).toBe(2);
+    expect(countOccurrences(conAutoridad, "Listo para facturar")).toBe(2);
+    // Segunda persona nunca más en este aviso.
+    expect(sinAutoridad).not.toContain("podés");
+    expect(conAutoridad).not.toContain("podés");
   });
 
   it("distingue la cobertura parcial de lo cargado", () => {

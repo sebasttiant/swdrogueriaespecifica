@@ -114,13 +114,24 @@ export function invoiceAffordance(
 // que puede facturar, pero no se lo dice a nadie, y el cliente espera de más.
 // Va como texto además de color porque estas filas se leen en un celular al sol.
 //
-// El aviso NO promete lo que el lector no puede hacer. "Cargado · podés
-// facturar" es dos afirmaciones pegadas —llegó la mercadería, y vos podés
-// facturarla— y solo la primera depende del pendiente. A quien no tiene la
-// autoridad se le dice "Cargado" y nada más: el hecho, sin la promesa.
+// TODOS los avisos describen el PENDIENTE, nunca a quien lo lee. Son los
+// peldaños de una sola escalera y se leen de corrido:
+//
+//   Sin stock  →  Llegó a la droguería · sin cargar
+//              →  Listo para facturar  →  Listo para entregar
+//
+// Uno solo rompía esa forma: "Cargado · podés facturar" le hablaba al vendedor
+// en segunda persona. Eran dos afirmaciones pegadas —llegó la mercadería, y vos
+// podés facturarla— y solo la primera depende del pendiente. Por eso el aviso
+// necesitaba saber QUIÉN estaba mirando la fila, para no prometerle facturar a
+// quien no podía.
+//
+// Enunciado como estado desaparece el problema entero: "Listo para facturar" es
+// cierto para el que puede facturar y para el que no. La función vuelve a ser
+// pura sobre la fila. El BOTÓN sigue gateado por `invoiceAffordance`, que es
+// donde la autoridad importa de verdad.
 export function fulfillmentNotice(
   item: PendingListItem,
-  viewer: PendingViewer,
 ): { label: string; tone: "success" | "primary" | "warning" | "danger" } | null {
   if (isTerminal(item)) return null;
 
@@ -142,13 +153,17 @@ export function fulfillmentNotice(
 
   // AMARILLO — bodega ya lo subió al sistema. Es el aviso que espera el
   // vendedor: "ya te llegó, te lo vamos a mandar".
+  //
+  // Mismo molde que "Listo para entregar", que es el peldaño siguiente: los dos
+  // dicen qué se puede hacer con el pendiente, no qué puede hacer el lector.
   if (notInvoiced && available > 0) {
     const parcial = available < item.quantity;
-    const cargado = parcial ? `Cargado: ${available} de ${item.quantity}` : "Cargado";
-    // La invitación a facturar solo se agrega si esta persona efectivamente
-    // puede: para el resto el hecho se enuncia y ahí termina.
-    const invitacion = invoiceAffordance(item, viewer).canInvoice ? " · podés facturar" : "";
-    return { label: `${cargado}${invitacion}`, tone: "warning" };
+    return {
+      label: parcial
+        ? `Listo para facturar: ${available} de ${item.quantity}`
+        : "Listo para facturar",
+      tone: "warning",
+    };
   }
 
   // VERDE — llegó a la droguería pero todavía no está cargado. El vendedor ya
