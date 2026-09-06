@@ -67,7 +67,6 @@ describe("getOperationalAlerts · a quién le habla cada aviso", () => {
       expiredBatches: 0,
       criticalBatches: 0,
       warningBatches: 0,
-      warningBatches: 0,
       overdueDeliveries: 1,
       upcomingDeliveries: 2,
       criticalMissing: 0,
