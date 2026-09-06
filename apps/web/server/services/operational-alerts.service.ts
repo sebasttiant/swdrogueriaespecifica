@@ -10,6 +10,7 @@ import { countStockoutProducts } from "@/server/services/stockout.service";
 const EMPTY_COUNTS: AlertCounts = {
   expiredBatches: 0,
   criticalBatches: 0,
+  warningBatches: 0,
   overdueDeliveries: 0,
   upcomingDeliveries: 0,
   criticalMissing: 0,
@@ -79,6 +80,7 @@ export async function getOperationalAlerts(
   return {
     expiredBatches: expiringCounts.expired,
     criticalBatches: expiringCounts.critical,
+    warningBatches: expiringCounts.warning,
     overdueDeliveries,
     upcomingDeliveries,
     criticalMissing,

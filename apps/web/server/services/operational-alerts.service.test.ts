@@ -28,7 +28,7 @@ const NOW = new Date("2026-07-30T22:00:00.000Z");
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.getExpiringBatchCounts.mockResolvedValue({ expired: 3, critical: 2 });
+  mocks.getExpiringBatchCounts.mockResolvedValue({ expired: 3, critical: 2, warning: 8 });
   mocks.countOverduePendings.mockResolvedValue(4);
   mocks.countUpcomingPendings.mockResolvedValue(5);
   mocks.countOverdueMissingItems.mockResolvedValue(6);
@@ -46,6 +46,9 @@ describe("getOperationalAlerts · a quién le habla cada aviso", () => {
     await expect(getOperationalAlerts(NOW, { kind: "global" })).resolves.toEqual({
       expiredBatches: 3,
       criticalBatches: 2,
+      // La franja de 90 días: se calculaba desde siempre y el servicio la
+      // descartaba antes de llegar a la barra.
+      warningBatches: 8,
       overdueDeliveries: 4,
       upcomingDeliveries: 5,
       criticalMissing: 6,
@@ -63,6 +66,8 @@ describe("getOperationalAlerts · a quién le habla cada aviso", () => {
     ).resolves.toEqual({
       expiredBatches: 0,
       criticalBatches: 0,
+      warningBatches: 0,
+      warningBatches: 0,
       overdueDeliveries: 1,
       upcomingDeliveries: 2,
       criticalMissing: 0,
@@ -84,6 +89,7 @@ describe("getOperationalAlerts · a quién le habla cada aviso", () => {
     await expect(getOperationalAlerts(NOW, { kind: "none" })).resolves.toEqual({
       expiredBatches: 0,
       criticalBatches: 0,
+      warningBatches: 0,
       overdueDeliveries: 0,
       upcomingDeliveries: 0,
       criticalMissing: 0,
@@ -116,6 +122,7 @@ describe("getOperationalAlerts · alcance de bodega", () => {
     expect(counts.upcomingDeliveries).toBe(0);
     expect(counts.expiredBatches).toBe(0);
     expect(counts.criticalBatches).toBe(0);
+    expect(counts.warningBatches).toBe(0);
     expect(counts.criticalMissing).toBe(0);
   });
 
