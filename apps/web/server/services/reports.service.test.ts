@@ -126,6 +126,25 @@ describe("getManagementMissingAlert", () => {
       UNCLOSED_MISSING_ALERT_HOURS * 60 * 60 * 1000,
     );
   });
+
+  // El aviso enlaza a Revision de faltantes, que muestra SOLO estanteria. Un
+  // contador global prometia 45 y esa pantalla mostraba menos: el numero del
+  // aviso y el de la pantalla que abre tienen que salir del mismo conjunto.
+  it("cuenta solo faltantes de estanteria, que es lo que muestra la pantalla que enlaza", async () => {
+    repos.countMissingItemsCreatedSince.mockResolvedValue(0);
+    repos.countUnclosedActionableMissingItemsBefore.mockResolvedValue(0);
+
+    await getManagementMissingAlert(new Date("2026-07-07T18:00:00Z"));
+
+    expect(repos.countUnclosedActionableMissingItemsBefore).toHaveBeenCalledWith(
+      expect.any(Date),
+      "shelf",
+    );
+    expect(repos.countMissingItemsCreatedSince).toHaveBeenCalledWith(
+      expect.any(Date),
+      "shelf",
+    );
+  });
 });
 
 describe("parseReportsPeriod", () => {
