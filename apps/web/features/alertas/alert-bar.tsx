@@ -4,7 +4,11 @@ import { Alert, type AlertTone } from "@/app/_components/ui/alert";
 import { alertSignature, type AlertCounts } from "@/lib/alertas/signature";
 import { can, seesAllPendings } from "@/lib/auth/permissions";
 import type { SessionRole } from "@/lib/auth/session";
-import { pendingReviewListHref } from "@/features/pendientes/pending-anchor";
+import {
+  pendingDeadlineHref,
+  pendingReviewListHref,
+  supplyOverdueHref,
+} from "@/features/pendientes/pending-anchor";
 import {
   EXPIRY_TIER_LABELS,
   vencimientosHref,
@@ -63,11 +67,14 @@ function buildAlertChips(counts: AlertCounts): AlertChip[] {
       count: counts.expiredBatches,
       href: vencimientosHref({ tier: "expired" }),
     },
+    // A SEGUIMIENTO y ya filtrado. Antes caía en `/pendientes`, la pantalla de
+    // captura: el chip decía "4 atrasadas" y abría el formulario de cargar uno
+    // nuevo, con la cola entera sin filtrar debajo.
     {
       severity: ALERT_SEVERITY.DANGER,
       label: "Atrasadas",
       count: counts.overdueDeliveries,
-      href: "/pendientes",
+      href: pendingDeadlineHref("atrasadas"),
     },
     {
       severity: ALERT_SEVERITY.WARNING,
@@ -88,13 +95,20 @@ function buildAlertChips(counts: AlertCounts): AlertChip[] {
       severity: ALERT_SEVERITY.WARNING,
       label: "Próximas",
       count: counts.upcomingDeliveries,
-      href: "/pendientes",
+      href: pendingDeadlineHref("proximas"),
     },
+    // A ABASTECIMIENTO, no a `/faltantes` ni a `/revision-faltantes`.
+    //
+    // `/faltantes` es la pantalla de reportar uno nuevo. Y `/revision-faltantes`
+    // —que parecería la correcta— filtra `origin: "shelf"`, mientras que este
+    // contador cuenta `originId: { not: null }`: faltantes nacidos de un PEDIDO
+    // DE CLIENTE. Son conjuntos disjuntos, así que ahí la lista saldría vacía.
+    // Ver `supplyOverdueHref`.
     {
       severity: ALERT_SEVERITY.DANGER,
       label: "Faltantes críticos",
       count: counts.criticalMissing,
-      href: "/faltantes",
+      href: supplyOverdueHref(),
     },
     // Un producto QUE LLEVAMOS se quedó sin con qué cubrir lo prometido.
     // Enlaza a la mitad de abastecimiento de Revisión de pendientes, que es

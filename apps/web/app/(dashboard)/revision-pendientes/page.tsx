@@ -60,6 +60,15 @@ export default async function RevisionPendientesPage({
     purchase?: string;
     availability?: string;
     customer?: string;
+    /**
+     * La ventana de ENTREGA: `atrasadas` o `proximas`.
+     *
+     * La escriben los chips de la barra de alertas. Vale en las DOS mitades y
+     * significa lo mismo en ambas —"solo lo que ya pasó su fecha prometida"—:
+     * en Seguimiento recorta la cola de pendientes, en Abastecimiento la cola
+     * de recepción.
+     */
+    entrega?: string;
     /** Qué mitad de la pantalla: seguimiento o abastecimiento. */
     tab?: string;
     /**
@@ -124,8 +133,23 @@ export default async function RevisionPendientesPage({
   const tab = resolveReviewTab(rawTab);
   const showingSupply = tab === "abastecimiento";
 
+  // Los ejes salen de la URL con la misma desconfianza que el scope: un valor
+  // que no está en el enum se descarta y equivale a no filtrar. Estos strings
+  // terminan en una consulta contra enums de PostgreSQL.
+  //
+  // Se leen ANTES de las consultas porque el eje de entrega también recorta la
+  // cola de recepción, no solo la de seguimiento.
+  const axes = parseReviewAxes(rawAxes);
+
+  // UN solo "ahora" para las dos mitades. Con dos relojes, un pendiente que
+  // cruza su hora prometida entre una consulta y la otra aparecería en una
+  // lista y no en la otra.
+  const now = new Date();
+
   const [reception, stockouts, receptionCount] = await Promise.all([
-    showingSupply ? listPendingReception() : Promise.resolve(null),
+    showingSupply
+      ? listPendingReception({ overdueOnly: axes.deadline === "atrasadas", now })
+      : Promise.resolve(null),
     // Los productos QUE LLEVAMOS y hoy no alcanzan. Va con la cola porque el
     // primer gesto de bodega es el mismo: mirar el depósito antes de esperar.
     showingSupply && canReceive ? listStockoutProducts() : Promise.resolve([]),
@@ -133,11 +157,6 @@ export default async function RevisionPendientesPage({
     // se calcula al entrar no avisa de nada, que es justo lo que tiene que hacer.
     countPendingReception(),
   ]);
-
-  // Los ejes salen de la URL con la misma desconfianza que el scope: un valor
-  // que no está en el enum se descarta y equivale a no filtrar. Estos strings
-  // terminan en una consulta contra enums de PostgreSQL.
-  const axes = parseReviewAxes(rawAxes);
 
   // Cualquier valor que no sea exactamente "history" cae en la vista operativa.
   // Un `?scope=cualquier-cosa` no abre los cerrados.
@@ -156,6 +175,7 @@ export default async function RevisionPendientesPage({
         axes,
         canViewCustomerIdentity,
         ownerId,
+        now,
       });
 
   // --------------------------------------------------------------------------

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db/prisma";
+import { clientOrderMissingWhere } from "@/server/repositories/missing-item.repository";
 
 // --------------------------------------------------------------------------
 // LO QUE BODEGA TIENE QUE RESOLVER DE LOS PEDIDOS DE CLIENTES.
@@ -61,15 +62,17 @@ const PAGE_SIZE = 50;
  * FIFO por antigüedad del pendiente y no por fecha de compra: acá no hay
  * compra: hay una persona esperando desde hace días.
  */
-export async function listPendingReception(): Promise<PendingReceptionItem[]> {
+export async function listPendingReception(params?: {
+  // Solo los que ya se pasaron de la fecha prometida. Lo escribe el chip
+  // "Faltantes críticos" de la barra de alertas, que cuenta exactamente eso.
+  overdueOnly?: boolean;
+  now?: Date;
+}): Promise<PendingReceptionItem[]> {
   const rows = await prisma.missingItem.findMany({
-    where: {
-      // Solo lo que nació de un pendiente. La reposición de estantería se
-      // recibe por su propio camino, con su orden de compra.
-      originId: { not: null },
-      status: { in: [...OPEN_STATUSES] },
-      confirmedAt: null,
-    },
+    // Mismo `where` que el contador del chip. Ver `clientOrderMissingWhere`:
+    // escribirlo acá otra vez es cómo el chip termina diciendo un número que
+    // esta lista no muestra.
+    where: clientOrderMissingWhere(params),
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     take: PAGE_SIZE,
     // El `select` es la minimización: lo que no se nombra acá no sale de la
@@ -139,11 +142,5 @@ export async function listPendingReception(): Promise<PendingReceptionItem[]> {
 
 /** Cuántos pedidos de clientes esperan una acción física de bodega. */
 export function countPendingReception(): Promise<number> {
-  return prisma.missingItem.count({
-    where: {
-      originId: { not: null },
-      status: { in: [...OPEN_STATUSES] },
-      confirmedAt: null,
-    },
-  });
+  return prisma.missingItem.count({ where: clientOrderMissingWhere() });
 }

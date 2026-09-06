@@ -197,14 +197,26 @@ export type PendingAxisFilters = {
   purchase?: PendingPurchaseStatus;
   availability?: PendingAvailabilityStatus;
   customer?: PendingCustomerStatus;
+  // La ventana de entrega. A diferencia de los otros tres, no es una columna de
+  // estado sino una comparación contra el reloj, así que se resuelve con
+  // `deadlineWhere` —la MISMA condición que cuenta el chip de la barra—.
+  deadline?: PendingDeadlineWindow;
 };
 
-function axisWhere(axes: PendingAxisFilters | undefined): Prisma.PendingWhereInput {
+function axisWhere(
+  axes: PendingAxisFilters | undefined,
+  now: Date | undefined,
+): Prisma.PendingWhereInput {
   if (!axes) return {};
   return {
     ...(axes.purchase ? { purchaseStatus: axes.purchase } : {}),
     ...(axes.availability ? { availabilityStatus: axes.availability } : {}),
     ...(axes.customer ? { customerStatus: axes.customer } : {}),
+    // Va dentro de `AND` y no derramado en el objeto: `deadlineWhere` trae su
+    // propio `status`, y derramarlo PISARÍA en silencio el del scope. Dentro de
+    // `AND` las dos condiciones tienen que cumplirse, que es lo correcto —y como
+    // ALERT_STATUSES ⊂ OPEN_STATUSES, el resultado es el subconjunto alertable—.
+    ...(axes.deadline ? { AND: [deadlineWhere(axes.deadline, now)] } : {}),
   };
 }
 
@@ -213,6 +225,9 @@ type PendingViewParams = {
   scope?: PendingScope;
   ownerId?: string;
   axes?: PendingAxisFilters;
+  // Inyectable para el eje de entrega, que compara contra el reloj. La vista lo
+  // pasa una sola vez para que el listado y el contador hablen del mismo "ahora".
+  now?: Date;
   // Solo los clientes que ACEPTARON esperar: la lista de espera.
   //
   // Es un filtro sobre una columna REAL, no una etapa derivada. La diferencia
@@ -240,7 +255,7 @@ function viewWhere(params: PendingViewParams): Prisma.PendingWhereInput {
   return {
     status: { in: params.scope === "history" ? HISTORY_STATUSES : OPEN_STATUSES },
     ...(params.ownerId ? { createdById: params.ownerId } : {}),
-    ...axisWhere(params.axes),
+    ...axisWhere(params.axes, params.now),
     // No se acota además por WAITLIST_STATUSES a propósito: un pendiente que ya
     // tiene respuesta y después se marca AGOTADO tiene que SEGUIR viéndose. Ese
     // cliente aceptó esperar algo que ahora no se consigue, y avisarle es
@@ -281,6 +296,7 @@ export async function listPendings(params: {
   ownerId?: string;
   axes?: PendingAxisFilters;
   waitlisted?: boolean;
+  now?: Date;
 }): Promise<Paginated<PendingListItem>> {
   const take = clampTake(params.take);
   let cursorId = params.cursor ? decodeCursor(params.cursor) : null;
@@ -385,27 +401,46 @@ export async function listPendingCreatedAtSince(since: Date): Promise<Date[]> {
   return rows.map((row) => row.createdAt);
 }
 
-// Vencidos = abiertos-alertables cuya promesa ya pasó. Usa ALERT_STATUSES para
-// excluir AGOTADO (ver la nota en la definición de la constante).
-export function countOverduePendings(now: Date = new Date(), ownerId?: string): Promise<number> {
-  return prisma.pending.count({
-    where: { status: { in: ALERT_STATUSES }, promisedAt: { lt: now }, ...(ownerId ? { createdById: ownerId } : {}) },
-  });
-}
-
-// Próximas = abiertos cuya promesa es >= now y <= now + 24h.
 // Spec R4/R5 boundary: exactly now + 24h counts as upcoming (lte, inclusive).
-// Disjoint with countOverduePendings by construction (overdue uses lt: now).
 const MS_24H = 24 * 60 * 60 * 1000;
 
+/**
+ * Las dos ventanas de entrega que alertan: la promesa ya pasó, o vence dentro
+ * de las próximas 24 horas.
+ *
+ * Vive acá una sola vez porque la comparten el CONTADOR que pinta el chip de la
+ * barra y el FILTRO de la lista que ese chip abre. Escritas por separado
+ * divergen al primer cambio, y ahí el chip dice 4 y la pantalla muestra 6 —que
+ * es exactamente el defecto que estos enlaces vienen a arreglar—.
+ *
+ * `ALERT_STATUSES` excluye AGOTADO (ver la nota en su definición): un pendiente
+ * agotado ya no tiene acción de gestión, y dejarlo en rojo entrena a ignorar el
+ * rojo. Las dos ventanas son DISJUNTAS por construcción: atrasada usa `lt: now`
+ * y próxima `gte: now`.
+ */
+export type PendingDeadlineWindow = "atrasadas" | "proximas";
+
+export function deadlineWhere(
+  window: PendingDeadlineWindow,
+  now: Date = new Date(),
+  ownerId?: string,
+): Prisma.PendingWhereInput {
+  return {
+    status: { in: ALERT_STATUSES },
+    promisedAt:
+      window === "atrasadas"
+        ? { lt: now }
+        : { gte: now, lte: new Date(now.getTime() + MS_24H) },
+    ...(ownerId ? { createdById: ownerId } : {}),
+  };
+}
+
+export function countOverduePendings(now: Date = new Date(), ownerId?: string): Promise<number> {
+  return prisma.pending.count({ where: deadlineWhere("atrasadas", now, ownerId) });
+}
+
 export function countUpcomingPendings(now: Date = new Date(), ownerId?: string): Promise<number> {
-  return prisma.pending.count({
-    where: {
-      status: { in: ALERT_STATUSES },
-      promisedAt: { gte: now, lte: new Date(now.getTime() + MS_24H) },
-      ...(ownerId ? { createdById: ownerId } : {}),
-    },
-  });
+  return prisma.pending.count({ where: deadlineWhere("proximas", now, ownerId) });
 }
 
 // Pendientes más urgentes: los que vencen antes, primero. Alertables (sin

@@ -43,6 +43,8 @@ export default async function PendientesPage({
     purchase?: string;
     availability?: string;
     customer?: string;
+    /** La ventana de entrega, igual que en Revisión de pendientes. */
+    entrega?: string;
   }>;
 }) {
   const session = await requireCapability("canViewPendientes");
@@ -101,6 +103,7 @@ export default async function PendientesPage({
       axes,
       canViewCustomerIdentity,
       ownerId: canSeeAll ? undefined : session.user.id,
+      now: new Date(),
     }),
     getUsedZones(),
   ]);

@@ -538,13 +538,36 @@ export function countUnclosedActionableMissingItemsBefore(
  */
 export function countOverdueMissingItems(now: Date = new Date()): Promise<number> {
   return prisma.missingItem.count({
-    where: {
-      status: { in: OPEN_STATUSES },
-      confirmedAt: null,
-      originId: { not: null },
-      origin: { promisedAt: { lt: now } },
-    },
+    where: clientOrderMissingWhere({ overdueOnly: true, now }),
   });
+}
+
+/**
+ * El `where` de los faltantes nacidos de un PEDIDO DE CLIENTE, con o sin la
+ * ventana de vencidos.
+ *
+ * Una sola definición porque la comparten tres consumidores que tienen que
+ * coincidir o la pantalla miente:
+ *
+ *   - `countOverdueMissingItems`  el número del chip "Faltantes críticos"
+ *   - `listPendingReception`      las filas de Abastecimiento
+ *   - `countPendingReception`     el contador de esa pestaña
+ *
+ * `originId: { not: null }` es lo que separa esto de la reposición de
+ * estantería, que se recibe por su propio camino y NO puede vencer: no le
+ * prometió nada a nadie.
+ */
+export function clientOrderMissingWhere(params?: {
+  overdueOnly?: boolean;
+  now?: Date;
+}): Prisma.MissingItemWhereInput {
+  const now = params?.now ?? new Date();
+  return {
+    status: { in: OPEN_STATUSES },
+    confirmedAt: null,
+    originId: { not: null },
+    ...(params?.overdueOnly ? { origin: { promisedAt: { lt: now } } } : {}),
+  };
 }
 
 // `client` permite ejecutar dentro de una transacción (ver pending.service).
