@@ -50,6 +50,9 @@ const CARGA = {
   note: "Va con pedido de Fitostimoline",
   totalAmount: "45.000",
   paidAmount: "20.000",
+  // El abono no viaja solo: desde que existe el medio de pago, cargar plata
+  // sin decir cómo entró no pasa ni el navegador ni el validador.
+  paymentMethod: "TRANSFERENCIA",
 } as const;
 
 function bogotaNow(wall: string): Date {
@@ -84,6 +87,9 @@ async function fillForm(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByLabelText("Zona o barrio"), CARGA.zone);
   await user.type(screen.getByLabelText("Valor total"), CARGA.totalAmount);
   await user.type(screen.getByLabelText("Abono"), CARGA.paidAmount);
+  // El desplegable recién existe DESPUÉS de escribir el abono: sin plata no
+  // hay medio que elegir.
+  await user.selectOptions(screen.getByLabelText("¿Cómo pagó?"), CARGA.paymentMethod);
   await user.type(screen.getByLabelText("Nota (opcional)"), CARGA.note);
 }
 
@@ -138,7 +144,8 @@ function failureEchoing(message: string) {
       [
         "productId", "manualName", "manualUnit", "manualMode", "quantity",
         "promisedAt", "customerName", "customerPhone", "customerAddress",
-        "note", "zone", "totalAmount", "paidAmount", "idempotencyKey",
+        "note", "zone", "totalAmount", "paidAmount", "paymentMethod",
+        "idempotencyKey",
       ].map((k) => [k, String(formData.get(k) ?? "")]),
     ) as PendingFormState["values"];
     return {
@@ -193,6 +200,7 @@ describe("PendingForm · un fallo NUNCA borra lo cargado", () => {
     expect(value(container, "note")).toBe(CARGA.note);
     expect(value(container, "totalAmount")).toBe(CARGA.totalAmount);
     expect(value(container, "paidAmount")).toBe(CARGA.paidAmount);
+    expect(value(container, "paymentMethod")).toBe(CARGA.paymentMethod);
   });
 
   it("conserva los campos ante un error de VALIDACIÓN", async () => {
@@ -286,6 +294,9 @@ describe("PendingForm · el éxito limpia, exactamente una vez", () => {
     expect(value(container, "note")).toBe("");
     expect(value(container, "totalAmount")).toBe("");
     expect(value(container, "paidAmount")).toBe("");
+    // Sin abono el desplegable no se limpia: DESAPARECE. Es la misma regla que
+    // impide elegir un medio sin plata, vista desde el otro lado.
+    expect(value(container, "paymentMethod")).toBe("<AUSENTE>");
     expect(value(container, "productId")).toBe("");
   });
 

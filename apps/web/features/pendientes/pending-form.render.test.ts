@@ -32,7 +32,14 @@ function render(
     now: Date;
     defaultCustom: boolean;
     zones: string[];
-    actionState: { error: string | null; ok: boolean };
+    actionState: {
+      error: string | null;
+      ok: boolean;
+      // Eco del envío anterior: es de donde el formulario toma los
+      // valores iniciales, así que es la forma de montarlo con un abono
+      // ya cargado.
+      values?: Record<string, string>;
+    };
     isPending: boolean;
     products: typeof PRODUCTS;
   }> = {},
@@ -271,5 +278,65 @@ describe("PendingForm · identidad del producto al elegirlo", () => {
     });
 
     expect(html).not.toContain("PROV-euc");
+  });
+});
+
+// --------------------------------------------------------------------------
+// Medio de pago: el desplegable existe SOLO cuando hay abono.
+//
+// No es prolijidad. Un medio sin plata no describe ningún movimiento: el
+// validador lo rechaza y el CHECK `pendings_payment_method_needs_paid` lo
+// prohíbe. Montarlo siempre invitaría a elegir algo que después hay que borrar.
+// --------------------------------------------------------------------------
+describe("PendingForm · medio de pago", () => {
+  it("no muestra el desplegable cuando no hay abono", () => {
+    const html = render();
+
+    expect(html).not.toContain('name="paymentMethod"');
+  });
+
+  it("muestra el desplegable con los cuatro medios cuando hay abono", () => {
+    const html = render({
+      actionState: { error: null, ok: false, values: { paidAmount: "20.000" } },
+    });
+
+    expect(html).toContain('name="paymentMethod"');
+    expect(html).toContain("Efectivo");
+    expect(html).toContain("Transferencia");
+    expect(html).toContain("Tarjeta débito");
+    expect(html).toContain("Tarjeta crédito");
+  });
+
+  // Ningún banco ni billetera: el dato que la operación necesita es el método.
+  it("no ofrece entidades, solo métodos", () => {
+    const html = render({
+      actionState: { error: null, ok: false, values: { paidAmount: "20.000" } },
+    });
+
+    expect(html).not.toContain("Nequi");
+    expect(html).not.toContain("Daviplata");
+    expect(html).not.toContain("Bancolombia");
+  });
+
+  // Sin la opción vacía, el navegador manda el primer medio de la lista y el
+  // pendiente queda diciendo "efectivo" porque nadie tocó el desplegable.
+  it("arranca sin medio elegido para que la elección sea real", () => {
+    const html = render({
+      actionState: { error: null, ok: false, values: { paidAmount: "20.000" } },
+    });
+
+    expect(html).toContain('value="" disabled');
+  });
+
+  it("devuelve el medio ya elegido cuando el envío anterior falló", () => {
+    const html = render({
+      actionState: {
+        error: "Revisá los datos",
+        ok: false,
+        values: { paidAmount: "20.000", paymentMethod: "TARJETA_DEBITO" },
+      },
+    });
+
+    expect(html).toContain('value="TARJETA_DEBITO" selected');
   });
 });

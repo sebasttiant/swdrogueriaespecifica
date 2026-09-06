@@ -23,6 +23,10 @@ import {
   PENDING_IDENTITY_DEFERRAL_REASONS,
 } from "@/features/pendientes/identity-deferral";
 import { ORION_CODE_MAX_CHARS } from "@/server/domain/catalog/sku-identity";
+import {
+  PAYMENT_METHODS,
+  paymentMethodLabel,
+} from "@/features/pendientes/payment-method";
 import { MAX_ZONE_LENGTH } from "@/features/pendientes/zone";
 import { MAX_PHONE_INPUT_LENGTH } from "@/features/pendientes/phone";
 import {
@@ -274,6 +278,9 @@ function PendingFormFields({
   // con `parseCopInput`, el mismo lector que usa el servidor.
   const [totalAmount, setTotalAmount] = useState(previous.totalAmount ?? "");
   const [paidAmount, setPaidAmount] = useState(previous.paidAmount ?? "");
+  // Medio de pago del abono. Vuelve del eco como los montos: si el alta falla
+  // por otro campo, lo que el operador ya eligió no se pierde.
+  const [paymentMethod, setPaymentMethod] = useState(previous.paymentMethod ?? "");
   const zonesListId = useId();
 
   const parsedTotal = parseCopInput(totalAmount);
@@ -732,6 +739,40 @@ function PendingFormFields({
           >
             Pagó todo
           </Button>
+
+          {/* Aparece SOLO cuando hay abono, y no por prolijidad: un medio de
+              pago sin plata no describe ningún movimiento, así que el validador
+              lo rechaza y la base lo prohíbe (CHECK
+              `pendings_payment_method_needs_paid`). Montarlo siempre invitaría a
+              elegir un medio que después hay que borrar.
+
+              Sin marcas a propósito: acá va el MÉTODO, no la entidad. Ver
+              `features/pendientes/payment-method.ts`. */}
+          {parsedPaid !== null && parsedPaid > 0 ? (
+            <Field label="¿Cómo pagó?" htmlFor="paymentMethod">
+              <Select
+                id="paymentMethod"
+                name="paymentMethod"
+                value={paymentMethod}
+                onChange={(event) => setPaymentMethod(event.target.value)}
+                // Ayuda del navegador para que el error llegue ANTES del viaje
+                // al servidor. El validador revalida igual: esto es comodidad,
+                // no la regla.
+                required
+              >
+                {/* Vacío y deshabilitado: obliga a una elección real en vez de
+                    dejar pasar el primer medio de la lista por inercia. */}
+                <option value="" disabled>
+                  Elegí el medio…
+                </option>
+                {PAYMENT_METHODS.map((method) => (
+                  <option key={method} value={method}>
+                    {paymentMethodLabel(method)}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          ) : null}
 
           {overpaid ? (
             <p className="text-sm font-medium text-danger">

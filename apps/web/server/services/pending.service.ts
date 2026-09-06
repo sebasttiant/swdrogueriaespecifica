@@ -16,6 +16,7 @@ import {
   type PendingStatus,
   type Product,
   type PendingIdentityDeferral,
+  type PendingPaymentMethod,
 } from "@/lib/generated/prisma/client";
 import {
   cancelPending,
@@ -98,6 +99,7 @@ export type RegisterPendingInput = {
   zone?: string;
   totalAmount?: number;
   paidAmount?: number;
+  paymentMethod?: PendingPaymentMethod;
   createdById?: string | null;
   productId?: string;
   manual?: ManualProductInput;
@@ -439,6 +441,12 @@ function requestFingerprint(data: RegisterPendingInput): string {
     zone: data.zone?.trim() || null,
     totalAmount: data.totalAmount ?? null,
     paidAmount: data.paidAmount ?? 0,
+    // Se emite SOLO cuando viene, igual que `orionCode` acá arriba. Emitirlo
+    // siempre —aunque fuera `null`— cambiaría la huella de TODO pendiente ya
+    // guardado, y el primer reintento de cualquiera de ellos se leería como
+    // "misma clave, otros datos": un conflicto inventado sobre un alta que
+    // nadie modificó.
+    ...(data.paymentMethod ? { paymentMethod: data.paymentMethod } : {}),
     createdById: data.createdById ?? null,
     ...(data.identitySkippedReason
       ? {
@@ -547,6 +555,7 @@ function createPendingRegistration(
         customerName: data.customerName, customerPhone: data.customerPhone,
         customerAddress: data.customerAddress, note: data.note, zone: data.zone,
         totalAmount: data.totalAmount, paidAmount: data.paidAmount,
+        paymentMethod: data.paymentMethod,
         createdById: data.createdById ?? null,
         idempotencyKey: data.idempotencyKey,
         requestFingerprint: fingerprint,
@@ -1134,6 +1143,7 @@ export type UpdatePendingInput = {
   zone?: string;
   totalAmount?: number;
   paidAmount?: number;
+  paymentMethod?: PendingPaymentMethod;
   actorId: string;
   canManageAll: boolean;
 };
@@ -1189,6 +1199,7 @@ export async function updatePending(
       zone: input.zone,
       totalAmount: input.totalAmount,
       paidAmount: input.paidAmount,
+      paymentMethod: input.paymentMethod,
       ...(input.canManageAll ? {} : { sellerEditedAt: now }),
     });
 
@@ -1247,6 +1258,7 @@ export async function getPendingForEdit(params: {
       zone: true,
       totalAmount: true,
       paidAmount: true,
+      paymentMethod: true,
       promisedAt: true,
     },
   });

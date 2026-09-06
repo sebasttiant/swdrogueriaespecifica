@@ -78,6 +78,17 @@ enum PendingWaitlistDecision {
   @@map("PendingPartialDecision")
 }
 
+// Cómo entró el abono del cliente. Ver features/pendientes/payment-method.ts
+// para el porqué del vocabulario cerrado y de la ausencia de marcas: acá va el
+// MÉTODO, nunca la entidad (Nequi, Daviplata, el banco de turno), porque la
+// entidad cambia con cada convenio y el método no.
+enum PendingPaymentMethod {
+  EFECTIVO
+  TRANSFERENCIA
+  TARJETA_DEBITO
+  TARJETA_CREDITO
+}
+
 enum PendingCustomerStatus {
   POR_CONTACTAR
   CONTACTADO
@@ -618,12 +629,21 @@ model Pending {
   // features/pendientes/payment-state.ts). Un flag persistido podría
   // contradecir a los montos y no habría forma de saber cuál vale.
   //
+  // `paymentMethod` es CÓMO entró el abono. Vale solo cuando hay abono, y la
+  // base lo hace cumplir con `pendings_payment_method_needs_paid`: un medio sin
+  // plata es un dato que no describe nada. La mitad recíproca —si hay abono,
+  // elegí el medio— vive en el formulario y NO en la base, por la misma razón
+  // que el nombre y el teléfono de acá arriba: los pendientes anteriores a esta
+  // columna tienen abono y no tienen medio, y exigírselo obligaría a
+  // inventarles uno o a bloquear su edición para siempre.
+  //
   // Sin índice sobre `zone`: todavía no hay query que agrupe por zona. Se
   // agrega cuando exista el reporte que lo use, no antes.
   // --------------------------------------------------------------------
   zone                      String?
   totalAmount               Int?
   paidAmount                Int                       @default(0)
+  paymentMethod             PendingPaymentMethod?
   legacyBeta                Boolean                   @default(false)
   createdBy                 User?                     @relation("PendingCreatedBy", fields: [createdById], references: [id])
   createdById               String?

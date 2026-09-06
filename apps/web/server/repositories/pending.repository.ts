@@ -15,6 +15,7 @@ import type {
   PendingAvailabilityStatus,
   PendingCustomerStatus,
   PendingIdentityDeferral,
+  PendingPaymentMethod,
   PendingPurchaseStatus,
   PendingStatus,
   Prisma,
@@ -48,6 +49,10 @@ export type PendingListItem = {
   zone: string | null;
   totalAmount: number | null;
   paidAmount: number;
+  // Cómo entró el abono. `null` cuando no hubo abono, y también en los
+  // pendientes anteriores a la columna: son casos distintos que se leen igual,
+  // y por eso la UI solo lo muestra cuando hay plata que describir.
+  paymentMethod: PendingPaymentMethod | null;
   createdAt: Date;
   deliveredQuantity: number;
   // T2.2b: lo que el cliente ya no espera de un cierre parcial. Completa la
@@ -101,6 +106,7 @@ export type CreatePendingData = {
   zone?: string;
   totalAmount?: number;
   paidAmount?: number;
+  paymentMethod?: PendingPaymentMethod;
   createdById?: string | null;
   inventoryReadyQuantity?: number;
   reservedInventoryQuantity?: number;
@@ -136,6 +142,7 @@ const LIST_SELECT = {
   zone: true,
   totalAmount: true,
   paidAmount: true,
+  paymentMethod: true,
   createdAt: true,
   deliveredQuantity: true,
   cancelledQuantity: true,
@@ -472,6 +479,10 @@ export async function createPending(
       totalAmount: data.totalAmount ?? null,
       // Cero, no null: "no abonó" es un hecho conocido, no un dato ausente.
       paidAmount: data.paidAmount ?? 0,
+      // Null cuando no hubo abono: acá sí es ausencia real, no hay movimiento
+      // que describir. El CHECK `pendings_payment_method_needs_paid` no admite
+      // otra cosa.
+      paymentMethod: data.paymentMethod ?? null,
       createdById: data.createdById ?? null,
       idempotencyKey: data.idempotencyKey,
       requestFingerprint: data.requestFingerprint,
@@ -695,6 +706,7 @@ export type UpdatePendingDetailsData = {
   zone?: string;
   totalAmount?: number;
   paidAmount?: number;
+  paymentMethod?: PendingPaymentMethod;
   /** Marca el cupo de corrección del vendedor. Gerencia no lo consume. */
   sellerEditedAt?: Date;
 };
@@ -713,6 +725,11 @@ export async function updatePendingDetails(
       zone: fields.zone ?? null,
       totalAmount: fields.totalAmount ?? null,
       paidAmount: fields.paidAmount ?? 0,
+      // Se escribe SIEMPRE, igual que `paidAmount` justo arriba, y por eso el
+      // par no puede desincronizarse: corregir el abono a cero limpia el medio
+      // en el mismo UPDATE. Dejarlo sin tocar guardaría "efectivo" sobre un
+      // abono que ya no existe, y el CHECK abortaría la edición entera.
+      paymentMethod: fields.paymentMethod ?? null,
       ...(sellerEditedAt ? { sellerEditedAt } : {}),
     },
   });
@@ -735,6 +752,7 @@ export type PendingForEdit = {
   zone: string | null;
   totalAmount: number | null;
   paidAmount: number;
+  paymentMethod: PendingPaymentMethod | null;
   promisedAt: Date;
 };
 
@@ -745,7 +763,8 @@ export async function lockPendingForEdit(
   const rows = await client.$queryRaw<PendingForEdit[]>`
     SELECT id, "productId", quantity, status, "createdById", "deliveredQuantity",
            "invoicedQuantity", "sellerEditedAt", "customerName", "customerPhone",
-           "customerAddress", note, zone, "totalAmount", "paidAmount", "promisedAt"
+           "customerAddress", note, zone, "totalAmount", "paidAmount",
+           "paymentMethod", "promisedAt"
     FROM pendings WHERE id = ${id} FOR UPDATE
   `;
   return rows[0] ?? null;

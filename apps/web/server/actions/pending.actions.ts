@@ -138,6 +138,7 @@ export type PendingSubmittedValues = {
   zone: string;
   totalAmount: string;
   paidAmount: string;
+  paymentMethod: string;
   idempotencyKey: string;
   // Identidad Orion: vuelven con el resto. Corregir un conflicto de código no
   // puede costar volver a cargar el pedido entero.
@@ -163,6 +164,7 @@ const SUBMITTED_FIELDS = [
   "zone",
   "totalAmount",
   "paidAmount",
+  "paymentMethod",
   "idempotencyKey",
   "orionCode",
   "identitySkippedReason",
@@ -403,6 +405,7 @@ export async function createPendingAction(
     zone: formData.get("zone") ?? undefined,
     totalAmount: formData.get("totalAmount") ?? undefined,
     paidAmount: formData.get("paidAmount") ?? undefined,
+    paymentMethod: formData.get("paymentMethod") ?? undefined,
     // Identidad Orion (S2b): el schema resuelve el XOR entre el código y el
     // aplazamiento. Qué se hace con el resultado se decide más abajo, contra
     // la base, que es la única que sabe qué identidad tiene hoy el producto.
@@ -825,6 +828,7 @@ export async function createPendingAction(
         zone: parsed.data.zone ?? null,
         totalAmount: parsed.data.totalAmount ?? null,
         paidAmount: parsed.data.paidAmount,
+        paymentMethod: parsed.data.paymentMethod ?? null,
       },
       context,
       correlationId,
@@ -1413,6 +1417,7 @@ export async function updatePendingAction(
     zone: formData.get("zone") ?? undefined,
     totalAmount: formData.get("totalAmount") ?? undefined,
     paidAmount: formData.get("paidAmount") ?? undefined,
+    paymentMethod: formData.get("paymentMethod") ?? undefined,
   });
 
   if (!parsed.success) {
@@ -1459,6 +1464,7 @@ export async function updatePendingAction(
             zone: before.zone,
             totalAmount: before.totalAmount,
             paidAmount: before.paidAmount,
+            paymentMethod: before.paymentMethod,
             note: before.note,
           }
         : null,
@@ -1472,6 +1478,7 @@ export async function updatePendingAction(
         zone: parsed.data.zone ?? null,
         totalAmount: parsed.data.totalAmount ?? null,
         paidAmount: parsed.data.paidAmount ?? 0,
+        paymentMethod: parsed.data.paymentMethod ?? null,
         note: parsed.data.note ?? null,
       },
     },
