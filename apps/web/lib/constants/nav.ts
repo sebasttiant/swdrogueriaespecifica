@@ -11,6 +11,7 @@ import {
   Users,
   Inbox,
   ScanBarcode,
+  CalendarClock,
   type LucideIcon,
 } from "lucide-react";
 
@@ -61,6 +62,10 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { label: "Revisión de identidad", href: "/revision-identidad-pendientes", icon: ScanBarcode, capability: "canFixProductIdentity" },
   { label: "Entradas", href: "/entradas", icon: PackagePlus, primaryMobile: true, capability: "canViewEntradas" },
   { label: "Productos", href: "/productos", icon: Package, capability: "canViewProductos" },
+  // Pegada a Productos porque son sus lotes mirados por fecha, no otra cola.
+  // Misma capability que el catálogo: quien ve los productos ve sus lotes.
+  // Sin `primaryMobile`: se consulta cuando la alerta avisa, no a cada rato.
+  { label: "Vencimientos", href: "/vencimientos", icon: CalendarClock, capability: "canViewProductos" },
   { label: "Reportes", href: "/reportes", icon: BarChart3, capability: "canViewReports" },
   { label: "Usuarios", href: "/admin", icon: Users, capability: "canManageUsers" },
   { label: "Auditoría", href: "/auditoria", icon: ShieldCheck, capability: "canViewAudit" },

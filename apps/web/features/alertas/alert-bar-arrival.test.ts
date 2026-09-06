@@ -40,6 +40,7 @@ import { AlertBar } from "./alert-bar";
 const SIN_ALERTAS: AlertCounts = {
   expiredBatches: 0,
   criticalBatches: 0,
+  warningBatches: 0,
   overdueDeliveries: 0,
   upcomingDeliveries: 0,
   criticalMissing: 0,

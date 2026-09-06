@@ -11,7 +11,11 @@ import {
   type Paginated,
 } from "@/lib/pagination";
 import type { ProductBatch, Prisma } from "@/lib/generated/prisma/client";
-import { EXPIRY_CRITICAL_DAYS, EXPIRY_WARNING_DAYS } from "@/lib/inventory/batch-status";
+import {
+  EXPIRY_CRITICAL_DAYS,
+  EXPIRY_WARNING_DAYS,
+  type ExpiryTier,
+} from "@/lib/inventory/batch-status";
 
 export type BatchListItem = Pick<
   ProductBatch,
@@ -116,39 +120,105 @@ export type ExpiringBatchCounts = {
  *
  * Three parallel Prisma count() calls — no row loading, pure aggregation.
  */
+/**
+ * El `where` de UNA franja de vencimiento — la ÚNICA definición.
+ *
+ * La usan el contador (que alimenta el chip de la barra de alertas) y el
+ * listado (la pantalla que ese chip abre). Que sea una sola función no es
+ * prolijidad: es lo que garantiza que el número del chip y la cantidad de filas
+ * de la pantalla sean el mismo hecho. Escrito dos veces, divergen en el primer
+ * cambio de umbral y la alerta empieza a mentir.
+ *
+ * Exclusive upper boundaries for each tier:
+ *   startDay+1  = start of tomorrow Bogota   → expiresAt < this means calendar date <= today
+ *   startDay+31 = start of today+31 Bogota   → expiresAt < this means calendar date <= today+30
+ *   startDay+91 = start of today+91 Bogota   → expiresAt < this means calendar date <= today+90
+ *
+ * D3: sin filtro de `status` — cuenta DISPONIBLE, CUARENTENA y RETENIDO. Un
+ * lote retenido que se vence es plata perdida igual. `quantity > 0` sí filtra:
+ * un lote agotado no es un aviso, no queda nada que perder.
+ */
+export function expiryTierWhere(
+  tier: ExpiryTier,
+  ref: Date = new Date(),
+): Prisma.ProductBatchWhereInput {
+  const boundary1 = startOfBogotaDayOffset(ref, 1);
+  const boundary31 = startOfBogotaDayOffset(ref, EXPIRY_CRITICAL_DAYS + 1);
+  const boundary91 = startOfBogotaDayOffset(ref, EXPIRY_WARNING_DAYS + 1);
+
+  const expiresAt =
+    tier === "expired"
+      ? // expired: calendar date <= today (Bogota)
+        { lt: boundary1 }
+      : tier === "critical"
+        ? // critical: calendar date > today AND <= today+30 (Bogota)
+          { gte: boundary1, lt: boundary31 }
+        : // warning: calendar date > today+30 AND <= today+90 (Bogota)
+          { gte: boundary31, lt: boundary91 };
+
+  return { expiresAt, quantity: { gt: 0 } };
+}
+
 export async function countExpiringBatches(
   ref: Date = new Date(),
 ): Promise<ExpiringBatchCounts> {
-  // Exclusive upper boundaries for each tier:
-  //   startDay+1 = start of tomorrow Bogota  → expiresAt < this means calendar date <= today
-  //   startDay+31 = start of today+31 Bogota → expiresAt < this means calendar date <= today+30
-  //   startDay+91 = start of today+91 Bogota → expiresAt < this means calendar date <= today+90
-  const boundary1 = startOfBogotaDayOffset(ref, 1);  // exclusive upper for expired
-  const boundary31 = startOfBogotaDayOffset(ref, EXPIRY_CRITICAL_DAYS + 1);  // exclusive upper for critical
-  const boundary91 = startOfBogotaDayOffset(ref, EXPIRY_WARNING_DAYS + 1);   // exclusive upper for warning
-
   const [expired, critical, warning] = await Promise.all([
-    // expired: calendar date <= today (Bogota)
-    prisma.productBatch.count({
-      where: { expiresAt: { lt: boundary1 }, quantity: { gt: 0 } },
-    }),
-    // critical: calendar date > today AND <= today+30 (Bogota)
-    prisma.productBatch.count({
-      where: {
-        expiresAt: { gte: boundary1, lt: boundary31 },
-        quantity: { gt: 0 },
-      },
-    }),
-    // warning: calendar date > today+30 AND <= today+90 (Bogota)
-    prisma.productBatch.count({
-      where: {
-        expiresAt: { gte: boundary31, lt: boundary91 },
-        quantity: { gt: 0 },
-      },
-    }),
+    prisma.productBatch.count({ where: expiryTierWhere("expired", ref) }),
+    prisma.productBatch.count({ where: expiryTierWhere("critical", ref) }),
+    prisma.productBatch.count({ where: expiryTierWhere("warning", ref) }),
   ]);
 
   return { expired, critical, warning };
+}
+
+// El lote solo no identifica nada: "L-4471" no le dice a nadie qué hay que ir a
+// buscar al estante. El producto viaja con la fila.
+const EXPIRING_PRODUCT_SELECT = {
+  id: true,
+  name: true,
+  code: true,
+  unit: true,
+} as const;
+
+export type ExpiringBatchListItem = BatchListItem & {
+  product: {
+    id: string;
+    name: string;
+    code: string;
+    unit: string;
+  };
+};
+
+/**
+ * Los lotes de UNA franja, el que vence antes primero.
+ *
+ * Mismo `where` que el contador (ver `expiryTierWhere`) y misma paginación por
+ * cursor que el resto del proyecto: ningún listado se expone sin `take`.
+ */
+export async function listExpiringBatches(params: {
+  tier: ExpiryTier;
+  cursor?: string | null;
+  take?: number;
+  now?: Date;
+}): Promise<Paginated<ExpiringBatchListItem>> {
+  const take = clampTake(params.take);
+  const cursorId = params.cursor ? decodeCursor(params.cursor) : null;
+
+  const rows = await prisma.productBatch.findMany({
+    where: expiryTierWhere(params.tier, params.now),
+    take: take + 1,
+    ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
+    // El que vence antes, primero: es el orden en que hay que actuar.
+    orderBy: [{ expiresAt: "asc" }, { id: "asc" }],
+    select: { ...LIST_SELECT, product: { select: EXPIRING_PRODUCT_SELECT } },
+  });
+
+  const hasMore = rows.length > take;
+  const items = hasMore ? rows.slice(0, take) : rows;
+  const last = items.at(-1);
+  const nextCursor = hasMore && last ? encodeCursor(last.id) : null;
+
+  return { items, nextCursor };
 }
 
 // ---------------------------------------------------------------------------

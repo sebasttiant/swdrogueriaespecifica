@@ -5,6 +5,10 @@ import { alertSignature, type AlertCounts } from "@/lib/alertas/signature";
 import { can, seesAllPendings } from "@/lib/auth/permissions";
 import type { SessionRole } from "@/lib/auth/session";
 import { pendingReviewListHref } from "@/features/pendientes/pending-anchor";
+import {
+  EXPIRY_TIER_LABELS,
+  vencimientosHref,
+} from "@/features/vencimientos/expiry-tier";
 import { cn } from "@/lib/utils/cn";
 import { countArrivalNotices } from "@/server/services/arrival-notice.service";
 import {
@@ -36,6 +40,7 @@ function totalAlerts(counts: AlertCounts): number {
   return (
     counts.expiredBatches +
     counts.criticalBatches +
+    counts.warningBatches +
     counts.overdueDeliveries +
     counts.upcomingDeliveries +
     counts.criticalMissing +
@@ -45,11 +50,18 @@ function totalAlerts(counts: AlertCounts): number {
 
 function buildAlertChips(counts: AlertCounts): AlertChip[] {
   const chipCandidates: AlertChip[] = [
+    // Las tres franjas de vencimiento abren la MISMA pantalla, cada una en su
+    // pestaña. Antes las dos primeras caían en `/productos`, que empieza por el
+    // formulario de "Nuevo producto" y sigue con el catálogo entero sin
+    // filtrar: el chip decía "3" y dejaba a la persona buscándolos a mano.
+    //
+    // Las etiquetas salen del mismo vocabulario que titula las pestañas, así
+    // que el chip y la pantalla que abre se llaman igual.
     {
       severity: ALERT_SEVERITY.DANGER,
-      label: "Vencidos",
+      label: EXPIRY_TIER_LABELS.expired,
       count: counts.expiredBatches,
-      href: "/productos",
+      href: vencimientosHref({ tier: "expired" }),
     },
     {
       severity: ALERT_SEVERITY.DANGER,
@@ -59,9 +71,18 @@ function buildAlertChips(counts: AlertCounts): AlertChip[] {
     },
     {
       severity: ALERT_SEVERITY.WARNING,
-      label: "Críticos",
+      label: EXPIRY_TIER_LABELS.critical,
       count: counts.criticalBatches,
-      href: "/productos",
+      href: vencimientosHref({ tier: "critical" }),
+    },
+    // El aviso con tres meses de antelación. Se calculaba desde siempre y no
+    // llegaba a la barra: sin él, la primera noticia de que un lote se vence
+    // llega a 30 días, cuando ya casi no hay margen para devolverlo o rotarlo.
+    {
+      severity: ALERT_SEVERITY.WARNING,
+      label: EXPIRY_TIER_LABELS.warning,
+      count: counts.warningBatches,
+      href: vencimientosHref({ tier: "warning" }),
     },
     {
       severity: ALERT_SEVERITY.WARNING,

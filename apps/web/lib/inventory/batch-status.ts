@@ -24,6 +24,18 @@ const BOGOTA_TZ = "America/Bogota";
 //   ok       = calendar date > today+90 days
 export type ExpiryLevel = "expired" | "critical" | "warning" | "ok";
 
+// Las tres franjas que se ALERTAN, en orden de urgencia. Es `ExpiryLevel` sin
+// "ok": un lote vigente no es un aviso, y ofrecerlo como pestaña sería una
+// cuarta lista que nadie abre.
+//
+// Deliberadamente el MISMO vocabulario que `ExpiryLevel`, no uno paralelo: la
+// pantalla, el chip y la consulta nombran la franja con la misma palabra, así
+// que no hay tabla de traducción que se desincronice. Las etiquetas en español
+// viven en `features/vencimientos/expiry-tier.ts` — lib queda sin idioma.
+export const EXPIRY_TIERS = ["expired", "critical", "warning"] as const;
+
+export type ExpiryTier = (typeof EXPIRY_TIERS)[number];
+
 /**
  * Returns the YYYY-MM-DD string for `date` anchored to the Bogota calendar.
  * Uses Intl (DST-safe, no hardcoded offset).
@@ -105,4 +117,33 @@ export function isSellable(
     batch.quantity > 0 &&
     batch.expiresAt.getTime() > now.getTime()
   );
+}
+
+/**
+ * Días de CALENDARIO Bogotá entre hoy y el vencimiento del lote.
+ *
+ *   > 0  faltan tantos días
+ *   = 0  vence hoy
+ *   < 0  venció hace tantos días
+ *
+ * Calendario y no milisegundos, a propósito: un lote que vence "mañana" tiene
+ * que decir 1 tanto a las 8 de la mañana como a las 11 de la noche. Restar
+ * instantes daría 0 en el segundo caso y la lista se contradiría con
+ * `expiryLevel`, que ya razona por día de calendario.
+ *
+ * Se compara al MEDIODÍA UTC de cada fecha Bogotá: ese instante siempre cae
+ * dentro de su propio día de calendario, así que la resta nunca queda a un pelo
+ * del borde.
+ */
+export function bogotaCalendarDaysUntil(
+  expiresAt: Date,
+  now: Date = new Date(),
+): number {
+  const utcNoonOf = (ymd: string): number => {
+    const [y, m, d] = ymd.split("-").map(Number) as [number, number, number];
+    return Date.UTC(y, m - 1, d, 12, 0, 0);
+  };
+
+  const diffMs = utcNoonOf(bogotaYMD(expiresAt)) - utcNoonOf(bogotaYMD(now));
+  return Math.round(diffMs / (24 * 60 * 60 * 1000));
 }

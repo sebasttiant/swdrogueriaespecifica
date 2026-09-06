@@ -5,6 +5,7 @@ const { prismaMock } = vi.hoisted(() => {
   const prismaMock = {
     productBatch: {
       count: vi.fn(),
+      findMany: vi.fn(),
     },
   };
   return { prismaMock };
@@ -12,7 +13,11 @@ const { prismaMock } = vi.hoisted(() => {
 
 vi.mock("@/lib/db/prisma", () => ({ prisma: prismaMock }));
 
-import { countExpiringBatches } from "./product-batch.repository";
+import {
+  countExpiringBatches,
+  expiryTierWhere,
+  listExpiringBatches,
+} from "./product-batch.repository";
 
 // Fixed reference: 2026-06-09 12:00 UTC = 2026-06-09 07:00 Bogota.
 const REF_NOW = new Date("2026-06-09T17:00:00.000Z"); // Bogota 12:00
@@ -116,5 +121,115 @@ describe("countExpiringBatches", () => {
       critical: 0,
       warning: 0,
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// listExpiringBatches — la lista que abre el chip de la barra de alertas.
+//
+// EL CONTRATO QUE IMPORTA: cuenta y lista tienen que preguntar EXACTAMENTE lo
+// mismo. Si divergen, el chip dice 3 y la pantalla muestra 5, y la gente deja
+// de creerle a la alerta. Por eso las dos pasan por `expiryTierWhere` y por eso
+// eso se prueba acá y no se confía en la lectura del diff.
+// ---------------------------------------------------------------------------
+
+describe("expiryTierWhere", () => {
+  it.each([
+    ["expired", 0],
+    ["critical", 1],
+    ["warning", 2],
+  ] as const)(
+    "builds the same where that countExpiringBatches uses for %s",
+    async (tier, callIndex) => {
+      prismaMock.productBatch.count.mockResolvedValue(0);
+
+      await countExpiringBatches(REF_NOW);
+      const fromCounter = prismaMock.productBatch.count.mock.calls[callIndex]![0].where;
+
+      expect(expiryTierWhere(tier, REF_NOW)).toEqual(fromCounter);
+    },
+  );
+
+  it("always requires stock: a batch at zero is not an alert", () => {
+    for (const tier of ["expired", "critical", "warning"] as const) {
+      expect(expiryTierWhere(tier, REF_NOW).quantity).toEqual({ gt: 0 });
+    }
+  });
+
+  // D3, igual que el contador: cuenta TODOS los status (DISPONIBLE, CUARENTENA,
+  // RETENIDO). Un lote retenido que vence sigue siendo plata que se pierde.
+  it("does not filter by status", () => {
+    for (const tier of ["expired", "critical", "warning"] as const) {
+      expect(expiryTierWhere(tier, REF_NOW).status).toBeUndefined();
+    }
+  });
+});
+
+describe("listExpiringBatches", () => {
+  const row = (id: string) => ({
+    id,
+    batchCode: `L-${id}`,
+    expiresAt: new Date("2026-06-01T05:00:00.000Z"),
+    quantity: 5,
+    location: null,
+    status: "DISPONIBLE",
+    product: { id: `p-${id}`, name: `Producto ${id}`, code: `C${id}`, unit: "Caja" },
+  });
+
+  it("queries with the tier's where and the soonest-first order", async () => {
+    prismaMock.productBatch.findMany.mockResolvedValue([]);
+
+    await listExpiringBatches({ tier: "critical", now: REF_NOW });
+
+    const args = prismaMock.productBatch.findMany.mock.calls[0]![0];
+    expect(args.where).toEqual(expiryTierWhere("critical", REF_NOW));
+    expect(args.orderBy).toEqual([{ expiresAt: "asc" }, { id: "asc" }]);
+  });
+
+  it("brings the product along, because a lote number alone identifies nothing", async () => {
+    prismaMock.productBatch.findMany.mockResolvedValue([]);
+
+    await listExpiringBatches({ tier: "expired", now: REF_NOW });
+
+    const args = prismaMock.productBatch.findMany.mock.calls[0]![0];
+    expect(args.select.product.select).toMatchObject({ id: true, name: true });
+  });
+
+  it("asks for one extra row to know whether another page exists", async () => {
+    prismaMock.productBatch.findMany.mockResolvedValue([]);
+
+    await listExpiringBatches({ tier: "expired", take: 3, now: REF_NOW });
+
+    expect(prismaMock.productBatch.findMany.mock.calls[0]![0].take).toBe(4);
+  });
+
+  it("trims the probe row and returns a cursor when there is more", async () => {
+    prismaMock.productBatch.findMany.mockResolvedValue([row("a"), row("b"), row("c")]);
+
+    const result = await listExpiringBatches({ tier: "expired", take: 2, now: REF_NOW });
+
+    expect(result.items.map((item) => item.id)).toEqual(["a", "b"]);
+    expect(result.nextCursor).not.toBeNull();
+  });
+
+  it("returns no cursor on the last page", async () => {
+    prismaMock.productBatch.findMany.mockResolvedValue([row("a")]);
+
+    const result = await listExpiringBatches({ tier: "expired", take: 2, now: REF_NOW });
+
+    expect(result.items).toHaveLength(1);
+    expect(result.nextCursor).toBeNull();
+  });
+
+  // Un cursor que no emitimos nosotros no puede saltear filas: `decodeCursor`
+  // lo rechaza y la consulta arranca de la primera página.
+  it("ignores a forged cursor instead of skipping rows", async () => {
+    prismaMock.productBatch.findMany.mockResolvedValue([]);
+
+    await listExpiringBatches({ tier: "expired", cursor: "no-es-un-cursor", now: REF_NOW });
+
+    const args = prismaMock.productBatch.findMany.mock.calls[0]![0];
+    expect(args.cursor).toBeUndefined();
+    expect(args.skip).toBeUndefined();
   });
 });

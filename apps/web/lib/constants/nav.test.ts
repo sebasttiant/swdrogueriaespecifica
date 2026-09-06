@@ -18,6 +18,7 @@ describe("visibleNavItems", () => {
       "Revisión de identidad",
       "Entradas",
       "Productos",
+      "Vencimientos",
       "Reportes",
       "Usuarios",
       "Auditoría",
@@ -81,6 +82,9 @@ describe("visibleNavItems", () => {
       "Revisión de identidad",
       "Entradas",
       "Productos",
+      // Los lotes del catálogo mirados por fecha. Misma capability que
+      // Productos, así que entra y sale con él.
+      "Vencimientos",
     ]);
     expect(supervisor).not.toContain("Reportes");
     expect(supervisor).not.toContain("Usuarios");
@@ -255,5 +259,41 @@ describe("visibleNavItems · dónde trabaja bodega", () => {
     // Revisión de faltantes arma DOS proyecciones y su guard es la más débil.
     expect(byHref["/revision-faltantes"]).toBe("canReceiveMissingItems");
     expect(byHref["/revision-pendientes"]).toBe("canReviewPendings");
+  });
+});
+
+// --------------------------------------------------------------------------
+// Vencimientos.
+//
+// Es el catálogo mirado por fecha, no una cola nueva: por eso viaja con
+// Productos y se gatea con la MISMA capacidad. Si el día de mañana se separan,
+// el menú mostraría un link que termina en redirect — el defecto que ya pasó
+// con SUPERVISOR y `canConfirmMissingItems`.
+// --------------------------------------------------------------------------
+describe("Vencimientos", () => {
+  it("la ve exactamente quien ve el catálogo de productos", () => {
+    for (const role of ["SUPERADMIN", "ADMIN", "SUPERVISOR", "BODEGA", "OPERADOR"] as const) {
+      const suyas = labels(role);
+      expect(suyas.includes("Vencimientos")).toBe(suyas.includes("Productos"));
+    }
+  });
+
+  it("sin sesión no aparece", () => {
+    expect(labels(null)).not.toContain("Vencimientos");
+  });
+
+  it("usa la capacidad exacta del guard de su página", () => {
+    const item = NAV_ITEMS.find((navItem) => navItem.href === "/vencimientos");
+    expect(item?.capability).toBe("canViewProductos");
+  });
+
+  // La barra inferior del celular ya tiene sus cuatro accesos. Esta pantalla se
+  // consulta cuando la alerta avisa, no a cada rato.
+  it("no ocupa un lugar en la barra inferior móvil", () => {
+    const item = visibleNavItems("ADMIN").find(
+      (navItem) => navItem.href === "/vencimientos",
+    );
+    expect(item).toBeDefined();
+    expect(item?.primaryMobile).toBeUndefined();
   });
 });
