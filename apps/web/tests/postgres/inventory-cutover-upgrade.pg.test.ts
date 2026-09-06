@@ -27,8 +27,18 @@ it("upgrades existing beta inventory before installing false defaults", async ()
   const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: url.toString() }) });
 
   try {
+    // ANTES del cutover, no "todas menos el cutover". Los nombres empiezan con
+    // su marca de tiempo, así que el orden lexicográfico ES el cronológico.
+    //
+    // El filtro decía `!== TARGET`, y mientras el cutover fue la última
+    // migración las dos formas daban el mismo conjunto. Dejó de darlo apenas
+    // entró una migración posterior: esa se colaba en el replay "previo" y el
+    // conteo saltaba, cuando en realidad no tiene nada que ver con probar que
+    // el cutover actualiza las filas viejas. El número de abajo es un guardián
+    // de ESE conjunto, y solo debe moverse cuando alguien agregue una migración
+    // anterior al cutover —cosa que casi nunca pasa—.
     const previous = readdirSync(MIGRATIONS, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && entry.name !== TARGET).map((entry) => entry.name).sort();
+      .filter((entry) => entry.isDirectory() && entry.name < TARGET).map((entry) => entry.name).sort();
     expect(previous).toHaveLength(47);
     execute(url.toString(), ["--stdin"], previous.map((migration) =>
       readFileSync(resolve(MIGRATIONS, migration, "migration.sql"), "utf8")).join("\n"));
