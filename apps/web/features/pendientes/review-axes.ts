@@ -33,7 +33,16 @@ export const CUSTOMER_AXIS_VALUES = [
   "CANCELADO",
 ] as const;
 
+// La ventana de ENTREGA. No es una columna de estado como los otros tres: es
+// una comparación contra el reloj (`deadlineWhere` en el repositorio).
+//
+// Las palabras son las MISMAS que dicen los chips de la barra de alertas
+// —"Atrasadas", "Próximas"—. Que el chip, la URL y el filtro se llamen igual es
+// lo que hace que tocar el aviso y ver la lista se sienta un solo gesto.
+export const DEADLINE_AXIS_VALUES = ["atrasadas", "proximas"] as const;
+
 export type PurchaseAxis = (typeof PURCHASE_AXIS_VALUES)[number];
+export type DeadlineAxis = (typeof DEADLINE_AXIS_VALUES)[number];
 export type AvailabilityAxis = (typeof AVAILABILITY_AXIS_VALUES)[number];
 export type CustomerAxis = (typeof CUSTOMER_AXIS_VALUES)[number];
 
@@ -41,6 +50,7 @@ export type ReviewAxes = {
   purchase?: PurchaseAxis;
   availability?: AvailabilityAxis;
   customer?: CustomerAxis;
+  deadline?: DeadlineAxis;
 };
 
 // Las etiquetas de gestión son las mismas que ya ve el vendedor en la fila: el
@@ -55,6 +65,11 @@ export const AVAILABILITY_AXIS_LABELS: Record<AvailabilityAxis, string> = {
   LLEGO_BODEGA: "Llegó a bodega",
   DISPONIBLE_PARCIAL: "Disponible parcial",
   DISPONIBLE_COMPLETO: "Disponible completo",
+};
+
+export const DEADLINE_AXIS_LABELS: Record<DeadlineAxis, string> = {
+  atrasadas: "Atrasadas",
+  proximas: "Próximas (24 h)",
 };
 
 export const CUSTOMER_AXIS_LABELS: Record<CustomerAxis, string> = {
@@ -84,20 +99,23 @@ export function parseReviewAxes(raw: {
   purchase?: string;
   availability?: string;
   customer?: string;
+  entrega?: string;
 }): ReviewAxes {
   const purchase = pick(PURCHASE_AXIS_VALUES, raw.purchase);
   const availability = pick(AVAILABILITY_AXIS_VALUES, raw.availability);
   const customer = pick(CUSTOMER_AXIS_VALUES, raw.customer);
+  const deadline = pick(DEADLINE_AXIS_VALUES, raw.entrega);
 
   return {
     ...(purchase ? { purchase } : {}),
     ...(availability ? { availability } : {}),
     ...(customer ? { customer } : {}),
+    ...(deadline ? { deadline } : {}),
   };
 }
 
 export function hasActiveAxis(axes: ReviewAxes): boolean {
-  return Boolean(axes.purchase || axes.availability || axes.customer);
+  return Boolean(axes.purchase || axes.availability || axes.customer || axes.deadline);
 }
 
 /**
@@ -141,6 +159,7 @@ function buildHref(params: ReviewView, cursor: string | null): string {
   if (params.axes.purchase) query.set("purchase", params.axes.purchase);
   if (params.axes.availability) query.set("availability", params.axes.availability);
   if (params.axes.customer) query.set("customer", params.axes.customer);
+  if (params.axes.deadline) query.set("entrega", params.axes.deadline);
 
   const search = query.toString();
   const basePath = params.basePath ?? "/pendientes";

@@ -206,6 +206,9 @@ export async function getPendings(params: {
   // Lista de espera: solo las filas cuyo cliente aceptó esperar. Mismo carácter
   // que los ejes — acota QUÉ se lista, no QUIÉN lo ve.
   waitlisted?: boolean;
+  // El "ahora" del eje de entrega. La pantalla pasa UNO solo para que el
+  // contador del chip y las filas de la lista hablen del mismo instante.
+  now?: Date;
 }): Promise<Paginated<PendingListItem>> {
   const { canViewCustomerIdentity, ...listParams } = params;
   const { items, nextCursor } = await listPendings(listParams);

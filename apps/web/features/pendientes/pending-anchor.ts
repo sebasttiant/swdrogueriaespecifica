@@ -24,6 +24,10 @@
 // PURO: sin Prisma, sin reloj, sin React. Se prueba con un string.
 // --------------------------------------------------------------------------
 
+import { SUPPLY_TAB } from "@/features/faltantes/missing-scope";
+
+import type { DeadlineAxis } from "./review-axes";
+
 /** La pantalla donde se OPERA un pendiente, no donde se carga uno nuevo. */
 const REVIEW_PATH = "/revision-pendientes";
 
@@ -90,4 +94,51 @@ export function resolveFocusedPendingId(raw: string | undefined | null): string 
  */
 export function pendingReviewListHref(): string {
   return REVIEW_PATH;
+}
+
+// --------------------------------------------------------------------------
+// Los enlaces de los chips de la barra de alertas.
+//
+// Viven acá, junto a `pendingReviewListHref`, por la misma razón que ese: la
+// barra de avisos NUNCA debe mandar a `/pendientes`. Esa es la pantalla de
+// CAPTURA —arranca con el formulario de "Nuevo pendiente"— y quien toca un
+// aviso viene a resolver algo que ya existe, no a cargar otro. Es el mismo
+// defecto que ya arreglamos una vez con el aviso de llegada.
+//
+// Y no alcanza con cambiar de pantalla: el chip promete un NÚMERO. Si la lista
+// llega sin filtrar, la persona igual tiene que buscar sus 4 entre 40. Por eso
+// cada enlace lleva su ventana en `?entrega=`, resuelta con `deadlineWhere`,
+// que es la MISMA condición que contó el chip.
+// --------------------------------------------------------------------------
+
+/**
+ * Las entregas atrasadas o próximas, en la mitad de SEGUIMIENTO.
+ *
+ * Seguimiento es donde se le responde al cliente que está esperando: llamarlo,
+ * facturar, entregar. Una promesa vencida es una conversación pendiente con una
+ * persona, no una compra.
+ */
+export function pendingDeadlineHref(window: DeadlineAxis): string {
+  const query = new URLSearchParams({ entrega: window });
+  return `${REVIEW_PATH}?${query.toString()}`;
+}
+
+/**
+ * Los faltantes de pedidos de clientes que ya se pasaron de fecha, en la mitad
+ * de ABASTECIMIENTO.
+ *
+ * NO va a `/revision-faltantes`, y no es una preferencia: esa pantalla filtra
+ * `origin: "shelf"` (revision-faltantes/page.tsx) y este contador cuenta lo
+ * contrario —`originId: { not: null }`, faltantes nacidos de un pendiente—. Los
+ * dos conjuntos son disjuntos por construcción, así que ese enlace daría una
+ * pantalla vacía garantizada. El propio servicio lo dice: `getMissingItemsSummary`
+ * devuelve `null` para el conteo de vencidos cuando el origen es estantería,
+ * porque una reposición de estante no le prometió nada a nadie.
+ *
+ * `listPendingReception` —la consulta de esta mitad— ya trae exactamente estas
+ * filas; lo único que le faltaba era la ventana de fecha.
+ */
+export function supplyOverdueHref(): string {
+  const query = new URLSearchParams({ tab: SUPPLY_TAB, entrega: "atrasadas" });
+  return `${REVIEW_PATH}?${query.toString()}`;
 }

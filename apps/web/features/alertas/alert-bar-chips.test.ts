@@ -102,3 +102,43 @@ describe("el aviso con tres meses de antelación", () => {
     expect(html).not.toContain("Por vencer (90 d)");
   });
 });
+
+// --------------------------------------------------------------------------
+// Los otros tres chips: a la pantalla donde se RESUELVE, no a la de crear.
+// --------------------------------------------------------------------------
+describe("destino de los chips de entrega y faltantes", () => {
+  it.each([
+    ["overdueDeliveries", "/revision-pendientes?entrega=atrasadas"],
+    ["upcomingDeliveries", "/revision-pendientes?entrega=proximas"],
+    [
+      "criticalMissing",
+      "/revision-pendientes?tab=abastecimiento&amp;entrega=atrasadas",
+    ],
+  ] as const)("%s abre %s", async (field, href) => {
+    const html = await pintar({ [field]: 4 });
+
+    expect(html).toContain(href);
+  });
+
+  // La regresión: la barra mandaba a las dos pantallas de CAPTURA. `/pendientes`
+  // arranca con el formulario de "Nuevo pendiente" y `/faltantes` con el de
+  // reportar uno: el chip decía "4 atrasadas" y abría un formulario en blanco.
+  it("ningún chip vuelve a caer en una pantalla de captura", async () => {
+    const html = await pintar({
+      overdueDeliveries: 4,
+      upcomingDeliveries: 2,
+      criticalMissing: 18,
+    });
+
+    expect(html).not.toContain('href="/pendientes"');
+    expect(html).not.toContain('href="/faltantes"');
+  });
+
+  // /revision-faltantes filtra `origin: "shelf"` y este contador cuenta
+  // `originId: { not: null }`. Enlazar ahí daría una lista vacía garantizada.
+  it("los faltantes de clientes NO van a la cola de estantería", async () => {
+    const html = await pintar({ criticalMissing: 18 });
+
+    expect(html).not.toContain("/revision-faltantes");
+  });
+});

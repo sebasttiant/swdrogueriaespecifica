@@ -7,6 +7,8 @@ import {
   AVAILABILITY_AXIS_VALUES,
   CUSTOMER_AXIS_LABELS,
   CUSTOMER_AXIS_VALUES,
+  DEADLINE_AXIS_LABELS,
+  DEADLINE_AXIS_VALUES,
   hasActiveAxis,
   PURCHASE_AXIS_LABELS,
   PURCHASE_AXIS_VALUES,
@@ -41,6 +43,16 @@ export function PendingReviewFilters({
 }: PendingReviewFiltersProps) {
   return (
     <section aria-label="Filtros de revisión" className="space-y-3">
+      {/* Primero la ENTREGA, y a propósito: es el eje con el que la gente llega
+          desde la barra de avisos. Verlo activo y poder soltarlo desde el mismo
+          lugar es lo que evita la pregunta "¿por qué faltan pendientes acá?". */}
+      <AxisRow
+        legend="Entrega"
+        values={DEADLINE_AXIS_VALUES}
+        labels={DEADLINE_AXIS_LABELS}
+        active={axes.deadline}
+        hrefFor={(value) => reviewHref({ scope, view, basePath, axes: { ...axes, deadline: value } })}
+      />
       <AxisRow
         legend="Compras"
         values={PURCHASE_AXIS_VALUES}
