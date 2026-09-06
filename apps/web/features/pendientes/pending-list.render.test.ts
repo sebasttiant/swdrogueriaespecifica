@@ -51,6 +51,7 @@ function pending(overrides: Partial<PendingListItem> = {}): PendingListItem {
     zone: null,
     totalAmount: null,
     paidAmount: 0,
+    paymentMethod: null,
     createdAt: new Date("2026-07-09T10:00:00.000Z"),
     deliveredQuantity: 4,
     cancelledQuantity: 0,
@@ -584,5 +585,42 @@ describe("PendingList · identidad pendiente", () => {
 
     // El texto viaja en el DOM, así que un lector de pantalla lo anuncia.
     expect(html).toContain(`>${IDENTITY_WARNING_LABEL}<`);
+  });
+});
+
+// --------------------------------------------------------------------------
+// El medio de pago en la tarjeta.
+//
+// Va en el mismo renglón que el abono y el saldo porque es la misma pregunta
+// —cuánta plata hay y cómo entró—, y quien cuadra la caja al cierre la lee de
+// una sola línea.
+// --------------------------------------------------------------------------
+describe("PendingList · medio de pago", () => {
+  it("dice cómo pagó junto al abono", () => {
+    const html = renderList({
+      items: [pending({ totalAmount: 50_000, paidAmount: 20_000, paymentMethod: "TRANSFERENCIA" })],
+    });
+
+    expect(html).toContain("Transferencia");
+  });
+
+  // Los pendientes anteriores a la columna tienen abono y no tienen medio.
+  // Rellenarlo con "efectivo" o con "sin dato" afirmaría sobre plata real algo
+  // que nadie sabe: se calla, que es lo único cierto.
+  it("no inventa nada cuando el abono viejo no trae medio", () => {
+    const html = renderList({
+      items: [pending({ totalAmount: 50_000, paidAmount: 20_000, paymentMethod: null })],
+    });
+
+    expect(html).toContain("Abonó");
+    expect(html).not.toContain("Efectivo");
+    expect(html).not.toContain("sin dato");
+  });
+
+  it("no menciona medios cuando el cliente no abonó", () => {
+    const html = renderList({ items: [pending({ paidAmount: 0, paymentMethod: null })] });
+
+    expect(html).not.toContain("Transferencia");
+    expect(html).not.toContain("Efectivo");
   });
 });

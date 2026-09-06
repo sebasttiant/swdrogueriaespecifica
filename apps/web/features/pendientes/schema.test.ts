@@ -5,6 +5,7 @@ import {
   pendingCreateSchema,
   pendingDeliverSchema,
   pendingManagementStatusSchema,
+  pendingUpdateSchema,
 } from "./schema";
 import { PENDING_IDENTITY_DEFERRAL_REASONS } from "./identity-deferral";
 
@@ -177,6 +178,7 @@ describe("pendingCreateSchema", () => {
       ...validInput,
       totalAmount: "$ 45.000",
       paidAmount: "20.000",
+      paymentMethod: "EFECTIVO",
     });
     expect(result.success).toBe(true);
     if (result.success) {
@@ -205,7 +207,11 @@ describe("pendingCreateSchema", () => {
   });
 
   it("acepta un abono sin total acordado (producto por cotizar)", () => {
-    const result = pendingCreateSchema.safeParse({ ...validInput, paidAmount: "20.000" });
+    const result = pendingCreateSchema.safeParse({
+      ...validInput,
+      paidAmount: "20.000",
+      paymentMethod: "EFECTIVO",
+    });
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.paidAmount).toBe(20_000);
@@ -732,5 +738,123 @@ describe("pendingCreateSchema · laboratorio opcional", () => {
       expect(result.data.requestedLaboratoryId).toBe("lab-1");
       expect(result.data.requestedLaboratoryName).toBe("Lab Test");
     }
+  });
+});
+
+// --------------------------------------------------------------------------
+// Medio de pago del abono.
+//
+// La regla vive PARTIDA: la base solo prohíbe "medio sin plata" (el CHECK
+// `pendings_payment_method_needs_paid`), y la recíproca —si hay abono, elegí el
+// medio— se exige acá. No puede vivir en la base porque los pendientes
+// anteriores a la columna tienen abono y no tienen medio.
+// --------------------------------------------------------------------------
+describe("pendingCreateSchema · medio de pago", () => {
+  it("exige el medio cuando el cliente dejó plata", () => {
+    const result = pendingCreateSchema.safeParse({
+      ...validInput,
+      totalAmount: "45.000",
+      paidAmount: "20.000",
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((i) => i.path[0] === "paymentMethod")).toBe(true);
+    }
+  });
+
+  it("acepta el abono cuando viene con su medio", () => {
+    const result = pendingCreateSchema.safeParse({
+      ...validInput,
+      totalAmount: "45.000",
+      paidAmount: "20.000",
+      paymentMethod: "TRANSFERENCIA",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.paymentMethod).toBe("TRANSFERENCIA");
+  });
+
+  // Un medio sin plata afirma un movimiento que no ocurrió. Es lo mismo que
+  // prohíbe el CHECK, adelantado al formulario para que el mensaje sea claro
+  // en vez de un error genérico de la base.
+  it("rechaza un medio sin abono: no describe ningún movimiento", () => {
+    const result = pendingCreateSchema.safeParse({
+      ...validInput,
+      paymentMethod: "EFECTIVO",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("sin abono y sin medio es válido: el cliente no dejó plata", () => {
+    const result = pendingCreateSchema.safeParse(validInput);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.paymentMethod).toBeUndefined();
+  });
+
+  // El <select> manda texto: nada garantiza que sea uno de los cuatro.
+  it("rechaza un medio fuera del vocabulario", () => {
+    const result = pendingCreateSchema.safeParse({
+      ...validInput,
+      paidAmount: "20.000",
+      paymentMethod: "NEQUI",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  // El campo vacío es lo que manda el navegador cuando nadie eligió, y tiene
+  // que leerse como "no vino medio" —y fallar por el abono sin medio—, no como
+  // un valor inválido que confunda el mensaje.
+  it("el desplegable sin elegir cuenta como medio ausente", () => {
+    const result = pendingCreateSchema.safeParse({
+      ...validInput,
+      paymentMethod: "",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.paymentMethod).toBeUndefined();
+  });
+});
+
+describe("pendingUpdateSchema · medio de pago", () => {
+  const validUpdate = {
+    id: "pend_1",
+    productId: "prod_123",
+    quantity: "5",
+    promisedAt: "2026-06-09T14:30",
+    customerName: "Ana Pérez",
+    customerPhone: "300 123 4567",
+  };
+
+  it("exige el medio al editar un abono", () => {
+    const result = pendingUpdateSchema.safeParse({
+      ...validUpdate,
+      totalAmount: "45.000",
+      paidAmount: "20.000",
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((i) => i.path[0] === "paymentMethod")).toBe(true);
+    }
+  });
+
+  it("acepta la edición con abono y medio", () => {
+    const result = pendingUpdateSchema.safeParse({
+      ...validUpdate,
+      totalAmount: "45.000",
+      paidAmount: "45.000",
+      paymentMethod: "TARJETA_DEBITO",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.paymentMethod).toBe("TARJETA_DEBITO");
+  });
+
+  // Bajar el abono a cero tiene que LIMPIAR el medio, no dejarlo colgado
+  // describiendo plata que ya no está registrada.
+  it("rechaza dejar el medio cuando el abono se corrige a cero", () => {
+    const result = pendingUpdateSchema.safeParse({
+      ...validUpdate,
+      totalAmount: "45.000",
+      paidAmount: "0",
+      paymentMethod: "EFECTIVO",
+    });
+    expect(result.success).toBe(false);
   });
 });

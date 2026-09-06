@@ -8,6 +8,10 @@ import {
   MANAGEMENT_ELIGIBLE_STATUSES,
   MANAGEMENT_STATUSES,
 } from "@/features/pendientes/management-status";
+import {
+  PAYMENT_METHODS,
+  type PaymentMethod,
+} from "@/features/pendientes/payment-method";
 import { MAX_ZONE_LENGTH, normalizeZone } from "@/features/pendientes/zone";
 import {
   MAX_PHONE_INPUT_LENGTH,
@@ -97,6 +101,53 @@ const optionalPaidAmount = optionalAmount({
   min: 0,
   belowMin: "El abono no puede ser negativo.",
 });
+
+// --------------------------------------------------------------------------
+// Medio de pago del abono.
+//
+// El `<select>` manda `""` cuando nadie eligió —es lo que hace el navegador con
+// la opción vacía—, y eso significa "no vino medio", no "medio inválido".
+// Traducirlo a `undefined` acá deja que el error lo dé la regla cruzada de
+// abajo, con el mensaje que el operador necesita leer ("elegí cómo pagó") en
+// vez de un genérico sobre un valor no permitido.
+// --------------------------------------------------------------------------
+const optionalPaymentMethod = z.preprocess(
+  (value) => (typeof value === "string" && value.trim().length === 0 ? undefined : value),
+  z.enum(PAYMENT_METHODS, { error: "Elegí un medio de pago válido." }).optional(),
+);
+
+// La regla cruzada entre el abono y su medio, compartida por el alta y la
+// edición: son el MISMO contrato y separarlos deja que uno se corrija y el otro
+// no. Ambas mitades apuntan a `paymentMethod` porque es el campo que el
+// operador tiene que tocar para resolverlo.
+function checkPaymentMethodAgainstPaid(
+  data: { paidAmount?: number; paymentMethod?: PaymentMethod },
+  ctx: z.RefinementCtx,
+): void {
+  const paid = data.paidAmount ?? 0;
+
+  // Hay plata y no se dijo cómo entró. Es la mitad que la base NO puede exigir
+  // (los pendientes viejos con abono tienen medio NULL), así que vive acá y
+  // aplica solo hacia adelante.
+  if (paid > 0 && data.paymentMethod === undefined) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["paymentMethod"],
+      message: "Elegí cómo pagó el cliente.",
+    });
+  }
+
+  // Medio sin plata: afirma un movimiento que no ocurrió. Es lo mismo que
+  // prohíbe el CHECK `pendings_payment_method_needs_paid`, adelantado al
+  // formulario para que el operador lea un mensaje y no un error de la base.
+  if (paid <= 0 && data.paymentMethod !== undefined) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["paymentMethod"],
+      message: "No dejes un medio de pago si el cliente no abonó.",
+    });
+  }
+}
 
 // --------------------------------------------------------------------------
 // Identidad Orion resuelta de un envío de captura.
@@ -195,6 +246,7 @@ export const pendingCreateSchema = z
     zone: optionalText(MAX_ZONE_LENGTH),
     totalAmount: optionalTotalAmount,
     paidAmount: optionalPaidAmount,
+    paymentMethod: optionalPaymentMethod,
     // ----------------------------------------------------------------------
     // Identidad Orion del producto (S2b). Llegan EXCLUYENTES: o el código, o
     // el motivo por el que se aplaza. Ver el superRefine de abajo.
@@ -304,6 +356,8 @@ export const pendingCreateSchema = z
       });
     }
 
+    checkPaymentMethodAgainstPaid(data, ctx);
+
     // ----------------------------------------------------------------------
     // Identidad Orion: XOR entre el código y el aplazamiento.
     // ----------------------------------------------------------------------
@@ -356,6 +410,9 @@ export const pendingCreateSchema = z
       totalAmount: data.totalAmount,
       // Sin abono es cero, no "desconocido": el cliente no dejó plata.
       paidAmount: data.paidAmount ?? 0,
+      // Viaja tal cual: sin abono ya quedó `undefined` por la regla cruzada,
+      // así que acá no hace falta volver a decidirlo.
+      paymentMethod: data.paymentMethod,
       // La identidad sale ya resuelta como UN valor y no como tres campos
       // sueltos: así ningún consumidor puede leer el código y olvidarse del
       // aplazamiento, ni al revés. `undefined` = no vino identidad en este
@@ -488,6 +545,7 @@ export const pendingUpdateSchema = z
     zone: optionalText(MAX_ZONE_LENGTH),
     totalAmount: optionalTotalAmount,
     paidAmount: optionalPaidAmount,
+    paymentMethod: optionalPaymentMethod,
   })
   .superRefine((data, ctx) => {
     if (
@@ -501,6 +559,8 @@ export const pendingUpdateSchema = z
         message: "El abono no puede superar el valor total.",
       });
     }
+
+    checkPaymentMethodAgainstPaid(data, ctx);
   });
 
 export type PendingUpdateInput = z.infer<typeof pendingUpdateSchema>;

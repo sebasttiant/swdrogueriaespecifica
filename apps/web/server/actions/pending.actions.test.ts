@@ -277,6 +277,7 @@ describe("createPendingAction", () => {
           zone: "Centro",
           totalAmount: "45.000",
           paidAmount: "20.000",
+          paymentMethod: "TRANSFERENCIA",
         }),
       );
 
@@ -304,6 +305,7 @@ describe("createPendingAction", () => {
         zone: "Centro",
         totalAmount: "45.000",
         paidAmount: "20.000",
+        paymentMethod: "TRANSFERENCIA",
         idempotencyKey: ATTEMPT_UUID,
         orionCode: "ORN-1001",
         identitySkippedReason: "",
@@ -391,6 +393,7 @@ describe("createPendingAction", () => {
           zone: "Norte",
           totalAmount: "60.000",
           paidAmount: "10.000",
+          paymentMethod: "EFECTIVO",
         }),
       );
 
@@ -413,6 +416,7 @@ describe("createPendingAction", () => {
         zone: "Norte",
         totalAmount: "60.000",
         paidAmount: "10.000",
+        paymentMethod: "EFECTIVO",
         idempotencyKey: ATTEMPT_UUID,
         orionCode: "ORN-2002",
         identitySkippedReason: "",
@@ -654,25 +658,39 @@ describe("createPendingAction", () => {
         zone: "  NORTE ",
         totalAmount: "$ 45.000",
         paidAmount: "20.000",
+        paymentMethod: "EFECTIVO",
       }),
     );
 
     expect(mocks.registerPending).toHaveBeenCalledWith(
-      expect.objectContaining({ zone: "Norte", totalAmount: 45_000, paidAmount: 20_000 }),
+      expect.objectContaining({
+        zone: "Norte",
+        totalAmount: 45_000,
+        paidAmount: 20_000,
+        paymentMethod: "EFECTIVO",
+      }),
     );
   });
 
   it("audita el dinero comprometido con el cliente", async () => {
     await createPendingAction(
       PREV,
-      createCatalogFormData({ totalAmount: "45.000", paidAmount: "45.000" }),
+      createCatalogFormData({
+        totalAmount: "45.000",
+        paidAmount: "45.000",
+        paymentMethod: "TARJETA_DEBITO",
+      }),
     );
 
     const auditCall = mocks.recordAudit.mock.calls.find(
       (call) => call[0].action === AUDIT_ACTIONS.PENDING_CREATE,
     )![0];
     expect(auditCall.after).toEqual(
-      expect.objectContaining({ totalAmount: 45_000, paidAmount: 45_000 }),
+      expect.objectContaining({
+        totalAmount: 45_000,
+        paidAmount: 45_000,
+        paymentMethod: "TARJETA_DEBITO",
+      }),
     );
   });
 
@@ -791,7 +809,11 @@ describe("createPendingAction", () => {
   // el cual compararlo. Antes esto chocaba contra "el abono supera el total".
   it("permite registrar un abono aunque el valor total sea desconocido", async () => {
     expectSuccess(
-      await createPendingAction(PREV, createCatalogFormData({ totalAmount: "0", paidAmount: "20.000" })),
+      await createPendingAction(PREV, createCatalogFormData({
+        totalAmount: "0",
+        paidAmount: "20.000",
+        paymentMethod: "EFECTIVO",
+      })),
     );
     expect(mocks.registerPending).toHaveBeenCalledWith(
       expect.objectContaining({ totalAmount: undefined, paidAmount: 20_000 }),

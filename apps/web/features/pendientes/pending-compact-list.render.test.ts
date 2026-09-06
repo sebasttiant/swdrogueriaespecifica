@@ -38,6 +38,7 @@ function pending(overrides: Partial<PendingListItem> = {}): PendingListItem {
     zone: "Belén",
     totalAmount: 50000,
     paidAmount: 20000,
+    paymentMethod: null,
     createdAt: new Date("2026-07-09T10:00:00.000Z"),
     deliveredQuantity: 0,
     cancelledQuantity: 0,
@@ -512,6 +513,7 @@ describe("PendingCompactList · seguimiento", () => {
       zone: "Norte",
       totalAmount: 50_000,
       paidAmount: 20_000,
+      paymentMethod: null,
       note: "Cliente espera los 2 restantes",
     });
 

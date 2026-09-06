@@ -38,6 +38,7 @@ function pending(overrides: Partial<PendingListItem> = {}): PendingListItem {
     zone: null,
     totalAmount: null,
     paidAmount: 0,
+    paymentMethod: null,
     createdAt: new Date("2026-08-30T10:00:00.000Z"),
     deliveredQuantity: 0,
     cancelledQuantity: 0,

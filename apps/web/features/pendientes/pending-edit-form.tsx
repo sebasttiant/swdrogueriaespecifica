@@ -1,11 +1,18 @@
 "use client";
 
+import { useState } from "react";
 import { useActionState } from "@/lib/hooks/use-action-state";
 
 import { Button } from "@/app/_components/ui/button";
 import { Field } from "@/app/_components/ui/field";
 import { Input } from "@/app/_components/ui/input";
 import { Select } from "@/app/_components/ui/select";
+import {
+  PAYMENT_METHODS,
+  paymentMethodLabel,
+  type PaymentMethod,
+} from "@/features/pendientes/payment-method";
+import { parseCopInput } from "@/lib/format/currency";
 import { MAX_ZONE_LENGTH } from "@/features/pendientes/zone";
 import { MAX_PHONE_INPUT_LENGTH } from "@/features/pendientes/phone";
 import {
@@ -29,6 +36,7 @@ export type PendingEditValues = {
   zone: string | null;
   totalAmount: number | null;
   paidAmount: number;
+  paymentMethod: PaymentMethod | null;
 };
 
 type PendingEditFormProps = {
@@ -69,6 +77,16 @@ export function PendingEditForm({
   isLastChance,
 }: PendingEditFormProps) {
   const [state, action, saving] = useActionState(updatePendingAction, INITIAL_STATE);
+  // Abono y medio CONTROLADOS: el medio se muestra solo cuando hay plata, así
+  // que el formulario tiene que saber qué dice el campo mientras se escribe.
+  // El resto de los campos siguen sin estado, que es como estaban.
+  const [paidAmount, setPaidAmount] = useState(
+    pending.paidAmount ? String(pending.paidAmount) : "",
+  );
+  const [paymentMethod, setPaymentMethod] = useState<string>(
+    pending.paymentMethod ?? "",
+  );
+  const parsedPaid = parseCopInput(paidAmount);
 
   return (
     <form action={action} className="space-y-4">
@@ -181,9 +199,37 @@ export function PendingEditForm({
             id="paidAmount"
             name="paidAmount"
             inputMode="numeric"
-            defaultValue={pending.paidAmount || ""}
+            value={paidAmount}
+            onChange={(event) => setPaidAmount(event.target.value)}
           />
         </Field>
+
+        {/* Misma regla que en el alta, y escrita igual a propósito: el medio
+            solo existe si hay abono. Acá pesa más todavía, porque corregir el
+            abono a cero tiene que PODER limpiar el medio: desmontarlo deja de
+            mandarlo, el validador lo exige ausente y el UPDATE lo escribe en
+            null. Un pendiente viejo con abono y sin medio pide elegirlo recién
+            cuando alguien lo edita, que es cuando hay una persona mirando. */}
+        {parsedPaid !== null && parsedPaid > 0 ? (
+          <Field label="¿Cómo pagó?" htmlFor="paymentMethod">
+            <Select
+              id="paymentMethod"
+              name="paymentMethod"
+              value={paymentMethod}
+              onChange={(event) => setPaymentMethod(event.target.value)}
+              required
+            >
+              <option value="" disabled>
+                Elegí el medio…
+              </option>
+              {PAYMENT_METHODS.map((method) => (
+                <option key={method} value={method}>
+                  {paymentMethodLabel(method)}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        ) : null}
 
         <Field label="Nota (opcional)" htmlFor="note" className="sm:col-span-2">
           <Input

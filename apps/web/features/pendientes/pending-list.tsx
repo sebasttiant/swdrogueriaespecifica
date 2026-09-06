@@ -26,6 +26,7 @@ import {
 import { identityWarning } from "./identity-warning";
 import { pendingAnchorId } from "./pending-anchor";
 import { PRESENTATION_LABEL, presentationLabel } from "./presentation";
+import { paymentMethodLabel } from "./payment-method";
 import {
   derivePaymentState,
   remainingAmount,
@@ -283,6 +284,13 @@ export function PendingList({
                       : ` de ${formatCop(pending.totalAmount)}`}
                     {balance !== null && balance > 0
                       ? ` · saldo ${formatCop(balance)}`
+                      : ""}
+                    {/* Solo cuando se registró: los pendientes anteriores a la
+                        columna tienen abono sin medio, y escribir algo ahí
+                        —"efectivo", "sin dato"— afirmaría sobre plata real algo
+                        que nadie sabe. Se calla, que es lo único cierto. */}
+                    {pending.paymentMethod
+                      ? ` · ${paymentMethodLabel(pending.paymentMethod)}`
                       : ""}
                   </p>
                 )}
