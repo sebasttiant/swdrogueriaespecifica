@@ -77,23 +77,51 @@
   --color-secondary: #5cc489;
   --color-secondary-foreground: #06182a;
 
-  /* Superficies: navy profundo derivado de la marca, no gris neutro. */
-  --color-background: #0b1a2b;
-  --color-surface: #12263c;
-  --color-muted: #1c3450;
+  /* Superficies: navy profundo derivado de la marca, no gris neutro.
+
+     Los escalones son ANCHOS a propósito. En claro la jerarquía entre capas la
+     hacen las sombras; en oscuro las sombras no existen —una sombra negra sobre
+     un fondo casi negro no se ve—, así que la profundidad tiene que darla la
+     LUMINOSIDAD. Los valores anteriores dejaban fondo y tarjeta a 1.14:1, o sea
+     casi el mismo color: la pantalla se leía como una mancha plana y las
+     tarjetas no se despegaban. Ahora el salto es 1.33:1 en los dos escalones. */
+  --color-background: #08121f;
+  --color-surface: #172c47;
+  --color-muted: #26405e;
   --color-muted-foreground: #9db4cc;
 
-  --color-border: #24405c;
+  --color-border: #345272;
   --color-text: #e8f0f8;
 
   /* Más marcada que la superficie: sobre la tarjeta oscura una grilla al nivel
      de `muted` no se llega a ver. */
-  --color-chart-grid: #24405c;
+  --color-chart-grid: #345272;
 
-  /* danger y success NO cambian: ya contrastan contra el fondo oscuro y su
-     texto sigue siendo legible.
+  /* Estados. Acá vivía un comentario que afirmaba que danger y success "ya
+     contrastan contra el fondo oscuro". Era falso, y ahora está medido:
+     #dc2626 daba 3.18:1 sobre la tarjeta contra el 4.5:1 que WCAG AA exige para
+     texto normal, y 3.06:1 sobre su propio `bg-danger/10` —el pill de "Venció
+     hace 31 días"—. Se veía sucio porque estaba mal, en las 56 pantallas que
+     usan `text-danger`. La lección: una afirmación de contraste escrita a mano
+     no vale nada; `globals.test.ts` ahora la calcula.
 
-     `warning-foreground` SÍ cambia. El #3a2a00 es un marrón muy oscuro pensado
+     Y NO es que "el rojo sea feo": el MISMO #dc2626 se ve bien en los gráficos
+     de Reportes y sigue ahí intacto (`features/reportes/palette.ts`, sin token),
+     porque una barra es una mancha grande y le alcanza el umbral no textual de
+     3:1. El texto es trazo fino y necesita 4.5:1. Dos umbrales distintos con un
+     color justo en el medio: pasa como gráfico, falla como letra.
+
+     `warning` NO se toca: #f59e0b ya da 6.57:1 sobre la tarjeta nueva. Se
+     arregla lo que está roto, no el semáforo entero. */
+  --color-danger: #fb9494;
+  /* El botón destructivo es `bg-danger` con `text-danger-foreground` encima
+     (`button.tsx`). Sobre el rojo aclarado, el blanco heredado del modo claro
+     caería a 2.77:1, así que el foreground se oscurece. Es el mismo movimiento
+     que `primary-foreground` hace arriba, y por la misma razón. */
+  --color-danger-foreground: #06182a;
+  --color-success: #4ade80;
+
+  /* `warning-foreground` SÍ cambia. El #3a2a00 es un marrón muy oscuro pensado
      para leerse sobre ámbar claro; en oscuro, el fondo de esas insignias es
      `bg-warning/15` sobre navy, o sea un oliva oscuro, y el texto desaparecía.
      Se ve en los chips "Críticos" y "Próximas" de la barra de alertas. Todos
@@ -216,7 +244,14 @@ input[type="datetime-local"]::-webkit-datetime-edit {
   }
   /* El papel siempre es claro. Si el usuario está en modo oscuro, los tokens
      vuelven a sus valores claros SOLO para imprimir; de lo contrario saldría
-     texto claro sobre fondo blanco, es decir, una hoja casi en blanco. */
+     texto claro sobre fondo blanco, es decir, una hoja casi en blanco.
+
+     La regla, para que no se olvide otra vez: TODO token que el bloque oscuro
+     aclare tiene que restaurarse acá. Los estados aclarados son ilegibles sobre
+     papel —el rojo #fb9494 cae a 2.15:1 contra blanco, el verde #4ade80 a
+     1.74:1—, así que una hoja impresa desde modo oscuro saldría con las alertas
+     en pastel. `globals.test.ts` recorre los tokens y falla si alguno se aclara
+     sin restaurarse. */
   [data-theme="dark"] {
     color-scheme: light;
     --color-primary: #0b66c3;
@@ -228,6 +263,9 @@ input[type="datetime-local"]::-webkit-datetime-edit {
     --color-surface: #ffffff;
     --color-muted: #e6eef7;
     --color-muted-foreground: #54708c;
+    --color-danger: #dc2626;
+    --color-danger-foreground: #ffffff;
+    --color-success: #16a34a;
     --color-warning-foreground: #3a2a00;
     --color-border: #d4e0ee;
     --color-text: #0c2a47;
