@@ -24,7 +24,6 @@ vi.mock("@/server/actions/laboratory.actions", () => ({
 
 import {
   MAX_MISSING_REPORT_NAME_LENGTH,
-  MAX_MISSING_REPORT_PRESENTATION_LENGTH,
   MAX_MISSING_REPORT_SELLER_CODE_LENGTH,
 } from "./schema";
 import { MissingReportForm } from "./missing-report-form";
@@ -175,21 +174,25 @@ describe("MissingReportForm · open", () => {
 });
 
 // --------------------------------------------------------------------------
-// Presentación y laboratorio (opcionales).
+// Ausencia de presentación y laboratorio.
 //
-// El vendedor reporta desde el celular, de pie y con un cliente adelante. Estos
-// dos campos suman información útil para comprar, pero NO pueden costarle el
-// reporte: si estorban, el vendedor deja de reportar y el faltante no existe.
+// El dueño decidió que el reporte del vendedor NO pide estos dos campos: el
+// vendedor está en el mostrador con un cliente adelante, y son datos que
+// gerencia completa después desde el catálogo. Esta aserción es la que evita
+// que alguno de los dos vuelva a aparecer sin que nadie lo haya decidido.
 // --------------------------------------------------------------------------
-describe("MissingReportForm · presentación y laboratorio", () => {
-  it("ofrece los dos campos, rotulados como opcionales", () => {
-    const html = render({ defaultOpen: true });
+describe("MissingReportForm · sin presentación ni laboratorio", () => {
+  it("no ofrece presentación ni laboratorio, abierto o colapsado", () => {
+    const openHtml = render({ defaultOpen: true });
+    const collapsedHtml = render();
 
-    expect(html).toContain("Presentación (opcional)");
-    expect(html).toContain('name="presentation"');
-    expect(html).toContain("Laboratorio (opcional)");
-    expect(html).toContain('name="requestedLaboratoryId"');
-    expect(html).toContain('name="requestedLaboratoryName"');
+    for (const html of [openHtml, collapsedHtml]) {
+      expect(html).not.toContain("Presentación");
+      expect(html).not.toContain('name="presentation"');
+      expect(html).not.toContain("Laboratorio");
+      expect(html).not.toContain('name="requestedLaboratoryId"');
+      expect(html).not.toContain('name="requestedLaboratoryName"');
+    }
   });
 
   // Lo que protege el reporte rápido: sigue habiendo UN solo campo obligatorio.
@@ -197,43 +200,6 @@ describe("MissingReportForm · presentación y laboratorio", () => {
     const html = render({ defaultOpen: true });
 
     expect(countOccurrences(html, "required")).toBe(1);
-  });
-
-  it("acota la presentación al mismo largo que el schema", () => {
-    const html = render({ defaultOpen: true });
-
-    const field = html.slice(html.indexOf("Presentación (opcional)"));
-    expect(field.slice(0, field.indexOf('name="presentation"'))).toContain(
-      `maxLength="${MAX_MISSING_REPORT_PRESENTATION_LENGTH}"`,
-    );
-  });
-
-  // El ORDEN es la decisión, no un accidente: nombre, después lo que describe
-  // al mismo producto, y el código del vendedor al final porque no habla del
-  // producto sino de quién reporta.
-  it("pone los dos campos entre el nombre y el código del vendedor", () => {
-    const html = render({ defaultOpen: true });
-
-    const posiciones = [
-      "Nombre del producto",
-      "Presentación (opcional)",
-      "Laboratorio (opcional)",
-      "Código del vendedor (opcional)",
-    ].map((rotulo) => html.indexOf(rotulo));
-
-    expect(posiciones).toEqual([...posiciones].sort((a, b) => a - b));
-    expect(posiciones.every((posicion) => posicion >= 0)).toBe(true);
-  });
-
-  // Colapsado no monta NADA: ni los campos nuevos ni el selector, que además
-  // consulta a la red. Si se montara igual, cada visita a Faltantes pagaría un
-  // componente que nadie abrió.
-  it("no monta los campos nuevos mientras está colapsado", () => {
-    const html = render();
-
-    expect(html).not.toContain("Presentación (opcional)");
-    expect(html).not.toContain("Laboratorio (opcional)");
-    expect(html).not.toContain('name="requestedLaboratoryId"');
   });
 });
 

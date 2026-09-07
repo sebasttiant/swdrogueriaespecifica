@@ -257,14 +257,17 @@ export async function updateProductIfVersionMatches(
  * El producto provisional de un reporte de faltante.
  *
  * `update: {}` NO es un descuido: si el producto ya existe, este camino no le
- * toca NADA. La presentación que informa un vendedor solo se usa al CREARLO.
- * Pisar la del catálogo desde una pantalla de captura sería dejar que un
- * reporte rápido reescriba información compartida —y `presentation.ts` es
- * explícito en que ninguna pantalla que no sea de captura la edita—.
+ * toca NADA.
+ *
+ * Nace SIN presentación (`MANUAL_UNIT_FALLBACK`, que `presentation.ts` sabe
+ * leer como "sin presentación"): el reporte del vendedor solo pide el nombre,
+ * así que no hay dato de presentación que capturar acá. Quien conozca la
+ * presentación la carga después desde el catálogo, igual que cualquier otro
+ * dato de un producto marcado `needsReview`.
  */
 export async function upsertProvisionalProduct(
   client: Prisma.TransactionClient,
-  data: { normalizedName: string; displayName: string; presentation?: string },
+  data: { normalizedName: string; displayName: string },
 ): Promise<Product> {
   return client.product.upsert({
     where: { provisionalNormalizedName: data.normalizedName },
@@ -272,9 +275,7 @@ export async function upsertProvisionalProduct(
     create: {
       code: `PROV-${data.normalizedName}`,
       name: data.displayName.trim(),
-      // Sin presentación informada cae en el mismo valor de siempre, que
-      // `presentation.ts` ya sabe leer como "sin presentación".
-      unit: data.presentation ?? MANUAL_UNIT_FALLBACK,
+      unit: MANUAL_UNIT_FALLBACK,
       minStock: 0,
       reorderQty: 0,
       needsReview: true,
