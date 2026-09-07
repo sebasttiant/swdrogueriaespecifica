@@ -27,6 +27,7 @@ import {
   countConfirmedMissingItems,
   countOpenMissingItems,
   countOrderedMissingItems,
+  countMissingItemsCreatedSince,
   countOverdueMissingItems,
   countUnclosedActionableMissingItemsBefore,
   createMissingItem,
@@ -546,6 +547,55 @@ describe("countUnclosedActionableMissingItemsBefore", () => {
     expect(where.status.in).not.toContain("EN_BODEGA");
     expect(where.status.in).not.toContain("RECIBIDO");
     expect(where.status.in).not.toContain("CANCELADO");
+  });
+
+  // El aviso de gerencia enlaza a Revisión de faltantes, que es una pantalla de
+  // ESTANTERIA. Sin este eje el contador sumaba tambien los pedidos de cliente
+  // y prometia un numero que esa pantalla no podia mostrar.
+  it("acota a estanteria cuando se le pasa el origen", async () => {
+    await countUnclosedActionableMissingItemsBefore(threshold, "shelf");
+
+    expect(prismaMock.missingItem.count).toHaveBeenCalledWith({
+      where: {
+        confirmedAt: null,
+        status: { in: ["FALTANTE"] },
+        createdAt: { lt: threshold },
+        originId: null,
+      },
+    });
+  });
+
+  it("sin origen sigue contando todo, para no cambiar a quien ya lo llama", async () => {
+    await countUnclosedActionableMissingItemsBefore(threshold);
+
+    const where = prismaMock.missingItem.count.mock.calls[0]![0].where;
+    expect(where).not.toHaveProperty("originId");
+  });
+});
+
+// Mismo eje para el contador del dia: las dos condiciones del aviso de gerencia
+// tienen que hablar de la misma pantalla, o el aviso se enciende por una razon
+// y manda a un lugar donde esa razon no se ve.
+describe("countMissingItemsCreatedSince", () => {
+  const since = new Date("2026-09-06T05:00:00.000Z");
+
+  it("sin origen cuenta todos los faltantes del periodo", async () => {
+    prismaMock.missingItem.count.mockResolvedValue(7);
+
+    const result = await countMissingItemsCreatedSince(since);
+
+    expect(result).toBe(7);
+    expect(prismaMock.missingItem.count).toHaveBeenCalledWith({
+      where: { createdAt: { gte: since } },
+    });
+  });
+
+  it("acota a estanteria cuando se le pasa el origen", async () => {
+    await countMissingItemsCreatedSince(since, "shelf");
+
+    expect(prismaMock.missingItem.count).toHaveBeenCalledWith({
+      where: { createdAt: { gte: since }, originId: null },
+    });
   });
 });
 

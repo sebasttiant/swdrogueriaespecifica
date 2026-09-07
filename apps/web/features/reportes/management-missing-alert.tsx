@@ -2,6 +2,7 @@ import Link from "next/link";
 import { AlertTriangle } from "lucide-react";
 
 import { Alert } from "@/app/_components/ui/alert";
+import { MISSING_QUEUE_PATH } from "@/features/faltantes/missing-scope";
 import { isAdminRole } from "@/lib/auth/permissions";
 import type { SessionRole } from "@/lib/auth/session";
 import {
@@ -58,7 +59,17 @@ export async function ManagementMissingAlert({
               {alert.exceedsDailyThreshold ? (
                 <>Hoy se generaron {alert.createdToday} faltantes. </>
               ) : null}
-              <Link prefetch={false} href="/faltantes" className="font-semibold underline">
+              {/* A la cola de REVISIÓN, no a `/faltantes`.
+                  Esa es la pantalla de captura —arranca con "Reportar faltante"
+                  y "Nuevo faltante"— y quien toca este aviso viene a cerrar los
+                  que ya existen, no a cargar otro. La ruta sale de la constante
+                  del tablero para que el aviso no pueda quedar apuntando a una
+                  dirección que la pantalla ya no usa. */}
+              <Link
+                prefetch={false}
+                href={MISSING_QUEUE_PATH}
+                className="font-semibold underline"
+              >
                 Revisar faltantes
               </Link>
             </p>

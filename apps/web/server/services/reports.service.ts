@@ -21,6 +21,7 @@ import {
   groupPendingsByStatusSince,
   listPendingCreatedAtSince,
 } from "@/server/repositories/pending.repository";
+import type { MissingItemOrigin } from "@/server/repositories/missing-item.repository";
 import {
   countAllMissingItems,
   countMissingItemsCreatedSince,
@@ -34,6 +35,9 @@ import {
 export const DAILY_MISSING_ALERT_THRESHOLD = 10;
 // Antigüedad (horas) desde la que un faltante abierto cuenta como "sin cerrar".
 export const UNCLOSED_MISSING_ALERT_HOURS = 8;
+// De qué faltantes habla el aviso de gerencia. Es el MISMO eje que filtra
+// Revisión de faltantes, la pantalla que el aviso enlaza.
+const ALERT_ORIGIN: MissingItemOrigin = "shelf";
 const MS_PER_HOUR = 60 * 60 * 1000;
 
 export type ReportsSummary = {
@@ -93,9 +97,13 @@ export async function getManagementMissingAlert(
     now.getTime() - UNCLOSED_MISSING_ALERT_HOURS * MS_PER_HOUR,
   );
 
+  // Las DOS condiciones se acotan a estantería, no solo una: el aviso enlaza a
+  // Revisión de faltantes y tiene que encenderse por algo que ahí se vea. Con el
+  // conteo del día global, "hoy se generaron 15" podía dispararlo por pedidos de
+  // cliente y mandar a una pantalla donde no hay ninguno.
   const [createdToday, unclosedOverThreshold] = await Promise.all([
-    countMissingItemsCreatedSince(startOfDay),
-    countUnclosedActionableMissingItemsBefore(staleThreshold),
+    countMissingItemsCreatedSince(startOfDay, ALERT_ORIGIN),
+    countUnclosedActionableMissingItemsBefore(staleThreshold, ALERT_ORIGIN),
   ]);
 
   const exceedsDailyThreshold = createdToday > DAILY_MISSING_ALERT_THRESHOLD;

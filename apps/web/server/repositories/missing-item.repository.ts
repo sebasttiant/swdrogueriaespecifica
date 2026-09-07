@@ -477,8 +477,17 @@ export function countConfirmedMissingItems(
 }
 
 // Faltantes creados desde `since` (para el conteo "del día").
-export function countMissingItemsCreatedSince(since: Date): Promise<number> {
-  return prisma.missingItem.count({ where: { createdAt: { gte: since } } });
+//
+// El eje de origen es OPCIONAL y por defecto no restringe: la reportería cuenta
+// todo, y el aviso de gerencia acota a estantería porque enlaza a una pantalla
+// que solo muestra eso.
+export function countMissingItemsCreatedSince(
+  since: Date,
+  origin?: MissingItemOrigin,
+): Promise<number> {
+  return prisma.missingItem.count({
+    where: { createdAt: { gte: since }, ...(whereForOrigin(origin) ?? {}) },
+  });
 }
 
 // Reportería: distribución por estado de los faltantes creados desde `since`.
@@ -511,14 +520,22 @@ export async function listMissingItemCreatedAtSince(since: Date): Promise<Date[]
 // solo lo que requiere trabajo de gestión. Los ya pedidos (PEDIDO) siguen su
 // curso hacia la llegada de la mercadería y no deben inflar este número —regla
 // de la reunión 2026-08-14: "cuando le dan 'ya lo pedí', sale de la alerta".
+//
+// El eje de origen es OPCIONAL. El aviso de gerencia pasa `"shelf"` porque
+// enlaza a Revisión de faltantes, que muestra SOLO estantería: sin acotarlo, el
+// número incluía además los pedidos de cliente y prometía un trabajo que esa
+// pantalla no podía mostrar. El contador y la pantalla que abre tienen que
+// contar lo mismo.
 export function countUnclosedActionableMissingItemsBefore(
   threshold: Date,
+  origin?: MissingItemOrigin,
 ): Promise<number> {
   return prisma.missingItem.count({
     where: {
       confirmedAt: null,
       status: { in: ACTIONABLE_STATUSES },
       createdAt: { lt: threshold },
+      ...(whereForOrigin(origin) ?? {}),
     },
   });
 }
