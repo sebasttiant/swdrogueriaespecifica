@@ -736,6 +736,29 @@ export async function deliverPending(
       throw new PendingConcurrentModificationError(current.id);
     }
     await tx.pending.update({ where: { id: current.id }, data: { customerStatus: status === "ENTREGADO" ? "ENTREGADO" : "FACTURADO" } });
+
+    // ENTREGAR TAMBIÉN CIERRA EL RIEL, igual que cancelar.
+    //
+    // El pedido y su `MissingItem` son dos filas que mueren por caminos
+    // distintos. `cancelPendingCommitment` y el cierre parcial ya cancelaban el
+    // riel en su misma transacción; la entrega no, y ese hueco dejaba faltantes
+    // abiertos para siempre: al 2026-09-07, 13 de los 16 que contaba el chip de
+    // abastecimiento colgaban de pedidos ya ENTREGADOS.
+    //
+    // No es solo un número feo. Esos rieles siguen siendo candidatos del cierre
+    // FIFO (`registerInventoryEntry` los busca por producto y antigüedad), así
+    // que la próxima entrada de ese producto le reserva stock a un pedido que ya
+    // se entregó: mercadería que está en el estante y nadie puede vender.
+    //
+    // Solo en la transición a ENTREGADO. Una entrega PARCIAL deja al cliente
+    // esperando el resto, y ahí el riel es exactamente lo que hay que conservar.
+    if (status === "ENTREGADO") {
+      await tx.missingItem.updateMany({
+        where: { originId: current.id, status: { in: ["FALTANTE", "PEDIDO", "EN_BODEGA"] } },
+        data: { status: "CANCELADO" },
+      });
+    }
+
     return {
       pending: { id: current.id, status, deliveredQuantity, completedAt },
       rejection: null,
