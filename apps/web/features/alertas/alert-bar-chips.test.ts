@@ -142,3 +142,26 @@ describe("destino de los chips de entrega y faltantes", () => {
     expect(html).not.toContain("/revision-faltantes");
   });
 });
+
+// --------------------------------------------------------------------------
+// CÓMO SE LLAMA EL CHIP.
+//
+// "Faltantes críticos" mandaba a la pantalla equivocada con solo leerlo: en
+// este sistema un "faltante" es de ESTANTERÍA y se resuelve en
+// `/revision-faltantes`. Este contador cuenta lo contrario —productos que un
+// CLIENTE encargó y todavía no se consiguieron—, y por eso abre Abastecimiento.
+// El nombre y el destino tienen que contar la misma historia.
+// --------------------------------------------------------------------------
+describe("nombre del chip de abastecimiento", () => {
+  it("se llama Pedidos sin conseguir", async () => {
+    const html = await pintar({ criticalMissing: 18 });
+
+    expect(html).toContain("Pedidos sin conseguir");
+  });
+
+  it("ya no dice faltantes, que es el vocabulario de la otra cola", async () => {
+    const html = await pintar({ criticalMissing: 18 });
+
+    expect(html).not.toContain("Faltantes críticos");
+  });
+});

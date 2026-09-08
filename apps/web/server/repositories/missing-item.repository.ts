@@ -11,6 +11,10 @@ import {
   encodeCursor,
   type Paginated,
 } from "@/lib/pagination";
+import {
+  alertablePendingWhere,
+  openPendingWhere,
+} from "@/server/repositories/pending.repository";
 import type {
   MissingItemStatus,
   PendingStatus,
@@ -566,13 +570,36 @@ export function countOverdueMissingItems(now: Date = new Date()): Promise<number
  * Una sola definición porque la comparten tres consumidores que tienen que
  * coincidir o la pantalla miente:
  *
- *   - `countOverdueMissingItems`  el número del chip "Faltantes críticos"
+ *   - `countOverdueMissingItems`  el número del chip "Pedidos sin conseguir"
  *   - `listPendingReception`      las filas de Abastecimiento
  *   - `countPendingReception`     el contador de esa pestaña
  *
  * `originId: { not: null }` es lo que separa esto de la reposición de
  * estantería, que se recibe por su propio camino y NO puede vencer: no le
  * prometió nada a nadie.
+ *
+ * DOS ESTADOS, NO UNO. El riel puede seguir abierto mientras el pedido que lo
+ * originó ya murió: `deliverPending` no lo toca, así que un pedido entregado
+ * con mercadería que entró por otro lado deja su faltante abierto para siempre.
+ * Sin mirar el pedido, esa fila se cuenta como trabajo urgente durante meses.
+ *
+ * (Cancelar y cerrar parcial no hacían falta: las dos transiciones ya cancelan
+ * el riel en la misma transacción. Ver `cancelPendingCommitment`.)
+ *
+ * LA VENTANA DE VENCIDOS NO ES SOLO UNA FECHA: es el modo ALERTA, y por eso
+ * cambia también qué pedidos admite.
+ *
+ *   sin ventana → `openPendingWhere`: la cola de bodega. Un pedido AGOTADO
+ *                 sigue acá a propósito. Que gerencia lo dé por perdido no
+ *                 puede cerrarle la puerta a quien recibe la caja si aparece
+ *                 igual —ese fue el defecto original de esta cola, y hay un
+ *                 test que lo blinda: `pending-reception-independence`—.
+ *
+ *   con ventana → `alertablePendingWhere`: lo que pinta el chip rojo. Ahí el
+ *                 agotado SÍ sale: gritar por algo que ya se dio por perdido
+ *                 entrena a la gente a ignorar el rojo. Es la misma condición
+ *                 que decide el chip "Atrasadas", y eso es a propósito: dos
+ *                 chips rojos no pueden discrepar sobre qué pedido sigue vivo.
  */
 export function clientOrderMissingWhere(params?: {
   overdueOnly?: boolean;
@@ -583,7 +610,9 @@ export function clientOrderMissingWhere(params?: {
     status: { in: OPEN_STATUSES },
     confirmedAt: null,
     originId: { not: null },
-    ...(params?.overdueOnly ? { origin: { promisedAt: { lt: now } } } : {}),
+    origin: params?.overdueOnly
+      ? { ...alertablePendingWhere(), promisedAt: { lt: now } }
+      : openPendingWhere(),
   };
 }
 

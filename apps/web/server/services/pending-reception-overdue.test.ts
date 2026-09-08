@@ -10,6 +10,10 @@ import {
   clientOrderMissingWhere,
   countOverdueMissingItems,
 } from "@/server/repositories/missing-item.repository";
+import {
+  alertablePendingWhere,
+  openPendingWhere,
+} from "@/server/repositories/pending.repository";
 
 import { countPendingReception, listPendingReception } from "./pending-reception.service";
 
@@ -22,8 +26,8 @@ beforeEach(() => {
 });
 
 // --------------------------------------------------------------------------
-// El chip "Faltantes críticos" abre Abastecimiento, y tiene que encontrar ahí
-// exactamente los que contó.
+// El chip "Pedidos sin conseguir" abre Abastecimiento, y tiene que encontrar
+// ahí exactamente los que contó.
 //
 // Ese contador filtra `originId: { not: null }` — faltantes nacidos de un
 // PEDIDO DE CLIENTE. Por eso el chip NO puede ir a /revision-faltantes, que
@@ -49,7 +53,59 @@ describe("clientOrderMissingWhere", () => {
   // Sin la ventana no hay filtro de fecha: la pestaña completa sigue mostrando
   // toda la cola, como siempre.
   it("sin la ventana no compara contra el reloj", () => {
-    expect(clientOrderMissingWhere({ now: NOW }).origin).toBeUndefined();
+    const origin = clientOrderMissingWhere({ now: NOW }).origin as Record<string, unknown>;
+
+    expect(origin.promisedAt).toBeUndefined();
+  });
+
+  // ----------------------------------------------------------------------
+  // EL ESTADO DEL PEDIDO ORIGEN TAMBIÉN FILTRA, con ventana y sin ventana.
+  //
+  // El riel puede seguir abierto cuando el pedido que lo originó ya murió:
+  // `deliverPending` no lo toca, y AGOTADO no cancela nada. Sin esta condición
+  // el chip contaba trabajo que ya no existe.
+  // ----------------------------------------------------------------------
+  // Los tres terminales quedan afuera de las dos formas. Cada rama lo dice a su
+  // manera —la cola nombra lo que excluye, la alerta nombra lo que admite— y
+  // por eso se afirma sobre la lista, no sobre el texto.
+  const TERMINALES = ["ENTREGADO", "CANCELADO", "CLOSED_PARTIAL"];
+
+  it("la cola excluye exactamente los tres terminales", () => {
+    const origin = clientOrderMissingWhere({ now: NOW }).origin as {
+      status: { notIn: string[] };
+    };
+
+    expect(origin.status.notIn).toEqual(TERMINALES);
+  });
+
+  it("la alerta admite solo estados vivos", () => {
+    const origin = clientOrderMissingWhere({ overdueOnly: true, now: NOW }).origin as {
+      status: { in: string[] };
+    };
+
+    for (const terminal of TERMINALES) {
+      expect(origin.status.in).not.toContain(terminal);
+    }
+  });
+
+  // ----------------------------------------------------------------------
+  // LA VENTANA NO ES SOLO UNA FECHA: es el modo alerta, y cambia qué admite.
+  //
+  // El agotado sale del chip rojo —gritar por algo dado por perdido entrena a
+  // ignorar el rojo— pero NO de la cola de bodega: si la caja aparece igual,
+  // quien la recibe tiene que poder verla. Ver `pending-reception-independence`.
+  // ----------------------------------------------------------------------
+  it("el chip usa la MISMA condición que las alertas de entrega", () => {
+    const origin = clientOrderMissingWhere({ overdueOnly: true, now: NOW }).origin;
+
+    expect(origin).toEqual({ ...alertablePendingWhere(), promisedAt: { lt: NOW } });
+  });
+
+  it("la cola de bodega NO mira el estado de compra", () => {
+    const origin = clientOrderMissingWhere({ now: NOW }).origin;
+
+    expect(origin).toEqual(openPendingWhere());
+    expect((origin as Record<string, unknown>).purchaseStatus).toBeUndefined();
   });
 });
 
@@ -66,7 +122,7 @@ describe("listPendingReception", () => {
     await listPendingReception();
 
     const where = prismaMock.missingItem.findMany.mock.calls[0]![0].where;
-    expect(where.origin).toBeUndefined();
+    expect(where.origin.promisedAt).toBeUndefined();
     expect(where.originId).toEqual({ not: null });
   });
 
