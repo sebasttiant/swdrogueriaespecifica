@@ -7,6 +7,7 @@ const { prismaMock } = vi.hoisted(() => ({
 vi.mock("@/lib/db/prisma", () => ({ prisma: prismaMock }));
 
 import {
+  alertablePendingWhere,
   countOverduePendings,
   countUpcomingPendings,
   deadlineWhere,
@@ -62,6 +63,36 @@ describe("deadlineWhere", () => {
   it("próximas cubre exactamente 24 h", () => {
     const w = deadlineWhere("proximas", NOW).promisedAt as { gte: Date; lte: Date };
     expect(w.lte.getTime() - w.gte.getTime()).toBe(24 * 60 * 60 * 1000);
+  });
+
+  // ----------------------------------------------------------------------
+  // EL AGOTADO VIVE EN DOS COLUMNAS, y filtrar solo por una no lo excluía.
+  //
+  // Hasta la migración 20260730230000 el estado de gestión se escribía en
+  // `status`; desde entonces `updatePendingManagementStatus` escribe SOLO
+  // `purchaseStatus`. La lista de estados alertables seguía mirando la columna
+  // vieja, así que todo pendiente marcado agotado después de esa migración
+  // seguía contando como atrasado. La exclusión estaba escrita y no tenía
+  // efecto.
+  // ----------------------------------------------------------------------
+  it.each(["atrasadas", "proximas"] as const)(
+    "%s excluye el agotado por las DOS columnas",
+    (window) => {
+      const where = deadlineWhere(window, NOW);
+
+      expect(where.status).toEqual({
+        in: ["PENDIENTE", "PARCIAL", "SOLICITADO", "BUSQUEDA", "COTIZANDO"],
+      });
+      expect(where.purchaseStatus).toEqual({ not: "AGOTADO" });
+    },
+  );
+
+  it("la condición sale de la definición compartida, no de una copia", () => {
+    const where = deadlineWhere("atrasadas", NOW);
+    const shared = alertablePendingWhere();
+
+    expect(where.status).toEqual(shared.status);
+    expect(where.purchaseStatus).toEqual(shared.purchaseStatus);
   });
 });
 

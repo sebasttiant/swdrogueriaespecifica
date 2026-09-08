@@ -97,16 +97,19 @@ function buildAlertChips(counts: AlertCounts): AlertChip[] {
       count: counts.upcomingDeliveries,
       href: pendingDeadlineHref("proximas"),
     },
-    // A ABASTECIMIENTO, no a `/faltantes` ni a `/revision-faltantes`.
+    // NO SE LLAMA "Faltantes críticos", y el nombre viejo no era un detalle: en
+    // el vocabulario del sistema un "faltante" es de ESTANTERÍA —lo que se
+    // repone— y se resuelve en `/revision-faltantes`. Este contador cuenta lo
+    // contrario: productos que un CLIENTE encargó, con fecha prometida ya
+    // vencida, y que todavía no se consiguieron. El nombre mandaba a buscarlos
+    // a la pantalla equivocada.
     //
-    // `/faltantes` es la pantalla de reportar uno nuevo. Y `/revision-faltantes`
-    // —que parecería la correcta— filtra `origin: "shelf"`, mientras que este
-    // contador cuenta `originId: { not: null }`: faltantes nacidos de un PEDIDO
-    // DE CLIENTE. Son conjuntos disjuntos, así que ahí la lista saldría vacía.
-    // Ver `supplyOverdueHref`.
+    // Por eso mismo va a ABASTECIMIENTO y no a `/faltantes` (la pantalla de
+    // reportar uno nuevo) ni a `/revision-faltantes` (que filtra
+    // `origin: "shelf"`, el conjunto disjunto de este). Ver `supplyOverdueHref`.
     {
       severity: ALERT_SEVERITY.DANGER,
-      label: "Faltantes críticos",
+      label: "Pedidos sin conseguir",
       count: counts.criticalMissing,
       href: supplyOverdueHref(),
     },

@@ -23,9 +23,6 @@ import { clientOrderMissingWhere } from "@/server/repositories/missing-item.repo
 // payload.
 // --------------------------------------------------------------------------
 
-/** Estados en los que un pendiente todavía espera existencia física. */
-const OPEN_STATUSES = ["FALTANTE", "PEDIDO", "EN_BODEGA"] as const;
-
 export type PendingReceptionItem = {
   /** El `MissingItem` que actúa de riel. Es el id con el que se opera. */
   id: string;
@@ -64,7 +61,7 @@ const PAGE_SIZE = 50;
  */
 export async function listPendingReception(params?: {
   // Solo los que ya se pasaron de la fecha prometida. Lo escribe el chip
-  // "Faltantes críticos" de la barra de alertas, que cuenta exactamente eso.
+  // "Pedidos sin conseguir" de la barra de alertas, que cuenta exactamente eso.
   overdueOnly?: boolean;
   now?: Date;
 }): Promise<PendingReceptionItem[]> {

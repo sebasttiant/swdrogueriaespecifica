@@ -216,6 +216,12 @@ function axisWhere(
     // propio `status`, y derramarlo PISARÍA en silencio el del scope. Dentro de
     // `AND` las dos condiciones tienen que cumplirse, que es lo correcto —y como
     // ALERT_STATUSES ⊂ OPEN_STATUSES, el resultado es el subconjunto alertable—.
+    //
+    // Consecuencia buscada: el eje de entrega significa "atrasada Y todavía
+    // accionable", así que combinarlo con `purchase: "AGOTADO"` da vacío. Es lo
+    // mismo que cuenta el chip, y que el chip y la lista digan lo mismo importa
+    // más que ofrecer un cruce que nadie pide: para ver los agotados está su
+    // propio eje, solo.
     ...(axes.deadline ? { AND: [deadlineWhere(axes.deadline, now)] } : {}),
   };
 }
@@ -362,6 +368,8 @@ const HISTORY_STATUSES: PendingStatus[] = ["ENTREGADO", "CANCELADO", "CLOSED_PAR
 // pendiente marcado agotado ya no tiene acción de gestión pendiente —el
 // vendedor lo rechaza por el flujo normal—, así que mantenerlo en la alerta
 // roja solo entrena a la gente a ignorarla.
+//
+// No alcanza SOLO con esta lista: ver `alertablePendingWhere`.
 const ALERT_STATUSES: PendingStatus[] = [
   "PENDIENTE",
   "PARCIAL",
@@ -369,6 +377,57 @@ const ALERT_STATUSES: PendingStatus[] = [
   "BUSQUEDA",
   "COTIZANDO",
 ];
+
+// --------------------------------------------------------------------------
+// DOS PREGUNTAS PARECIDAS QUE NO SON LA MISMA. Separadas a propósito.
+//
+//   `openPendingWhere`       ¿el pedido sigue vivo?   → COLAS DE TRABAJO
+//   `alertablePendingWhere`  ¿hay que gritar por él?  → CHIPS ROJOS
+//
+// La diferencia es el agotado, y tiene dueño: gerencia lo marca cuando decide
+// que no se consigue. Eso apaga la ALARMA —seguir en rojo por algo que ya se
+// dio por perdido entrena a ignorar el rojo— pero NO le cierra la puerta a
+// bodega: si la caja aparece igual, tiene que poder recibirla. Ese fue el
+// defecto original de la cola de abastecimiento y hay un test que lo blinda
+// (`pending-reception-independence`: "purchaseStatus informa, NUNCA bloquea").
+//
+// Y el agotado vive en DOS columnas, que es lo que rompía la exclusión:
+//
+//   `status`          el ciclo de vida: abierto, entregado, cancelado, cerrado
+//                     parcial. `AGOTADO` quedó ahí como LEGADO —hasta la
+//                     migración 20260730230000 el estado de gestión vivía en
+//                     esta columna, y el backfill copió sin limpiar—.
+//
+//   `purchaseStatus`  donde gerencia lo marca HOY.
+//                     `updatePendingManagementStatus` escribe SOLO esta
+//                     columna: ningún camino vivo vuelve a poner `AGOTADO` en
+//                     `status`.
+//
+// Mirar una sola columna dejaba pasar todos los agotados posteriores a esa
+// migración: la exclusión estaba escrita en el código y no tenía ningún efecto
+// sobre los datos nuevos.
+// --------------------------------------------------------------------------
+
+/**
+ * El pedido sigue vivo: no se entregó, no se canceló, no se cerró parcial.
+ *
+ * NO mira `purchaseStatus` a propósito (ver arriba). Es la condición de las
+ * colas de trabajo, donde el agotado sigue siendo visible.
+ */
+export function openPendingWhere(): Prisma.PendingWhereInput {
+  return { status: { notIn: HISTORY_STATUSES } };
+}
+
+/**
+ * El pedido puede entrar a una alerta roja: sigue vivo Y no se dio por perdido.
+ * Es `openPendingWhere` más la exclusión del agotado, por las dos columnas.
+ */
+export function alertablePendingWhere(): Prisma.PendingWhereInput {
+  return {
+    status: { in: ALERT_STATUSES },
+    purchaseStatus: { not: "AGOTADO" },
+  };
+}
 
 export function countOpenPendings(ownerId?: string): Promise<number> {
   return prisma.pending.count({ where: { status: { in: OPEN_STATUSES }, ...(ownerId ? { createdById: ownerId } : {}) } });
@@ -413,10 +472,10 @@ const MS_24H = 24 * 60 * 60 * 1000;
  * divergen al primer cambio, y ahí el chip dice 4 y la pantalla muestra 6 —que
  * es exactamente el defecto que estos enlaces vienen a arreglar—.
  *
- * `ALERT_STATUSES` excluye AGOTADO (ver la nota en su definición): un pendiente
- * agotado ya no tiene acción de gestión, y dejarlo en rojo entrena a ignorar el
- * rojo. Las dos ventanas son DISJUNTAS por construcción: atrasada usa `lt: now`
- * y próxima `gte: now`.
+ * El agotado queda afuera por `alertablePendingWhere` (ver la nota en su
+ * definición): un pendiente agotado ya no tiene acción de gestión, y dejarlo en
+ * rojo entrena a ignorar el rojo. Las dos ventanas son DISJUNTAS por
+ * construcción: atrasada usa `lt: now` y próxima `gte: now`.
  */
 export type PendingDeadlineWindow = "atrasadas" | "proximas";
 
@@ -426,7 +485,7 @@ export function deadlineWhere(
   ownerId?: string,
 ): Prisma.PendingWhereInput {
   return {
-    status: { in: ALERT_STATUSES },
+    ...alertablePendingWhere(),
     promisedAt:
       window === "atrasadas"
         ? { lt: now }
@@ -444,10 +503,11 @@ export function countUpcomingPendings(now: Date = new Date(), ownerId?: string):
 }
 
 // Pendientes más urgentes: los que vencen antes, primero. Alertables (sin
-// AGOTADO), como el resto de las señales de urgencia.
+// agotados), como el resto de las señales de urgencia: ver
+// `alertablePendingWhere`.
 export function listUrgentPendings(take: number, ownerId?: string): Promise<PendingListItem[]> {
   return prisma.pending.findMany({
-    where: { status: { in: ALERT_STATUSES }, ...(ownerId ? { createdById: ownerId } : {}) },
+    where: { ...alertablePendingWhere(), ...(ownerId ? { createdById: ownerId } : {}) },
     take,
     orderBy: [{ promisedAt: "asc" }, { id: "asc" }],
     select: LIST_SELECT,

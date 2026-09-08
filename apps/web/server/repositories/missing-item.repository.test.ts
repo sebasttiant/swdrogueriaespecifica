@@ -471,7 +471,16 @@ describe("countOverdueMissingItems", () => {
         status: { in: ["FALTANTE", "PEDIDO"] },
         confirmedAt: null,
         originId: { not: null },
-        origin: { promisedAt: { lt: now } },
+        // El estado del PEDIDO también filtra: un riel abierto colgando de un
+        // pedido entregado o agotado es trabajo fantasma, y en rojo entrena a
+        // ignorar el rojo. Ver `alertablePendingWhere`.
+        origin: {
+          status: {
+            in: ["PENDIENTE", "PARCIAL", "SOLICITADO", "BUSQUEDA", "COTIZANDO"],
+          },
+          purchaseStatus: { not: "AGOTADO" },
+          promisedAt: { lt: now },
+        },
       },
     });
   });
