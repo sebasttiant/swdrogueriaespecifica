@@ -24,6 +24,7 @@ import { encodeCursor } from "@/lib/pagination";
 import {
   confirmMissingItem,
   countActionableMissingItems,
+  missingQueueWhere,
   countConfirmedMissingItems,
   countOpenMissingItems,
   countOrderedMissingItems,
@@ -538,24 +539,21 @@ describe("countUnclosedActionableMissingItemsBefore", () => {
     const result = await countUnclosedActionableMissingItemsBefore(threshold);
 
     expect(result).toBe(5);
+    // La MISMA definición que consulta la lista que el aviso abre, no una
+    // copia parecida: ahí estaba el defecto.
     expect(prismaMock.missingItem.count).toHaveBeenCalledWith({
-      where: {
-        confirmedAt: null,
-        status: { in: ["FALTANTE"] },
-        createdAt: { lt: threshold },
-      },
+      where: missingQueueWhere("actionable", "all", threshold),
     });
   });
 
   it("excluye los ya pedidos (PEDIDO) para no inflar la alerta", async () => {
     await countUnclosedActionableMissingItemsBefore(threshold);
 
-    const where = prismaMock.missingItem.count.mock.calls[0]![0].where;
-    expect(where.status.in).toEqual(["FALTANTE"]);
-    expect(where.status.in).not.toContain("PEDIDO");
-    expect(where.status.in).not.toContain("EN_BODEGA");
-    expect(where.status.in).not.toContain("RECIBIDO");
-    expect(where.status.in).not.toContain("CANCELADO");
+    const where = JSON.stringify(prismaMock.missingItem.count.mock.calls[0]![0].where);
+    expect(where).toContain("FALTANTE");
+    for (const cerrado of ["PEDIDO", "EN_BODEGA", "RECIBIDO", "CANCELADO"]) {
+      expect(where).not.toContain(cerrado);
+    }
   });
 
   // El aviso de gerencia enlaza a Revisión de faltantes, que es una pantalla de
@@ -564,21 +562,16 @@ describe("countUnclosedActionableMissingItemsBefore", () => {
   it("acota a estanteria cuando se le pasa el origen", async () => {
     await countUnclosedActionableMissingItemsBefore(threshold, "shelf");
 
-    expect(prismaMock.missingItem.count).toHaveBeenCalledWith({
-      where: {
-        confirmedAt: null,
-        status: { in: ["FALTANTE"] },
-        createdAt: { lt: threshold },
-        originId: null,
-      },
-    });
+    const { where } = prismaMock.missingItem.count.mock.calls[0]![0];
+    expect(originOf(where)).toBe(null);
+    expect(where).toEqual(missingQueueWhere("actionable", "shelf", threshold));
   });
 
   it("sin origen sigue contando todo, para no cambiar a quien ya lo llama", async () => {
     await countUnclosedActionableMissingItemsBefore(threshold);
 
     const where = prismaMock.missingItem.count.mock.calls[0]![0].where;
-    expect(where).not.toHaveProperty("originId");
+    expect(originOf(where)).toBeUndefined();
   });
 });
 
@@ -662,6 +655,35 @@ describe("createMissingItem", () => {
 // Se prueba el WHERE que sale hacia PostgreSQL, no el resultado: es la
 // traducción de la regla de negocio a la consulta lo que puede romperse.
 // --------------------------------------------------------------------------
+
+// --------------------------------------------------------------------------
+// El eje de origen, VIVA DONDE VIVA.
+//
+// Los contadores que comparten la definición de la cola (`missingQueueWhere`)
+// lo llevan dentro de `AND`; los que arman su `where` plano lo llevan arriba.
+// La condición es la misma, lo que cambia es la forma, y estas pruebas hablan
+// de la condición. Afirmar la forma fue justamente lo que dejó que el contador
+// se separara de la lista sin que ningún test se enterara.
+// --------------------------------------------------------------------------
+type Where = Record<string, unknown>;
+
+function originOf(where: Where): unknown {
+  if (where.originId !== undefined) return where.originId;
+  for (const part of (where.AND as Where[] | undefined) ?? []) {
+    if (part?.originId !== undefined) return part.originId;
+  }
+  return undefined;
+}
+
+function withoutOrigin(where: Where): unknown {
+  const { originId: _drop, AND, ...rest } = where;
+  if (!AND) return rest;
+  const parts = (AND as Where[]).filter((part) => part?.originId === undefined);
+  return parts.length === 1 && Object.keys(rest).length === 0
+    ? parts[0]
+    : { ...rest, AND: parts };
+}
+
 describe("eje de origen en los contadores", () => {
   const COUNTERS = [
     { name: "abiertos", run: countOpenMissingItems },
@@ -679,7 +701,7 @@ describe("eje de origen en los contadores", () => {
     await run("shelf");
 
     const { where } = prismaMock.missingItem.count.mock.calls.at(-1)![0];
-    expect(where.originId).toBe(null);
+    expect(originOf(where)).toBe(null);
   });
 
   // (2) Un faltante de estantería NO tiene que engordar "Pendientes por abastecer".
@@ -687,7 +709,7 @@ describe("eje de origen en los contadores", () => {
     await run("pending");
 
     const { where } = prismaMock.missingItem.count.mock.calls.at(-1)![0];
-    expect(where.originId).toEqual({ not: null });
+    expect(originOf(where)).toEqual({ not: null });
   });
 
   // (3) Los dos ejes son COMPLEMENTARIOS: `null` y `not null` no dejan huecos ni
@@ -697,7 +719,7 @@ describe("eje de origen en los contadores", () => {
   it.each(COUNTERS)("'$name' sin eje no filtra por origen, y los dos ejes lo parten en dos", async ({ run }) => {
     await run("all");
     const { where: global } = prismaMock.missingItem.count.mock.calls.at(-1)![0];
-    expect(global.originId).toBeUndefined();
+    expect(originOf(global)).toBeUndefined();
 
     await run("shelf");
     const { where: shelf } = prismaMock.missingItem.count.mock.calls.at(-1)![0];
@@ -707,11 +729,8 @@ describe("eje de origen en los contadores", () => {
     // El resto de la condición es IDÉNTICO en las tres: lo único que cambia es
     // el origen. Si un eje arrastrara además otro filtro, su población dejaría
     // de ser una mitad del total y la suma no cerraría.
-    const { originId: _g, ...globalRest } = global;
-    const { originId: _s, ...shelfRest } = shelf;
-    const { originId: _p, ...pendingRest } = pending;
-    expect(shelfRest).toEqual(globalRest);
-    expect(pendingRest).toEqual(globalRest);
+    expect(withoutOrigin(shelf)).toEqual(withoutOrigin(global));
+    expect(withoutOrigin(pending)).toEqual(withoutOrigin(global));
   });
 
   // El default es "all" para que un llamador que todavía no eligió eje siga
@@ -721,7 +740,7 @@ describe("eje de origen en los contadores", () => {
     await run();
 
     const { where } = prismaMock.missingItem.count.mock.calls.at(-1)![0];
-    expect(where.originId).toBeUndefined();
+    expect(originOf(where)).toBeUndefined();
   });
 
   // "Vencido" se mide contra la fecha prometida a un cliente. Una reposición de
@@ -735,5 +754,91 @@ describe("eje de origen en los contadores", () => {
     // Siempre acotado a pendientes, sin forma de pedir otra cosa: la firma no
     // expone eje de origen, así que este WHERE es el único que puede salir.
     expect(where.originId).toEqual({ not: null });
+  });
+});
+
+// --------------------------------------------------------------------------
+// EL CONTADOR CUENTA LO QUE LA COLA MUESTRA.
+//
+// El badge y la tabla venían de dos `where` escritos por separado, y al del
+// contador le faltaba la exclusión de cuarentena que la lista sí aplica. Ese
+// defecto ya había pasado —está contado en `notQuarantineWhere`: el badge decía
+// 1 sobre una tabla que decía "Nada por pedir"— y volvió por la puerta del
+// contador. Ahora los dos salen de `missingQueueWhere`, así que no se pueden
+// separar sin borrarla.
+// --------------------------------------------------------------------------
+describe("contador y lista, una sola definición", () => {
+  beforeEach(() => {
+    prismaMock.missingItem.count.mockResolvedValue(0);
+    prismaMock.missingItem.findMany.mockResolvedValue([]);
+  });
+
+  it("'Por pedir' cuenta exactamente lo que la lista consulta", async () => {
+    await countActionableMissingItems("shelf");
+    await listMissingItems({ scope: "actionable", origin: "shelf" });
+
+    expect(prismaMock.missingItem.count.mock.calls[0]![0].where).toEqual(
+      prismaMock.missingItem.findMany.mock.calls[0]![0].where,
+    );
+  });
+
+  it("el número del aviso cuenta exactamente lo que su enlace abre", async () => {
+    const frontera = new Date("2026-09-07T07:00:00.000Z");
+
+    await countUnclosedActionableMissingItemsBefore(frontera, "shelf");
+    await listMissingItems({
+      scope: "actionable",
+      origin: "shelf",
+      staleBefore: frontera,
+    });
+
+    expect(prismaMock.missingItem.count.mock.calls[0]![0].where).toEqual(
+      prismaMock.missingItem.findMany.mock.calls[0]![0].where,
+    );
+  });
+
+  // La cuarentena la aplicaba solo la lista. Que el contador la incluya es lo
+  // que impide que el badge prometa filas que la tabla no tiene.
+  it("el contador también excluye la cuarentena", async () => {
+    await countActionableMissingItems("shelf");
+
+    expect(JSON.stringify(prismaMock.missingItem.count.mock.calls[0]![0].where)).toContain(
+      "__ref:orderedQuantity",
+    );
+  });
+});
+
+// --------------------------------------------------------------------------
+// MÁS VIEJO PRIMERO cuando se pide lo atrasado.
+//
+// La cola por defecto muestra lo último que entró —"¿qué pasó hoy?"—, pero al
+// filtrar por demora la pregunta es la contraria: "¿qué lleva más esperando?".
+// Con el orden descendente, el faltante de tres días quedaba en la última
+// página de la lista que el aviso abre.
+// --------------------------------------------------------------------------
+describe("el orden de la cola", () => {
+  beforeEach(() => {
+    prismaMock.missingItem.findMany.mockResolvedValue([]);
+  });
+
+  it("sin filtro de demora, lo último que entró primero", async () => {
+    await listMissingItems({ scope: "actionable" });
+
+    expect(prismaMock.missingItem.findMany.mock.calls[0]![0].orderBy).toEqual([
+      { createdAt: "desc" },
+      { id: "desc" },
+    ]);
+  });
+
+  it("con filtro de demora, lo más viejo primero", async () => {
+    await listMissingItems({
+      scope: "actionable",
+      staleBefore: new Date("2026-09-07T07:00:00.000Z"),
+    });
+
+    expect(prismaMock.missingItem.findMany.mock.calls[0]![0].orderBy).toEqual([
+      { createdAt: "asc" },
+      { id: "asc" },
+    ]);
   });
 });

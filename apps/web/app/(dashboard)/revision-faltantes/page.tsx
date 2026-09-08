@@ -18,10 +18,17 @@ import {
 } from "@/features/faltantes/missing-board-tabs";
 import { MissingQueueBoard } from "@/features/faltantes/missing-queue-board";
 import {
+  MISSING_QUEUE_PATH,
   SHELF_BOARD_ROUTE,
   repositoryScopeFor,
   resolveMissingScope,
 } from "@/features/faltantes/missing-scope";
+import {
+  STALE_PERSISTENT_PARAMS,
+  UNCLOSED_MISSING_ALERT_HOURS,
+  resolveStaleOnly,
+  staleThreshold,
+} from "@/features/faltantes/missing-stale";
 import { resolveMissingView } from "@/features/faltantes/missing-view";
 import {
   getActionableMissingCount,
@@ -64,6 +71,8 @@ export default async function RevisionFaltantesPage({
     cursor?: string;
     /** Estado dentro del buzón de reportes, para no pisar `scope`. */
     rscope?: string;
+    /** Recorte por demora: lo que abre el aviso de gerencia. */
+    demora?: string;
   }>;
 }) {
   // Una ruta, DOS proyecciones — y las dos son DE ESTANTERÍA.
@@ -104,6 +113,7 @@ export default async function RevisionFaltantesPage({
     view: rawView,
     cursor: rawCursor,
     rscope: rawReportScope,
+    demora: rawStale,
   } = await searchParams;
 
   // --------------------------------------------------------------------------
@@ -137,6 +147,21 @@ export default async function RevisionFaltantesPage({
   const canExport = can(session.user.role, "canExportFaltantes");
 
   const now = new Date();
+
+  // EL EJE DE DEMORA. Cuando está puesto, la cola muestra SOLO lo que lleva más
+  // de 8 h sin cerrarse —lo que el aviso de gerencia reclama— y el contador de
+  // la pestaña cuenta exactamente eso: el mismo `staleBefore` viaja por los dos
+  // caminos, o por ninguno. Ese es el contrato que este arreglo viene a cumplir.
+  const staleOnly = resolveStaleOnly(rawStale);
+  const staleBefore = staleOnly ? staleThreshold(now) : undefined;
+
+  // Con el filtro puesto, TODO enlace del tablero tiene que arrastrarlo: sin
+  // esto, "Ver más" o cambiar de layout lo apagan en silencio y la persona
+  // vuelve a la cola entera sin haber pedido nada.
+  const boardRoute = staleOnly
+    ? { ...SHELF_BOARD_ROUTE, persistentParams: STALE_PERSISTENT_PARAMS }
+    : SHELF_BOARD_ROUTE;
+
   const page = parseReportQueuePage(rawPage);
   const reportScope = resolveReportQueueScope(rawReportScope);
 
@@ -150,12 +175,13 @@ export default async function RevisionFaltantesPage({
           cursor: rawCursor,
           scope: repositoryScopeFor(scope),
           origin: SHELF_ONLY,
+          staleBefore,
           canViewCustomerIdentity,
           canViewSupplierIdentity,
         }),
     // El contador de "Por pedir" tiene que contar LO QUE ESTA PANTALLA MUESTRA.
     // Global, marcaría trabajo que acá no se puede tocar.
-    getActionableMissingCount(SHELF_ONLY),
+    getActionableMissingCount(SHELF_ONLY, staleBefore),
     getMissingReportQueue({
       page,
       pageSize: DEFAULT_PAGE_SIZE,
@@ -173,12 +199,29 @@ export default async function RevisionFaltantesPage({
         description="Decidí qué pedir y qué descartar. Bodega marca acá lo que llega."
       />
 
+      {/* Un filtro que no se ve es un filtro que confunde: la persona lee
+          "Por pedir 86" y cree que se le perdieron cuarenta. Se dice qué está
+          mirando y se le da la salida en el mismo renglón. */}
+      {staleOnly ? (
+        <p className="text-sm text-muted-foreground">
+          Mostrando solo los que llevan más de {UNCLOSED_MISSING_ALERT_HOURS} h
+          sin cerrarse, del más viejo al más nuevo.{" "}
+          <Link
+            prefetch={false}
+            href={MISSING_QUEUE_PATH}
+            className="font-semibold text-primary underline"
+          >
+            Ver todos
+          </Link>
+        </p>
+      ) : null}
+
       <MissingBoardTabs
         active={showingReports ? REPORTS_TAB_SCOPE : scope}
         view={view}
         actionableCount={actionableCount}
         reportsCount={pendingReportGroups}
-        route={SHELF_BOARD_ROUTE}
+        route={boardRoute}
         label="Estado de los faltantes"
       />
 
@@ -229,7 +272,7 @@ export default async function RevisionFaltantesPage({
           canExport={canExport}
           canSeeSupplier={canViewSupplierIdentity}
           now={now}
-          route={SHELF_BOARD_ROUTE}
+          route={boardRoute}
           label="Vista de faltantes"
         />
       )}

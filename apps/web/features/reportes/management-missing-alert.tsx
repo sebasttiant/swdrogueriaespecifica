@@ -2,7 +2,7 @@ import Link from "next/link";
 import { AlertTriangle } from "lucide-react";
 
 import { Alert } from "@/app/_components/ui/alert";
-import { MISSING_QUEUE_PATH } from "@/features/faltantes/missing-scope";
+import { staleMissingHref } from "@/features/faltantes/missing-stale";
 import { isAdminRole } from "@/lib/auth/permissions";
 import type { SessionRole } from "@/lib/auth/session";
 import {
@@ -59,18 +59,21 @@ export async function ManagementMissingAlert({
               {alert.exceedsDailyThreshold ? (
                 <>Hoy se generaron {alert.createdToday} faltantes. </>
               ) : null}
-              {/* A la cola de REVISIÓN, no a `/faltantes`.
-                  Esa es la pantalla de captura —arranca con "Reportar faltante"
-                  y "Nuevo faltante"— y quien toca este aviso viene a cerrar los
-                  que ya existen, no a cargar otro. La ruta sale de la constante
-                  del tablero para que el aviso no pueda quedar apuntando a una
-                  dirección que la pantalla ya no usa. */}
+              {/* A la cola de REVISIÓN, no a `/faltantes` —esa es la pantalla
+                  de captura, y quien toca este aviso viene a cerrar los que ya
+                  existen, no a cargar otro—, Y CON EL FILTRO PUESTO.
+
+                  Sin el filtro, el aviso decía "86 llevan más de 8 h" y abría
+                  la cola entera: 126 faltantes de a 20 por página, con esos 86
+                  mezclados adentro y los más viejos al final, porque la lista
+                  ordena por fecha descendente. El número prometía una cosa y el
+                  destino entregaba otra. */}
               <Link
                 prefetch={false}
-                href={MISSING_QUEUE_PATH}
+                href={staleMissingHref()}
                 className="font-semibold underline"
               >
-                Revisar faltantes
+                Revisar los atrasados
               </Link>
             </p>
           </div>

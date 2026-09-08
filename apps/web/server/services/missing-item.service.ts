@@ -121,6 +121,8 @@ export async function getMissingItems(params: {
   // De dónde nació la necesidad: pedido de un cliente, reposición de
   // estantería, o sin filtrar. Eje ORTOGONAL al scope; ver el repositorio.
   origin?: MissingItemOrigin;
+  // Solo lo creado antes de esta fecha: lo que abre el aviso de gerencia.
+  staleBefore?: Date;
   // Requerido (sin default): que falte el flag debe ser un error de tipos,
   // nunca una fuga silenciosa de PII. `false` fuerza la minimización abajo.
   canViewCustomerIdentity: boolean;
@@ -199,8 +201,12 @@ export async function createManualMissingItem(input: CreateManualMissingItemInpu
 // "Por pedir". Distinto del KPI de abiertos, que incluye los ya pedidos.
 export function getActionableMissingCount(
   origin: MissingItemOrigin = "all",
+  // El recorte por demora, cuando la pantalla lo pide. El contador tiene que
+  // contar LO QUE LA LISTA MUESTRA, así que viaja por los dos caminos o por
+  // ninguno.
+  staleBefore?: Date,
 ): Promise<number> {
-  return countActionableMissingItems(origin);
+  return countActionableMissingItems(origin, staleBefore);
 }
 
 // Conteo de faltantes abiertos para el KPI del dashboard.

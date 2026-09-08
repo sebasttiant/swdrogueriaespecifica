@@ -12,6 +12,7 @@ vi.mock("@/server/services/reports.service", async (importOriginal) => {
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { MISSING_QUEUE_PATH } from "@/features/faltantes/missing-scope";
+import { staleMissingHref } from "@/features/faltantes/missing-stale";
 import type { SessionRole } from "@/lib/auth/session";
 
 import { ManagementMissingAlert } from "./management-missing-alert";
@@ -43,8 +44,21 @@ describe("ManagementMissingAlert", () => {
   it("manda a la cola de revisión, no a la pantalla de cargar uno nuevo", async () => {
     const html = await render("ADMIN");
 
-    expect(html).toContain(`href="${MISSING_QUEUE_PATH}"`);
+    expect(html).toContain(MISSING_QUEUE_PATH);
     expect(html).not.toContain('href="/faltantes"');
+  });
+
+  // EL SEGUNDO DEFECTO DEL MISMO ENLACE. Llegar a la pantalla correcta no
+  // alcanzaba: el aviso decía "45 llevan más de 8 h" y abría la cola ENTERA,
+  // con esos 45 mezclados entre cientos y —peor— los más viejos al final,
+  // porque la lista ordena por fecha descendente. Medido en producción el
+  // 2026-09-07: el aviso reclamaba 86 y abría 126 repartidos en siete páginas.
+  //
+  // Un aviso es una promesa: "hay N de esto, tocá para verlos".
+  it("abre la cola YA FILTRADA a los atrasados", async () => {
+    const html = await render("ADMIN");
+
+    expect(html).toContain(`href="${staleMissingHref()}"`);
   });
 
   it("dice cuántos faltantes llevan demasiado tiempo sin cerrarse", async () => {

@@ -11,6 +11,8 @@
 // --------------------------------------------------------------------------
 
 import { bogotaDayKey, bogotaStartOfDay } from "@/lib/datetime/bogota";
+import { staleThreshold } from "@/features/faltantes/missing-stale";
+
 import type {
   MissingItemStatus,
   PendingStatus,
@@ -34,11 +36,13 @@ import {
 // Se dispara la alerta si HOY se generaron MÁS de este número de faltantes.
 export const DAILY_MISSING_ALERT_THRESHOLD = 10;
 // Antigüedad (horas) desde la que un faltante abierto cuenta como "sin cerrar".
-export const UNCLOSED_MISSING_ALERT_HOURS = 8;
+// Reexportado, no redeclarado: el umbral vive en `features/faltantes/missing-stale`
+// junto al filtro de la pantalla. Escrito en dos lados, el aviso contaría con un
+// número y la lista que abre filtraría con otro.
+export { UNCLOSED_MISSING_ALERT_HOURS } from "@/features/faltantes/missing-stale";
 // De qué faltantes habla el aviso de gerencia. Es el MISMO eje que filtra
 // Revisión de faltantes, la pantalla que el aviso enlaza.
 const ALERT_ORIGIN: MissingItemOrigin = "shelf";
-const MS_PER_HOUR = 60 * 60 * 1000;
 
 export type ReportsSummary = {
   pendings: { total: number; open: number; closed: number };
@@ -93,9 +97,7 @@ export async function getManagementMissingAlert(
   now: Date = new Date(),
 ): Promise<ManagementMissingAlert> {
   const startOfDay = bogotaStartOfDay(now);
-  const staleThreshold = new Date(
-    now.getTime() - UNCLOSED_MISSING_ALERT_HOURS * MS_PER_HOUR,
-  );
+  const staleBefore = staleThreshold(now);
 
   // Las DOS condiciones se acotan a estantería, no solo una: el aviso enlaza a
   // Revisión de faltantes y tiene que encenderse por algo que ahí se vea. Con el
@@ -103,7 +105,7 @@ export async function getManagementMissingAlert(
   // cliente y mandar a una pantalla donde no hay ninguno.
   const [createdToday, unclosedOverThreshold] = await Promise.all([
     countMissingItemsCreatedSince(startOfDay, ALERT_ORIGIN),
-    countUnclosedActionableMissingItemsBefore(staleThreshold, ALERT_ORIGIN),
+    countUnclosedActionableMissingItemsBefore(staleBefore, ALERT_ORIGIN),
   ]);
 
   const exceedsDailyThreshold = createdToday > DAILY_MISSING_ALERT_THRESHOLD;
