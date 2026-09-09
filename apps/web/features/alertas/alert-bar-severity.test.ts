@@ -23,17 +23,19 @@ import type { AlertCounts } from "@/lib/alertas/signature";
 import { AlertBar } from "./alert-bar";
 
 // --------------------------------------------------------------------------
-// JERARQUÍA Y COMPOSICIÓN de los chips DENTRO de la barra.
+// DÓNDE VIVE EL COLOR: en los chips, no en la barra.
 //
 // Estas pruebas se miran EL CHIP, no el HTML entero, y esa es toda la
-// diferencia. La versión anterior afirmaba `expect(html).toContain(
-// "bg-danger-solid")` para probar el relleno del chip de peligro… y esa clase
-// la pone el CONTENEDOR. El assert pasaba aunque el chip no tuviera una sola
-// clase propia, que es exactamente el defecto que había: chip rojo pleno
-// adentro de una barra roja plena, o sea invisible.
-//
+// diferencia. Una versión anterior afirmaba `expect(html).toContain(
+// "bg-danger-solid")` para probar el relleno del chip… y esa clase la ponía el
+// CONTENEDOR. El assert pasaba aunque el chip no tuviera una sola clase propia.
 // Un test que se conforma con encontrar la clase en cualquier ancestro no
 // prueba composición: prueba que la cadena existe en alguna parte.
+//
+// Y la guarda más importante es la primera: LA BARRA NO PUEDE VOLVER A SER UN
+// BLOQUE ROJO PLENO. Lo fue, y en el tablero quedaba apilada con el banner de
+// gerencia —que sí es rojo pleno—, dos losas que se comían el tercio superior
+// de la pantalla. El rojo pleno es de UN solo bloque de la app.
 // --------------------------------------------------------------------------
 
 const SIN_ALERTAS: AlertCounts = {
@@ -77,49 +79,54 @@ beforeEach(() => {
   mocks.countArrivalNotices.mockResolvedValue(0);
 });
 
-describe("la barra de peligro es roja plena", () => {
-  it("el contenedor lleva el relleno pleno", async () => {
+describe("la barra NO se tiñe: el color va en los chips", () => {
+  it("el contenedor queda NEUTRO aunque haya peligro — nunca una segunda losa roja", async () => {
     const host = await pintar({ expiredBatches: 3 });
+    const barra = clasesDeLaBarra(host);
 
-    expect(clasesDeLaBarra(host)).toContain("bg-danger-solid");
+    expect(barra).toContain("bg-muted");
+    // La regresión que este test existe para impedir: en el tablero esta barra
+    // convive con el banner de gerencia, que sí es rojo pleno.
+    expect(barra).not.toContain("bg-danger-solid");
+    expect(barra).not.toContain("bg-warning/10");
   });
 
-  it("el chip de peligro NO comparte el relleno del contenedor: lo invierte", async () => {
+  it("la urgencia sigue anunciándose, aunque el color no la muestre", async () => {
+    const conPeligro = await pintar({ expiredBatches: 3 });
+    const soloAviso = await pintar({ warningBatches: 7 });
+
+    // El `role` NO cambió con el color: quien usa lector de pantalla necesita
+    // que un peligro interrumpa y un aviso entre por la cola cortés.
+    expect(conPeligro.querySelector('[role="alert"]')).not.toBeNull();
+    expect(soloAviso.querySelector('[role="status"]')).not.toBeNull();
+  });
+
+  it("el chip de peligro lleva el relleno pleno", async () => {
     const host = await pintar({ expiredBatches: 3 });
     const apariciones = clasesDelChip(host, "Vencidos");
 
     expect(apariciones.length).toBeGreaterThan(0);
     for (const clases of apariciones) {
-      // Relleno blanco y letra roja: los dos tokens del par, al revés.
-      expect(clases).toContain("bg-danger-solid-foreground");
-      expect(clases).toContain("text-danger-solid");
-      // Y JAMÁS el relleno del contenedor, que lo haría desaparecer.
-      expect(clases).not.toContain("bg-danger-solid");
-      expect(clases).not.toContain("border-danger-solid");
+      expect(clases).toContain("bg-danger-solid");
+      expect(clases).toContain("text-danger-solid-foreground");
     }
   });
 
-  it("el chip de advertencia queda de contorno sobre el rojo, sin tinte amarillo", async () => {
+  it("el chip de advertencia queda ámbar, para distinguirse del rojo a un metro", async () => {
     const host = await pintar({ expiredBatches: 3, warningBatches: 7 });
     const apariciones = clasesDelChip(host, "Por vencer");
 
     expect(apariciones.length).toBeGreaterThan(0);
     for (const clases of apariciones) {
-      expect(clases).toContain("text-danger-solid-foreground");
-      expect(clases).toContain("border-danger-solid-foreground/60");
-      // El tinte amarillo está pensado para la barra amarilla. Sobre el rojo
-      // se ve como una mancha y pierde contraste.
-      expect(clases).not.toContain("bg-warning/10");
-      expect(clases).not.toContain("bg-danger-solid-foreground");
+      expect(clases).toContain("bg-warning/10");
+      expect(clases).toContain("text-warning-foreground");
+      expect(clases).not.toContain("bg-danger-solid");
     }
   });
 
-  it("ningún hover sobre el rojo toca el relleno, porque ahí se cae de AA", async () => {
-    const host = await pintar({ expiredBatches: 3, warningBatches: 7 });
-    const apariciones = [
-      ...clasesDelChip(host, "Vencidos"),
-      ...clasesDelChip(host, "Por vencer"),
-    ];
+  it("el hover del chip de peligro no toca el relleno, porque ahí se cae de AA", async () => {
+    const host = await pintar({ expiredBatches: 3 });
+    const apariciones = clasesDelChip(host, "Vencidos");
 
     expect(apariciones.length).toBeGreaterThan(0);
     for (const clases of apariciones) {
@@ -130,24 +137,8 @@ describe("la barra de peligro es roja plena", () => {
   });
 });
 
-describe("la barra de advertencia sigue tenue", () => {
-  it("sin peligro, el contenedor y los chips conservan el tinte", async () => {
-    const host = await pintar({ warningBatches: 7 });
-
-    expect(clasesDeLaBarra(host)).toContain("bg-warning/10");
-    expect(clasesDeLaBarra(host)).not.toContain("bg-danger-solid");
-
-    const apariciones = clasesDelChip(host, "Por vencer");
-    expect(apariciones.length).toBeGreaterThan(0);
-    for (const clases of apariciones) {
-      expect(clases).toContain("bg-warning/10");
-      expect(clases).toContain("text-warning-foreground");
-    }
-  });
-});
-
 describe("el resumen del celular", () => {
-  it("no usa el gris de superficies neutras, que sobre el rojo es ilegible", async () => {
+  it("usa el gris de superficies neutras, que es lo que la barra volvió a ser", async () => {
     const host = await pintar({ expiredBatches: 3 });
     const resumen = host.querySelector("summary");
 
@@ -155,7 +146,6 @@ describe("el resumen del celular", () => {
     const controles = [...(resumen?.querySelectorAll("span") ?? [])].flatMap((span) =>
       classTokens(span.getAttribute("class")),
     );
-    expect(controles).not.toContain("text-muted-foreground");
-    expect(controles).toContain("opacity-80");
+    expect(controles).toContain("text-muted-foreground");
   });
 });
