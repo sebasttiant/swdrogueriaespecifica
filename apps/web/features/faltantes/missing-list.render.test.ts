@@ -22,11 +22,14 @@ vi.mock("@/server/actions/missing-item.actions", () => ({
 	discardMissingItemsAction: vi.fn(),
 }));
 
+import { can } from "@/lib/auth/permissions";
 import { formatBogotaDate } from "@/lib/datetime/bogota";
 import type { MissingItemListItem } from "@/server/repositories/missing-item.repository";
 import type { MissingItemListEntry } from "@/server/services/missing-item.service";
 
+import { MISSING_BULK_FORM_ID } from "./missing-bulk-selection";
 import { MissingList } from "./missing-list";
+import type { MissingQueueScope } from "./missing-scope";
 
 const now = new Date("2026-06-06T12:00:00.000Z");
 
@@ -65,6 +68,10 @@ function item(overrides: Partial<MissingItemListEntry>): MissingItemListEntry {
     // Ya resuelto por el service (reporter o createdBy). Null por defecto para
     // no inyectar la línea de solicitante en tests que no la prueban.
     requestedByName: null,
+    // Ídem: la columna Fecha lee este campo, nunca `createdAt` directamente.
+    // El default coincide con `createdAt` porque el service cae ahí sin
+    // reporte de por medio; los tests de la guarda lo desacoplan a propósito.
+    requestedAt: new Date("2026-06-01T00:00:00.000Z"),
     ...overrides,
   };
 }
@@ -103,6 +110,18 @@ function renderMissingList(
 		// Identidad del proveedor: eje propio. Por defecto sigue a `canAct`
 		// (gerencia), y los tests de la fuga lo fijan aparte.
 		canSeeSupplier?: boolean;
+		// Capability `canViewMissingAttribution`: gatea la columna Fecha. Apagada
+		// por defecto para no inyectarla en tests que no la prueban.
+		canSeeRequestedAt?: boolean;
+		// Scope de la página (`missing-scope.ts`). Default "ordered": deja
+		// Estado/Pedido visibles cuando el permiso lo habilita, igual que el
+		// comportamiento previo a que existiera este eje — los tests que
+		// prueban la supresión en "actionable" lo fijan explícitamente.
+		scope?: MissingQueueScope;
+		// Selección masiva: modo alternativo, activado por `?bulk=1` y resuelto
+		// aguas arriba en `missing-queue-board.tsx`. Por defecto apagado, para
+		// no afectar ningún test existente del modo normal.
+		bulkMode?: boolean;
 	} = {},
 ): string {
 	return renderToStaticMarkup(
@@ -113,6 +132,9 @@ function renderMissingList(
 			canQuickAct: canAct,
 			canSeeStatus: options.canSeeStatus ?? canAct,
 			canSeeSupplier: options.canSeeSupplier ?? canAct,
+			canSeeRequestedAt: options.canSeeRequestedAt ?? false,
+			scope: options.scope ?? "ordered",
+			bulkMode: options.bulkMode ?? false,
 			now,
 		}),
 	);
@@ -160,32 +182,47 @@ describe("MissingList render contract", () => {
     expect(html).toContain("Ver detalle");
   });
 
-  it("renders a manual note in both the mobile card and desktop table", () => {
+  // La Nota manual sigue existiendo, pero como detalle colapsado del celular
+  // (ver `missing-list.tsx`): ya no es una columna de la tabla desktop.
+  it("keeps the manual note as collapsed mobile detail, not as a desktop column", () => {
     const note = "Prioridad mostrador";
     const html = renderMissingList([
       item({ id: "manual-note", note, product: product("Manual product", "MAN-1") }),
     ]);
 
-    expect(countOccurrences(html, `Nota: ${note}`)).toBe(2);
-    expect(html).toMatch(new RegExp(`<th[^>]*>Nota<\\/th>`));
+    expect(countOccurrences(html, `Nota: ${note}`)).toBe(1);
+    expect(html).not.toMatch(/<th[^>]*>Nota<\/th>/);
   });
+});
 
-  it("renders the seller code in both the mobile card and desktop table", () => {
+// Código, Referencia (déficit calculado / código del vendedor) y Nota-como-
+// columna se retiraron de la lista unificada: comparados contra producción, el
+// 79 % de las filas mostraba "PROV-<nombre>" en Código —el mismo nombre del
+// producto de al lado— y el resto de la información vive en otro lado.
+describe("MissingList · columnas retiradas (Código, Referencia)", () => {
+  it("ya no muestra el código de producto en ninguna parte de la fila", () => {
     const html = renderMissingList([
-      item({ sellerCode: "VEN-12", product: product("Manual product", "MAN-1") }),
+      item({ product: product("Open missing", "OPEN-1") }),
     ]);
 
-    expect(countOccurrences(html, "VEN-12")).toBe(2);
-    expect(html).toMatch(/<th[^>]*>Referencia<\/th>/);
+    expect(html).not.toContain("OPEN-1");
+    expect(html).not.toMatch(/<th[^>]*>Código<\/th>/);
   });
 
-  it("keeps the calculated deficit for automatic missing items", () => {
+  it("ya no muestra el déficit calculado ni el código del vendedor como columna 'Referencia'", () => {
     const html = renderMissingList([
-      item({ originId: "pending-1", origin: origin({}), quantity: 4 }),
+      item({
+        originId: "pending-1",
+        origin: origin({}),
+        quantity: 4,
+        sellerCode: "VEN-12",
+        product: product("Con déficit", "DEF-1"),
+      }),
     ]);
 
-    expect(html).toContain("4 unidad");
-    expect(html).toContain(">4<span");
+    expect(html).not.toContain("VEN-12");
+    expect(html).not.toContain("4 unidad");
+    expect(html).not.toMatch(/<th[^>]*>Referencia<\/th>/);
   });
 });
 
@@ -408,7 +445,7 @@ describe("MissingList · no ambiguous authorization path", () => {
     );
 
     expect(html).toContain("Historico");
-    expect(html).toContain("HIST-1");
+    expect(html).toMatch(/<td[^>]*>Historico<\/td>/);
     // El nombre del responsable histórico no se muestra todavía: C2 lo trae de
     // vuelta como "pedido histórico", con su proveedor sin registrar.
     expect(html).not.toContain("Ana Gerente");
@@ -452,6 +489,81 @@ describe("MissingList · status visibility (Mejora 4)", () => {
   });
 });
 
+// Estado y Pedido solo distinguen algo en "ordered"/"discarded": en
+// "actionable" ("Por pedir") todo es FALTANTE y la columna sería constante.
+// Los dos ejes se combinan: el scope decide si aplica, el permiso si se habilita.
+describe("MissingList · columnas Estado/Pedido según el scope (Mejora 6)", () => {
+  function orderedish() {
+    return item({
+      id: "ord-1",
+      status: "PEDIDO",
+      orderedAt: new Date("2026-06-05T15:30:00.000Z"),
+      supplier: { id: "supplier-id", name: "Distribuidora Norte" },
+      supplierId: "supplier-id",
+      product: product("Pedido", "PED-1"),
+    });
+  }
+
+  it("en 'actionable' no muestra Estado ni Pedido aunque el permiso lo habilite", () => {
+    const html = renderMissingList(
+      [item({ product: product("Faltante", "FALT-1") })],
+      true,
+      { canSeeStatus: true, canSeeSupplier: true, scope: "actionable" },
+    );
+
+    expect(html).not.toMatch(/<th[^>]*>Estado<\/th>/);
+    expect(html).not.toMatch(/<th[^>]*>Pedido<\/th>/);
+  });
+
+  it("en 'ordered' muestra Estado y Pedido cuando el permiso lo habilita", () => {
+    const html = renderMissingList([orderedish()], false, {
+      canSeeStatus: true,
+      canSeeSupplier: true,
+      scope: "ordered",
+    });
+
+    expect(html).toMatch(/<th[^>]*>Estado<\/th>/);
+    expect(html).toMatch(/<th[^>]*>Pedido<\/th>/);
+  });
+
+  it("en 'discarded' también las muestra", () => {
+    const html = renderMissingList([orderedish()], false, {
+      canSeeStatus: true,
+      canSeeSupplier: true,
+      scope: "discarded",
+    });
+
+    expect(html).toMatch(/<th[^>]*>Estado<\/th>/);
+    expect(html).toMatch(/<th[^>]*>Pedido<\/th>/);
+  });
+
+  // El permiso sigue mandando: el scope solo abre la puerta, no reemplaza la
+  // autoridad de `canSeeStatus`/`canSeeSupplier`.
+  it("sin el permiso, ni 'ordered' las muestra", () => {
+    const html = renderMissingList([orderedish()], false, {
+      canSeeStatus: false,
+      canSeeSupplier: false,
+      scope: "ordered",
+    });
+
+    expect(html).not.toMatch(/<th[^>]*>Estado<\/th>/);
+    expect(html).not.toMatch(/<th[^>]*>Pedido<\/th>/);
+  });
+
+  it("las cuatro columnas base siguen presentes en 'actionable'", () => {
+    const html = renderMissingList(
+      [item({ requestedByName: "Juan Vendedor", product: product("Faltante", "FALT-1") })],
+      true,
+      { canSeeRequestedAt: true, scope: "actionable" },
+    );
+
+    expect(html).toMatch(/<th[^>]*>Producto<\/th>/);
+    expect(html).toMatch(/<th[^>]*>Solicitado por<\/th>/);
+    expect(html).toMatch(/<th[^>]*>Fecha<\/th>/);
+    expect(html).toMatch(/<th[^>]*>Acción<\/th>/);
+  });
+});
+
 // Mejora 5: quién pidió el faltante. `requestedByName` ya viene resuelto por el
 // service (reporter del vendedor o createdBy). La lista solo lo muestra.
 describe("MissingList · requester traceability (Mejora 5)", () => {
@@ -479,6 +591,88 @@ describe("MissingList · requester traceability (Mejora 5)", () => {
 
     // Solo el encabezado; sin línea de solicitante en la tarjeta.
     expect(countOccurrences(html, "Solicitado por")).toBe(1);
+  });
+});
+
+// La columna Fecha (Mejora 5, trazabilidad): gatea con la capability
+// `canViewMissingAttribution`, evaluada con `can()` REAL sobre cada rol — no un
+// mock del rol — para que este test caiga si la matriz de permisos cambia.
+describe("MissingList · columna Fecha (capability canViewMissingAttribution)", () => {
+  const requestedAt = new Date("2026-09-02T09:00:00.000Z");
+  const dateLabel = formatBogotaDate(requestedAt, { style: "date" });
+
+  it.each([
+    ["SUPERADMIN", true],
+    ["ADMIN", true],
+    ["SUPERVISOR", false],
+    ["OPERADOR", false],
+  ] as const)("%s: canViewMissingAttribution → columna Fecha visible = %s", (role, expected) => {
+    const canSeeRequestedAt = can(role, "canViewMissingAttribution");
+    expect(canSeeRequestedAt).toBe(expected);
+
+    const html = renderMissingList(
+      [
+        item({
+          id: "m-1",
+          requestedByName: "Juan Vendedor",
+          requestedAt,
+          product: product("Producto", "PR-1"),
+        }),
+      ],
+      false,
+      { canSeeRequestedAt },
+    );
+
+    if (expected) {
+      expect(html).toContain(dateLabel);
+      expect(html).toMatch(/<th[^>]*>Fecha<\/th>/);
+    } else {
+      expect(html).not.toContain(dateLabel);
+      expect(html).not.toMatch(/<th[^>]*>Fecha<\/th>/);
+    }
+  });
+
+  // "Solicitado por" (el nombre) NO depende de esta capability: sigue visible
+  // para todos, incluso cuando la fecha está apagada.
+  it("mantiene 'Solicitado por' visible aunque la Fecha esté apagada", () => {
+    const html = renderMissingList(
+      [
+        item({
+          id: "m-1",
+          requestedByName: "Juan Vendedor",
+          requestedAt,
+          product: product("Producto", "PR-1"),
+        }),
+      ],
+      false,
+      { canSeeRequestedAt: false },
+    );
+
+    expect(html).toContain("Solicitado por Juan Vendedor");
+  });
+
+  // LA GUARDA QUE IMPORTA: la lista muestra `requestedAt` textual, nunca
+  // `createdAt` del item, aunque difieran — misma guarda que arma el service en
+  // `missing-item.service.test.ts`. Si algún día el render leyera el campo
+  // equivocado, este test cae.
+  it("muestra requestedAt, nunca item.createdAt, cuando ambos difieren", () => {
+    const createdAt = new Date("2026-09-09T14:00:00.000Z");
+    const html = renderMissingList(
+      [
+        item({
+          id: "m-1",
+          requestedByName: "Daniel Bonilla",
+          requestedAt,
+          createdAt,
+          product: product("Producto", "PR-1"),
+        }),
+      ],
+      false,
+      { canSeeRequestedAt: true },
+    );
+
+    expect(html).toContain(dateLabel);
+    expect(html).not.toContain(formatBogotaDate(createdAt, { style: "date" }));
   });
 });
 
@@ -582,13 +776,12 @@ describe("MissingList · el proveedor no existe para el vendedor", () => {
 
   // Lo operativo sigue estando: el vendedor ve QUÉ falta y CUÁNTO, que es su
   // trabajo. Solo se le oculta a quién se le compra.
-  it("conserva el producto, la cantidad y el solicitante", () => {
+  it("conserva el producto y el solicitante", () => {
     const html = renderMissingList([orderedItem()], false, {
       canSeeSupplier: false,
     });
 
     expect(html).toContain("Loratadina 10mg");
-    expect(html).toContain("MED-003");
   });
 
   it("sí lo muestra a gerencia sobre la misma fila", () => {
@@ -620,5 +813,144 @@ describe("MissingList · el nombre no se corta en el celular", () => {
     const html = renderMissingList([item({})]);
 
     expect(html).not.toContain("truncate");
+  });
+});
+
+// --------------------------------------------------------------------------
+// Selección masiva (modo alternativo, `?bulk=1`): la casilla vive en la FILA
+// REAL, asociada al `<form>` de la barra por el atributo `form` de HTML —los
+// formularios no se anidan y cada fila ya monta los dos de
+// `MissingQuickActions`—. En modo normal el árbol tiene que quedar IDÉNTICO al
+// de hoy: nada de columnas vacías ni condicionales nuevos cuando el modo está
+// apagado.
+// --------------------------------------------------------------------------
+describe("MissingList · selección masiva", () => {
+  it("en modo normal no dibuja ninguna casilla de selección", () => {
+    const html = renderMissingList(
+      [item({ id: "faltante-1", product: product("Faltante", "FALT-1") })],
+      true,
+    );
+
+    // `MissingQuickActions` YA postea un `<input type="hidden" name="ids">`
+    // por formulario, así que `name="ids"` a secas también matchea el camino
+    // individual de hoy. La señal específica de la casilla masiva es el
+    // `type="checkbox"` asociado al form de la barra.
+    expect(html).not.toContain('type="checkbox"');
+    expect(html).not.toContain(`form="${MISSING_BULK_FORM_ID}"`);
+  });
+
+  it("en modo normal conserva las acciones individuales de la fila", () => {
+    const html = renderMissingList(
+      [item({ id: "faltante-1", product: product("Faltante", "FALT-1") })],
+      true,
+    );
+
+    expect(html).toContain("Marcar Faltante como pedido");
+    expect(html).toContain("Descartar Faltante");
+  });
+
+  it("en modo masivo dibuja una casilla por fila elegible, asociada al form de la barra", () => {
+    const html = renderMissingList(
+      [item({ id: "elegible-1", product: product("Elegible", "ELE-1") })],
+      true,
+      { bulkMode: true },
+    );
+
+    expect(html).toContain('type="checkbox"');
+    expect(html).toContain('name="ids"');
+    expect(html).toContain('value="elegible-1"');
+    expect(html).toContain(`form="${MISSING_BULK_FORM_ID}"`);
+  });
+
+  it("en modo masivo la fila NO monta sus acciones individuales", () => {
+    const html = renderMissingList(
+      [item({ id: "elegible-1", product: product("Elegible", "ELE-1") })],
+      true,
+      { bulkMode: true },
+    );
+
+    expect(html).not.toContain("Marcar Elegible como pedido");
+    expect(html).not.toContain("Descartar Elegible");
+  });
+
+  // Mismo criterio que ya filtra `missing-queue-board.tsx`: `canDiscard`
+  // exige `status === "FALTANTE"`. Una fila ya pedida no lleva casilla.
+  it("en modo masivo una fila NO elegible no lleva casilla", () => {
+    const html = renderMissingList(
+      [
+        item({
+          id: "no-elegible-1",
+          status: "PEDIDO",
+          product: product("No elegible", "NOELE-1"),
+        }),
+      ],
+      true,
+      { bulkMode: true },
+    );
+
+    expect(html).not.toContain('name="ids"');
+  });
+
+  it("no ofrece casillas a quien no es autoridad de compras, aunque el modo esté activo", () => {
+    const html = renderMissingList(
+      [item({ id: "elegible-1", product: product("Elegible", "ELE-1") })],
+      false,
+      { bulkMode: true },
+    );
+
+    expect(html).not.toContain('name="ids"');
+  });
+
+  // Ningún `<form>` puede quedar anidado dentro de otro: cada fila en modo
+  // masivo monta como mucho una casilla suelta, nunca los dos `<form>` de
+  // `MissingQuickActions` a la vez.
+  it("no monta ningún <form> por fila en modo masivo", () => {
+    const html = renderMissingList(
+      [item({ id: "elegible-1", product: product("Elegible", "ELE-1") })],
+      true,
+      { bulkMode: true },
+    );
+
+    expect(html).not.toContain("<form");
+  });
+});
+
+// --------------------------------------------------------------------------
+// LA GUARDA QUE IMPORTA. `MissingBulkActions` dejó de dibujar su propia copia
+// de la cola (ver `missing-bulk-actions.render.test.ts` para el contrato de
+// la barra en aislamiento); este test prueba la COMPOSICIÓN real que arma
+// `missing-queue-board.tsx`: la barra envolviendo la lista de verdad. Si
+// alguna vez alguien reintroduce un listado propio dentro de la barra, el
+// conteo sube de 2 (tarjeta mobile + fila desktop) a 3, y este test falla.
+// --------------------------------------------------------------------------
+describe("MissingList · compuesta con la barra, sin duplicar (guarda anti-regresión)", () => {
+  it("cada faltante aparece exactamente dos veces en pantalla (tarjeta + fila), nunca tres", async () => {
+    const { MissingBulkActions } = await import("./missing-bulk-actions");
+
+    const html = renderToStaticMarkup(
+      createElement(
+        MissingBulkActions,
+        { eligibleIds: ["unico-1"] },
+        createElement(MissingList, {
+          items: [item({ id: "unico-1", product: product("Producto Único En Pantalla", "UNI-1") })],
+          nextCursor: null,
+          pageHref: (cursor: string) => `/faltantes?cursor=${cursor}`,
+          canQuickAct: true,
+          canSeeStatus: true,
+          canSeeSupplier: true,
+          canSeeRequestedAt: false,
+          scope: "ordered",
+          bulkMode: true,
+          now,
+        }),
+      ),
+    );
+
+    // Delimitado entre `>` y `<`: la casilla de selección también lleva el
+    // nombre del producto, pero en un `aria-label` ("Seleccionar Producto
+    // Único En Pantalla"), nunca como texto visible suelto. Contar la
+    // ocurrencia visible es lo que hace que la guarda hable de duplicación de
+    // FILAS, no de coincidencias de atributo.
+    expect(countOccurrences(html, ">Producto Único En Pantalla<")).toBe(2);
   });
 });

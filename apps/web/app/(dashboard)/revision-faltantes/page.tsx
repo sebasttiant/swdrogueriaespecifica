@@ -21,6 +21,7 @@ import {
   MISSING_QUEUE_PATH,
   SHELF_BOARD_ROUTE,
   repositoryScopeFor,
+  resolveMissingBulkMode,
   resolveMissingScope,
 } from "@/features/faltantes/missing-scope";
 import {
@@ -29,7 +30,6 @@ import {
   resolveStaleOnly,
   staleThreshold,
 } from "@/features/faltantes/missing-stale";
-import { resolveMissingView } from "@/features/faltantes/missing-view";
 import {
   getActionableMissingCount,
   getMissingItems,
@@ -67,12 +67,13 @@ export default async function RevisionFaltantesPage({
   searchParams: Promise<{
     page?: string;
     scope?: string;
-    view?: string;
     cursor?: string;
     /** Estado dentro del buzón de reportes, para no pisar `scope`. */
     rscope?: string;
     /** Recorte por demora: lo que abre el aviso de gerencia. */
     demora?: string;
+    /** Selección masiva: ver `MissingBoardRoute.bulkParam` (`SHELF_BOARD_ROUTE`). */
+    bulk?: string;
   }>;
 }) {
   // Una ruta, DOS proyecciones — y las dos son DE ESTANTERÍA.
@@ -110,10 +111,10 @@ export default async function RevisionFaltantesPage({
   const {
     page: rawPage,
     scope: rawScope,
-    view: rawView,
     cursor: rawCursor,
     rscope: rawReportScope,
     demora: rawStale,
+    bulk: rawBulk,
   } = await searchParams;
 
   // --------------------------------------------------------------------------
@@ -138,13 +139,16 @@ export default async function RevisionFaltantesPage({
   // que este buzón solo contiene lo anterior al cambio y se apaga solo cuando
   // se vacía.
   const showingReports = rawScope === REPORTS_TAB_SCOPE;
-  const view = resolveMissingView(rawView);
   const scope = resolveMissingScope(rawScope);
+  const bulkMode = resolveMissingBulkMode(rawBulk);
 
   const canAct = can(session.user.role, "canOrderMissingItems");
   const canViewCustomerIdentity = can(session.user.role, "canViewCustomerIdentity");
   const canViewSupplierIdentity = can(session.user.role, "canViewSupplierIdentity");
   const canExport = can(session.user.role, "canExportFaltantes");
+  // Columna Fecha (Mejora 5, trazabilidad): solo ADMIN/SUPERADMIN. En
+  // faltantes el supervisor está al nivel del vendedor, así que no la hereda.
+  const canSeeRequestedAt = can(session.user.role, "canViewMissingAttribution");
 
   const now = new Date();
 
@@ -218,11 +222,11 @@ export default async function RevisionFaltantesPage({
 
       <MissingBoardTabs
         active={showingReports ? REPORTS_TAB_SCOPE : scope}
-        view={view}
         actionableCount={actionableCount}
         reportsCount={pendingReportGroups}
         route={boardRoute}
         label="Estado de los faltantes"
+        bulkMode={bulkMode}
       />
 
       {showingReports ? (
@@ -267,13 +271,14 @@ export default async function RevisionFaltantesPage({
           items={queue!.items}
           nextCursor={queue!.nextCursor}
           scope={scope}
-          view={view}
           canAct={canAct}
           canExport={canExport}
           canSeeSupplier={canViewSupplierIdentity}
+          canSeeRequestedAt={canSeeRequestedAt}
           now={now}
           route={boardRoute}
           label="Vista de faltantes"
+          bulkMode={bulkMode}
         />
       )}
     </div>

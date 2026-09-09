@@ -8,6 +8,7 @@ import {
   missingPageHref,
   missingScopeHref,
   repositoryScopeFor,
+  resolveMissingBulkMode,
   resolveMissingScope,
 } from "./missing-scope";
 
@@ -55,50 +56,32 @@ describe("MISSING_SCOPE_LABELS", () => {
 describe("missingScopeHref", () => {
   // La cola de trabajo es la URL limpia: es la que el gerente va a guardar en
   // favoritos y abrir 30 veces por día.
-  // La vista por defecto es la COMPLETA, no la compacta: así lo fija
-  // `resolveMissingView`. La URL limpia es la de esa vista; la compacta tiene
-  // que pedirse explícitamente, o el enlace de "Compacta" quedaría apuntando a
-  // una URL que el resolvedor lee como completa —y sería el mismo bug de
-  // antes, ahora en la mitad que se dejara sin invertir: el botón no se podría
-  // activar.
-  it("deja la ruta limpia para la vista por defecto", () => {
-    expect(missingScopeHref("actionable", "full")).toBe("/revision-faltantes");
+  it("deja la ruta limpia para el scope por defecto", () => {
+    expect(missingScopeHref("actionable")).toBe("/revision-faltantes");
   });
 
-  it("pide la vista compacta de forma explícita", () => {
-    expect(missingScopeHref("actionable", "compact")).toBe(
-      "/revision-faltantes?view=compact",
-    );
+  it("pide un scope explícito", () => {
+    expect(missingScopeHref("ordered")).toBe("/revision-faltantes?scope=ordered");
   });
 
-  it("conserva el layout elegido al cambiar de vista", () => {
-    expect(missingScopeHref("ordered", "compact")).toBe(
-      "/revision-faltantes?scope=ordered&view=compact",
-    );
-    expect(missingScopeHref("ordered", "full")).toBe("/revision-faltantes?scope=ordered");
-  });
-
-  // Cambiar de vista NO arrastra el cursor: apuntaría a una fila que la nueva
-  // vista no contiene y la paginación quedaría en un estado imposible.
-  it("nunca arrastra el cursor de la vista anterior", () => {
-    expect(missingScopeHref("discarded", "compact")).not.toContain("cursor");
+  // Cambiar de scope NO arrastra el cursor: apuntaría a una fila que el nuevo
+  // scope no contiene y la paginación quedaría en un estado imposible.
+  it("nunca arrastra el cursor del scope anterior", () => {
+    expect(missingScopeHref("discarded")).not.toContain("cursor");
   });
 });
 
 describe("missingPageHref", () => {
-  // Pasar de página NO puede devolverte a otra vista: con 847 faltantes,
+  // Pasar de página NO puede devolverte a otro scope: con 847 faltantes,
   // perder el lugar es perder el trabajo hecho.
-  it("preserva vista y layout al pasar de página", () => {
-    expect(missingPageHref("ordered", "compact", "cur-1")).toBe(
-      "/revision-faltantes?scope=ordered&view=compact&cursor=cur-1",
-    );
-    expect(missingPageHref("ordered", "full", "cur-1")).toBe(
+  it("preserva el scope al pasar de página", () => {
+    expect(missingPageHref("ordered", "cur-1")).toBe(
       "/revision-faltantes?scope=ordered&cursor=cur-1",
     );
   });
 
   it("escapa el cursor para que no rompa la URL", () => {
-    expect(missingPageHref("actionable", "compact", "a b&c=d")).toContain(
+    expect(missingPageHref("actionable", "a b&c=d")).toContain(
       "cursor=a+b%26c%3Dd",
     );
   });
@@ -120,61 +103,139 @@ describe("repositoryScopeFor", () => {
 // --------------------------------------------------------------------------
 describe("rutas de tablero", () => {
   it("la estantería arma sus enlaces sobre Revisión de faltantes", () => {
-    expect(missingScopeHref("ordered", "full", SHELF_BOARD_ROUTE)).toBe(
+    expect(missingScopeHref("ordered", SHELF_BOARD_ROUTE)).toBe(
       "/revision-faltantes?scope=ordered",
     );
   });
 
   it("el abastecimiento de cliente arma los suyos sobre Revisión de pendientes", () => {
-    const href = missingScopeHref("ordered", "compact", PENDING_SUPPLY_ROUTE);
+    const href = missingScopeHref("ordered", PENDING_SUPPLY_ROUTE);
 
     expect(href.startsWith("/revision-pendientes?")).toBe(true);
   });
 
   // EL TEST QUE IMPORTA. Los nombres de parámetro de un tablero no pueden ser
   // los del otro, o los dos se pisan en la misma URL de Revisión de pendientes,
-  // que ya usa `scope`, `view` y `cursor` para su lista de pendientes.
+  // que ya usa `scope` y `cursor` para su lista de pendientes.
   it("no comparte NINGÚN nombre de parámetro entre los dos tableros", () => {
-    const shelf = [
-      SHELF_BOARD_ROUTE.scopeParam,
-      SHELF_BOARD_ROUTE.viewParam,
-      SHELF_BOARD_ROUTE.cursorParam,
-    ];
-    const supply = [
-      PENDING_SUPPLY_ROUTE.scopeParam,
-      PENDING_SUPPLY_ROUTE.viewParam,
-      PENDING_SUPPLY_ROUTE.cursorParam,
-    ];
+    const shelf = [SHELF_BOARD_ROUTE.scopeParam, SHELF_BOARD_ROUTE.cursorParam];
+    const supply = [PENDING_SUPPLY_ROUTE.scopeParam, PENDING_SUPPLY_ROUTE.cursorParam];
 
     expect(supply.filter((param) => shelf.includes(param))).toEqual([]);
   });
 
-  // Los tres nombres que Revisión de pendientes ya tiene ocupados con su propia
+  // Los nombres que Revisión de pendientes ya tiene ocupados con su propia
   // lista. Si el tablero de abastecimiento usara uno, pasar de página en él
   // movería también la lista de pendientes de la otra mitad.
   it("no usa los parámetros que Revisión de pendientes ya tiene ocupados", () => {
     const taken = ["scope", "view", "cursor", "purchase", "availability", "customer"];
 
     expect(taken).not.toContain(PENDING_SUPPLY_ROUTE.scopeParam);
-    expect(taken).not.toContain(PENDING_SUPPLY_ROUTE.viewParam);
     expect(taken).not.toContain(PENDING_SUPPLY_ROUTE.cursorParam);
   });
 
   // Sin esto, tocar "Ya pedidos" dentro del abastecimiento devuelve a
   // seguimiento: el enlace pierde la mitad en la que estás parado.
   it("arrastra la pestaña activa en TODOS los enlaces del abastecimiento", () => {
-    const scopeHref = missingScopeHref("discarded", "full", PENDING_SUPPLY_ROUTE);
-    const pageHref = missingPageHref("ordered", "compact", "cur-1", PENDING_SUPPLY_ROUTE);
+    const scopeHref = missingScopeHref("discarded", PENDING_SUPPLY_ROUTE);
+    const pageHref = missingPageHref("ordered", "cur-1", PENDING_SUPPLY_ROUTE);
 
     expect(scopeHref).toContain("tab=abastecimiento");
     expect(pageHref).toContain("tab=abastecimiento");
   });
 
   it("pagina el abastecimiento con su propio cursor", () => {
-    const href = missingPageHref("actionable", "compact", "cur-9", PENDING_SUPPLY_ROUTE);
+    const href = missingPageHref("actionable", "cur-9", PENDING_SUPPLY_ROUTE);
 
     expect(href).toContain("scursor=cur-9");
     expect(href).not.toContain("cursor=cur-9&");
     expect(new URL(href, "https://x").searchParams.get("cursor")).toBeNull();
+  });
+
+  // El nombre del parámetro de selección masiva tampoco puede pisar los otros,
+  // por la misma razón que ya obligó a `sscope`/`scursor`.
+  it("el parámetro de selección masiva de cada tablero tiene su propio nombre", () => {
+    expect(SHELF_BOARD_ROUTE.bulkParam).toBe("bulk");
+    expect(PENDING_SUPPLY_ROUTE.bulkParam).toBe("sbulk");
+    expect(PENDING_SUPPLY_ROUTE.bulkParam).not.toBe(SHELF_BOARD_ROUTE.bulkParam);
+
+    const shelf = [
+      SHELF_BOARD_ROUTE.scopeParam,
+      SHELF_BOARD_ROUTE.cursorParam,
+      SHELF_BOARD_ROUTE.bulkParam,
+    ];
+    const supply = [
+      PENDING_SUPPLY_ROUTE.scopeParam,
+      PENDING_SUPPLY_ROUTE.cursorParam,
+      PENDING_SUPPLY_ROUTE.bulkParam,
+    ];
+    expect(supply.filter((param) => shelf.includes(param))).toEqual([]);
+  });
+});
+
+// --------------------------------------------------------------------------
+// Selección masiva: modo alternativo de la lista real, activado por URL.
+// `missingHref` tiene que arrastrarlo igual que arrastra `persistentParams`:
+// sin esto, tocar otra pestaña o cambiar de layout devolvería al modo normal
+// en silencio, con la selección ya hecha perdida.
+// --------------------------------------------------------------------------
+describe("selección masiva en la URL", () => {
+  it("no escribe el parámetro cuando el modo no se pide", () => {
+    expect(missingScopeHref("actionable")).toBe("/revision-faltantes");
+    expect(missingScopeHref("actionable", SHELF_BOARD_ROUTE, false)).toBe(
+      "/revision-faltantes",
+    );
+  });
+
+  it("escribe bulk=1 sobre la estantería cuando el modo está activo", () => {
+    const href = missingScopeHref("actionable", SHELF_BOARD_ROUTE, true);
+
+    expect(new URL(href, "https://x").searchParams.get("bulk")).toBe("1");
+  });
+
+  it("escribe sbulk=1 sobre el abastecimiento cuando el modo está activo", () => {
+    const href = missingScopeHref("ordered", PENDING_SUPPLY_ROUTE, true);
+
+    expect(new URL(href, "https://x").searchParams.get("sbulk")).toBe("1");
+    // No pisa el nombre de la estantería.
+    expect(new URL(href, "https://x").searchParams.get("bulk")).toBeNull();
+  });
+
+  it("conserva el modo masivo al cambiar de scope (missingScopeHref)", () => {
+    expect(missingScopeHref("ordered", SHELF_BOARD_ROUTE, true)).toBe(
+      "/revision-faltantes?scope=ordered&bulk=1",
+    );
+  });
+
+  it("conserva el modo masivo al pasar de página (missingPageHref)", () => {
+    const href = missingPageHref("ordered", "cur-1", SHELF_BOARD_ROUTE, true);
+
+    expect(new URL(href, "https://x").searchParams.get("bulk")).toBe("1");
+    expect(new URL(href, "https://x").searchParams.get("cursor")).toBe("cur-1");
+  });
+
+  it("conserva el modo masivo al pasar de página en el abastecimiento", () => {
+    const href = missingPageHref("actionable", "cur-9", PENDING_SUPPLY_ROUTE, true);
+
+    expect(new URL(href, "https://x").searchParams.get("sbulk")).toBe("1");
+    expect(new URL(href, "https://x").searchParams.get("tab")).toBe("abastecimiento");
+  });
+});
+
+// El parámetro que activa la selección masiva. Es input de usuario: cualquier
+// basura tiene que caer en el modo normal, nunca romper la pantalla. (Movido
+// desde `missing-view.ts`, junto con el toggle de layout que sí se retiró.)
+describe("resolveMissingBulkMode", () => {
+  it("activa el modo solo con el valor exacto '1'", () => {
+    expect(resolveMissingBulkMode("1")).toBe(true);
+  });
+
+  it("cae en modo normal ante ausencia o basura", () => {
+    expect(resolveMissingBulkMode(undefined)).toBe(false);
+    expect(resolveMissingBulkMode(null)).toBe(false);
+    expect(resolveMissingBulkMode("")).toBe(false);
+    expect(resolveMissingBulkMode("true")).toBe(false);
+    expect(resolveMissingBulkMode("0")).toBe(false);
+    expect(resolveMissingBulkMode(" 1")).toBe(false);
   });
 });

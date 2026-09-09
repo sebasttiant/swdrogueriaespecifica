@@ -14,29 +14,51 @@ import {
   type DeadlineStatus,
 } from "../pendientes/deadline-status";
 import { groupMissingItems, type MissingGroupKey } from "./missing-grouping";
+import { MISSING_BULK_FORM_ID } from "./missing-bulk-selection";
 import { getOrderMetadata, orderedQuantityLabel } from "./missing-list-helpers";
+import type { MissingQueueScope } from "./missing-scope";
+import { canDiscard } from "./order-rules";
 import { MissingQuickActions } from "./missing-quick-actions";
 
 type MissingListProps = {
   items: MissingItemListEntry[];
   nextCursor: string | null;
-  // Construye la URL de la página siguiente preservando vista y layout. Sin
-  // esto, "Ver más" devolvía siempre a la cola por defecto.
+  // Construye la URL de la página siguiente preservando el scope. Sin esto,
+  // "Ver más" devolvía siempre a la cola por defecto.
   pageHref: (cursor: string) => string;
   // Autoridad de compras para las acciones de un toque (✓ pedido / ✗ descartar).
   canQuickAct: boolean;
   // Autoridad de compras (`canOrderMissingItems`): habilita ver los badges de
   // estado y vencimiento. El vendedor reporta y sigue operando; para él la cola
-  // es solo producto/cantidad/código, sin el seguimiento de gerencia. Es un eje
-  // distinto de `canQuickAct`: ver en qué anda un faltante no es poder tocarlo.
+  // es solo producto/cantidad/solicitante, sin el seguimiento de gerencia. Es
+  // un eje distinto de `canQuickAct`: ver en qué anda un faltante no es poder
+  // tocarlo. El SCOPE decide además si la columna aplica: ver `scope` abajo.
   canSeeStatus: boolean;
   // Gatea la columna "Pedido" (proveedor · fecha · cantidad pedida). Un vendedor
   // NO debe saber a qué depósito le compra la droguería. Eje distinto de
-  // `canSeeStatus`: saber en qué anda el faltante no es saber a quién se le pide.
+  // `canSeeStatus`: saber en qué anda el faltante no es saber a quién se le
+  // pide. El SCOPE decide además si la columna aplica: ver `scope` abajo.
   canSeeSupplier: boolean;
+  // Capability `canViewMissingAttribution` (SUPERADMIN/ADMIN): gatea la
+  // columna Fecha. "Solicitado por" (el nombre) queda visible para TODOS —esta
+  // capability no la toca—; solo la fecha exacta es trazabilidad de gerencia.
+  canSeeRequestedAt: boolean;
+  // Alcance operativo de la página (`missing-scope.ts`). Estado y Pedido solo
+  // aportan en "ordered"/"discarded", donde SÍ distinguen una fila de otra
+  // (PEDIDO vs RECIBIDO, y a qué proveedor). En "actionable" ("Por pedir") todo
+  // es FALTANTE: la columna sería constante, puro ruido. Los dos ejes se
+  // combinan: la columna se muestra si el scope la justifica Y el permiso
+  // (`canSeeStatus`/`canSeeSupplier`) la habilita.
+  scope: MissingQueueScope;
   // Instante compartido con `MissingSummary` para que ambas piezas hablen del
   // mismo momento (deadline badges + agrupación de urgencia).
   now: Date;
+  // Selección masiva (modo alternativo, activado por `?bulk=1` y resuelto en
+  // `missing-queue-board.tsx` como `canAct && bulkMode`). En este modo la fila
+  // NO monta `MissingQuickActions`: tener la acción individual y la masiva a
+  // la vez es el mismo defecto de duplicación un nivel más abajo. Por defecto
+  // apagado, para no tocar el árbol de nadie que no pida el modo.
+  bulkMode?: boolean;
 };
 
 // Etiqueta y tono del encabezado de cada grupo de urgencia.
@@ -88,6 +110,10 @@ function canOrderItem(missing: MissingItemListItem): boolean {
 // Contexto de render de una fila: quién puede pedir (acción) y quién ve el
 // seguimiento (badges de estado/vencimiento). Agrupado para no arrastrar
 // parámetros posicionales por cada helper de render.
+//
+// `canSeeStatus`/`canSeeSupplier` acá YA son el resultado combinado de permiso
+// + scope (ver `MissingList` más abajo): las filas no vuelven a mirar el
+// scope, solo leen si la columna aplica.
 type ActionContext = {
   // Pedido rápido y descarte: la única autoridad que la fila necesita.
   canQuickAct: boolean;
@@ -95,6 +121,14 @@ type ActionContext = {
   // Identidad del proveedor. El service YA la anuló para quien no la tiene, así
   // que esto solo evita pintar una columna vacía; la protección real no vive acá.
   canSeeSupplier: boolean;
+  // Columna Fecha: capability pura (`canViewMissingAttribution`), sin eje de
+  // scope — a diferencia de status/supplier, aplica igual en las tres colas.
+  canSeeRequestedAt: boolean;
+  // Selección masiva: ver `MissingListProps.bulkMode`. Se exige también
+  // `canQuickAct` acá abajo, en la propia fila, en vez de confiar en que quien
+  // arma la página ya lo hizo — la misma defensa en profundidad que ya usa el
+  // resto del contexto.
+  bulkMode: boolean;
 };
 
 // --------------------------------------------------------------------------
@@ -128,6 +162,36 @@ function missingActions(
       />
     </div>
   );
+}
+
+// Casilla de selección masiva. Mismo criterio de elegibilidad que ya filtra
+// `missing-queue-board.tsx` para armar la barra: `canDiscard(item.status)`.
+// Deliberadamente NO mira `confirmedAt` — ver la nota de `canOrderItem` sobre
+// la asimetría preexistente que este trabajo no corrige. Vive FUERA del
+// `<form>` de la barra: se asocia por el atributo `form`, no por anidamiento.
+function missingBulkCheckbox(missing: MissingItemListItem) {
+  if (!canDiscard(missing.status)) return null;
+
+  return (
+    <input
+      type="checkbox"
+      name="ids"
+      value={missing.id}
+      form={MISSING_BULK_FORM_ID}
+      aria-label={`Seleccionar ${missing.product.name}`}
+      className="h-4 w-4 shrink-0 rounded border-border accent-primary"
+    />
+  );
+}
+
+// En modo masivo la fila despacha en LOTE, nunca junto con la acción
+// individual: tenerlas a la vez es el mismo defecto de duplicación un nivel
+// más abajo. Cuando el modo está apagado, esto es exactamente
+// `missingActions(missing, actions)` — el árbol no cambia un bit.
+function missingActionsOrCheckbox(missing: MissingItemListItem, actions: ActionContext) {
+  return actions.canQuickAct && actions.bulkMode
+    ? missingBulkCheckbox(missing)
+    : missingActions(missing, actions);
 }
 
 // Proveedor y fecha de una orden en curso. `getOrderMetadata` ya decide si el
@@ -185,44 +249,35 @@ function missingCard(
   // contexto secundario y va colapsado: en la cola no se lee, se actúa.
   return (
     <Card key={missing.id} className="space-y-3 p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="break-words text-base font-semibold text-text">
-            {missing.product.name}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {missing.product.code}
-            {missing.originId ? " · auto" : ""}
-          </p>
-          {/* Trazabilidad (Mejora 5): quién lo pidió. El vendedor que reportó,
-              o quien lo creó. Visible para todos: es contexto operativo. */}
-          {missing.requestedByName ? (
-            <p className="break-words text-xs text-muted-foreground">
-              Solicitado por {missing.requestedByName}
-            </p>
-          ) : null}
-        </div>
-        <p className="shrink-0 text-lg font-bold tabular-nums text-text">
+      <div className="min-w-0">
+        <p className="break-words text-base font-semibold text-text">
+          {missing.product.name}
           {missing.originId ? (
-            <>
-              {missing.quantity}
-              <span className="ml-1 text-xs font-normal text-muted-foreground">
-                {missing.product.unit}
-              </span>
-            </>
-          ) : missing.sellerCode ? (
-            <>
-              <span className="font-mono">{missing.sellerCode}</span>
-              <span className="ml-1 text-xs font-normal text-muted-foreground">vendedor</span>
-            </>
-          ) : (
-            <span className="text-muted-foreground">—</span>
-          )}
+            <span className="ml-2 text-xs font-normal text-muted-foreground">auto</span>
+          ) : null}
         </p>
+        {/* Trazabilidad (Mejora 5): quién lo pidió. El vendedor que reportó,
+            o quien lo creó. Visible para todos: es contexto operativo. */}
+        {missing.requestedByName ? (
+          <p className="break-words text-xs text-muted-foreground">
+            Solicitado por {missing.requestedByName}
+          </p>
+        ) : null}
+        {/* Columna Fecha: capability `canViewMissingAttribution`
+            (SUPERADMIN/ADMIN). Misma fecha que dio nombre a "Solicitado
+            por" arriba —el service las ata al mismo evento—, así que nunca
+            se muestra una sin la otra. */}
+        {actions.canSeeRequestedAt ? (
+          <p className="text-xs text-muted-foreground">
+            {formatBogotaDate(missing.requestedAt, { style: "date" })}
+          </p>
+        ) : null}
       </div>
 
-      {/* Seguimiento (vencimiento + estado): solo gerencia. El vendedor ve la
-          fila sin badges: reporta y sigue operando. */}
+      {/* Seguimiento (vencimiento + estado): solo gerencia, y solo en las
+          colas donde distingue algo ("ordered"/"discarded" — ver `scope` en
+          `MissingList`). El vendedor ve la fila sin badges: reporta y sigue
+          operando. */}
       {actions.canSeeStatus ? (
         <div className="flex flex-wrap items-center gap-1.5">
           {deadlineBadge(origin, now)}
@@ -230,7 +285,7 @@ function missingCard(
         </div>
       ) : null}
 
-      {missingActions(missing, actions)}
+      {missingActionsOrCheckbox(missing, actions)}
 
       <details className="group">
         <summary className="cursor-pointer list-none text-xs font-medium text-muted-foreground hover:text-text">
@@ -272,24 +327,14 @@ function missingRow(
           <span className="ml-2 text-xs font-normal text-muted-foreground">auto</span>
         ) : null}
       </td>
-      <td className="px-3 py-2 text-muted-foreground">{missing.product.code}</td>
-      <td className="px-3 py-2 text-muted-foreground">
-        {missing.originId ? (
-          <>
-            {missing.quantity} {missing.product.unit}
-          </>
-        ) : missing.sellerCode ? (
-          <span className="font-mono">{missing.sellerCode}</span>
-        ) : (
-          "—"
-        )}
-      </td>
-      <td className="px-3 py-2 text-sm text-muted-foreground">
-        {missing.note ? `Nota: ${missing.note}` : "—"}
-      </td>
       <td className="px-3 py-2 text-sm text-muted-foreground">
         {missing.requestedByName ?? "—"}
       </td>
+      {actions.canSeeRequestedAt ? (
+        <td className="px-3 py-2 text-sm text-muted-foreground">
+          {formatBogotaDate(missing.requestedAt, { style: "date" })}
+        </td>
+      ) : null}
       {actions.canSeeStatus ? (
         <td className="px-3 py-2">
           <div className="flex items-center gap-1.5">
@@ -302,7 +347,7 @@ function missingRow(
         <td className="px-3 py-2 text-sm">{orderCell(missing)}</td>
       ) : null}
       {hasActions ? (
-        <td className="px-3 py-2">{missingActions(missing, actions)}</td>
+        <td className="px-3 py-2">{missingActionsOrCheckbox(missing, actions)}</td>
       ) : null}
     </tr>
   );
@@ -319,12 +364,24 @@ export function MissingList({
   canQuickAct,
   canSeeStatus,
   canSeeSupplier,
+  canSeeRequestedAt,
+  scope,
+  bulkMode = false,
   now,
 }: MissingListProps) {
+  // Estado y Pedido solo distinguen algo en "ordered"/"discarded": en
+  // "actionable" ("Por pedir") TODO es FALTANTE y la columna sería constante.
+  // El permiso (`canSeeStatus`/`canSeeSupplier`) sigue gobernando el eje de
+  // autoridad; acá se combina con lo que el scope justifica.
+  const showsStatus = canSeeStatus && scope !== "actionable";
+  const showsSupplier = canSeeSupplier && scope !== "actionable";
+
   const actions: ActionContext = {
     canQuickAct,
-    canSeeStatus,
-    canSeeSupplier,
+    canSeeStatus: showsStatus,
+    canSeeSupplier: showsSupplier,
+    canSeeRequestedAt,
+    bulkMode,
   };
 
   if (items.length === 0) {
@@ -367,14 +424,14 @@ export function MissingList({
                 <thead className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
                   <tr>
                     <th className="px-3 py-2 font-medium">Producto</th>
-                    <th className="px-3 py-2 font-medium">Código</th>
-                    <th className="px-3 py-2 font-medium">Referencia</th>
-                    <th className="px-3 py-2 font-medium">Nota</th>
                     <th className="px-3 py-2 font-medium">Solicitado por</th>
-                    {canSeeStatus ? (
+                    {canSeeRequestedAt ? (
+                      <th className="px-3 py-2 font-medium">Fecha</th>
+                    ) : null}
+                    {showsStatus ? (
                       <th className="px-3 py-2 font-medium">Estado</th>
                     ) : null}
-                    {canSeeSupplier ? (
+                    {showsSupplier ? (
                       <th className="px-3 py-2 font-medium">Pedido</th>
                     ) : null}
                     {canQuickAct ? (

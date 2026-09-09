@@ -24,7 +24,7 @@ import {
   type MissingItemOrigin,
   type MissingItemScope,
 } from "@/server/repositories/missing-item.repository";
-import { reporterNamesByLinkedItemIds } from "@/server/repositories/missing-report.repository";
+import { reporterAttributionByLinkedItemIds } from "@/server/repositories/missing-report.repository";
 import {
   buildMissingExportRows,
   type MissingExportRow,
@@ -105,11 +105,14 @@ const MANUAL_MISSING_ITEM_QUANTITY = 1;
 // PEDIDO + confirmedAt). El repositorio refuerza este mismo filtro en su CAS.
 const CONFIRMABLE_STATUSES: MissingItemStatus[] = ["FALTANTE"];
 
-// Faltante enriquecido con el nombre del solicitante (Mejora 5). `requestedByName`
-// es derivado en el service —no vive en la fila de `MissingItem`—, así que se
-// expone acá y no en el tipo del repositorio.
+// Faltante enriquecido con el nombre del solicitante (Mejora 5) y la fecha del
+// MISMO evento que lo produjo (columna Fecha). Ambos son derivados en el
+// service —no viven en la fila de `MissingItem`—, así que se exponen acá y no
+// en el tipo del repositorio.
 export type MissingItemListEntry = MissingItemListItem & {
   requestedByName: string | null;
+  // Nunca null: cae en `item.createdAt` cuando no hay reporte de por medio.
+  requestedAt: Date;
 };
 
 export async function getMissingItems(params: {
@@ -137,7 +140,9 @@ export async function getMissingItems(params: {
   // `createdBy` es gerencia (quien lo vinculó), así que el vendedor está en el
   // `reporter` del reporte. Una consulta por lote (índice `linkedMissingItemId`)
   // resuelve toda la página sin N+1.
-  const reporterNames = await reporterNamesByLinkedItemIds(items.map((item) => item.id));
+  const reporterAttribution = await reporterAttributionByLinkedItemIds(
+    items.map((item) => item.id),
+  );
 
   // Minimización server-side: el nombre del cliente nunca llega al cliente
   // (ni siquiera serializado en el HTML) para roles sin esta capability.
@@ -159,9 +164,18 @@ export async function getMissingItems(params: {
       : { ...withoutCustomer, supplier: null, supplierId: null };
     // Reporte → reporter; si no, quien lo creó (vendedor del pendiente o
     // gerencia en el alta manual). Nombre de staff, no PII de cliente.
-    const requestedByName =
-      reporterNames.get(item.id) ?? item.createdBy?.name ?? null;
-    return { ...base, requestedByName };
+    //
+    // `requestedAt` usa EXACTAMENTE la misma precedencia que `requestedByName`
+    // y los dos leen del mismo `attribution` — nunca por separado. Si un
+    // faltante nació de un reporte, `createdBy` es gerencia (quien lo vinculó,
+    // días después) y `item.createdAt` sería SU fecha, no la del vendedor que
+    // reportó: mostrar "Daniel Bonilla" con la fecha en que gerencia lo
+    // vinculó le atribuiría a Daniel un momento que no vivió. Nombre y fecha
+    // viajan pegados al mismo evento, o no viajan.
+    const attribution = reporterAttribution.get(item.id);
+    const requestedByName = attribution?.name ?? item.createdBy?.name ?? null;
+    const requestedAt = attribution?.createdAt ?? item.createdAt;
+    return { ...base, requestedByName, requestedAt };
   });
 
   return { items: enrichedItems, nextCursor };

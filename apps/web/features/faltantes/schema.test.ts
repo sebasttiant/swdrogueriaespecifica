@@ -6,6 +6,7 @@ import {
   MAX_MISSING_REPORT_SELLER_CODE_LENGTH,
   MAX_ORDERED_QUANTITY,
   manualMissingItemCreateSchema,
+  markMissingItemsOrderedSchema,
   missingReportSubmitSchema,
   orderMissingItemSchema,
 } from "./schema";
@@ -295,5 +296,26 @@ describe("linkMissingReportSchema · group hygiene", () => {
     expect(
       linkMissingReportSchema.safeParse({ normalizedName: "x".repeat(201), productId: "p1" }).success,
     ).toBe(false);
+  });
+});
+
+// La barra de selección masiva comparte UN solo <form> entre "Ya lo pedí" y
+// "Descartar" (ver `missing-bulk-actions.tsx`), así que el campo "Motivo"
+// viaja también en el submit de pedido. Este schema NO declara `reason` y no
+// usa `.strict()`, así que Zod lo descarta en modo "strip" (default) en vez de
+// rechazar el parseo. Si alguna vez se le agrega `.strict()`, este test lo
+// detecta antes de que rompa el pedido rápido.
+describe("markMissingItemsOrderedSchema · campos ajenos", () => {
+  it("descarta en silencio un campo que no declara, en vez de rechazar el pedido", () => {
+    const result = markMissingItemsOrderedSchema.safeParse({
+      ids: ["m-1"],
+      reason: "Duplicado, ya no se necesita",
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toEqual({ ids: ["m-1"] });
+      expect("reason" in result.data).toBe(false);
+    }
   });
 });

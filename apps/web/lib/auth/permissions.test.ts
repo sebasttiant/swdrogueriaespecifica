@@ -281,6 +281,18 @@ describe("canOrderMissingItems (capability)", () => {
   });
 });
 
+// La columna Fecha de la cola de faltantes: mismo criterio que
+// `canOrderMissingItems` porque en faltantes el supervisor está al nivel del
+// vendedor, no de gerencia.
+describe("canViewMissingAttribution (capability)", () => {
+  it("permite ver la fecha de solicitud solo a SUPERADMIN y ADMIN", () => {
+    expect(can("SUPERADMIN", "canViewMissingAttribution")).toBe(true);
+    expect(can("ADMIN", "canViewMissingAttribution")).toBe(true);
+    expect(can("SUPERVISOR", "canViewMissingAttribution")).toBe(false);
+    expect(can("OPERADOR", "canViewMissingAttribution")).toBe(false);
+  });
+});
+
 describe("canManageSuppliers (capability)", () => {
   it("permite crear proveedores nuevos solo a SUPERADMIN y ADMIN", () => {
     expect(can("SUPERADMIN", "canManageSuppliers")).toBe(true);

@@ -3,16 +3,13 @@ import Link from "next/link";
 import { MissingBulkActions } from "@/features/faltantes/missing-bulk-actions";
 import { MissingExportActions } from "@/features/faltantes/missing-export-actions";
 import { MissingList } from "@/features/faltantes/missing-list";
-import { MissingListCompact } from "@/features/faltantes/missing-list-compact";
 import { canDiscard } from "@/features/faltantes/order-rules";
 import {
-  MISSING_SCOPE_EMPTY,
   missingPageHref,
   missingScopeHref,
   type MissingBoardRoute,
   type MissingQueueScope,
 } from "@/features/faltantes/missing-scope";
-import type { MissingView } from "@/features/faltantes/missing-view";
 import { cn } from "@/lib/utils/cn";
 
 // --------------------------------------------------------------------------
@@ -31,57 +28,99 @@ import { cn } from "@/lib/utils/cn";
 //
 // Es presentación pura: recibe los datos ya resueltos y no consulta nada. Así
 // la página decide el alcance —y quién puede verlo— en un solo lugar.
+//
+// La vista compacta se retiró (el dueño la comparó contra la completa con
+// datos de producción y convergían): ya no hay toggle de layout acá, solo
+// `MissingList`.
 // --------------------------------------------------------------------------
 
 type MissingQueueBoardProps = {
   items: Parameters<typeof MissingList>[0]["items"];
   nextCursor: string | null;
   scope: MissingQueueScope;
-  view: MissingView;
   canAct: boolean;
   canExport: boolean;
   canSeeSupplier: boolean;
+  // Capability `canViewMissingAttribution` (SUPERADMIN/ADMIN): gatea la
+  // columna Fecha de la lista. "Solicitado por" sigue visible para todos.
+  canSeeRequestedAt: boolean;
   now: Date;
   /** Ruta y nombres de parámetros del tablero. Ver `missing-scope.ts`. */
   route: MissingBoardRoute;
   /** Cómo se llama esta cola para el lector de pantalla. */
   label: string;
+  /**
+   * Selección masiva: modo alternativo de la MISMA lista, resuelto por la
+   * página vía `resolveMissingBulkMode` sobre `route.bulkParam`. Se combina
+   * acá abajo con `canAct` — quien arma la página no tiene por qué acordarse
+   * de ese gate cada vez que lea este prop.
+   */
+  bulkMode: boolean;
 };
 
 export function MissingQueueBoard({
   items,
   nextCursor,
   scope,
-  view,
   canAct,
   canExport,
   canSeeSupplier,
+  canSeeRequestedAt,
   now,
   route,
   label,
+  bulkMode,
 }: MissingQueueBoardProps) {
+  // Se muestra y se activa SOLO para la autoridad de compras — igual que hoy
+  // se monta `MissingBulkActions` — sin importar qué traiga la URL.
+  const isBulkMode = canAct && bulkMode;
+
+  // Mismo criterio que ya filtra `missing-queue-board.tsx` de siempre:
+  // `canDiscard(item.status)`. Solo para "Seleccionar todos" y el total; NO
+  // para dibujar filas, que es trabajo de la lista real.
+  const eligibleIds = items
+    .filter((item) => canDiscard(item.status))
+    .map((item) => item.id);
+
+  const list = (
+    <MissingList
+      items={items}
+      nextCursor={nextCursor}
+      pageHref={(next) => missingPageHref(scope, next, route, isBulkMode)}
+      canQuickAct={canAct}
+      canSeeStatus={canAct}
+      canSeeSupplier={canSeeSupplier}
+      canSeeRequestedAt={canSeeRequestedAt}
+      scope={scope}
+      bulkMode={isBulkMode}
+      now={now}
+    />
+  );
+
   return (
     <div className="space-y-4">
-      {/* Toggle de vista (completa/compacta) + export. Se ocultan al imprimir:
-          el PDF es la lista, no los controles. */}
+      {/* Selección masiva + export. Se ocultan al imprimir: el PDF es la
+          lista, no los controles. */}
       <div className="flex flex-col gap-3 print:hidden sm:flex-row sm:items-center sm:justify-between">
-        <nav aria-label={label} className="flex gap-2 text-sm font-semibold">
-          {(["full", "compact"] as const).map((option) => (
+        <nav aria-label={label} className="flex flex-wrap gap-2 text-sm font-semibold">
+          {/* Entrar y salir de selección masiva, como enlace de URL —server
+              rendered, compartible—. Solo para la autoridad de compras: quien
+              no puede despachar en lote no tiene qué hacer con el modo. */}
+          {canAct ? (
             <Link
               prefetch={false}
-              key={option}
-              href={missingScopeHref(scope, option, route)}
-              aria-current={view === option ? "page" : undefined}
+              href={missingScopeHref(scope, route, !isBulkMode)}
+              aria-current={isBulkMode ? "page" : undefined}
               className={cn(
                 "rounded-lg px-3 py-1.5 transition-colors",
-                view === option
+                isBulkMode
                   ? "bg-primary text-primary-foreground"
                   : "text-muted-foreground hover:bg-muted",
               )}
             >
-              {option === "full" ? "Completa" : "Compacta"}
+              {isBulkMode ? "Salir de selección" : "Seleccionar varios"}
             </Link>
-          ))}
+          ) : null}
         </nav>
 
         {/* Export (Excel/CSV/PDF) solo para gerencia. La ruta de descarga
@@ -89,42 +128,14 @@ export function MissingQueueBoard({
         {canExport ? <MissingExportActions /> : null}
       </div>
 
-      {/* Cierre rápido de duplicados: solo la autoridad de compras. El vendedor
-          no ve ni las casillas. Se ofrecen únicamente los faltantes que la
-          acción admite, para no mostrar un control que el servidor rechazaría. */}
-      {canAct ? (
-        <MissingBulkActions
-          items={items
-            .filter((item) => canDiscard(item.status))
-            .map((item) => ({
-              id: item.id,
-              productName: item.product.name,
-              quantity: item.originId ? item.quantity : null,
-              unit: item.product.unit,
-              sellerCode: item.originId ? null : item.sellerCode,
-            }))}
-        />
-      ) : null}
-
-      {view === "compact" ? (
-        <MissingListCompact
-          items={items}
-          canAct={canAct}
-          emptyTitle={MISSING_SCOPE_EMPTY[scope].title}
-          emptyDescription={MISSING_SCOPE_EMPTY[scope].description}
-          nextCursor={nextCursor}
-          pageHref={(next) => missingPageHref(scope, view, next, route)}
-        />
+      {/* La barra ENVUELVE la lista real: en modo masivo dibuja UN formulario
+          y delega el conteo sobre las casillas que la lista ya monta en cada
+          fila. Fuera de modo masivo no se monta nada acá — la lista sola,
+          como siempre. */}
+      {isBulkMode ? (
+        <MissingBulkActions eligibleIds={eligibleIds}>{list}</MissingBulkActions>
       ) : (
-        <MissingList
-          items={items}
-          nextCursor={nextCursor}
-          pageHref={(next) => missingPageHref(scope, view, next, route)}
-          canQuickAct={canAct}
-          canSeeStatus={canAct}
-          canSeeSupplier={canSeeSupplier}
-          now={now}
-        />
+        list
       )}
     </div>
   );

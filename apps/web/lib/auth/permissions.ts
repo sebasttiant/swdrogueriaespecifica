@@ -202,6 +202,12 @@ export const CAPABILITIES = [
   // (ADMIN/SUPERADMIN) compran; llevar esta capacidad a otro rol es un
   // cambio de matriz (esta lista + `ROLE_CAPABILITIES`), nunca un cambio de código.
   "canOrderMissingItems",
+  // Gatea la columna Fecha de la cola de faltantes (cuándo se pidió). "Solicitado
+  // por" queda visible para todos —es contexto operativo—, pero la fecha exacta
+  // es trazabilidad de gerencia, así que solo ADMIN/SUPERADMIN. En faltantes el
+  // supervisor está al nivel del vendedor: no la hereda, a diferencia de
+  // `canOrderMissingItems`, que tampoco tiene.
+  "canViewMissingAttribution",
   // Gatea la CREACIÓN de un proveedor nuevo al vuelo mientras se pide un
   // faltante. Es un eje DISTINTO de `canOrderMissingItems`: pedir a un
   // proveedor ya conocido e inventar uno nuevo son decisiones separadas. Hoy
