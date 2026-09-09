@@ -117,12 +117,15 @@ function missingHref(
 ): string {
   const params = new URLSearchParams(route.persistentParams);
   if (scope !== "actionable") params.set(route.scopeParam, scope);
-  // Se escribe el valor NO predeterminado, y el predeterminado es `compact`
-  // —lo fija `resolveMissingView`—. Estaba al revés: el enlace de "Completa"
-  // omitía el parámetro, la URL quedaba sin `view`, y el resolvedor la leía
-  // como compacta. El botón era literalmente imposible de activar: se hacía
-  // clic, la URL cambiaba de scope y la vista seguía siendo la misma.
-  if (view === "full") params.set(route.viewParam, "full");
+  // Se escribe el valor NO predeterminado, y el predeterminado es `full`
+  // —lo fija `resolveMissingView`—. La regla que importa es esta: la mitad de
+  // acá y la de `resolveMissingView` tienen que invertirse JUNTAS. Ya pasó al
+  // revés una vez —compacta era el default y este `if` escribía `view=full`—
+  // y el resultado fue que el enlace de "Completa" quedaba sin `view`, el
+  // resolvedor la leía como compacta, y el botón era literalmente imposible
+  // de activar: se hacía clic, la URL cambiaba de scope y la vista seguía
+  // siendo la misma. Tocar solo una mitad reproduce el mismo bug al revés.
+  if (view === "compact") params.set(route.viewParam, "compact");
   if (cursor) params.set(route.cursorParam, cursor);
   const query = params.toString();
   return query ? `${route.basePath}?${query}` : route.basePath;

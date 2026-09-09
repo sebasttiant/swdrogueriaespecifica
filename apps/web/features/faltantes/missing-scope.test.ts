@@ -55,30 +55,33 @@ describe("MISSING_SCOPE_LABELS", () => {
 describe("missingScopeHref", () => {
   // La cola de trabajo es la URL limpia: es la que el gerente va a guardar en
   // favoritos y abrir 30 veces por día.
-  // La vista por defecto es la COMPACTA, no la completa: así lo fija
-  // `resolveMissingView`. La URL limpia es la de esa vista; la completa tiene
-  // que pedirse explícitamente, o el enlace de "Completa" quedaría apuntando a
-  // una URL que el resolvedor lee como compacta —y era exactamente el bug: el
-  // botón no se podía activar.
+  // La vista por defecto es la COMPLETA, no la compacta: así lo fija
+  // `resolveMissingView`. La URL limpia es la de esa vista; la compacta tiene
+  // que pedirse explícitamente, o el enlace de "Compacta" quedaría apuntando a
+  // una URL que el resolvedor lee como completa —y sería el mismo bug de
+  // antes, ahora en la mitad que se dejara sin invertir: el botón no se podría
+  // activar.
   it("deja la ruta limpia para la vista por defecto", () => {
-    expect(missingScopeHref("actionable", "compact")).toBe("/revision-faltantes");
+    expect(missingScopeHref("actionable", "full")).toBe("/revision-faltantes");
   });
 
-  it("pide la vista completa de forma explícita", () => {
-    expect(missingScopeHref("actionable", "full")).toBe("/revision-faltantes?view=full");
+  it("pide la vista compacta de forma explícita", () => {
+    expect(missingScopeHref("actionable", "compact")).toBe(
+      "/revision-faltantes?view=compact",
+    );
   });
 
   it("conserva el layout elegido al cambiar de vista", () => {
-    expect(missingScopeHref("ordered", "full")).toBe(
-      "/revision-faltantes?scope=ordered&view=full",
+    expect(missingScopeHref("ordered", "compact")).toBe(
+      "/revision-faltantes?scope=ordered&view=compact",
     );
-    expect(missingScopeHref("ordered", "compact")).toBe("/revision-faltantes?scope=ordered");
+    expect(missingScopeHref("ordered", "full")).toBe("/revision-faltantes?scope=ordered");
   });
 
   // Cambiar de vista NO arrastra el cursor: apuntaría a una fila que la nueva
   // vista no contiene y la paginación quedaría en un estado imposible.
   it("nunca arrastra el cursor de la vista anterior", () => {
-    expect(missingScopeHref("discarded", "full")).not.toContain("cursor");
+    expect(missingScopeHref("discarded", "compact")).not.toContain("cursor");
   });
 });
 
@@ -86,16 +89,16 @@ describe("missingPageHref", () => {
   // Pasar de página NO puede devolverte a otra vista: con 847 faltantes,
   // perder el lugar es perder el trabajo hecho.
   it("preserva vista y layout al pasar de página", () => {
-    expect(missingPageHref("ordered", "full", "cur-1")).toBe(
-      "/revision-faltantes?scope=ordered&view=full&cursor=cur-1",
-    );
     expect(missingPageHref("ordered", "compact", "cur-1")).toBe(
+      "/revision-faltantes?scope=ordered&view=compact&cursor=cur-1",
+    );
+    expect(missingPageHref("ordered", "full", "cur-1")).toBe(
       "/revision-faltantes?scope=ordered&cursor=cur-1",
     );
   });
 
   it("escapa el cursor para que no rompa la URL", () => {
-    expect(missingPageHref("actionable", "full", "a b&c=d")).toContain(
+    expect(missingPageHref("actionable", "compact", "a b&c=d")).toContain(
       "cursor=a+b%26c%3Dd",
     );
   });
@@ -117,7 +120,7 @@ describe("repositoryScopeFor", () => {
 // --------------------------------------------------------------------------
 describe("rutas de tablero", () => {
   it("la estantería arma sus enlaces sobre Revisión de faltantes", () => {
-    expect(missingScopeHref("ordered", "compact", SHELF_BOARD_ROUTE)).toBe(
+    expect(missingScopeHref("ordered", "full", SHELF_BOARD_ROUTE)).toBe(
       "/revision-faltantes?scope=ordered",
     );
   });
