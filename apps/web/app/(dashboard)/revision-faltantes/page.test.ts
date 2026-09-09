@@ -308,16 +308,26 @@ describe("RevisionFaltantesPage · el eje de demora", () => {
 
   it("la frontera son las 8 h que el aviso anuncia", async () => {
     sesion("ADMIN");
+    // Se acota entre DOS marcas, no contra una. La página toma su propio `now`
+    // en algún punto entre estas dos, así que `staleBefore` cae en esa ventana
+    // corrida ocho horas: es una igualdad exacta, sin tolerancia inventada.
+    //
+    // Medir contra una sola marca era una CARRERA PERDIDA de entrada: con
+    // `antes` tomado antes de correr la página, `antes - staleBefore` da
+    // siempre MENOS de 8 h, y el test solo pasaba si la página se ejecutaba
+    // dentro del mismo milisegundo. Venía ganando esa carrera de casualidad
+    // hasta que la suite completa la cargó y devolvió 7.999998.
     const antes = Date.now();
 
     await RevisionFaltantesPage({ searchParams: searchParams({ demora: "8h" }) });
 
+    const despues = Date.now();
     const { staleBefore } = mocks.getMissingItems.mock.calls[0]![0] as {
       staleBefore: Date;
     };
-    const horas = (antes - staleBefore.getTime()) / (60 * 60 * 1000);
-    expect(horas).toBeGreaterThanOrEqual(UNCLOSED_MISSING_ALERT_HOURS);
-    expect(horas).toBeLessThan(UNCLOSED_MISSING_ALERT_HOURS + 1);
+    const ochoHoras = UNCLOSED_MISSING_ALERT_HOURS * 60 * 60 * 1000;
+    expect(staleBefore.getTime()).toBeGreaterThanOrEqual(antes - ochoHoras);
+    expect(staleBefore.getTime()).toBeLessThanOrEqual(despues - ochoHoras);
   });
 
   it("sin el parámetro no recorta nada, ni en la lista ni en el contador", async () => {
