@@ -6,8 +6,16 @@ export type AlertTone = "danger" | "warning" | "success" | "neutral";
 
 // Maps tone to background + border + text classes using the @theme tokens from globals.css.
 // Mirrors the TONES pattern from badge.tsx — reuse existing tokens, no new colors.
+//
+// `danger` es el único tono con relleno PLENO (`bg-danger-solid`), no tinte.
+// `warning`, `success` y `neutral` se quedan como tinte a propósito: es
+// jerarquía deliberada, no un arreglo parejo — si todos gritan, ninguno
+// grita. Es el mismo criterio que en `waitlist.ts` sobre por qué AGOTADO
+// queda fuera de la alerta roja ("mantenerlo en la alerta roja solo entrena
+// a la gente a ignorarla"). El peligro es la única condición que de verdad
+// necesita ganarle el ojo a las demás.
 const TONE_CLASSES: Record<AlertTone, string> = {
-  danger: "bg-danger/10 border-danger/30 text-danger",
+  danger: "bg-danger-solid border-danger-solid text-danger-solid-foreground",
   warning: "bg-warning/10 border-warning/30 text-warning-foreground",
   success: "bg-success/10 border-success/30 text-success",
   neutral: "bg-muted border-border text-muted-foreground",

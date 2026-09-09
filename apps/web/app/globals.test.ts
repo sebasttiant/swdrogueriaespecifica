@@ -172,6 +172,38 @@ describe("dark theme contrast", () => {
   });
 });
 
+describe("danger-solid token pair", () => {
+  // El relleno pleno de las alertas de peligro (`bg-danger-solid` +
+  // `text-danger-solid-foreground`) tiene que cumplir AA por sí solo: es el
+  // par que reemplaza al tinte `bg-danger/10` + `text-danger`, que en claro
+  // medía 4.13:1 —por debajo del mínimo— y en oscuro solo se salvaba
+  // aclarando el rojo hasta perder la urgencia.
+  it("keeps the solid foreground legible on the solid danger fill", async () => {
+    const css = await readGlobals();
+    const light = tokensOf(css, "@theme");
+    const fill = valueOf(light, "--color-danger-solid");
+    const foreground = valueOf(light, "--color-danger-solid-foreground");
+
+    expect(contrastRatio(foreground, fill), `foreground (${foreground}) sobre fill (${fill})`).toBeGreaterThanOrEqual(
+      AA_NORMAL_TEXT,
+    );
+  });
+
+  // La gracia del par es que NO cambia entre temas: el mismo rojo se ve
+  // igual de urgente en claro, en oscuro y en papel. Si alguien lo
+  // redefiniera en `[data-theme="dark"]` o en `@media print` —"arreglando"
+  // el par por reflejo, como se hizo con `--color-danger`—, este test tiene
+  // que romperse para avisarlo.
+  it("is not redefined for dark theme or print", async () => {
+    const theme = await readTheme();
+
+    for (const token of ["--color-danger-solid", "--color-danger-solid-foreground"]) {
+      expect(valueOf(theme.dark, token), `${token} redefinido en oscuro`).toBe("");
+      expect(valueOf(theme.print, token), `${token} redefinido en impresión`).toBe("");
+    }
+  });
+});
+
 describe("print theme tokens", () => {
   it("restores the light warning foreground for dark-theme print output", async () => {
     const { print } = await readTheme();

@@ -28,6 +28,26 @@
   --color-success: #16a34a;
   --color-success-foreground: #ffffff;
 
+  /* Relleno pleno de peligro. Existe porque `--color-danger` hace dos
+     trabajos OPUESTOS y no puede seguir haciendo los dos: como TEXTO sobre
+     fondo oscuro tiene que ser CLARO (por eso el bloque oscuro lo aclara a
+     `#fb9494`), y como RELLENO con texto blanco encima tiene que ser OSCURO
+     (si se aclara, el blanco de encima deja de contrastar). Las alertas de
+     peligro necesitaban lo segundo —comunicar urgencia con el fondo, no con
+     el color de una letra sobre un tinte casi transparente— y el mismo token
+     no daba para las dos cosas: `bg-danger/10` + `text-danger` medía 4.13:1
+     en claro, por debajo del 4.5:1 de WCAG AA, y en oscuro solo se salvaba
+     aclarando el rojo hasta que dejaba de leerse urgente.
+
+     Por eso este par es un token APARTE, y a propósito NO se redefine en
+     `[data-theme="dark"]` ni en `@media print`: es el MISMO rojo en los tres
+     contextos, y ahí está la gracia — una alerta de peligro se ve igual de
+     urgente en claro, en oscuro y en papel. `globals.test.ts` protege las
+     dos cosas: el contraste del par y que nadie lo redefina "arreglándolo"
+     como se hizo alguna vez con `--color-danger`. */
+  --color-danger-solid: #dc2626;
+  --color-danger-solid-foreground: #ffffff;
+
   /* Bordes y texto */
   --color-border: #d4e0ee; /* gris suave */
   --color-text: #0c2a47; /* azul oscuro */
