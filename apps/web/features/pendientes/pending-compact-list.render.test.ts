@@ -96,6 +96,37 @@ beforeEach(() => {
 // en listado... para que Andrés y don Guillermo sepan quién ha pedido qué, y que
 // le puedan colocar el okay".
 // --------------------------------------------------------------------------
+describe("PendingCompactList · Orion SKU", () => {
+  it.each([false, true])("shows Orion in both representations with management=%s", (canOrder) => {
+    const item = pending({ product: { ...pending().product, code: "MAN-123", orionCode: "001234" } });
+    const html = render([item], canOrder, null, { canFollowUp: canOrder });
+    const representations = html.split("<table");
+    expect(representations).toHaveLength(2);
+
+    for (const representation of representations) {
+      expect(countOccurrences(representation, "SKU / Código Orion: 001234")).toBe(1);
+      expect(representation).not.toContain("MAN-123");
+    }
+    expect(html.match(/<th /g)).toHaveLength(canOrder ? 6 : 5);
+  });
+
+  it("shows legacy missing codes in both views without an invented identifier or warning", () => {
+    const html = render([pending({ product: { ...pending().product, code: "MAN-123" } })]);
+    expect(countOccurrences(html, "SKU / Código Orion: Sin código")).toBe(2);
+    expect(html).not.toContain("MAN-123");
+    expect(html).not.toContain(IDENTITY_WARNING_LABEL);
+  });
+
+  it("allows long unbroken codes to wrap in both views", () => {
+    const code = "001234".repeat(40);
+    const html = render([pending({ product: { ...pending().product, orionCode: code } })]);
+    expect(countOccurrences(html, `SKU / Código Orion: ${code}</p>`)).toBe(2);
+    expect(html.match(/<p class="[^"]*\[overflow-wrap:anywhere\][^"]*text-xs[^"]*">SKU \/ Código Orion:/g)).toHaveLength(2);
+    expect(html).toContain('min-w-[48rem]');
+    expect(html.match(/<th /g)).toHaveLength(6);
+  });
+});
+
 describe("PendingCompactList", () => {
   it("muestra producto, cantidad, vendedor y fecha de un vistazo", () => {
     const html = render([pending()]);

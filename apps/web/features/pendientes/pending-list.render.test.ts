@@ -105,6 +105,35 @@ beforeEach(() => {
   mockActionState(IDLE);
 });
 
+describe("PendingList · Orion SKU", () => {
+  it.each([false, true])("shows the original Orion code with management=%s", (canManageStatus) => {
+    const item = pending({
+      status: "PENDIENTE",
+      customerName: "Ana",
+      product: { ...pending().product, code: "MAN-123", orionCode: "001234" },
+    });
+    const html = renderList({ items: [item], canManageStatus });
+
+    expect(html).toContain("SKU / Código Orion: 001234");
+    expect(html).not.toContain("MAN-123");
+    expect(html).toContain("10 unidad · Ana");
+  });
+
+  it("shows a discrete missing-code line without substituting the internal code", () => {
+    const html = renderList({ items: [pending({ product: { ...pending().product, code: "MAN-123" } })] });
+    expect(html).toContain("SKU / Código Orion: Sin código");
+    expect(html).not.toContain("MAN-123");
+    expect(html).not.toContain(IDENTITY_WARNING_LABEL);
+  });
+
+  it("allows long unbroken codes to wrap without truncating them", () => {
+    const code = "001234".repeat(40);
+    const html = renderList({ items: [pending({ product: { ...pending().product, orionCode: code } })] });
+    expect(html).toContain(`SKU / Código Orion: ${code}</p>`);
+    expect(html).toMatch(/<p class="[^"]*\[overflow-wrap:anywhere\][^"]*text-xs[^"]*">SKU \/ Código Orion:/);
+  });
+});
+
 describe("PendingList · scope-aware pagination", () => {
   // Si el link "Ver más" solo llevara el cursor, paginar dentro del historial
   // devolvería al usuario a la vista activa sin avisar: la página siguiente se
