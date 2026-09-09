@@ -30,6 +30,7 @@ import {
   PendingIdempotencyPayloadConflictError,
   registerPending,
   setPendingManagementStatus,
+  setPendingObservation,
 } from "@/server/services/pending.service";
 import { linkOrionCodeAtCapture, linkOrionCode } from "@/server/services/sku-onboarding.service";
 import { findProductById } from "@/server/repositories/product.repository";
@@ -46,6 +47,7 @@ import {
   pendingCreateSchema,
   pendingDeliverSchema,
   pendingManagementStatusSchema,
+  pendingObservationSchema,
   pendingUpdateSchema,
 } from "@/features/pendientes/schema";
 
@@ -1090,6 +1092,90 @@ export async function updatePendingManagementStatusAction(
       logPendingError(null, error);
     }
   }
+  return { error: null, ok: true };
+}
+
+// --------------------------------------------------------------------------
+// Dejar la observación de gerencia sobre un pendiente.
+//
+// El permiso se comprueba ACÁ, no escondiendo el botón: quien conozca el
+// nombre de la acción puede invocarla sin pasar por la pantalla. `requireCapability`
+// es el único borde que cuenta.
+// --------------------------------------------------------------------------
+const OBSERVATION_REJECTION_MESSAGES: Record<
+  NonNullable<Awaited<ReturnType<typeof setPendingObservation>>["rejection"]>,
+  string
+> = {
+  NOT_FOUND: "No se encontró el pendiente. Actualizá la pantalla.",
+  STALE: "Alguien más escribió una observación mientras editabas. Actualizá para verla.",
+  TOO_LONG: "La observación es muy larga. Resumila un poco.",
+};
+
+export async function updatePendingObservationAction(
+  _prev: PendingFormState,
+  formData: FormData,
+): Promise<PendingFormState> {
+  const session = await requireCapability("canWriteManagementObservation");
+
+  const parsed = pendingObservationSchema.safeParse({
+    id: formData.get("id"),
+    observation: formData.get("observation") ?? "",
+    expectedVersion: formData.get("expectedVersion") ?? 0,
+  });
+
+  if (!parsed.success) {
+    return { error: "No se pudo identificar el pendiente ni la observación.", ok: false };
+  }
+
+  let result: Awaited<ReturnType<typeof setPendingObservation>>;
+  try {
+    result = await setPendingObservation({
+      id: parsed.data.id,
+      observation: parsed.data.observation,
+      expectedVersion: parsed.data.expectedVersion,
+      actorId: session.user.id,
+    });
+  } catch (error) {
+    logPendingError(null, error);
+    return { error: "No se pudo guardar la observación. Intentá de nuevo.", ok: false };
+  }
+
+  if (result.rejection) {
+    return { error: OBSERVATION_REJECTION_MESSAGES[result.rejection], ok: false };
+  }
+
+  // Guardar el mismo texto es un éxito sin novedad: no se audita un cambio que
+  // no ocurrió ni se revalidan pantallas que muestran exactamente lo mismo.
+  if (!result.changed) {
+    return { error: null, ok: true };
+  }
+
+  // Desde acá ya persistió: fallos de auditoría o revalidación no pueden
+  // sugerir un reintento que chocaría con el compare-and-set.
+  try {
+    await recordAudit({
+      action: AUDIT_ACTIONS.PENDING_OBSERVATION,
+      module: AUDIT_MODULES.PENDIENTES,
+      entity: "Pending",
+      entityId: parsed.data.id,
+      // El TEXTO de la observación no se audita: puede nombrar al cliente y la
+      // auditoría se lee, se exporta y se copia. Queda la versión, que dice qué
+      // cambió y cuántas veces, sin repetir el dato.
+      after: { version: result.version, cleared: result.version > 0 && parsed.data.observation.trim() === "" },
+      context: await auditContextFromHeaders(session.user.id),
+    });
+  } catch (error) {
+    logPendingError(null, error);
+  }
+
+  for (const path of ["/pendientes", "/revision-pendientes"]) {
+    try {
+      revalidatePath(path);
+    } catch (error) {
+      logPendingError(null, error);
+    }
+  }
+
   return { error: null, ok: true };
 }
 

@@ -19,6 +19,11 @@ import {
   type PendingPaymentMethod,
 } from "@/lib/generated/prisma/client";
 import {
+  isManagementObservationChanged,
+  isManagementObservationTooLong,
+  normalizeManagementObservation,
+} from "@/features/pendientes/management-observation";
+import {
   cancelPending,
   countOpenPendings,
   countOverduePendings,
@@ -39,6 +44,8 @@ import {
   type PendingListItem,
   type PendingScope,
   lockPendingForEdit,
+  findPendingObservation,
+  setPendingManagementObservation,
   updatePendingDetails,
   type PendingForEdit,
 } from "@/server/repositories/pending.repository";
@@ -1139,6 +1146,80 @@ export async function setPendingManagementStatus(
   }
 
   return { pending: { id: input.id, status: input.status }, rejection: null };
+}
+
+// --------------------------------------------------------------------------
+// Dejar la observación de gerencia sobre un pendiente.
+//
+// Tres cosas que esta función decide y que la capa de arriba no debe repetir:
+//
+//   1. Guardar EXACTAMENTE el mismo texto no es un cambio. No escribe, no sube
+//      la versión y no despierta al vendedor. Sin esto, abrir la observación y
+//      cerrarla sin tocar nada generaría un aviso de una novedad que no existe.
+//   2. La versión es el testigo del compare-and-set. Si otro gerente escribió
+//      mientras esta pantalla miraba, el guardado se rechaza en vez de pisar lo
+//      que el otro dejó.
+//   3. Vaciar es una operación normal, no un caso aparte: el texto normalizado
+//      queda en `null` y la versión sube igual. El aviso no queda huérfano
+//      porque se deriva de que HAYA texto, no de la versión sola.
+// --------------------------------------------------------------------------
+export type SetPendingObservationInput = {
+  id: string;
+  /** Texto crudo del formulario. Se normaliza acá, una sola vez. */
+  observation: string | null;
+  /** La versión que la pantalla tenía a la vista. */
+  expectedVersion: number;
+  actorId: string;
+};
+
+export type SetPendingObservationRejection = "NOT_FOUND" | "STALE" | "TOO_LONG";
+
+export type SetPendingObservationResult = {
+  rejection: SetPendingObservationRejection | null;
+  /** `false` cuando el texto era idéntico: no hubo escritura ni versión nueva. */
+  changed: boolean;
+  version: number;
+};
+
+export async function setPendingObservation(
+  input: SetPendingObservationInput,
+  now: Date = new Date(),
+): Promise<SetPendingObservationResult> {
+  const next = normalizeManagementObservation(input.observation);
+  if (isManagementObservationTooLong(next)) {
+    return { rejection: "TOO_LONG", changed: false, version: input.expectedVersion };
+  }
+
+  const current = await findPendingObservation(input.id);
+  if (!current) {
+    return { rejection: "NOT_FOUND", changed: false, version: input.expectedVersion };
+  }
+  if (current.managementObservationVersion !== input.expectedVersion) {
+    return {
+      rejection: "STALE",
+      changed: false,
+      version: current.managementObservationVersion,
+    };
+  }
+  if (!isManagementObservationChanged(current.managementObservation, next)) {
+    return { rejection: null, changed: false, version: current.managementObservationVersion };
+  }
+
+  const written = await setPendingManagementObservation({
+    id: input.id,
+    observation: next,
+    expectedVersion: input.expectedVersion,
+    authorId: input.actorId,
+    at: now,
+  });
+
+  // Cero filas escritas después de haber leído la versión correcta significa
+  // que alguien escribió entre la lectura y el UPDATE. Es el mismo rechazo.
+  if (written !== 1) {
+    return { rejection: "STALE", changed: false, version: input.expectedVersion };
+  }
+
+  return { rejection: null, changed: true, version: input.expectedVersion + 1 };
 }
 
 // --------------------------------------------------------------------------

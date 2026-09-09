@@ -226,6 +226,7 @@ model User {
   pendingDeliveries      PendingDelivery[]    @relation("PendingDeliveredBy")
   contactedPendings      Pending[]            @relation("PendingContactedBy")
   invoicedPendings       Pending[]            @relation("PendingInvoicedBy")
+  observedPendings       Pending[]            @relation("PendingObservationBy")
   missingItems           MissingItem[]        @relation("MissingItemCreatedBy")
   confirmedMissingItems  MissingItem[]        @relation("MissingItemConfirmedBy")
   inventoryEntries       InventoryEntry[]
@@ -609,6 +610,29 @@ model Pending {
   // nombre y el teléfono.
   customerAddress           String?
   note                      String?
+  // --------------------------------------------------------------------
+  // Observación de gerencia sobre ESTE pendiente.
+  //
+  // Vive aparte de `note` a propósito. `note` es lo que el vendedor anotó al
+  // capturar —contexto del pedido—; esto es lo que gerencia le responde
+  // después. Colapsarlas dejaría que gerencia pisara lo que el vendedor
+  // escribió, y nadie podría saber cuál de las dos voces habla.
+  //
+  // `managementObservationVersion` cuenta los cambios REALES de texto, y es lo
+  // que hace posible el aviso al vendedor sin un booleano "leído" que una
+  // edición posterior pueda dar por leída sin que nadie la haya visto. Empieza
+  // en 0 y sube solo cuando el texto normalizado cambia: guardar dos veces lo
+  // mismo no es una novedad y no debe volver a avisar.
+  //
+  // Vaciar la observación TAMBIÉN sube la versión —es un cambio real—, pero no
+  // genera aviso: el aviso se deriva de que HAYA texto, así que una observación
+  // borrada no deja un aviso huérfano apuntando a nada.
+  // --------------------------------------------------------------------
+  managementObservation        String?
+  managementObservationVersion Int       @default(0)
+  managementObservationAt      DateTime?
+  managementObservationBy      User?     @relation("PendingObservationBy", fields: [managementObservationById], references: [id])
+  managementObservationById    String?
   // Aplazamiento de identidad: el vendedor capturó sin el código. Vive en el
   // PENDIENTE porque es un hecho de ESTA venta, no del catálogo. El aviso se
   // DERIVA de este motivo más `product.orionCode IS NULL`, así que se cura solo

@@ -44,6 +44,18 @@ export type PendingListItem = {
   customerPhone: string | null;
   customerAddress: string | null;
   note: string | null;
+  // La observación que gerencia le dejó a ESTE pendiente, y la versión que la
+  // identifica. La versión viaja con el texto porque el aviso al vendedor se
+  // deriva de ella: un booleano "leído" guardado en la fila daría por leída la
+  // siguiente edición sin que nadie la haya visto.
+  //
+  // Opcionales por el mismo motivo que `purchaseStatus` y `completedAt`: son
+  // columnas nuevas y las proyecciones que no las piden no tienen que fingir
+  // que sí. Quien las consume las trata como ausentes, no como vacías.
+  managementObservation?: string | null;
+  managementObservationVersion?: number;
+  managementObservationAt?: Date | null;
+  managementObservationBy?: { id: string; name: string } | null;
   // Seguimiento del cliente. Los montos son enteros de pesos; el estado de pago
   // se deriva de ellos en `features/pendientes/payment-state.ts`, no se lee.
   zone: string | null;
@@ -139,6 +151,10 @@ const LIST_SELECT = {
   customerPhone: true,
   customerAddress: true,
   note: true,
+  managementObservation: true,
+  managementObservationVersion: true,
+  managementObservationAt: true,
+  managementObservationBy: { select: { id: true, name: true } },
   zone: true,
   totalAmount: true,
   paidAmount: true,
@@ -776,6 +792,61 @@ export async function updatePendingManagementStatus(
       purchaseStatus: data.expectedPurchaseStatus ?? legacyPurchaseStatus(data.expectedStatus),
     },
     data: { purchaseStatus: data.purchaseStatus ?? legacyPurchaseStatus(data.status) ?? "POR_PEDIR" },
+  });
+  return count;
+}
+
+// --------------------------------------------------------------------------
+// Escribir la observación de gerencia sobre un pendiente.
+//
+// Compare-and-set sobre la VERSIÓN, no sobre el texto. Dos gerentes con la
+// misma lista abierta escriben sobre la misma fila: el segundo tiene que
+// enterarse de que estaba mirando una observación vieja en vez de pisarla en
+// silencio. La versión es corta y monótona, así que sirve de testigo exacto.
+//
+// Escribe SOLO las cuatro columnas de la observación. El ciclo de vida, la
+// nota del vendedor y los datos del cliente no se tocan por acá: dejar una
+// observación no puede tener el poder de mover un pendiente.
+//
+// A diferencia del estado de gestión, un pendiente CERRADO sí admite
+// observación: gerencia explica por qué se canceló o qué pasó con la entrega, y
+// esa explicación llega justamente cuando ya se cerró.
+// --------------------------------------------------------------------------
+/**
+ * Lo mínimo para decidir si vale la pena escribir: el texto actual y su
+ * versión. No trae la fila entera porque la decisión no necesita más, y esta
+ * lectura ocurre en cada guardado.
+ */
+export function findPendingObservation(id: string) {
+  return prisma.pending.findUnique({
+    where: { id },
+    select: { id: true, managementObservation: true, managementObservationVersion: true },
+  });
+}
+
+export type SetPendingManagementObservationData = {
+  id: string;
+  observation: string | null;
+  /** La versión que la pantalla tenía a la vista. */
+  expectedVersion: number;
+  authorId: string;
+  at: Date;
+};
+
+export async function setPendingManagementObservation(
+  data: SetPendingManagementObservationData,
+): Promise<number> {
+  const { count } = await prisma.pending.updateMany({
+    where: { id: data.id, managementObservationVersion: data.expectedVersion },
+    data: {
+      managementObservation: data.observation,
+      managementObservationVersion: data.expectedVersion + 1,
+      // Autor y fecha SIEMPRE acompañan al texto, también cuando se vacía: es
+      // el registro de quién la borró. La restricción de la base solo los
+      // exige cuando hay texto, así que un borrado los conserva sin mentir.
+      managementObservationAt: data.at,
+      managementObservationById: data.authorId,
+    },
   });
   return count;
 }

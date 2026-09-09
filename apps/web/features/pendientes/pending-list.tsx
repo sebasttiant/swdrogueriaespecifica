@@ -35,6 +35,10 @@ import {
 import { PendingCancelForm } from "./pending-cancel-form";
 import { PendingDeliverForm } from "./pending-deliver-form";
 import { PendingManagementStatusForm } from "./pending-management-status-form";
+import {
+  PendingObservationForm,
+  PendingObservationView,
+} from "./pending-observation-form";
 import { PendingCustomerLifecycleForm } from "./pending-customer-lifecycle-form";
 
 type PendingListProps = {
@@ -47,6 +51,9 @@ type PendingListProps = {
   // Autoridad de compras (`canOrderMissingItems`): habilita el selector de
   // estado de gestión. El vendedor no lo tiene y solo ve el badge.
   canManageStatus: boolean;
+  // Autoridad de gerencia sobre la observación (`canWriteManagementObservation`).
+  // LEERLA no necesita permiso: la observación es para el vendedor.
+  canWriteObservation: boolean;
   // Quién mira. Reemplaza al viejo `canContactOrInvoice`, que era un booleano
   // de rol: no sabía de quién era la fila, así que no podía distinguir un
   // pendiente propio de uno ajeno ni un pendiente cargado de uno sin stock.
@@ -115,6 +122,7 @@ export function PendingList({
   canDeliver,
   canCancel,
   canManageStatus,
+  canWriteObservation,
   viewer,
   scope,
   pageHref,
@@ -318,6 +326,27 @@ export function PendingList({
                 {notice.label}
               </Badge>
             ) : null}
+
+            {/* La observación de gerencia va con los DATOS del pendiente, no
+                con las acciones: es información que el vendedor lee, no un
+                botón que ejecuta. Se renderiza sola cuando hay algo que decir
+                —o cuando gerencia puede decirlo—, así que una fila sin
+                observación no paga el alto de un bloque vacío. */}
+            {canWriteObservation ? (
+              <PendingObservationForm
+                pendingId={pending.id}
+                observation={pending.managementObservation ?? null}
+                version={pending.managementObservationVersion ?? 0}
+                observedAt={pending.managementObservationAt ?? null}
+                observedByName={pending.managementObservationBy?.name ?? null}
+              />
+            ) : (
+              <PendingObservationView
+                observation={pending.managementObservation ?? null}
+                observedAt={pending.managementObservationAt ?? null}
+                observedByName={pending.managementObservationBy?.name ?? null}
+              />
+            )}
 
             {showManagement || showDeliverCancel ? (
               <div className="flex flex-col gap-3 border-t border-border pt-3">

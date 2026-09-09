@@ -126,6 +126,7 @@ describe("lista de detalle · una variante por fila, el ancla vive acá", () => 
         canDeliver: true,
         canCancel: true,
         canManageStatus: false,
+         canWriteObservation: false,
         scope: "active" as const,
         pageHref: () => "",
       }),

@@ -31,6 +31,10 @@ import { PendingDeliverForm } from "./pending-deliver-form";
 import { PendingCancelForm } from "./pending-cancel-form";
 import { PendingWaitlistDecisionForm } from "./pending-waitlist-decision-form";
 import { acceptsWaitlistDecision } from "./waitlist";
+import {
+  PendingObservationForm,
+  PendingObservationView,
+} from "./pending-observation-form";
 
 // --------------------------------------------------------------------------
 // Vista LISTADO de pendientes — la que pidió el gerente en la reunión del
@@ -77,6 +81,8 @@ type PendingCompactListProps = {
   // el vendedor. Sin eso supervisar es abrir el detalle de cada pendiente, uno
   // por uno, con 36 en la cola a las 9:30 de la mañana.
   canFollowUp?: boolean;
+  // Autoridad de gerencia sobre la observación. LEERLA no necesita permiso.
+  canWriteObservation?: boolean;
 };
 
 // Urgencia como texto + color, nunca solo color: la mitad de las decisiones se
@@ -353,6 +359,7 @@ export function PendingCompactList({
   canEdit = false,
   canManageAll = false,
   canFollowUp = false,
+  canWriteObservation = false,
 }: PendingCompactListProps) {
   if (items.length === 0) {
     return (
@@ -425,6 +432,22 @@ export function PendingCompactList({
                     })}
                   </p>
                   {canFollowUp ? <FollowUpLine item={pending} /> : null}
+                  {canWriteObservation ? (
+                    <PendingObservationForm
+                      pendingId={pending.id}
+                      observation={pending.managementObservation ?? null}
+                      version={pending.managementObservationVersion ?? 0}
+                      observedAt={pending.managementObservationAt ?? null}
+                      observedByName={pending.managementObservationBy?.name ?? null}
+                      domSuffix="card"
+                    />
+                  ) : (
+                    <PendingObservationView
+                      observation={pending.managementObservation ?? null}
+                      observedAt={pending.managementObservationAt ?? null}
+                      observedByName={pending.managementObservationBy?.name ?? null}
+                    />
+                  )}
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1">
                   <p className="font-bold tabular-nums text-text">
@@ -519,6 +542,22 @@ export function PendingCompactList({
                     <PresentationLine item={pending} />
                     <LaboratoryLine item={pending} />
                     {canFollowUp ? <FollowUpLine item={pending} /> : null}
+                    {canWriteObservation ? (
+                      <PendingObservationForm
+                        pendingId={pending.id}
+                        observation={pending.managementObservation ?? null}
+                        version={pending.managementObservationVersion ?? 0}
+                        observedAt={pending.managementObservationAt ?? null}
+                        observedByName={pending.managementObservationBy?.name ?? null}
+                        domSuffix="row"
+                      />
+                    ) : (
+                      <PendingObservationView
+                        observation={pending.managementObservation ?? null}
+                        observedAt={pending.managementObservationAt ?? null}
+                        observedByName={pending.managementObservationBy?.name ?? null}
+                      />
+                    )}
                   </td>
                   <td className="px-3 py-2 tabular-nums text-muted-foreground">
                     <span className="inline-flex items-center gap-2">
