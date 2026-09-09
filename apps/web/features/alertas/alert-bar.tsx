@@ -133,12 +133,42 @@ function highestSeverity(chips: AlertChip[]): AlertSeverity {
     : ALERT_SEVERITY.WARNING;
 }
 
-function chipClasses(severity: AlertSeverity): string {
+// LOS CHIPS SE DIBUJAN CONTRA LA BARRA, no en el aire, y por eso hace falta
+// saber sobre qué fondo caen.
+//
+// `highestSeverity` pinta el contenedor de rojo PLENO apenas hay un chip de
+// peligro, así que un chip de peligro cae SIEMPRE sobre rojo pleno — no es un
+// caso raro, es el único caso. Darle a ese chip el mismo `bg-danger-solid` del
+// contenedor no lo hace poco visible: le da el MISMO relleno y el MISMO borde
+// que el fondo, o sea que desaparece. La decisión de fondo pleno, aplicada
+// igual al contenedor y a lo que lleva adentro, se anula a sí misma.
+//
+// Sobre esa superficie el vocabulario se da vuelta: el que grita es el que
+// INVIERTE el par —relleno blanco, letra roja, los mismos dos tokens al
+// revés—, y la advertencia queda como contorno sobre el rojo. La jerarquía es
+// la que fijó `TONE_CLASSES` en `alert.tsx` (el peligro le gana el ojo a la
+// advertencia); lo que cambia es contra qué fondo se dibuja.
+//
+// NINGÚN `hover` toca el RELLENO de estos dos, y no es pereza: es lo único
+// que medía. Sobre `#dc2626`, el blanco al 15 % da 4.05:1 y al 90 % da 4.14:1,
+// los dos por debajo del 4.5:1 de AA. Un estado de hover que rompe el contraste
+// es el mismo defecto que este trabajo vino a arreglar, solo que escondido
+// hasta que alguien pasa el dedo por encima. El hover se comunica con el
+// contorno, que no altera la relación entre letra y fondo.
+function chipClasses(severity: AlertSeverity, surface: AlertSeverity): string {
+  const onSolidDanger = surface === ALERT_SEVERITY.DANGER;
+
   return cn(
-    "inline-flex min-h-11 items-center gap-2 rounded-full border px-3 py-2 text-sm font-semibold transition-opacity duration-[250ms] ease-in-out",
-    severity === ALERT_SEVERITY.DANGER &&
-      "border-danger/30 bg-danger/10 text-danger hover:bg-danger/15",
-    severity === ALERT_SEVERITY.WARNING &&
+    "inline-flex min-h-11 items-center gap-2 rounded-full border px-3 py-2 text-sm font-semibold transition-colors duration-[250ms] ease-in-out",
+    onSolidDanger &&
+      severity === ALERT_SEVERITY.DANGER &&
+      "border-transparent bg-danger-solid-foreground text-danger-solid hover:ring-2 hover:ring-danger-solid-foreground/70",
+    onSolidDanger &&
+      severity === ALERT_SEVERITY.WARNING &&
+      "border-danger-solid-foreground/60 text-danger-solid-foreground hover:border-danger-solid-foreground",
+    // Barra AMARILLA: no hay chips de peligro (si los hubiera, el contenedor
+    // sería rojo), así que acá el tinte de advertencia sí contrasta.
+    !onSolidDanger &&
       "border-warning/30 bg-warning/10 text-warning-foreground hover:bg-warning/15",
   );
 }
@@ -165,16 +195,21 @@ function OperationalAlertContent({
           <span>
             {severityLabel} · {totalCount} aviso{totalCount === 1 ? "" : "s"}
           </span>
-          <span className="text-xs uppercase tracking-wide text-muted-foreground group-open:hidden">
+          {/* `text-muted-foreground` es un gris pensado para superficies
+              NEUTRAS, y este resumen vive dentro de la barra: sobre el rojo
+              pleno queda ilegible. Se atenúa con opacidad sobre el color que
+              el contenedor ya fijó, así el control se subordina al título sin
+              dejar de contrastar contra el fondo, sea rojo o amarillo. */}
+          <span className="text-xs uppercase tracking-wide opacity-80 group-open:hidden">
             Ver
           </span>
-          <span className="hidden text-xs uppercase tracking-wide text-muted-foreground group-open:inline">
+          <span className="hidden text-xs uppercase tracking-wide opacity-80 group-open:inline">
             Ocultar
           </span>
         </summary>
         <div className="mt-3 grid gap-2 transition-[height,opacity] duration-200 ease-in-out">
           {chips.map((chip) => (
-            <Link prefetch={false} key={chip.label} href={chip.href} className={chipClasses(chip.severity)}>
+            <Link prefetch={false} key={chip.label} href={chip.href} className={chipClasses(chip.severity, severity)}>
               <span>{chip.label}</span>
               <span>{chip.count}</span>
             </Link>
@@ -185,7 +220,7 @@ function OperationalAlertContent({
       <div className="hidden items-center gap-3 sm:flex sm:flex-wrap">
         <span className="mr-1 text-sm font-semibold">{severityLabel}</span>
         {chips.map((chip) => (
-          <Link prefetch={false} key={chip.label} href={chip.href} className={chipClasses(chip.severity)}>
+          <Link prefetch={false} key={chip.label} href={chip.href} className={chipClasses(chip.severity, severity)}>
             <span>{chip.label}</span>
             <span>{chip.count}</span>
           </Link>
