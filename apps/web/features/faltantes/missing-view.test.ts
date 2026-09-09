@@ -3,17 +3,17 @@ import { describe, expect, it } from "vitest";
 import { resolveMissingView } from "./missing-view";
 
 describe("resolveMissingView", () => {
-  it("returns 'full' only for exactly 'full'", () => {
-    expect(resolveMissingView("full")).toBe("full");
+  it("returns 'compact' only for exactly 'compact'", () => {
+    expect(resolveMissingView("compact")).toBe("compact");
   });
 
-  // COMPACTA es el default: es la vista que se puede escanear con cientos de
-  // filas. La completa queda para quien pida el detalle explícitamente.
-  it("falls back to 'compact' for anything else", () => {
-    expect(resolveMissingView("Full")).toBe("compact");
-    expect(resolveMissingView("completa")).toBe("compact");
-    expect(resolveMissingView("")).toBe("compact");
-    expect(resolveMissingView(undefined)).toBe("compact");
-    expect(resolveMissingView(null)).toBe("compact");
+  // COMPLETA es el default: gerencia necesita ver el detalle apenas entra.
+  // La compacta queda a un toque para quien la pida explícitamente.
+  it("falls back to 'full' for anything else", () => {
+    expect(resolveMissingView("Compact")).toBe("full");
+    expect(resolveMissingView("compacta")).toBe("full");
+    expect(resolveMissingView("")).toBe("full");
+    expect(resolveMissingView(undefined)).toBe("full");
+    expect(resolveMissingView(null)).toBe("full");
   });
 });
