@@ -185,8 +185,11 @@ export function PendingList({
                 <p className="break-words font-semibold text-text">
                   {pending.product.name}
                 </p>
+                <p className="[overflow-wrap:anywhere] text-xs text-muted-foreground">
+                  SKU / Código Orion: {pending.product.orionCode ?? "Sin código"}
+                </p>
                 <p className="text-sm text-muted-foreground">
-                  {pending.quantity} {pending.product.unit} · {pending.product.code}
+                  {pending.quantity} {pending.product.unit}
                   {pending.customerName ? ` · ${pending.customerName}` : ""}
                 </p>
                 {/* La presentación del producto: frasco, sobre, caja. Es

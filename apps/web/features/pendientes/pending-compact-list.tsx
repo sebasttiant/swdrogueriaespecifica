@@ -157,6 +157,14 @@ function LaboratoryLine({ item }: { item: PendingListItem }) {
   );
 }
 
+function OrionCodeLine({ item }: { item: PendingListItem }) {
+  return (
+    <p className="[overflow-wrap:anywhere] text-xs text-muted-foreground">
+      SKU / Código Orion: {item.product.orionCode ?? "Sin código"}
+    </p>
+  );
+}
+
 // La presentación —frasco, sobre, caja— va pegada al producto por el mismo
 // motivo que el laboratorio: es un dato del producto, y es parte de lo que se
 // mira para decidir qué comprar y qué entregar.
@@ -397,6 +405,7 @@ export function PendingCompactList({
                   <p className="break-words font-medium text-text">
                     {pending.product.name}
                   </p>
+                  <OrionCodeLine item={pending} />
                   {/* Va pegado al producto porque es del producto de lo que
                       habla: le falta el código de Orion. Se deriva del estado
                       actual, así que se apaga solo cuando alguien lo carga. */}
@@ -501,6 +510,7 @@ export function PendingCompactList({
                 <tr key={pending.id} className="border-b border-border last:border-0">
                   <td className="px-3 py-2 font-medium text-text">
                     {pending.product.name}
+                    <OrionCodeLine item={pending} />
                     {identityNotice ? (
                       <Badge tone="warning" className="ml-2">
                         {identityNotice}
