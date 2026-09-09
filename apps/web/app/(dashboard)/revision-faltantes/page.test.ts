@@ -30,6 +30,7 @@ vi.mock("@/server/services/missing-receiver.service", async (original) => {
   return { ...actual, listReceiverQueue: mocks.listReceiverQueue };
 });
 
+import { UNCLOSED_MISSING_ALERT_HOURS } from "@/features/faltantes/missing-stale";
 import { MAX_REVIEW_QUEUE_PAGE } from "@/features/faltantes/report-queue-paging";
 import { DEFAULT_PAGE_SIZE } from "@/lib/pagination";
 
@@ -42,6 +43,7 @@ function searchParams(
     view?: string;
     cursor?: string;
     rscope?: string;
+    demora?: string;
   } = {},
 ) {
   return Promise.resolve(params);
@@ -261,7 +263,7 @@ describe("RevisionFaltantesPage · solo estantería", () => {
 
     await RevisionFaltantesPage({ searchParams: searchParams() });
 
-    expect(mocks.getActionableMissingCount).toHaveBeenCalledWith("shelf");
+    expect(mocks.getActionableMissingCount).toHaveBeenCalledWith("shelf", undefined);
   });
 
   it("mantiene el recorte al cambiar de pestaña", async () => {
@@ -274,6 +276,69 @@ describe("RevisionFaltantesPage · solo estantería", () => {
     );
   });
 
+});
+
+// --------------------------------------------------------------------------
+// EL EJE DE DEMORA: lo que abre el aviso de gerencia.
+//
+// El contrato es uno solo y es el que este arreglo viene a cumplir: el número
+// de la pestaña tiene que contar EXACTAMENTE las filas que la lista muestra.
+// El aviso decía "86 llevan más de 8 h" y abría los 126: la barra prometía una
+// cosa y la pantalla entregaba otra.
+// --------------------------------------------------------------------------
+describe("RevisionFaltantesPage · el eje de demora", () => {
+  function recorteDe(mock: { mock: { calls: unknown[][] } }, indice = 0) {
+    const call = mock.mock.calls[0]![indice];
+    return call;
+  }
+
+  it("con el filtro puesto, lista y contador usan LA MISMA frontera", async () => {
+    sesion("ADMIN");
+
+    await RevisionFaltantesPage({ searchParams: searchParams({ demora: "8h" }) });
+
+    const listado = mocks.getMissingItems.mock.calls[0]![0] as { staleBefore?: Date };
+    const contado = mocks.getActionableMissingCount.mock.calls[0]![1] as Date;
+
+    expect(listado.staleBefore).toBeInstanceOf(Date);
+    // No "una fecha parecida": la MISMA. Calculadas por separado divergen al
+    // primer cambio de umbral y el número vuelve a no coincidir con la lista.
+    expect(contado).toBe(listado.staleBefore);
+  });
+
+  it("la frontera son las 8 h que el aviso anuncia", async () => {
+    sesion("ADMIN");
+    const antes = Date.now();
+
+    await RevisionFaltantesPage({ searchParams: searchParams({ demora: "8h" }) });
+
+    const { staleBefore } = mocks.getMissingItems.mock.calls[0]![0] as {
+      staleBefore: Date;
+    };
+    const horas = (antes - staleBefore.getTime()) / (60 * 60 * 1000);
+    expect(horas).toBeGreaterThanOrEqual(UNCLOSED_MISSING_ALERT_HOURS);
+    expect(horas).toBeLessThan(UNCLOSED_MISSING_ALERT_HOURS + 1);
+  });
+
+  it("sin el parámetro no recorta nada, ni en la lista ni en el contador", async () => {
+    sesion("ADMIN");
+
+    await RevisionFaltantesPage({ searchParams: searchParams() });
+
+    const listado = mocks.getMissingItems.mock.calls[0]![0] as { staleBefore?: Date };
+    expect(listado.staleBefore).toBeUndefined();
+    expect(mocks.getActionableMissingCount).toHaveBeenCalledWith("shelf", undefined);
+  });
+
+  // El parámetro viaja en la URL y la URL la puede escribir cualquiera.
+  it("un valor inventado no filtra", async () => {
+    sesion("ADMIN");
+
+    await RevisionFaltantesPage({ searchParams: searchParams({ demora: "siempre" }) });
+
+    const listado = mocks.getMissingItems.mock.calls[0]![0] as { staleBefore?: Date };
+    expect(listado.staleBefore).toBeUndefined();
+  });
 });
 
 // --------------------------------------------------------------------------

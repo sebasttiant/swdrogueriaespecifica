@@ -202,6 +202,9 @@ export async function listMissingItems(params: {
   scope?: MissingItemScope;
   // Eje de origen. Sin valor = `all`, que es no filtrar.
   origin?: MissingItemOrigin;
+  // Eje de DEMORA: solo lo creado antes de esta fecha. Sin valor no filtra.
+  // Es lo que abre el aviso de gerencia; ver `features/faltantes/missing-stale`.
+  staleBefore?: Date;
 }): Promise<Paginated<MissingItemListItem>> {
   const take = clampTake(params.take);
   let cursorId = params.cursor ? decodeCursor(params.cursor) : null;
@@ -219,13 +222,20 @@ export async function listMissingItems(params: {
     if (!exists) cursorId = null;
   }
 
-  const where = whereFor(params.scope, params.origin);
+  const where = whereFor(params.scope, params.origin, params.staleBefore);
+
+  // MÁS VIEJO PRIMERO cuando se pide lo atrasado, y al revés en la cola normal.
+  // No es una preferencia: la cola por defecto muestra lo último que entró
+  // —"¿qué pasó hoy?"—, pero al filtrar por demora la pregunta es la contraria,
+  // "¿qué lleva más tiempo esperando?". Con el orden descendente, el faltante
+  // de tres días quedaba en la última página de la lista que el aviso abre.
+  const direction = params.staleBefore ? ("asc" as const) : ("desc" as const);
 
   const rows = await prisma.missingItem.findMany({
     take: take + 1,
     ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
     ...(where ? { where } : {}),
-    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    orderBy: [{ createdAt: direction }, { id: direction }],
     select: LIST_SELECT,
   });
 
@@ -343,19 +353,39 @@ function whereForOrigin(origin: MissingItemOrigin | undefined) {
 }
 
 /**
- * Compone los dos ejes. Se mantienen SEPARADOS hasta acá a propósito: cada uno
+ * Compone los TRES ejes. Se mantienen SEPARADOS hasta acá a propósito: cada uno
  * se lee y se prueba solo, y agregar una vista nueva no puede romper el filtro
  * de origen (ni al revés).
+ *
+ * Es la ÚNICA definición de qué contiene la cola, y por eso la usan también los
+ * contadores. Antes `countActionableMissingItems` armaba su propio `where` a
+ * mano y se le olvidaba la exclusión de cuarentena que la lista sí aplicaba:
+ * el badge decía un número y la tabla mostraba otro. Ese defecto ya apareció
+ * —está contado en `notQuarantineWhere`— y volvió por la puerta del contador.
  */
+export function missingQueueWhere(
+  scope: MissingItemScope | undefined,
+  origin: MissingItemOrigin | undefined,
+  staleBefore?: Date,
+): Prisma.MissingItemWhereInput | undefined {
+  const parts: Prisma.MissingItemWhereInput[] = [];
+  const scopeWhere = whereForScope(scope);
+  if (scopeWhere) parts.push(scopeWhere);
+  const originWhere = whereForOrigin(origin);
+  if (originWhere) parts.push(originWhere);
+  if (staleBefore) parts.push({ createdAt: { lt: staleBefore } });
+
+  if (parts.length === 0) return undefined;
+  if (parts.length === 1) return parts[0];
+  return { AND: parts };
+}
+
 function whereFor(
   scope: MissingItemScope | undefined,
   origin: MissingItemOrigin | undefined,
+  staleBefore?: Date,
 ) {
-  const scopeWhere = whereForScope(scope);
-  const originWhere = whereForOrigin(origin);
-  if (!scopeWhere) return originWhere;
-  if (!originWhere) return scopeWhere;
-  return { AND: [scopeWhere, originWhere] };
+  return missingQueueWhere(scope, origin, staleBefore);
 }
 
 /**
@@ -423,14 +453,12 @@ export function countOpenMissingItems(
  */
 export function countActionableMissingItems(
   origin: MissingItemOrigin = "all",
+  // Solo lo creado antes de esta fecha: el mismo recorte que abre el aviso de
+  // gerencia. Sin valor, la cola entera.
+  staleBefore?: Date,
 ): Promise<number> {
-  const originWhere = whereForOrigin(origin);
   return prisma.missingItem.count({
-    where: {
-      confirmedAt: null,
-      status: { in: ACTIONABLE_STATUSES },
-      ...(originWhere ?? {}),
-    },
+    where: missingQueueWhere("actionable", origin, staleBefore),
   });
 }
 
@@ -534,14 +562,10 @@ export function countUnclosedActionableMissingItemsBefore(
   threshold: Date,
   origin?: MissingItemOrigin,
 ): Promise<number> {
-  return prisma.missingItem.count({
-    where: {
-      confirmedAt: null,
-      status: { in: ACTIONABLE_STATUSES },
-      createdAt: { lt: threshold },
-      ...(whereForOrigin(origin) ?? {}),
-    },
-  });
+  // El número del aviso ES el de la lista que el aviso abre, no uno parecido:
+  // misma función, mismo recorte. Escrito aparte, este contador ya se había
+  // olvidado de la cuarentena que la cola sí excluye.
+  return countActionableMissingItems(origin ?? "all", threshold);
 }
 
 /**
