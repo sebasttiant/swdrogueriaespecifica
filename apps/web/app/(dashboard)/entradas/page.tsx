@@ -8,8 +8,14 @@ import { requireCapability } from "@/lib/auth/require-role";
 import { EntryForm, type ProductOption } from "@/features/entradas/entry-form";
 import { EntryList } from "@/features/entradas/entry-list";
 import { ArrivedMissingQueue } from "@/features/entradas/arrived-missing-queue";
-import { getProducts } from "@/server/services/product.service";
-import { getArrivedMissingItems, getInventoryEntries } from "@/server/services/inventory-entry.service";
+import {
+  getProducts,
+  getEntryProduct,
+} from "@/server/services/product.service";
+import {
+  getArrivedMissingItems,
+  getInventoryEntries,
+} from "@/server/services/inventory-entry.service";
 
 export const metadata: Metadata = { title: "Entradas" };
 
@@ -36,13 +42,16 @@ export default async function EntradasPage({
   // cualquier otra cosa en la URL se ignora y el formulario vuelve a su default.
   const parsedQuantity = Number(quantity);
   const suggestedQuantity =
-    Number.isInteger(parsedQuantity) && parsedQuantity > 0 ? parsedQuantity : undefined;
+    Number.isInteger(parsedQuantity) && parsedQuantity > 0
+      ? parsedQuantity
+      : undefined;
 
   // Opciones para el selector del formulario: primera página de productos activos.
-  const [products, entries, arrivedItems] = await Promise.all([
-    getProducts({ take: MAX_PAGE_SIZE }),
+  const [products, entries, arrivedItems, selectedProduct] = await Promise.all([
+    getProducts({ take: MAX_PAGE_SIZE, active: true }),
     getInventoryEntries({ cursor }),
     getArrivedMissingItems(),
+    canCreate && productId ? getEntryProduct(productId) : null,
   ]);
 
   const productOptions: ProductOption[] = products.items
@@ -60,14 +69,16 @@ export default async function EntradasPage({
       catalogVersion: product.catalogVersion,
     }));
 
-  // Cuando la entrada viene de un faltante, el producto queda FIJO. Se busca
-  // entre las opciones ya cargadas: si el id de la URL no corresponde a un
-  // producto activo, no se bloquea nada y el formulario vuelve a pedir que se
-  // elija — un id inventado no puede fijar una identidad.
-  const lockedProduct =
-    missingItemId && productId
-      ? productOptions.find((option) => option.id === productId)
-      : undefined;
+  // La URL se resuelve independientemente de la página, sin duplicar identidades.
+  const options = selectedProduct
+    ? [
+        selectedProduct,
+        ...productOptions.filter((option) => option.id !== selectedProduct.id),
+      ]
+    : productOptions;
+  const lockedProduct = missingItemId
+    ? (selectedProduct ?? undefined)
+    : undefined;
 
   return (
     <div className="space-y-6">
@@ -88,9 +99,9 @@ export default async function EntradasPage({
               del selector —que solo se aplica al montar— quedaba ignorado. El
               producto viajaba en la URL y el campo se veía vacío igual. */}
           <EntryForm
-            key={`${productId ?? "sin-producto"}:${suggestedQuantity ?? 0}`}
-            products={productOptions}
-            selectedProductId={productId}
+            key={`${productId ?? "sin-producto"}:${suggestedQuantity ?? 0}:${missingItemId ?? "sin-faltante"}`}
+            products={options}
+            selectedProductId={selectedProduct?.id}
             selectedQuantity={suggestedQuantity}
             lockedProduct={lockedProduct}
             missingItemId={lockedProduct ? missingItemId : undefined}

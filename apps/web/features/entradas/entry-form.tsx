@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { searchEntryProductsAction } from "@/server/actions/product-search.actions";
 import { useActionState } from "@/lib/hooks/use-action-state";
 import { LaboratorySearch } from "@/features/productos/laboratory-search";
 import {
@@ -116,20 +117,27 @@ export function EntryForm({
   // la fotografía no tiene: sin él, no hay versiones que declarar y la entrada
   // moría en un error de validación que no explicaba nada.
   // ------------------------------------------------------------------------
-  const [catalog] = useState(() => products);
+  const [catalog, setCatalog] = useState(() => products);
+  const [query, setQuery] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [searchMessage, setSearchMessage] = useState("");
+  const searchRequest = useRef(0);
   const [locked] = useState(() => lockedProduct);
   const [selectedId, setSelectedId] = useState(() => selectedProductId ?? "");
   // Lo que la persona decidió adoptar DESPUÉS de ver que el producto cambió.
   // Nunca se llena solo: adoptarlo en silencio dejaría pasar el reintento sin
   // que nadie haya vuelto a mirar la caja.
-  const [adopted, setAdopted] = useState<
-    NonNullable<EntryFormState["conflict"]> | null
-  >(null);
-  const [state, formAction, isPending] = useActionState(async (previousState: EntryFormState, formData: FormData) => {
-    const result = await createInventoryEntryAction(previousState, formData);
-    if (result.ok) setOperationId(crypto.randomUUID());
-    return result;
-  }, INITIAL_STATE);
+  const [adopted, setAdopted] = useState<NonNullable<
+    EntryFormState["conflict"]
+  > | null>(null);
+  const [state, formAction, isPending] = useActionState(
+    async (previousState: EntryFormState, formData: FormData) => {
+      const result = await createInventoryEntryAction(previousState, formData);
+      if (result.ok) setOperationId(crypto.randomUUID());
+      return result;
+    },
+    INITIAL_STATE,
+  );
 
   const chosen = locked ?? catalog.find((option) => option.id === selectedId);
 
@@ -165,12 +173,37 @@ export function EntryForm({
   // mostraría como presentación real solo en el camino adoptado.
   const shownPresentation = presentationLabel(shown?.unit);
 
-  if (catalog.length === 0) {
-    return (
-      <p className="text-base text-muted-foreground">
-        Cargá al menos un producto en el catálogo para registrar entradas.
-      </p>
-    );
+  async function searchCatalog() {
+    const requestId = ++searchRequest.current;
+    setSearching(true);
+    setSearchMessage("");
+    try {
+      const results = await searchEntryProductsAction(query);
+      if (requestId !== searchRequest.current) return;
+      // Buscar no adopta silenciosamente versiones nuevas del producto elegido.
+      setCatalog((previous) => {
+        const selected = previous.find((product) => product.id === selectedId);
+        const options = results.map(
+          (product) =>
+            previous.find((snapshot) => snapshot.id === product.id) ?? product,
+        );
+        return selected &&
+          !options.some((product) => product.id === selected.id)
+          ? [selected, ...options]
+          : options;
+      });
+      setSearchMessage(
+        results.length
+          ? "Hasta 20 resultados. Afiná la búsqueda si no aparece."
+          : "No se encontraron productos activos. Probá otro nombre o código.",
+      );
+    } catch {
+      if (requestId === searchRequest.current) {
+        setSearchMessage("No se pudo buscar. Intentá nuevamente.");
+      }
+    } finally {
+      if (requestId === searchRequest.current) setSearching(false);
+    }
   }
 
   return (
@@ -208,7 +241,9 @@ export function EntryForm({
               <input type="hidden" name="missingItemId" value={missingItemId} />
             ) : null}
             <div className="rounded-lg border border-border bg-muted px-3 py-2">
-              <p className="font-medium text-text">{shown?.name ?? locked.name}</p>
+              <p className="font-medium text-text">
+                {shown?.name ?? locked.name}
+              </p>
               <p className="text-xs text-muted-foreground">
                 SKU (código de Orion):{" "}
                 <span className="font-mono">{shownSku ?? "sin asignar"}</span>
@@ -229,11 +264,47 @@ export function EntryForm({
           </Field>
         ) : (
           <Field label="Producto" htmlFor="productId" className="sm:col-span-2">
+            <label htmlFor="entry-product-query" className="text-sm">
+              Buscar producto
+            </label>
+            <div className="mb-2 flex gap-2">
+              <Input
+                id="entry-product-query"
+                value={query}
+                placeholder="Nombre o código"
+                onChange={(event) => {
+                  // Una respuesta anterior no pertenece al texto recién escrito.
+                  searchRequest.current += 1;
+                  setQuery(event.target.value);
+                  setSearching(false);
+                  setSearchMessage("");
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    if (!searching) void searchCatalog();
+                  }
+                }}
+              />
+              <Button
+                type="button"
+                disabled={searching}
+                onClick={() => void searchCatalog()}
+              >
+                {searching ? "Buscando…" : "Buscar"}
+              </Button>
+            </div>
+            {searchMessage ? (
+              <p role="status" className="text-sm">
+                {searchMessage}
+              </p>
+            ) : null}
             <Select
               id="productId"
               name="productId"
               required
               value={selectedId}
+              disabled={searching}
               onChange={(event) => {
                 setSelectedId(event.target.value);
                 // Cambiar de producto tira la adopción: pertenecía al anterior.
@@ -249,7 +320,8 @@ export function EntryForm({
             </Select>
             {chosen ? (
               <p className="mt-2 text-xs text-muted-foreground">
-                SKU: <span className="font-mono">{shownSku ?? "sin asignar"}</span>
+                SKU:{" "}
+                <span className="font-mono">{shownSku ?? "sin asignar"}</span>
                 {" · "}
                 {PRESENTATION_LABEL}: {shownPresentation}
               </p>
@@ -358,7 +430,7 @@ export function EntryForm({
         </p>
       ) : null}
 
-      <Button type="submit" disabled={isPending}>
+      <Button type="submit" disabled={isPending || searching}>
         {isPending ? "Guardando…" : "Registrar entrada"}
       </Button>
     </form>
