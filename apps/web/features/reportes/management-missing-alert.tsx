@@ -43,7 +43,7 @@ export async function ManagementMissingAlert({
           role="alert"
           className="flex items-start gap-3 shadow-sm"
         >
-          <AlertTriangle className="mt-0.5 size-5 shrink-0" aria-hidden />
+          <AlertTriangle className="mt-0.5 size-5 shrink-0 text-danger" aria-hidden />
           <div className="min-w-0 space-y-1">
             <p className="text-base font-semibold">
               Estos faltantes no se han cerrado
@@ -71,7 +71,7 @@ export async function ManagementMissingAlert({
               <Link
                 prefetch={false}
                 href={staleMissingHref()}
-                className="font-semibold underline"
+                className="font-semibold text-primary underline"
               >
                 Revisar los atrasados
               </Link>

@@ -14,27 +14,31 @@ import { rootClassTokens } from "@/lib/testing/class-tokens";
 import { Alert } from "./alert";
 
 // --------------------------------------------------------------------------
-// El tono `danger` pasa de tinte (`bg-danger/10` + `text-danger`) a relleno
-// pleno (`bg-danger-solid` + `text-danger-solid-foreground`): el tinte no
-// cumplía AA en ningún tema (ver `globals.test.ts`, par `--color-danger-solid`).
+// El tono `danger` es un ACENTO —filo rojo sobre superficie normal—, no un
+// relleno. Fue relleno pleno y se comía la pantalla; antes fue tinte y no
+// cumplía AA. El rojo no se desaturó: se le redujo el ÁREA. Ver el comentario
+// de `TONE_CLASSES` y `globals.test.ts` para las mediciones.
+//
 // Los demás tonos NO se tocan: es jerarquía deliberada, no un arreglo parejo.
 // --------------------------------------------------------------------------
 describe("Alert", () => {
-  it("paints the danger tone as a solid fill, not a tint", () => {
+  it("marks the danger tone with an accent, not with a filled surface", () => {
     const html = renderToStaticMarkup(Alert({ tone: "danger", children: "Peligro" }));
     const clases = rootClassTokens(html);
 
-    expect(clases).toContain("bg-danger-solid");
-    expect(clases).toContain("text-danger-solid-foreground");
-    expect(clases).toContain("border-danger-solid");
+    // El rojo entero, en un filo de 4 px: superficie normal y texto normal.
+    expect(clases).toContain("border-l-4");
+    expect(clases).toContain("border-l-danger");
+    expect(clases).toContain("bg-surface");
+    expect(clases).toContain("text-text");
 
-    // El tinte viejo NO puede quedar. Se compara clase contra clase y no por
-    // subcadena: `text-danger` es prefijo de `text-danger-solid-foreground`,
-    // y la guarda anterior —`not.toMatch(/\btext-danger\b/)`— matcheaba
-    // justamente la clase que venía a distinguir, porque en una regex el
-    // guion es un BORDE de palabra, no un carácter de palabra.
+    // Ni el bloque pleno que se comía la pantalla, ni el tinte que no cumplía
+    // AA. Se compara clase contra clase y no por subcadena: `text-danger` es
+    // prefijo de `text-danger-solid-foreground`, y una guarda con
+    // `/\btext-danger\b/` matcheaba justo la clase que venía a distinguir,
+    // porque en una regex el guion es un BORDE de palabra.
+    expect(clases).not.toContain("bg-danger-solid");
     expect(clases).not.toContain("bg-danger/10");
-    expect(clases).not.toContain("border-danger/30");
     expect(clases).not.toContain("text-danger");
   });
 

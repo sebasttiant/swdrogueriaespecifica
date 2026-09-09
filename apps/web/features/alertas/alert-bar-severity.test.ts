@@ -69,9 +69,22 @@ function clasesDeLaBarra(host: HTMLElement): string[] {
  * llega a una de las dos vistas es medio arreglo.
  */
 function clasesDelChip(host: HTMLElement, etiqueta: string): string[][] {
-  return [...host.querySelectorAll("a")]
-    .filter((enlace) => enlace.textContent?.startsWith(etiqueta))
-    .map((enlace) => classTokens(enlace.getAttribute("class")));
+  return enlacesDelChip(host, etiqueta).map((enlace) =>
+    classTokens(enlace.getAttribute("class")),
+  );
+}
+
+/** Las clases del PUNTO de color, que es el primer hijo del enlace. */
+function clasesDelPunto(host: HTMLElement, etiqueta: string): string[][] {
+  return enlacesDelChip(host, etiqueta).map((enlace) =>
+    classTokens(enlace.firstElementChild?.getAttribute("class")),
+  );
+}
+
+function enlacesDelChip(host: HTMLElement, etiqueta: string): HTMLAnchorElement[] {
+  return [...host.querySelectorAll("a")].filter((enlace) =>
+    enlace.textContent?.startsWith(etiqueta),
+  );
 }
 
 beforeEach(() => {
@@ -79,61 +92,69 @@ beforeEach(() => {
   mocks.countArrivalNotices.mockResolvedValue(0);
 });
 
-describe("la barra NO se tiñe: el color va en los chips", () => {
-  it("el contenedor queda NEUTRO aunque haya peligro — nunca una segunda losa roja", async () => {
+describe("el color va en el punto, no en el relleno", () => {
+  it("el contenedor queda NEUTRO aunque haya peligro — nunca una losa roja", async () => {
     const host = await pintar({ expiredBatches: 3 });
     const barra = clasesDeLaBarra(host);
 
     expect(barra).toContain("bg-muted");
-    // La regresión que este test existe para impedir: en el tablero esta barra
-    // convive con el banner de gerencia, que sí es rojo pleno.
     expect(barra).not.toContain("bg-danger-solid");
     expect(barra).not.toContain("bg-warning/10");
+  });
+
+  it("peligro y advertencia comparten EXACTAMENTE la misma pastilla", async () => {
+    const host = await pintar({ expiredBatches: 3, warningBatches: 7 });
+    const [peligro] = clasesDelChip(host, "Vencidos");
+    const [advertencia] = clasesDelChip(host, "Por vencer");
+
+    // Esta es la aserción central: si mañana alguien le devuelve el relleno de
+    // color a una de las dos, la fila vuelve a ser cuatro pastillas gritando y
+    // una que parece deshabilitada. Lo único que puede distinguirlas es el
+    // punto, y eso lo fija la prueba de abajo.
+    expect(peligro).toEqual(advertencia);
+    expect(peligro).toContain("bg-surface");
+  });
+
+  it("ningún chip lleva relleno de color", async () => {
+    const host = await pintar({ expiredBatches: 3, warningBatches: 7 });
+    const todos = [
+      ...clasesDelChip(host, "Vencidos"),
+      ...clasesDelChip(host, "Por vencer"),
+    ];
+
+    expect(todos.length).toBeGreaterThan(0);
+    for (const clases of todos) {
+      expect(clases.filter((clase) => clase.startsWith("bg-danger"))).toEqual([]);
+      expect(clases.filter((clase) => clase.startsWith("bg-warning"))).toEqual([]);
+    }
+  });
+
+  it("el punto del peligro NO se aclara en oscuro; el del aviso es ámbar", async () => {
+    const host = await pintar({ expiredBatches: 3, warningBatches: 7 });
+    const puntosPeligro = clasesDelPunto(host, "Vencidos");
+    const puntosAviso = clasesDelPunto(host, "Por vencer");
+
+    expect(puntosPeligro.length).toBeGreaterThan(0);
+    for (const clases of puntosPeligro) {
+      // `danger-solid`, no `danger`: ocho píxeles no tienen margen para
+      // compensar. Con el token adaptativo el punto se vuelve rosa en oscuro.
+      expect(clases).toContain("bg-danger-solid");
+    }
+    expect(puntosAviso.length).toBeGreaterThan(0);
+    for (const clases of puntosAviso) {
+      expect(clases).toContain("bg-warning");
+    }
   });
 
   it("la urgencia sigue anunciándose, aunque el color no la muestre", async () => {
     const conPeligro = await pintar({ expiredBatches: 3 });
     const soloAviso = await pintar({ warningBatches: 7 });
 
-    // El `role` NO cambió con el color: quien usa lector de pantalla necesita
-    // que un peligro interrumpa y un aviso entre por la cola cortés.
+    // El `role` NO sigue al color: quien usa lector de pantalla necesita que un
+    // peligro interrumpa y un aviso entre por la cola cortés. Bajarle el tono a
+    // algo no puede bajarle la urgencia a quien no lo ve.
     expect(conPeligro.querySelector('[role="alert"]')).not.toBeNull();
     expect(soloAviso.querySelector('[role="status"]')).not.toBeNull();
-  });
-
-  it("el chip de peligro lleva el relleno pleno", async () => {
-    const host = await pintar({ expiredBatches: 3 });
-    const apariciones = clasesDelChip(host, "Vencidos");
-
-    expect(apariciones.length).toBeGreaterThan(0);
-    for (const clases of apariciones) {
-      expect(clases).toContain("bg-danger-solid");
-      expect(clases).toContain("text-danger-solid-foreground");
-    }
-  });
-
-  it("el chip de advertencia queda ámbar, para distinguirse del rojo a un metro", async () => {
-    const host = await pintar({ expiredBatches: 3, warningBatches: 7 });
-    const apariciones = clasesDelChip(host, "Por vencer");
-
-    expect(apariciones.length).toBeGreaterThan(0);
-    for (const clases of apariciones) {
-      expect(clases).toContain("bg-warning/10");
-      expect(clases).toContain("text-warning-foreground");
-      expect(clases).not.toContain("bg-danger-solid");
-    }
-  });
-
-  it("el hover del chip de peligro no toca el relleno, porque ahí se cae de AA", async () => {
-    const host = await pintar({ expiredBatches: 3 });
-    const apariciones = clasesDelChip(host, "Vencidos");
-
-    expect(apariciones.length).toBeGreaterThan(0);
-    for (const clases of apariciones) {
-      // Medido sobre `#dc2626`: blanco al 15 % da 4.05:1 y al 90 % da 4.14:1,
-      // los dos bajo el 4.5:1 de AA. El hover se comunica con el contorno.
-      expect(clases.filter((clase) => clase.startsWith("hover:bg-"))).toEqual([]);
-    }
   });
 });
 

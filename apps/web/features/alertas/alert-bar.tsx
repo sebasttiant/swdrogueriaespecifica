@@ -133,36 +133,45 @@ function highestSeverity(chips: AlertChip[]): AlertSeverity {
     : ALERT_SEVERITY.WARNING;
 }
 
-// EL COLOR LO LLEVAN LOS CHIPS, NO LA BARRA.
+// EL COLOR VIAJA EN UN PUNTO, NO EN EL RELLENO DEL CHIP.
 //
-// La barra fue un bloque rojo pleno y hubo que deshacerlo: en el tablero
-// convive con el banner de gerencia, que también es rojo pleno, y dos losas
-// rojas apiladas se comen el tercio superior de la pantalla. El resto de la
-// app —las tarjetas, los números, el saludo— desaparecía detrás de ellas.
+// Tercera vuelta sobre lo mismo, y la lección se repite en cada nivel. Primero
+// la barra entera era roja y los chips desaparecían adentro. Después la barra
+// se calmó y los chips pasaron a relleno pleno: quedaron CUATRO pastillas rojas
+// saturadas en fila, y volvió a pasar lo de siempre —si cuatro de cinco gritan,
+// ninguna se destaca—. Peor todavía: al lado de esas cuatro, el chip de
+// advertencia con su tinte ámbar se leía como un control DESHABILITADO.
 //
-// Es el MISMO principio de `waitlist.ts` fallando un nivel más arriba: si todo
-// grita, nada grita. Lo habíamos aplicado DENTRO de la barra y no ENTRE los
-// avisos. El rojo pleno queda para UN solo bloque de la app —el banner de
-// gerencia, que es una frase con una acción y no tiene nada adentro que
-// compita—; la barra es un contenedor NEUTRO y la severidad viaja en cada
-// pastilla.
+// El problema de fondo no es el color: es que hay cuatro métricas clasificadas
+// como peligro al mismo tiempo. Ninguna paleta sobrevive a eso. Lo que sí se
+// puede hacer es dejar de gastar el rojo en superficies: todos los chips
+// comparten la misma pastilla neutra, y la severidad va en un PUNTO. El ojo
+// distingue igual —el punto es lo único que cambia, así que es lo único que
+// mira—, la advertencia recupera su ámbar porque ya no compite contra cuatro
+// rellenos, y la fila deja de ser un semáforo roto.
 //
-// Y se gana precisión: cuando el fondo era rojo, los chips de peligro y los de
-// advertencia eran los dos pastillas claras sobre rojo y se parecían entre sí.
-// Sobre una superficie calma, el rojo pleno de un chip se distingue del ámbar
-// de otro a un metro de distancia.
+// Los dos tokens de rojo NO son intercambiables acá:
+// - el PUNTO usa `danger-solid`, que vale lo mismo en claro y en oscuro. Ocho
+//   píxeles no tienen margen para compensar: con el token adaptativo el punto
+//   se vuelve rosa en oscuro y deja de leerse como peligro.
+// - el FILO del `Alert` usa `danger`, que se aclara en oscuro. Cuatro píxeles
+//   contra una superficie oscura necesitan justo lo contrario. Es el mismo
+//   criterio de la tarjeta "Estado general" del tablero.
 //
-// El `hover` del chip de peligro NO toca el relleno, y eso está medido: sobre
-// `#dc2626` el blanco al 15 % da 4.05:1 y al 90 % da 4.14:1, los dos por
-// debajo del 4.5:1 de AA. Un hover que rompe el contraste es el mismo defecto,
-// escondido hasta que alguien pasa el dedo por encima.
-function chipClasses(severity: AlertSeverity): string {
+// Y el punto nunca va solo: la etiqueta dice qué es. Es la regla que encabeza
+// `globals.css` — "estados SIEMPRE acompañados de texto, nunca solo color".
+function chipClasses(): string {
   return cn(
-    "inline-flex min-h-11 items-center gap-2 rounded-full border px-3 py-2 text-sm font-semibold transition-colors duration-[250ms] ease-in-out",
-    severity === ALERT_SEVERITY.DANGER &&
-      "border-danger-solid bg-danger-solid text-danger-solid-foreground hover:ring-2 hover:ring-danger-solid/40",
-    severity === ALERT_SEVERITY.WARNING &&
-      "border-warning/30 bg-warning/10 text-warning-foreground hover:bg-warning/15",
+    "inline-flex min-h-11 items-center gap-2 rounded-full border border-border bg-surface px-3 py-2 text-sm font-semibold text-text",
+    "transition-colors duration-[250ms] ease-in-out hover:border-muted-foreground",
+  );
+}
+
+function chipDotClasses(severity: AlertSeverity): string {
+  return cn(
+    "size-2 shrink-0 rounded-full",
+    severity === ALERT_SEVERITY.DANGER && "bg-danger-solid",
+    severity === ALERT_SEVERITY.WARNING && "bg-warning",
   );
 }
 
@@ -205,7 +214,8 @@ function OperationalAlertContent({
         </summary>
         <div className="mt-3 grid gap-2 transition-[height,opacity] duration-200 ease-in-out">
           {chips.map((chip) => (
-            <Link prefetch={false} key={chip.label} href={chip.href} className={chipClasses(chip.severity)}>
+            <Link prefetch={false} key={chip.label} href={chip.href} className={chipClasses()}>
+              <span className={chipDotClasses(chip.severity)} aria-hidden />
               <span>{chip.label}</span>
               <span>{chip.count}</span>
             </Link>
@@ -216,7 +226,8 @@ function OperationalAlertContent({
       <div className="hidden items-center gap-3 sm:flex sm:flex-wrap">
         <span className="mr-1 text-sm font-semibold">{severityLabel}</span>
         {chips.map((chip) => (
-          <Link prefetch={false} key={chip.label} href={chip.href} className={chipClasses(chip.severity)}>
+          <Link prefetch={false} key={chip.label} href={chip.href} className={chipClasses()}>
+            <span className={chipDotClasses(chip.severity)} aria-hidden />
             <span>{chip.label}</span>
             <span>{chip.count}</span>
           </Link>
