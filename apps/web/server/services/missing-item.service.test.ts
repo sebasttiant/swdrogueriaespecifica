@@ -38,7 +38,7 @@ vi.mock("@/server/repositories/missing-item.repository", () => repo);
 // combinando el repo de faltantes con el de reportes. Se mockea para fijar el
 // mapa faltante→reporter sin tocar DB.
 const { reportRepo } = vi.hoisted(() => ({
-  reportRepo: { reporterNamesByLinkedItemIds: vi.fn() },
+  reportRepo: { reporterAttributionByLinkedItemIds: vi.fn() },
 }));
 
 vi.mock("@/server/repositories/missing-report.repository", () => reportRepo);
@@ -88,9 +88,10 @@ import type { MissingItemListItem } from "@/server/repositories/missing-item.rep
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // Por defecto ningún faltante nació de un reporte: el solicitante cae en
-  // `createdBy`. Los tests de reporte-gana sobreescriben este mapa.
-  reportRepo.reporterNamesByLinkedItemIds.mockResolvedValue(new Map());
+  // Por defecto ningún faltante nació de un reporte: el solicitante y la fecha
+  // caen en `createdBy`/`createdAt`. Los tests de reporte-gana sobreescriben
+  // este mapa.
+  reportRepo.reporterAttributionByLinkedItemIds.mockResolvedValue(new Map());
 });
 
 // Typed fixture for `listMissingItems` rows — mirrors `MissingItemListItem`
@@ -290,6 +291,7 @@ describe("getMissingItems", () => {
       ...row,
       origin: { ...row.origin, customerName: null },
       requestedByName: row.createdBy!.name,
+      requestedAt: row.createdAt,
     });
   });
 
@@ -300,7 +302,11 @@ describe("getMissingItems", () => {
     const result = await getMissingItems({ canViewCustomerIdentity: true, canViewSupplierIdentity: true });
 
     expect(result.items[0]!.origin?.customerName).toBe("Juan Pérez");
-    expect(result.items[0]).toEqual({ ...row, requestedByName: row.createdBy!.name });
+    expect(result.items[0]).toEqual({
+      ...row,
+      requestedByName: row.createdBy!.name,
+      requestedAt: row.createdAt,
+    });
   });
 
   it("passes items with origin === null through unchanged under both flags", async () => {
@@ -308,10 +314,18 @@ describe("getMissingItems", () => {
     repo.listMissingItems.mockResolvedValue({ items: [row], nextCursor: null });
 
     const resultDenied = await getMissingItems({ canViewCustomerIdentity: false, canViewSupplierIdentity: false });
-    expect(resultDenied.items[0]).toEqual({ ...row, requestedByName: row.createdBy!.name });
+    expect(resultDenied.items[0]).toEqual({
+      ...row,
+      requestedByName: row.createdBy!.name,
+      requestedAt: row.createdAt,
+    });
 
     const resultAllowed = await getMissingItems({ canViewCustomerIdentity: true, canViewSupplierIdentity: true });
-    expect(resultAllowed.items[0]).toEqual({ ...row, requestedByName: row.createdBy!.name });
+    expect(resultAllowed.items[0]).toEqual({
+      ...row,
+      requestedByName: row.createdBy!.name,
+      requestedAt: row.createdAt,
+    });
   });
 
   it("does not mutate the repository row in place when minimizing", async () => {
@@ -335,7 +349,7 @@ describe("getMissingItems · requestedByName (trazabilidad)", () => {
 
     await getMissingItems({ canViewCustomerIdentity: true, canViewSupplierIdentity: true });
 
-    expect(reportRepo.reporterNamesByLinkedItemIds).toHaveBeenCalledWith(["m-1"]);
+    expect(reportRepo.reporterAttributionByLinkedItemIds).toHaveBeenCalledWith(["m-1"]);
   });
 
   // Faltante nacido de un reporte: `createdBy` es gerencia (quien lo vinculó),
@@ -346,8 +360,8 @@ describe("getMissingItems · requestedByName (trazabilidad)", () => {
       createdBy: { id: "mgr-1", name: "Gerente Guillermo" },
     });
     repo.listMissingItems.mockResolvedValue({ items: [row], nextCursor: null });
-    reportRepo.reporterNamesByLinkedItemIds.mockResolvedValue(
-      new Map([["m-1", "Juan Vendedor"]]),
+    reportRepo.reporterAttributionByLinkedItemIds.mockResolvedValue(
+      new Map([["m-1", { name: "Juan Vendedor", createdAt: new Date("2026-09-02T09:00:00.000Z") }]]),
     );
 
     const result = await getMissingItems({ canViewCustomerIdentity: true, canViewSupplierIdentity: true });
@@ -374,6 +388,61 @@ describe("getMissingItems · requestedByName (trazabilidad)", () => {
     const result = await getMissingItems({ canViewCustomerIdentity: true, canViewSupplierIdentity: true });
 
     expect(result.items[0]!.requestedByName).toBeNull();
+  });
+});
+
+// LA GUARDA QUE IMPORTA: `requestedAt` tiene que venir del MISMO evento que
+// `requestedByName`, nunca mezclado. Un faltante nacido de un reporte tiene
+// `createdBy` = gerencia (quien lo vinculó, días después); si `requestedAt`
+// usara `item.createdAt` en ese caso, la fila diría "Daniel Bonilla — 9 de
+// septiembre" cuando Daniel reportó el 2 y gerencia vinculó el 9. Eso es peor
+// que no tener la columna: le atribuye a Daniel un momento que no vivió.
+describe("getMissingItems · requestedAt (misma guarda que requestedByName)", () => {
+  const reportedAt = new Date("2026-09-02T09:00:00.000Z");
+  const linkedByManagementAt = new Date("2026-09-09T14:00:00.000Z");
+
+  it("usa la fecha del REPORTE cuando el faltante nació de un reporte, no la del MissingItem", async () => {
+    const row = missingItemRow({
+      id: "m-1",
+      createdAt: linkedByManagementAt,
+      createdBy: { id: "mgr-1", name: "Gerente Guillermo" },
+    });
+    repo.listMissingItems.mockResolvedValue({ items: [row], nextCursor: null });
+    reportRepo.reporterAttributionByLinkedItemIds.mockResolvedValue(
+      new Map([["m-1", { name: "Daniel Bonilla", createdAt: reportedAt }]]),
+    );
+
+    const result = await getMissingItems({ canViewCustomerIdentity: true, canViewSupplierIdentity: true });
+
+    // Nombre y fecha salen del MISMO reporte: si se desacoplaran, este test cae.
+    expect(result.items[0]!.requestedByName).toBe("Daniel Bonilla");
+    expect(result.items[0]!.requestedAt).toEqual(reportedAt);
+    expect(result.items[0]!.requestedAt).not.toEqual(linkedByManagementAt);
+  });
+
+  it("cae en item.createdAt cuando no hay reporte de por medio", async () => {
+    const row = missingItemRow({
+      id: "m-1",
+      createdAt: linkedByManagementAt,
+      createdBy: { id: "sell-1", name: "Carla Vendedora" },
+    });
+    repo.listMissingItems.mockResolvedValue({ items: [row], nextCursor: null });
+
+    const result = await getMissingItems({ canViewCustomerIdentity: true, canViewSupplierIdentity: true });
+
+    expect(result.items[0]!.requestedByName).toBe("Carla Vendedora");
+    expect(result.items[0]!.requestedAt).toEqual(linkedByManagementAt);
+  });
+
+  // Nunca null: aunque no haya ni reporte ni createdBy, el MissingItem
+  // siempre tiene su propio createdAt.
+  it("nunca es null: cae en item.createdAt incluso sin createdBy", async () => {
+    const row = missingItemRow({ id: "m-1", createdAt: linkedByManagementAt, createdBy: null });
+    repo.listMissingItems.mockResolvedValue({ items: [row], nextCursor: null });
+
+    const result = await getMissingItems({ canViewCustomerIdentity: true, canViewSupplierIdentity: true });
+
+    expect(result.items[0]!.requestedAt).toEqual(linkedByManagementAt);
   });
 });
 

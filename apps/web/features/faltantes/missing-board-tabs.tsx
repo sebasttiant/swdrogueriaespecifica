@@ -7,7 +7,6 @@ import {
   type MissingBoardRoute,
   type MissingQueueScope,
 } from "@/features/faltantes/missing-scope";
-import type { MissingView } from "@/features/faltantes/missing-view";
 import { cn } from "@/lib/utils/cn";
 
 // --------------------------------------------------------------------------
@@ -45,7 +44,6 @@ function tabClasses(active: boolean): string {
 type MissingBoardTabsProps = {
   /** El alcance activo, o `REPORTS_TAB_SCOPE` si se está viendo el buzón. */
   active: MissingQueueScope | typeof REPORTS_TAB_SCOPE;
-  view: MissingView;
   /** "Cuánto me falta por pedir", global y no de la página actual. */
   actionableCount: number;
   /**
@@ -64,15 +62,21 @@ type MissingBoardTabsProps = {
   route: MissingBoardRoute;
   /** Cómo se llama esta cola para el lector de pantalla. */
   label: string;
+  /**
+   * Selección masiva activa: sin arrastrarla acá, tocar otra pestaña
+   * (Por pedir / Ya pedidos / Descartados) devolvería al modo normal en
+   * silencio, con la selección ya hecha perdida.
+   */
+  bulkMode?: boolean;
 };
 
 export function MissingBoardTabs({
   active,
-  view,
   actionableCount,
   reportsCount,
   route,
   label,
+  bulkMode = false,
 }: MissingBoardTabsProps) {
   return (
     <nav
@@ -83,7 +87,7 @@ export function MissingBoardTabs({
         <Link
           prefetch={false}
           key={option}
-          href={missingScopeHref(option, view, route)}
+          href={missingScopeHref(option, route, bulkMode)}
           aria-current={active === option ? "page" : undefined}
           className={tabClasses(active === option)}
         >

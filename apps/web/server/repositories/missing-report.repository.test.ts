@@ -20,7 +20,7 @@ import {
   linkMissingReports,
   resolveMissingReports,
   listPendingReportsForNames,
-  reporterNamesByLinkedItemIds,
+  reporterAttributionByLinkedItemIds,
 } from "./missing-report.repository";
 
 beforeEach(() => {
@@ -209,40 +209,55 @@ describe("linkMissingReports", () => {
   });
 });
 
-describe("reporterNamesByLinkedItemIds", () => {
+describe("reporterAttributionByLinkedItemIds", () => {
   // Sin ids no hay nada que resolver: ni siquiera se consulta la base.
   it("returns an empty map without querying when there are no ids", async () => {
-    const result = await reporterNamesByLinkedItemIds([]);
+    const result = await reporterAttributionByLinkedItemIds([]);
 
     expect(result.size).toBe(0);
     expect(prismaMock.missingReport.findMany).not.toHaveBeenCalled();
   });
 
-  it("maps each linked missing item id to its reporter name", async () => {
+  it("maps each linked missing item id to its reporter name and the report's createdAt", async () => {
+    const juanReportedAt = new Date("2026-09-02T09:00:00.000Z");
+    const anaReportedAt = new Date("2026-09-03T09:00:00.000Z");
     prismaMock.missingReport.findMany.mockResolvedValue([
-      { linkedMissingItemId: "m-1", reporter: { name: "Juan Vendedor" } },
-      { linkedMissingItemId: "m-2", reporter: { name: "Ana Vendedora" } },
+      {
+        linkedMissingItemId: "m-1",
+        createdAt: juanReportedAt,
+        reporter: { name: "Juan Vendedor" },
+      },
+      {
+        linkedMissingItemId: "m-2",
+        createdAt: anaReportedAt,
+        reporter: { name: "Ana Vendedora" },
+      },
     ]);
 
-    const result = await reporterNamesByLinkedItemIds(["m-1", "m-2"]);
+    const result = await reporterAttributionByLinkedItemIds(["m-1", "m-2"]);
 
-    expect(result.get("m-1")).toBe("Juan Vendedor");
-    expect(result.get("m-2")).toBe("Ana Vendedora");
+    expect(result.get("m-1")).toEqual({ name: "Juan Vendedor", createdAt: juanReportedAt });
+    expect(result.get("m-2")).toEqual({ name: "Ana Vendedora", createdAt: anaReportedAt });
     const call = prismaMock.missingReport.findMany.mock.calls[0]![0];
     expect(call.where).toEqual({ linkedMissingItemId: { in: ["m-1", "m-2"] } });
   });
 
   // Determinismo: si dos reportes apuntaran al mismo faltante, gana el primero
-  // (orden por createdAt asc + first-wins).
-  it("keeps the first reporter when two reports point to the same item", async () => {
+  // (orden por createdAt asc + first-wins) — nombre Y fecha del MISMO reporte.
+  it("keeps the first reporter's name and createdAt when two reports point to the same item", async () => {
+    const primeroCreatedAt = new Date("2026-09-01T09:00:00.000Z");
     prismaMock.missingReport.findMany.mockResolvedValue([
-      { linkedMissingItemId: "m-1", reporter: { name: "Primero" } },
-      { linkedMissingItemId: "m-1", reporter: { name: "Segundo" } },
+      { linkedMissingItemId: "m-1", createdAt: primeroCreatedAt, reporter: { name: "Primero" } },
+      {
+        linkedMissingItemId: "m-1",
+        createdAt: new Date("2026-09-05T09:00:00.000Z"),
+        reporter: { name: "Segundo" },
+      },
     ]);
 
-    const result = await reporterNamesByLinkedItemIds(["m-1"]);
+    const result = await reporterAttributionByLinkedItemIds(["m-1"]);
 
-    expect(result.get("m-1")).toBe("Primero");
+    expect(result.get("m-1")).toEqual({ name: "Primero", createdAt: primeroCreatedAt });
   });
 });
 

@@ -338,26 +338,41 @@ export function listMissingReportsForReporter(reporterId: string): Promise<MyMis
 // así que el solicitante real vive acá, en el `reporter` del reporte cuyo
 // `linkedMissingItemId` apunta al faltante. Consulta por lote (índice
 // `linkedMissingItemId`) para no hacer N+1 sobre la página de faltantes.
+//
+// Devuelve el `createdAt` del REPORTE junto con el nombre, no solo el nombre:
+// la columna Fecha de la cola tiene que hablar del mismo evento que "Solicitado
+// por", o la fila atribuye a alguien un momento que no vivió (el service arma
+// esa guarda en `getMissingItems`). Por eso el nombre de la función ya no
+// alcanza para describir lo que devuelve.
 // --------------------------------------------------------------------------
 
-export async function reporterNamesByLinkedItemIds(
+export type ReporterAttribution = { name: string; createdAt: Date };
+
+export async function reporterAttributionByLinkedItemIds(
   itemIds: string[],
-): Promise<Map<string, string>> {
+): Promise<Map<string, ReporterAttribution>> {
   if (itemIds.length === 0) return new Map();
 
   const rows = await prisma.missingReport.findMany({
     where: { linkedMissingItemId: { in: itemIds } },
-    select: { linkedMissingItemId: true, reporter: { select: { name: true } } },
+    select: {
+      linkedMissingItemId: true,
+      createdAt: true,
+      reporter: { select: { name: true } },
+    },
     // Determinismo si dos reportes apuntaran al mismo faltante: gana el primero
     // (el reporte original). `first-wins` abajo lo garantiza.
     orderBy: { createdAt: "asc" },
   });
 
-  const names = new Map<string, string>();
+  const attribution = new Map<string, ReporterAttribution>();
   for (const row of rows) {
-    if (row.linkedMissingItemId && !names.has(row.linkedMissingItemId)) {
-      names.set(row.linkedMissingItemId, row.reporter.name);
+    if (row.linkedMissingItemId && !attribution.has(row.linkedMissingItemId)) {
+      attribution.set(row.linkedMissingItemId, {
+        name: row.reporter.name,
+        createdAt: row.createdAt,
+      });
     }
   }
-  return names;
+  return attribution;
 }
