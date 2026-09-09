@@ -1,8 +1,11 @@
 "use server";
 
-import { requireSession } from "@/lib/auth/require-role";
+import { requireCapability, requireSession } from "@/lib/auth/require-role";
 import { prepareProductQuery } from "@/lib/productos/search-query";
-import { getProducts } from "@/server/services/product.service";
+import {
+  getProducts,
+  toEntryProductOption,
+} from "@/server/services/product.service";
 
 // --------------------------------------------------------------------------
 // Read-only Server Action backing the mobile topbar autocomplete and the
@@ -28,6 +31,14 @@ export type ProductSuggestion = {
 };
 
 const SUGGESTION_LIMIT = 8;
+
+export async function searchEntryProductsAction(rawQuery: string) {
+  await requireCapability("canCreateEntries");
+  const q = prepareProductQuery(rawQuery);
+  if (!q) return [];
+  const { items } = await getProducts({ q, active: true, take: 20 });
+  return items.filter((product) => product.active).map(toEntryProductOption);
+}
 
 export async function searchProductsAction(
   rawQuery: string,

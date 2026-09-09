@@ -11,6 +11,7 @@ import { laboratoryCreateCommandKey } from "@/server/domain/laboratory/identity"
 import type { Product } from "@/lib/generated/prisma/client";
 import {
   createProduct,
+  findActiveEntryProduct,
   updateProduct,
   updateProductIfVersionMatches,
   type UpdateProductData,
@@ -27,6 +28,36 @@ export function getProducts(params: {
   active?: boolean;
 }): Promise<Paginated<ProductListItem>> {
   return listProducts(params);
+}
+
+export function toEntryProductOption(
+  product: Pick<
+    ProductListItem,
+    | "id"
+    | "name"
+    | "code"
+    | "orionCode"
+    | "unit"
+    | "identityVersion"
+    | "catalogVersion"
+    | "laboratory"
+  >,
+) {
+  return {
+    id: product.id,
+    name: product.name,
+    code: product.code,
+    orionCode: product.orionCode,
+    unit: product.unit,
+    identityVersion: product.identityVersion,
+    catalogVersion: product.catalogVersion,
+    laboratoryName: product.laboratory?.name ?? null,
+  };
+}
+
+export async function getEntryProduct(id: string) {
+  const product = await findActiveEntryProduct(id);
+  return product ? toEntryProductOption(product) : null;
 }
 
 export type ActiveProductOption = Pick<ProductListItem, "id" | "name" | "code">;
