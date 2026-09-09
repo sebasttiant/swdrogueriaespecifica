@@ -39,9 +39,9 @@ type MissingListProps = {
   // `canSeeStatus`: saber en qué anda el faltante no es saber a quién se le
   // pide. El SCOPE decide además si la columna aplica: ver `scope` abajo.
   canSeeSupplier: boolean;
-  // Capability `canViewMissingAttribution` (SUPERADMIN/ADMIN): gatea la
-  // columna Fecha. "Solicitado por" (el nombre) queda visible para TODOS —esta
-  // capability no la toca—; solo la fecha exacta es trazabilidad de gerencia.
+  // Capability `canViewMissingAttribution` (SUPERADMIN/ADMIN): gatea las
+  // columnas Fecha/Hora. "Solicitado por" (el nombre) queda visible para TODOS
+  // —esta capability no lo toca—; el instante exacto es trazabilidad de gerencia.
   canSeeRequestedAt: boolean;
   // Alcance operativo de la página (`missing-scope.ts`). Estado y Pedido solo
   // aportan en "ordered"/"discarded", donde SÍ distinguen una fila de otra
@@ -121,7 +121,7 @@ type ActionContext = {
   // Identidad del proveedor. El service YA la anuló para quien no la tiene, así
   // que esto solo evita pintar una columna vacía; la protección real no vive acá.
   canSeeSupplier: boolean;
-  // Columna Fecha: capability pura (`canViewMissingAttribution`), sin eje de
+  // Columnas Fecha/Hora: capability pura (`canViewMissingAttribution`), sin eje de
   // scope — a diferencia de status/supplier, aplica igual en las tres colas.
   canSeeRequestedAt: boolean;
   // Selección masiva: ver `MissingListProps.bulkMode`. Se exige también
@@ -263,13 +263,14 @@ function missingCard(
             Solicitado por {missing.requestedByName}
           </p>
         ) : null}
-        {/* Columna Fecha: capability `canViewMissingAttribution`
+        {/* Fecha/Hora: capability `canViewMissingAttribution`
             (SUPERADMIN/ADMIN). Misma fecha que dio nombre a "Solicitado
             por" arriba —el service las ata al mismo evento—, así que nunca
             se muestra una sin la otra. */}
         {actions.canSeeRequestedAt ? (
           <p className="text-xs text-muted-foreground">
             {formatBogotaDate(missing.requestedAt, { style: "date" })}
+            {" · Hora: "}{formatBogotaDate(missing.requestedAt, { style: "time" })}
           </p>
         ) : null}
       </div>
@@ -331,9 +332,14 @@ function missingRow(
         {missing.requestedByName ?? "—"}
       </td>
       {actions.canSeeRequestedAt ? (
-        <td className="px-3 py-2 text-sm text-muted-foreground">
-          {formatBogotaDate(missing.requestedAt, { style: "date" })}
-        </td>
+        <>
+          <td className="px-3 py-2 text-sm text-muted-foreground">
+            {formatBogotaDate(missing.requestedAt, { style: "date" })}
+          </td>
+          <td className="whitespace-nowrap px-3 py-2 text-sm text-muted-foreground">
+            {formatBogotaDate(missing.requestedAt, { style: "time" })}
+          </td>
+        </>
       ) : null}
       {actions.canSeeStatus ? (
         <td className="px-3 py-2">
@@ -426,7 +432,10 @@ export function MissingList({
                     <th className="px-3 py-2 font-medium">Producto</th>
                     <th className="px-3 py-2 font-medium">Solicitado por</th>
                     {canSeeRequestedAt ? (
-                      <th className="px-3 py-2 font-medium">Fecha</th>
+                      <>
+                        <th className="px-3 py-2 font-medium">Fecha</th>
+                        <th className="px-3 py-2 font-medium">Hora</th>
+                      </>
                     ) : null}
                     {showsStatus ? (
                       <th className="px-3 py-2 font-medium">Estado</th>

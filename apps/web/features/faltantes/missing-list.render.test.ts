@@ -676,6 +676,36 @@ describe("MissingList · columna Fecha (capability canViewMissingAttribution)", 
   });
 });
 
+describe("MissingList · report time", () => {
+  it.each([false, true])("shows requestedAt in Bogota after Fecha in both trees (bulkMode=%s)", (bulkMode) => {
+    const html = renderMissingList([
+      item({
+        requestedAt: new Date("2026-09-02T02:07:00.000Z"),
+        createdAt: new Date("2026-09-09T14:36:00.000Z"),
+      }),
+    ], true, { canSeeRequestedAt: true, scope: "actionable", bulkMode });
+
+    const headers = [...html.matchAll(/<th\b[^>]*>(.*?)<\/th>/g)].map((match) => match[1]);
+    expect(headers).toEqual(["Producto", "Solicitado por", "Fecha", "Hora", "Acción"]);
+    expect(html).toMatch(/<td[^>]*>1\/9\/2026<\/td><td[^>]*>21:07<\/td>/);
+    expect(html).toMatch(/<p[^>]*>1\/9\/2026 · Hora: 21:07<\/p>/);
+    expect(countOccurrences(html, "21:07")).toBe(2);
+    expect(html).not.toContain("09:36");
+    expect(html).not.toContain("02:07");
+    expect(html).toContain("min-w-[56rem]");
+  });
+
+  it.each(["SUPERVISOR", "OPERADOR"] as const)("hides report time in both trees for %s", (role) => {
+    const html = renderMissingList([
+      item({ requestedAt: new Date("2026-09-02T02:07:00.000Z") }),
+    ], false, { canSeeRequestedAt: can(role, "canViewMissingAttribution") });
+
+    expect(html).not.toContain("Hora");
+    expect(html).not.toContain("21:07");
+    expect(html).not.toContain("1/9/2026");
+  });
+});
+
 describe("MissingList · action error contract", () => {
   it("surfaces the order rejection returned by the server action", () => {
     const message = "Este faltante ya fue pedido.";
