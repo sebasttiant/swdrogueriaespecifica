@@ -174,6 +174,15 @@ export function EntryForm({
   const shownPresentation = presentationLabel(shown?.unit);
 
   async function searchCatalog() {
+    // An empty box is not a search: the server rejects it and would answer with
+    // zero results, which used to read as "nothing exists" and shrink the list
+    // the person was already looking at.
+    if (!query.trim()) {
+      searchRequest.current += 1;
+      setSearching(false);
+      setSearchMessage("Escribí un nombre o un código para buscar.");
+      return;
+    }
     const requestId = ++searchRequest.current;
     setSearching(true);
     setSearchMessage("");
@@ -181,21 +190,25 @@ export function EntryForm({
       const results = await searchEntryProductsAction(query);
       if (requestId !== searchRequest.current) return;
       // Buscar no adopta silenciosamente versiones nuevas del producto elegido.
-      setCatalog((previous) => {
-        const selected = previous.find((product) => product.id === selectedId);
-        const options = results.map(
-          (product) =>
-            previous.find((snapshot) => snapshot.id === product.id) ?? product,
-        );
-        return selected &&
-          !options.some((product) => product.id === selected.id)
-          ? [selected, ...options]
-          : options;
-      });
+      // A search that matched nothing leaves the list untouched: replacing it
+      // would strand the person with an empty selector.
+      if (results.length) {
+        setCatalog((previous) => {
+          const selected = previous.find((product) => product.id === selectedId);
+          const options = results.map(
+            (product) =>
+              previous.find((snapshot) => snapshot.id === product.id) ?? product,
+          );
+          return selected &&
+            !options.some((product) => product.id === selected.id)
+            ? [selected, ...options]
+            : options;
+        });
+      }
       setSearchMessage(
         results.length
           ? "Hasta 20 resultados. Afiná la búsqueda si no aparece."
-          : "No se encontraron productos activos. Probá otro nombre o código.",
+          : "No se encontraron productos activos con ese texto. La lista quedó como estaba.",
       );
     } catch {
       if (requestId === searchRequest.current) {
@@ -264,12 +277,14 @@ export function EntryForm({
           </Field>
         ) : (
           <Field label="Producto" htmlFor="productId" className="sm:col-span-2">
-            <label htmlFor="entry-product-query" className="text-sm">
-              Buscar producto
-            </label>
+            {/* The search box is named through aria-label, not a second visible
+                label: `Field` already renders an inline "Producto" label, and a
+                sibling inline label rendered glued to it as "ProductoBuscar
+                producto". The placeholder and the button carry the visible cue. */}
             <div className="mb-2 flex gap-2">
               <Input
                 id="entry-product-query"
+                aria-label="Buscar producto"
                 value={query}
                 placeholder="Nombre o código"
                 onChange={(event) => {

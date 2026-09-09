@@ -90,10 +90,10 @@ const LIST_SELECT = {
 } as const;
 
 export function findActiveEntryProduct(id: string) {
- return prisma.product.findFirst({
-  where: { id, active: true },
-  select: LIST_SELECT,
- });
+  return prisma.product.findFirst({
+    where: { id, active: true },
+    select: LIST_SELECT,
+  });
 }
 
 export async function listProducts(params: {

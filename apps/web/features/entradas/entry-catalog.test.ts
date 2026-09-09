@@ -174,3 +174,34 @@ it("searches beyond the initial page and submits the selected snapshot", async (
   expect(data.get("expectedIdentityVersion")).toBe("4");
   expect(data.get("expectedCatalogVersion")).toBe("7");
 });
+
+it("does not query the server when the search box is empty", async () => {
+  const user = userEvent.setup();
+  render(
+    createElement(EntryForm, {
+      products: [target],
+      selectedProductId: target.id,
+    }),
+  );
+  await user.click(screen.getByRole("button", { name: "Buscar" }));
+  await screen.findByText(/Escribí un nombre o un código para buscar/);
+  expect(searchEntryProductsAction).not.toHaveBeenCalled();
+  expect(screen.getByRole("option", { name: /Vichy/ })).toBeTruthy();
+});
+
+it("keeps the loaded options when a search matches nothing", async () => {
+  vi.mocked(searchEntryProductsAction).mockResolvedValue([]);
+  const other: ProductOption = { ...target, id: "184", name: "Sensilis" };
+  const user = userEvent.setup();
+  render(
+    createElement(EntryForm, {
+      products: [target, other],
+      selectedProductId: target.id,
+    }),
+  );
+  await user.type(screen.getByLabelText("Buscar producto"), "unknown");
+  await user.click(screen.getByRole("button", { name: "Buscar" }));
+  await screen.findByText(/No se encontraron productos activos con ese texto/);
+  expect(screen.getByRole("option", { name: /Vichy/ })).toBeTruthy();
+  expect(screen.getByRole("option", { name: /Sensilis/ })).toBeTruthy();
+});
