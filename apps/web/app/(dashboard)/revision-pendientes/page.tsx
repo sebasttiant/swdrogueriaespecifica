@@ -105,6 +105,9 @@ export default async function RevisionPendientesPage({
   // Estado de gestión: autoridad de compras (gerencia). Reusa la misma
   // capability que pedir un faltante, no la de cancelar.
   const canManageStatus = can(session.user.role, "canOrderMissingItems");
+  // Eje propio: supervisión opera la cola entera y aun así no habla en
+  // nombre de gerencia. Solo ADMIN/SUPERADMIN escriben la observación.
+  const canWriteObservation = can(session.user.role, "canWriteManagementObservation");
 
   const { cursor, scope: rawScope, tab: rawTab, focus: rawFocus, ...rawAxes } = await searchParams;
 
@@ -260,6 +263,7 @@ export default async function RevisionPendientesPage({
                 canDeliver={canDeliver}
                 canCancel={canCancel}
                 canManageStatus={canManageStatus}
+                canWriteObservation={canWriteObservation}
                 viewer={viewer}
                 scope={scope}
                 pageHref={() => ""}
@@ -273,6 +277,7 @@ export default async function RevisionPendientesPage({
             canDeliver={canDeliver}
             canCancel={canCancel}
             canManageStatus={canManageStatus}
+            canWriteObservation={canWriteObservation}
             viewer={viewer}
             scope={scope}
             pageHref={(nextCursor) =>

@@ -262,6 +262,14 @@ export const CAPABILITIES = [
   // mismo; quién ve qué lo decide `ownerId` en la capa de datos, no una
   // pantalla distinta ni esta capacidad.
   "canReviewPendings",
+  // Escribir la observación de gerencia sobre un pendiente. Eje PROPIO y no un
+  // pedazo de `canManageAllPendings`: supervisión opera la cola entera —entrega,
+  // factura, cancela— y aun así no habla en nombre de gerencia. Colapsarlas
+  // para que gerencia pueda escribir le daría la voz a supervisión de regalo.
+  //
+  // LEER la observación no necesita capacidad: quien ya tiene el pendiente
+  // delante lo ve entero. La restricción es sobre quién ESCRIBE.
+  "canWriteManagementObservation",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];

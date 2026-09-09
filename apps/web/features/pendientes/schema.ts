@@ -491,6 +491,26 @@ export type PendingManagementStatusInput = z.infer<
 >;
 
 // --------------------------------------------------------------------------
+// Observación de gerencia sobre un pendiente.
+//
+// `observation` se acepta VACÍO a propósito: vaciar el campo es cómo se borra
+// la observación, y un `min(1)` acá dejaría un texto imposible de retirar. El
+// largo lo mide el servicio sobre el texto YA normalizado, no Zod sobre el
+// crudo: contar los espacios que el teclado del celular deja de más rechazaría
+// observaciones que en realidad entran.
+//
+// `expectedVersion` es lo que la pantalla tenía a la vista. Sin él, dos
+// gerentes con la misma lista abierta se pisan en silencio.
+// --------------------------------------------------------------------------
+export const pendingObservationSchema = z.object({
+  id: z.string().trim().min(1, "Falta el id del pendiente"),
+  observation: z.string(),
+  expectedVersion: z.coerce.number().int().min(0),
+});
+
+export type PendingObservationInput = z.infer<typeof pendingObservationSchema>;
+
+// --------------------------------------------------------------------------
 // Edición de un pendiente por parte de quien administra.
 //
 // Es la potestad de gerencia sobre cualquier pendiente: corregir lo que el

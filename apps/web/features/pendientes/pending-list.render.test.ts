@@ -76,6 +76,7 @@ function renderList(
     canDeliver: boolean;
     canCancel: boolean;
     canManageStatus: boolean;
+    canWriteObservation: boolean;
     items: PendingListItem[];
     nextCursor: string | null;
     scope: "active" | "history";
@@ -92,6 +93,7 @@ function renderList(
       canDeliver: props.canDeliver ?? true,
       canCancel: props.canCancel ?? true,
       canManageStatus: props.canManageStatus ?? false,
+      canWriteObservation: props.canWriteObservation ?? false,
       scope,
       // La página es la que arma el enlace, porque es la única que conoce la
       // vista completa. Acá se usa el mismo constructor que en producción.

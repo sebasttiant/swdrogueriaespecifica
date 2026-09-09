@@ -65,6 +65,7 @@ function renderDetail(item: PendingListItem): string {
       canDeliver: true,
       canCancel: true,
       canManageStatus: false,
+       canWriteObservation: false,
       scope: "active" as const,
       pageHref: (cursor: string) => `?cursor=${cursor}`,
     }),

@@ -57,6 +57,9 @@ export const AUDIT_ACTIONS = {
   // reescribe es la promesa (producto, cantidad, fecha, cliente), y por eso la
   // auditoría guarda el ANTES además del después.
   PENDING_UPDATE: "pending.update",
+  // La observación de gerencia. Registra la VERSIÓN, nunca el texto: la
+  // observación puede nombrar al cliente y la auditoría se exporta.
+  PENDING_OBSERVATION: "pending.observation",
   // Faltantes
   MISSING_AUTO_CREATE: "missing.auto.create",
   MISSING_CREATE: "missing.create",
