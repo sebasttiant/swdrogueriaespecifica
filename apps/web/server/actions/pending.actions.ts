@@ -942,12 +942,19 @@ export async function deliverPendingAction(
     return { error: "Revisá los datos de la entrega.", ok: false };
   }
 
+  // Misma validación de FORMA que el alta, sin la misma dureza: un cliente
+  // viejo (sin el campo oculto, o con uno mal formado) sigue pudiendo
+  // entregar. Acá una clave ausente o inválida NUNCA bloquea el envío — solo
+  // apaga la protección anti-duplicado de ESTE intento en particular.
+  const idempotencyKey = idempotencyKeyFrom(text(formData, "idempotencyKey"));
+
   try {
     const result = await deliverPending({
       id: parsed.data.id,
       quantity: parsed.data.quantity,
       deliveredById: session.user.id,
       canManageAll: can(session.user.role, "canManageAllPendings"),
+      idempotencyKey,
     });
 
 		// Un rechazo de negocio no es ruido de formulario: alguien con la capacidad
@@ -979,6 +986,9 @@ export async function deliverPendingAction(
         deliverQuantity: parsed.data.quantity,
         status: result.pending?.status ?? null,
         deliveredQuantity: result.pending?.deliveredQuantity ?? null,
+        // Solo presente en el replay de un duplicado: un reenvío no
+        // desaparece, queda su propia marca en la auditoría.
+        ...(result.replayed ? { replayed: true } : {}),
       },
       context: await auditContextFromHeaders(session.user.id),
     });

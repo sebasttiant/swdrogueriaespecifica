@@ -758,6 +758,12 @@ model PendingDelivery {
   deliveredBy   User?    @relation("PendingDeliveredBy", fields: [deliveredById], references: [id])
   deliveredById String?
   createdAt     DateTime @default(now())
+  // Idempotencia de la ENTREGA (nullable): un reenvío duplicado del mismo
+  // intento (doble tap, reintento tras un timeout) no debe registrar una
+  // segunda fila. Nullable porque las filas anteriores a esta columna no
+  // tienen intento que reconstruir, y en PostgreSQL el índice único admite
+  // múltiples NULL.
+  idempotencyKey String? @unique
 
   @@index([pendingId])
   @@map("pending_deliveries")

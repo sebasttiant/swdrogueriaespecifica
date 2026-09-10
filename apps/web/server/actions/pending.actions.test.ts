@@ -1152,6 +1152,72 @@ describe("deliverPendingAction", () => {
     expect(result.ok).toBe(false);
     expect(mocks.deliverPending).not.toHaveBeenCalled();
   });
+
+  // ---------------------------------------------------------------------------
+  // Idempotencia: la clave viaja del FormData al service con el mismo criterio
+  // de forma que `idempotencyKeyFrom` usa para el alta. Sin clave o con una
+  // clave mal formada, el comportamiento es exactamente el de hoy — un cliente
+  // viejo (sin el campo oculto) no puede quedar sin poder entregar.
+  // ---------------------------------------------------------------------------
+  describe("clave de idempotencia", () => {
+    beforeEach(() => {
+      mocks.requireCapability.mockResolvedValue({ user: { id: "op-1", role: "OPERADOR" } });
+      mocks.deliverPending.mockResolvedValue({
+        rejection: null,
+        pending: { id: "pend-1", status: "PARCIAL", deliveredQuantity: 4, completedAt: null },
+      });
+    });
+
+    it("passes a well-formed idempotency key through to the service", async () => {
+      await deliverPendingAction(PREV, deliverFormData({ idempotencyKey: ATTEMPT_UUID }));
+
+      expect(mocks.deliverPending).toHaveBeenCalledWith(
+        expect.objectContaining({ idempotencyKey: ATTEMPT_UUID }),
+      );
+    });
+
+    it.each(["", "not-a-uuid", "../../admin"])(
+      "ignores a missing or malformed key and still delivers: %s",
+      async (idempotencyKey) => {
+        const result = await deliverPendingAction(PREV, deliverFormData({ idempotencyKey }));
+
+        expect(result.ok).toBe(true);
+        expect(mocks.deliverPending).toHaveBeenCalledWith(
+          expect.objectContaining({ idempotencyKey: null }),
+        );
+      },
+    );
+
+    it("delivers without the field at all, exactly like before this feature existed", async () => {
+      const result = await deliverPendingAction(PREV, deliverFormData());
+
+      expect(result.ok).toBe(true);
+      expect(mocks.deliverPending).toHaveBeenCalledWith(
+        expect.objectContaining({ idempotencyKey: null }),
+      );
+    });
+
+    it("audits a replay with replayed: true so a duplicate leaves a trace instead of vanishing", async () => {
+      mocks.deliverPending.mockResolvedValue({
+        rejection: null,
+        replayed: true,
+        pending: { id: "pend-1", status: "PARCIAL", deliveredQuantity: 4, completedAt: null },
+      });
+
+      await deliverPendingAction(PREV, deliverFormData({ idempotencyKey: ATTEMPT_UUID }));
+
+      expect(mocks.recordAudit).toHaveBeenCalledTimes(1);
+      const auditCall = mocks.recordAudit.mock.calls[0]![0];
+      expect(auditCall.after).toEqual(expect.objectContaining({ replayed: true }));
+    });
+
+    it("does not mark replayed on an ordinary, non-duplicate delivery", async () => {
+      await deliverPendingAction(PREV, deliverFormData({ idempotencyKey: ATTEMPT_UUID }));
+
+      const auditCall = mocks.recordAudit.mock.calls[0]![0];
+      expect(auditCall.after).not.toHaveProperty("replayed");
+    });
+  });
 });
 
 describe("cancelPendingAction", () => {

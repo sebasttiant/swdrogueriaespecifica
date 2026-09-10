@@ -13,7 +13,7 @@ const { prismaMock, tx } = vi.hoisted(() => {
       update: vi.fn(),
       updateMany: vi.fn(),
     },
-    pendingDelivery: { create: vi.fn() },
+    pendingDelivery: { create: vi.fn(), findUnique: vi.fn() },
     missingItem: { create: vi.fn(), updateMany: vi.fn() },
     pendingInventoryReservation: { findMany: vi.fn(), upsert: vi.fn(), deleteMany: vi.fn(), delete: vi.fn(), update: vi.fn() },
     productBatch: { aggregate: vi.fn(), update: vi.fn() },
@@ -154,6 +154,9 @@ beforeEach(() => {
   // mock obligaba al código de producción a defenderse de un caso que la base
   // no produce.
   tx.pendingInventoryReservation.findMany.mockResolvedValue([]);
+  // Sin clave de idempotencia (la mayoría de los tests) este mock ni se
+  // consulta; con clave, "ninguna entrega la usó todavía" es el default sano.
+  tx.pendingDelivery.findUnique.mockResolvedValue(null);
 });
 
 describe("registerPending", () => {
@@ -546,6 +549,92 @@ describe("deliverPending", () => {
 
     expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
     expect(tx.missingItem.create).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // Idempotencia de la entrega PARCIAL (el único caso sin protección: una
+  // entrega TOTAL ya vuelve ALREADY_DELIVERED por el `status` guardado). Un
+  // reenvío duplicado con la MISMA clave no debe entregar dos veces.
+  //
+  // UNA sola lectura alcanza acá, a diferencia de `registerPending` que
+  // necesita dos (antes de escribir, y de nuevo si pierde la carrera contra el
+  // índice único): el lock de fila de `lockPendingForUpdate` ya serializó a
+  // TODOS los que entregan este pendiente antes de esta lectura, así que no
+  // hay ninguna carrera que perder entre leer "no existe" y escribir. El
+  // índice único de la columna queda como red por si un llamador futuro se
+  // saltea el lock — mismo espíritu que `PendingConcurrentModificationError`.
+  // -------------------------------------------------------------------------
+  describe("idempotencia de la entrega parcial", () => {
+    it("same key on a duplicate partial delivery: does not deliver twice, returns the current state", async () => {
+      mockLockedPending(pendingForDelivery({ status: "PARCIAL", deliveredQuantity: 4 }));
+      tx.pendingDelivery.findUnique.mockResolvedValue({
+        id: "del-1",
+        pendingId: "pend-1",
+        idempotencyKey: "attempt-1",
+      });
+
+      const result = await deliverPending({ ...input, idempotencyKey: "attempt-1" }, now);
+
+      expect(result.rejection).toBeNull();
+      expect(result.pending).toEqual({
+        id: "pend-1",
+        status: "PARCIAL",
+        deliveredQuantity: 4,
+        completedAt: null,
+      });
+      expect(result.replayed).toBe(true);
+      expect(tx.pendingDelivery.create).not.toHaveBeenCalled();
+      expect(tx.pending.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("a different key on a later partial delivery is a NEW legitimate attempt: it delivers", async () => {
+      mockLockedPending(pendingForDelivery({ status: "PARCIAL", deliveredQuantity: 4 }));
+      mockCasWrote(1);
+      tx.pendingDelivery.findUnique.mockResolvedValue(null);
+
+      const result = await deliverPending(
+        { ...input, quantity: 6, idempotencyKey: "attempt-2" },
+        now,
+      );
+
+      expect(result.rejection).toBeNull();
+      expect(result.replayed).toBeUndefined();
+      expect(result.pending).toEqual({
+        id: "pend-1",
+        status: "ENTREGADO",
+        deliveredQuantity: 10,
+        completedAt: now,
+      });
+      expect(tx.pendingDelivery.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("passes the idempotency key through to the delivery row", async () => {
+      mockLockedPending(pendingForDelivery({ deliveredQuantity: 0 }));
+      mockCasWrote(1);
+      tx.pendingDelivery.findUnique.mockResolvedValue(null);
+
+      await deliverPending({ ...input, idempotencyKey: "attempt-3" }, now);
+
+      expect(tx.pendingDelivery.create).toHaveBeenCalledWith({
+        data: {
+          pendingId: "pend-1",
+          quantity: 6,
+          deliveredById: "op-1",
+          idempotencyKey: "attempt-3",
+        },
+      });
+    });
+
+    it("without a key, behaves exactly as before: no lookup, always delivers", async () => {
+      mockLockedPending(pendingForDelivery({ deliveredQuantity: 0 }));
+      mockCasWrote(1);
+
+      const result = await deliverPending(input, now);
+
+      expect(tx.pendingDelivery.findUnique).not.toHaveBeenCalled();
+      expect(tx.pendingDelivery.create).toHaveBeenCalledTimes(1);
+      expect(result.replayed).toBeUndefined();
+    });
   });
 });
 
