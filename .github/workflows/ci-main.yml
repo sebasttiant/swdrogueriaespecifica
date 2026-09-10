@@ -27,6 +27,11 @@ jobs:
         run: pnpm test
 
       - name: Build
+        # Misma versión que la imagen: el build de Next incrusta
+        # `NEXT_PUBLIC_APP_VERSION` al compilar, y si acá faltara, este job
+        # estaría validando algo distinto de lo que se despliega.
+        env:
+          NEXT_PUBLIC_APP_VERSION: ${{ github.sha }}
         run: pnpm build
 
   # Gate de PostgreSQL real: corre contra una base descartable que el harness
@@ -77,6 +82,12 @@ jobs:
           target: runner
           push: false
           tags: drogueria-especifica-web:main
+          # SHA COMPLETO del commit. El build del cliente se marca con él, y esa
+          # marca es lo único que después permite detectar que una pestaña vieja
+          # sigue hablando con un servidor nuevo. Sin esto la imagen sale con
+          # `unknown` y el guard no puede comparar nada.
+          build-args: |
+            APP_VERSION=${{ github.sha }}
 
   # Despliegue: preparado, sin deploy real todavía (Fase posterior).
   deploy:
