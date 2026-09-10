@@ -18,9 +18,11 @@ vi.mock("@/lib/db/prisma", () => ({ prisma: prismaMock }));
 import { encodeCursor } from "@/lib/pagination";
 import {
   cancelPending,
+  createPendingDelivery,
   decodeQueueCursor,
   countOverduePendings,
   countUpcomingPendings,
+  findPendingDeliveryByIdempotencyKey,
   listPendings,
   listUrgentPendings,
   lockPendingForUpdate,
@@ -40,6 +42,10 @@ function txClient() {
   return {
     $queryRaw: vi.fn().mockResolvedValue([]),
     pending: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+    pendingDelivery: {
+      create: vi.fn().mockResolvedValue({}),
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
   };
 }
 
@@ -115,6 +121,76 @@ describe("updatePendingAfterDelivery", () => {
     });
 
     expect(written).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Idempotencia de la ENTREGA: la mitad de escritura/lectura del intento
+// duplicado. Mismo patrón que `findPendingByIdempotencyKey` para el alta.
+// ---------------------------------------------------------------------------
+
+describe("createPendingDelivery", () => {
+  it("writes the given idempotency key on the delivery row", async () => {
+    const tx = txClient();
+
+    await createPendingDelivery(tx as never, {
+      pendingId: "pend-1",
+      quantity: 4,
+      deliveredById: "op-1",
+      idempotencyKey: "attempt-1",
+    });
+
+    expect(tx.pendingDelivery.create).toHaveBeenCalledWith({
+      data: {
+        pendingId: "pend-1",
+        quantity: 4,
+        deliveredById: "op-1",
+        idempotencyKey: "attempt-1",
+      },
+    });
+  });
+
+  it("writes null when no idempotency key is given, exactly like today", async () => {
+    const tx = txClient();
+
+    await createPendingDelivery(tx as never, {
+      pendingId: "pend-1",
+      quantity: 4,
+      deliveredById: "op-1",
+    });
+
+    expect(tx.pendingDelivery.create).toHaveBeenCalledWith({
+      data: {
+        pendingId: "pend-1",
+        quantity: 4,
+        deliveredById: "op-1",
+        idempotencyKey: null,
+      },
+    });
+  });
+});
+
+describe("findPendingDeliveryByIdempotencyKey", () => {
+  it("looks up the unique idempotencyKey column on the tx client", async () => {
+    const tx = txClient();
+    const row = { id: "del-1", pendingId: "pend-1", quantity: 4 };
+    tx.pendingDelivery.findUnique.mockResolvedValue(row);
+
+    await expect(
+      findPendingDeliveryByIdempotencyKey(tx as never, "attempt-1"),
+    ).resolves.toEqual(row);
+    expect(tx.pendingDelivery.findUnique).toHaveBeenCalledWith({
+      where: { idempotencyKey: "attempt-1" },
+    });
+  });
+
+  it("returns null when no delivery used that key", async () => {
+    const tx = txClient();
+    tx.pendingDelivery.findUnique.mockResolvedValue(null);
+
+    await expect(
+      findPendingDeliveryByIdempotencyKey(tx as never, "attempt-2"),
+    ).resolves.toBeNull();
   });
 });
 

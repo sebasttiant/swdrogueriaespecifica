@@ -667,6 +667,7 @@ export type CreatePendingDeliveryData = {
   pendingId: string;
   quantity: number;
   deliveredById: string;
+  idempotencyKey?: string | null;
 };
 
 export function createPendingDelivery(
@@ -678,8 +679,25 @@ export function createPendingDelivery(
       pendingId: data.pendingId,
       quantity: data.quantity,
       deliveredById: data.deliveredById,
+      idempotencyKey: data.idempotencyKey ?? null,
     },
   });
+}
+
+/**
+ * Busca la entrega que un intento ya escribió, por su clave de idempotencia.
+ *
+ * Es la mitad de lectura de la regla anti-duplicado de la ENTREGA (mismo
+ * espíritu que `findPendingByIdempotencyKey` para el alta), pero acá con una
+ * sola lectura alcanza: `deliverPending` ya toma el lock de fila del pendiente
+ * antes de llamar a esto, así que no hay ninguna carrera que perder entre leer
+ * "no existe" y escribir.
+ */
+export function findPendingDeliveryByIdempotencyKey(
+  tx: Prisma.TransactionClient,
+  idempotencyKey: string,
+) {
+  return tx.pendingDelivery.findUnique({ where: { idempotencyKey } });
 }
 
 export type UpdatePendingAfterDeliveryData = {

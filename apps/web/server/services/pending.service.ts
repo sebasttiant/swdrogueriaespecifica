@@ -31,6 +31,7 @@ import {
   createPending,
   createPendingDelivery,
   findPendingByIdempotencyKey,
+  findPendingDeliveryByIdempotencyKey,
   findPendingInView,
   lockPendingForUpdate,
   listPendings,
@@ -645,6 +646,9 @@ export type DeliverPendingInput = {
   quantity: number;
   deliveredById: string;
   canManageAll?: boolean;
+  // Idempotencia (Slice de entrega). Ver el bloque de replay dentro de
+  // `deliverPending` para el porqué de una sola lectura acá.
+  idempotencyKey?: string | null;
 };
 
 export type DeliverPendingResult = {
@@ -655,6 +659,9 @@ export type DeliverPendingResult = {
     completedAt: Date | null;
   } | null;
   rejection: DeliveryRejection | null;
+  // true SOLO en el replay de un intento duplicado (misma idempotencyKey).
+  // Ausente en cualquier otro camino, igual que `CreatePendingResult.replayed`.
+  replayed?: boolean;
 };
 
 // Se lanza cuando el compare-and-set no escribe ninguna fila. Con el lock de
@@ -692,6 +699,39 @@ export async function deliverPending(
       throw new Error("Pending not found");
     }
 
+    // Reintento del MISMO intento (doble tap, reenvío tras un timeout): con la
+    // clave que ya escribió una entrega, esto es un éxito ya ocurrido, no una
+    // entrega nueva. Se responde con el estado actual sin volver a escribir.
+    //
+    // UNA sola lectura alcanza acá — a diferencia de `registerPending`, que
+    // necesita dos (antes de escribir, y de nuevo si pierde la carrera contra
+    // el índice único) — porque el `lockPendingForUpdate` de arriba ya
+    // serializó a TODOS los que entregan este pendiente antes de esta
+    // lectura: no queda ninguna carrera que perder entre leer "no existe
+    // todavía" y escribir. El índice único de la columna queda como red
+    // igual, por si un llamador futuro se saltea el lock — mismo espíritu que
+    // `PendingConcurrentModificationError` más abajo.
+    if (input.idempotencyKey) {
+      const replayedDelivery = await findPendingDeliveryByIdempotencyKey(
+        tx,
+        input.idempotencyKey,
+      );
+      if (replayedDelivery) {
+        return {
+          pending: {
+            id: current.id,
+            status: current.status,
+            deliveredQuantity: current.deliveredQuantity,
+            // La fila bloqueada (`PendingForDelivery`) no trae `completedAt`;
+            // inventar un valor acá sería peor que omitirlo.
+            completedAt: null,
+          },
+          rejection: null,
+          replayed: true,
+        };
+      }
+    }
+
     if (!input.canManageAll && current.createdById !== input.deliveredById) {
       return { pending: null, rejection: "NOT_OWNER" };
     }
@@ -719,6 +759,7 @@ export async function deliverPending(
       pendingId: current.id,
       quantity: input.quantity,
       deliveredById: input.deliveredById,
+      idempotencyKey: input.idempotencyKey ?? null,
     });
     await consumePendingReservations(tx, current.id, input.quantity);
 
