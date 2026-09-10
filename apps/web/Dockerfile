@@ -14,7 +14,7 @@
 # ==========================================================================
 
 # ---------- base ----------
-FROM node:24.18.0-trixie AS base
+FROM node:24.21.0-trixie AS base
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 RUN corepack enable && corepack prepare pnpm@11.18.0 --activate
@@ -72,7 +72,7 @@ USER node
 CMD ["node_modules/.bin/prisma", "db", "seed"]
 
 # ---------- runner ----------
-FROM node:24.18.0-trixie AS runner
+FROM node:24.21.0-trixie AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
