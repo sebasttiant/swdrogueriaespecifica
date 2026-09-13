@@ -31,12 +31,21 @@ class ArchiveTests(unittest.TestCase):
                 self.assertEqual(path, '/work/postgres.dump')
                 self.assertEqual(mode, 'xb')
                 yield output
-        with patch('sys.argv', ['validator', '/backup.tar.gz', '/work']), \
-             patch('shutil.copyfile'), patch('os.path.exists', return_value=checksum is not None), \
-             patch('pathlib.Path.read_text', return_value=checksum(raw) if checksum else ''), \
+        events = []
+        def read_checksum(*args, **kwargs):
+            self.assertEqual(events, ['copied'])
+            if checksum is None:
+                raise FileNotFoundError('sidecar disappeared or absent')
+            return checksum(raw)
+        status = io.StringIO()
+        with contextlib.redirect_stdout(status), \
+             patch('sys.argv', ['validator', '/backup.tar.gz', '/work']), \
+             patch('shutil.copyfile', side_effect=lambda *a: events.append('copied')), \
+             patch('pathlib.Path.read_text', side_effect=read_checksum), \
              patch('builtins.open', fake_open), \
              patch('tarfile.open', side_effect=lambda *a, **kw: real_open(fileobj=io.BytesIO(raw), mode='r:gz')):
             exec(compile(archive_code, 'archive-validator', 'exec'), {})
+        self.assertEqual(status.getvalue(), 'missing\n' if checksum is None else '')
         return output.getvalue()
 
     def test_safety_archive_round_trip(self):
@@ -84,6 +93,40 @@ class ShellTests(unittest.TestCase):
     def shell(self, body, stdin=''):
         return subprocess.run(['bash', '-c', 'source scripts/restore-data.sh\n' + body],
                               input=stdin, text=True, capture_output=True)
+
+    def test_missing_or_disappeared_sidecar_requires_acceptance(self):
+        # Mock only the Python validator: no archive or temporary files are written.
+        body = '''
+ARCHIVE=/selected.tar.gz WORK_DIR=/frozen
+python3() { printf 'missing\\n'; }
+prepare_archive
+'''
+        for answer in ('', '\n', 'n\n'):
+            result = self.shell(body, answer)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('Cancelado sin checksum', result.stderr)
+        self.assertEqual(self.shell(body, 's\n').returncode, 0)
+        self.assertEqual(self.shell(body.replace("printf 'missing\\n'", ':'), '').returncode, 0)
+        self.assertNotEqual(self.shell(body.replace("printf 'missing\\n'", 'return 7'), 's\n').returncode, 0)
+        self.assertNotIn('[[ -f "$ARCHIVE.sha256" ]]', source)
+
+    def test_exact_custom_validation_without_database_connection(self):
+        body = '''
+db() { printf 'MOCK %s\\n' "$*" >&2; }
+validate_custom_dump /dev/null
+'''
+        result = self.shell(body)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn('pg_restore --list', result.stderr)
+        self.assertIn('--exit-on-error --no-owner --no-privileges --file=/dev/null', result.stderr)
+        self.assertNotIn(' -d ', result.stderr)
+        for failure in ('--list', '--exit-on-error'):
+            result = self.shell(body.replace('printf', f'[[ "$2" != {failure} ]] || return 9; printf'))
+            self.assertNotEqual(result.returncode, 0)
+        self.assertIn('validate_custom_dump "$WORK_DIR/postgres.dump"', source)
+        self.assertIn('validate_custom_dump "$safety_path"', source)
+        self.assertIn('NO valida este postgres.dump', source)
+        self.assertLess(source.index('validate_custom_dump "$WORK_DIR/postgres.dump"'), source.index('QUIESCED=1'))
 
     def test_default_no(self):
         for answer in ('\n', 'yes\n', ''):
