@@ -8,7 +8,7 @@ usage() {
     'Requiere Docker Compose, Python 3 y PostgreSQL ya disponible; --help no usa Docker.' \
     'Valida archivo y .sha256 opcional; sin checksum exige aceptación explícita.' \
     'Backup actual obligatorio por defecto; omitirlo exige escribir SIN RESPALDO.' \
-    'Exige ensayo aislado previo y confirmación literal del destino.' \
+    'Valida el custom exacto sin ejecutar SQL; NO equivale a ensayo/reconciliación.' \
     'Solo DB: uploads con archivos bloquean la operación (web no tiene montaje).' \
     'No ejecuta migrate/seed, no borra volúmenes. Un fallo deja web detenida.'
 }
@@ -48,15 +48,20 @@ PY
   exit "$code"
 }
 prepare_archive() {
-  python3 - "$ARCHIVE" "$WORK_DIR" <<'PY'
+  local checksum_status
+  checksum_status="$(
+    python3 - "$ARCHIVE" "$WORK_DIR" <<'PY'
 import hashlib, os, pathlib, re, shutil, sys, tarfile
 source, work = sys.argv[1:]
 # Congelar bytes antes de validar para no restaurar otra versión del archivo.
 snapshot = os.path.join(work, 'source.tar.gz')
 shutil.copyfile(source, snapshot)
 checksum = source + '.sha256'
-if os.path.exists(checksum):
+try:
     text = pathlib.Path(checksum).read_text().strip()
+except FileNotFoundError:
+    print('missing')
+else:
     # Un único hash, opcionalmente seguido por el nombre del archivo seleccionado.
     match = re.fullmatch(r'([0-9a-fA-F]{64})(?:[ \t]+\*?([^\r\n]+))?', text)
     if not match or (match[2] and match[2] not in (os.path.basename(source), source)):
@@ -92,6 +97,15 @@ with tarfile.open(snapshot, 'r:gz') as archive:
         dst.write(b'PGDMP')
         shutil.copyfileobj(src, dst)
 PY
+  )" || return $?
+  if [[ "$checksum_status" == missing ]]; then
+    confirm 'ADVERTENCIA: no hay SHA256 para la copia congelada. ¿Aceptar integridad no autenticada?' || die 'Cancelado sin checksum.'
+  fi
+}
+validate_custom_dump() {
+  # Sin conexión a DB: recorrer también los datos, no solamente el índice TOC.
+  db pg_restore --list <"$1" >/dev/null || return $?
+  db pg_restore --exit-on-error --no-owner --no-privileges --file=/dev/null <"$1"
 }
 package_safety_archive() {
   python3 - "$1" "$2" <<'PY'
@@ -130,7 +144,6 @@ PY
   [[ -f "$ARCHIVE" && "$ARCHIVE" == *.tar.gz ]] || die 'No hay respaldo .tar.gz válido.'
   printf 'Respaldo seleccionado: %s\n' "$ARCHIVE"
   confirm '¿Usar este respaldo? (el más reciente puede ser posterior al incidente)' || die 'Cancelado.'
-  [[ -f "$ARCHIVE.sha256" ]] || confirm 'ADVERTENCIA: no hay SHA256. ¿Aceptar integridad no autenticada?' || die 'Cancelado sin checksum.'
   WORK_DIR='' QUIESCED=0
   trap cleanup EXIT
   trap 'exit 1' ERR
@@ -154,10 +167,12 @@ PY
   [[ "$DB_NAME" != postgres && "$DB_NAME" != template0 && "$DB_NAME" != template1 ]] || die 'No se permite restaurar bases administrativas.'
   WEB_STATE="$(docker inspect --format '{{.State.Status}}' "$WEB_ID")"
   [[ "$WEB_STATE" == running || "$WEB_STATE" == exited || "$WEB_STATE" == created ]] || die 'Estado de web no soportado.'
-  db pg_restore --list <"$WORK_DIR/postgres.dump" >/dev/null
+  validate_custom_dump "$WORK_DIR/postgres.dump"
   psql_db -d postgres -Atc 'SELECT 1;' >/dev/null
   printf 'Destino: proyecto=%s servicio=postgres contenedor=%s usuario=%s base=%s\nWeb: %s (%s)\n' "$PROJECT" "$DB_ID" "$DB_USER" "$DB_NAME" "$WEB_ID" "$WEB_STATE"
-  confirm '¿Ensayo aislado previo OK, respaldo confiable y otros escritores detenidos? El dump puede ejecutar SQL' || die 'Falta ensayo/autorización.'
+  printf '%s\n' 'Custom congelado validado sin ejecutar SQL. NO prueba restaurabilidad ni reconcilia inventario.' \
+    'restore-drill.sh usa postgres.sql: NO valida este postgres.dump. Aquí se reemplaza ese requisito por validación sin ejecución del custom exacto.'
+  confirm '¿Aceptar los límites de esta validación, respaldo confiable y otros escritores detenidos? El dump puede ejecutar SQL' || die 'Falta autorización de validación limitada.'
   local safety=1 answer expected
   if ! confirm '¿Crear respaldo de seguridad actual? (recomendado y requerido por defecto)'; then
     printf 'ADVERTENCIA: perdés la vuelta atrás. Escribí SIN RESPALDO para omitir; Enter cancela: ' >&2
@@ -179,7 +194,7 @@ PY
     safety_path="$(mktemp "$APP_DIR/backups/data/pre-restore.XXXXXXXX.dump")"
     printf 'Backup de seguridad DB-only: %s (si falla, queda parcial; no usarlo).\n' "$safety_path"
     db pg_dump -U "$DB_USER" -d "$DB_NAME" -Fc >"$safety_path"
-    db pg_restore --list <"$safety_path" >/dev/null
+    validate_custom_dump "$safety_path"
     safety_archive="$(mktemp "$APP_DIR/backups/data/pre-restore.XXXXXXXX.tar.gz")"
     printf 'Empaquetando respaldo: %s (si falla, queda parcial; no usarlo). Dump validado: %s\n' "$safety_archive" "$safety_path"
     package_safety_archive "$safety_path" "$safety_archive" || die "Falló el empaquetado; DB sin reemplazar. Dump validado conservado: $safety_path; archivo parcial: $safety_archive"
