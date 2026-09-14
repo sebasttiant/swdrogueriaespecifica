@@ -6,6 +6,7 @@ import { Card } from "@/app/_components/ui/card";
 import { EmptyState } from "@/app/_components/ui/empty-state";
 import { formatBogotaDate } from "@/lib/datetime/bogota";
 import type { PendingStatus } from "@/lib/generated/prisma/client";
+import { cn } from "@/lib/utils/cn";
 import type {
   PendingListItem,
   PendingScope,
@@ -19,8 +20,11 @@ import { formatPhone } from "./phone";
 import { deliverySummary, remainingQuantity } from "./delivery-rules";
 import { canSetManagementStatus } from "./management-status";
 import {
+  canInvoiceWithoutStock,
   fulfillmentNotice,
+  invoiceableQuantity,
   invoiceAffordance,
+  pendingStateTone,
   type PendingViewer,
 } from "./fulfillment-notice";
 import { identityWarning } from "./identity-warning";
@@ -40,6 +44,14 @@ import {
   PendingObservationView,
 } from "./pending-observation-form";
 import { PendingCustomerLifecycleForm } from "./pending-customer-lifecycle-form";
+
+// Color de estado LOCAL de la tarjeta: un borde izquierdo con los tokens del
+// tema. La regla vive en `pendingStateTone`; acá solo se pinta.
+const STATE_BORDER = {
+  ready: "border-l-4 border-l-warning",
+  soldOut: "border-l-4 border-l-danger",
+} as const;
+
 
 type PendingListProps = {
   items: PendingListItem[];
@@ -178,6 +190,7 @@ export function PendingList({
         // abre esta pantalla: saber sobre cuáles ya se puede actuar.
         const notice = fulfillmentNotice(pending);
         const identityNotice = identityWarning(pending);
+        const stateTone = pendingStateTone(pending);
 
         return (
           <Card
@@ -186,7 +199,7 @@ export function PendingList({
             // es la lista de Revisión, la mesa donde se factura. `scroll-mt-20`
             // deja aire para el topbar sticky (h-16).
             id={pendingAnchorId(pending.id)}
-            className="scroll-mt-20 space-y-3"
+            className={cn("scroll-mt-20 space-y-3", stateTone && STATE_BORDER[stateTone])}
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -285,6 +298,13 @@ export function PendingList({
                     Anotado por {pending.createdBy.name}
                   </p>
                 ) : null}
+                {/* El vendedor ESCRITO en una cuenta compartida: se lee junto a
+                    quien anotó, no en su lugar. */}
+                {pending.manualSellerName ? (
+                  <p className="break-words text-sm text-muted-foreground">
+                    {`Vendedor: ${pending.manualSellerName}`}
+                  </p>
+                ) : null}
                 {/* El saldo es lo que hay que COBRAR al entregar: se muestra en
                     la tarjeta, no escondido detrás de un badge. */}
                 {paymentState === "SIN_ABONO" ? null : (
@@ -359,13 +379,17 @@ export function PendingList({
                 {/* Facturar: mismo criterio que el listado, y el MISMO que usa
                     el aviso de la fila. Solo se ofrece si esta persona puede
                     facturar este pendiente y hay mercadería cargada; el service
-                    vuelve a comprobar las dos cosas. */}
-                {invoiceAffordance(pending, viewer).canInvoice ? (
+                    vuelve a comprobar las dos cosas. U5: también sin mercadería
+                    cargada si queda saldo, para la excepción sin stock, que el
+                    formulario confirma en un segundo paso. */}
+                {invoiceAffordance(pending, viewer).canInvoice ||
+                canInvoiceWithoutStock(pending, viewer) ? (
                   <PendingCustomerLifecycleForm
                     pendingId={pending.id}
                     customerStatus={pending.customerStatus}
                     quantity={pending.quantity}
                     invoicedQuantity={pending.invoicedQuantity ?? 0}
+                    invoiceableQuantity={invoiceableQuantity(pending)}
                   />
                 ) : null}
                 {showDeliverCancel ? (

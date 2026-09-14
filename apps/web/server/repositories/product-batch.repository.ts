@@ -16,6 +16,11 @@ import {
   EXPIRY_WARNING_DAYS,
   type ExpiryTier,
 } from "@/lib/inventory/batch-status";
+import {
+  deriveReservedBatchCode,
+  hasReservedBatchCodeShape,
+  normalizeBatchCode,
+} from "@/lib/inventory/reserved-batch-code";
 
 export type BatchListItem = Pick<
   ProductBatch,
@@ -43,8 +48,10 @@ export async function listBatchesByProduct(params: {
     where: { productId: params.productId },
     take: take + 1,
     ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
-    // Los que vencen antes, primero (útil para revisar caducidades).
-    orderBy: [{ expiresAt: "asc" }, { id: "asc" }],
+    // Los que vencen antes, primero (útil para revisar caducidades). Los lotes
+    // sin fecha van al FINAL: "no se sabe cuándo vence" no es "vence ya", y
+    // arriba desplazarían justo a los que hay que revisar.
+    orderBy: [{ expiresAt: { sort: "asc", nulls: "last" } }, { id: "asc" }],
     select: LIST_SELECT,
   });
 
@@ -137,6 +144,12 @@ export type ExpiringBatchCounts = {
  * D3: sin filtro de `status` — cuenta DISPONIBLE, CUARENTENA y RETENIDO. Un
  * lote retenido que se vence es plata perdida igual. `quantity > 0` sí filtra:
  * un lote agotado no es un aviso, no queda nada que perder.
+ *
+ * Los lotes SIN fecha quedan fuera de las tres franjas: nadie sabe cuándo
+ * vencen, así que no hay nada que anunciar. El `IS NOT NULL` va EXPLÍCITO
+ * aunque la lógica de tres valores de SQL ya los descartaría por su cuenta —una
+ * comparación contra NULL nunca es verdadera—: escrito, la intención sobrevive
+ * a que alguien reescriba estos límites, y es lo que la prueba puede leer.
  */
 export function expiryTierWhere(
   tier: ExpiryTier,
@@ -156,7 +169,7 @@ export function expiryTierWhere(
         : // warning: calendar date > today+30 AND <= today+90 (Bogota)
           { gte: boundary31, lt: boundary91 };
 
-  return { expiresAt, quantity: { gt: 0 } };
+  return { expiresAt: { not: null, ...expiresAt }, quantity: { gt: 0 } };
 }
 
 export async function countExpiringBatches(
@@ -230,7 +243,11 @@ export async function listExpiringBatches(params: {
 export type UpsertBatchQuantityParams = {
   productId: string;
   batchCode: string;
-  expiresAt: Date;
+  /**
+   * Vencimiento del lote, o `null` cuando la caja no lo trae impreso. NULL es
+   * DESCONOCIDO: el lote se sigue vendiendo y se consume al final.
+   */
+  expiresAt: Date | null;
   quantity: number;
   /**
    * Laboratorio OBSERVADO al recibir el lote físico. Ausente cuando la
@@ -241,9 +258,14 @@ export type UpsertBatchQuantityParams = {
 };
 
 /**
- * Evidencia de laboratorio del lote, con la RECEPCIÓN DE ESE LOTE serializada.
+ * Evidencia del lote —laboratorio y vencimiento—, con la RECEPCIÓN DE ESE LOTE
+ * serializada.
  *
  * DEBE llamarse dentro de una transacción y ANTES del upsert.
+ *
+ * Devuelve las DOS evidencias que la recepción puede contradecir, y las
+ * devuelve juntas porque las decide el MISMO candado: pedirlas por separado
+ * serían dos lecturas que pueden ver estados distintos del mismo lote.
  *
  * El candado NO cuelga de la fila. `SELECT ... FOR UPDATE` bloquea filas, y la
  * primera recepción de un lote ocurre justamente cuando la fila todavía no
@@ -267,19 +289,22 @@ export type UpsertBatchQuantityParams = {
  * contradecir, y el upsert lo creará — pero ahora con la garantía de que nadie
  * más está haciendo lo mismo con el mismo par.
  *
- * El nombre viaja junto al id porque el mensaje de conflicto se le muestra a
- * una persona, y una persona no puede hacer nada con un cuid.
+ * El nombre del laboratorio y la fecha viajan junto al id porque el mensaje de
+ * conflicto se le muestra a una persona, y una persona no puede hacer nada con
+ * un cuid.
  */
-export type LockedBatchLaboratoryEvidence = {
+export type LockedBatchEvidence = {
   id: string;
   receivedLaboratoryId: string | null;
   receivedLaboratoryName: string | null;
+  /** Vencimiento YA registrado para este lote. `null` = desconocido. */
+  expiresAt: Date | null;
 };
 
-export async function lockBatchLaboratoryEvidence(
+export async function lockBatchForEntry(
   client: Prisma.TransactionClient,
   params: { productId: string; batchCode: string },
-): Promise<LockedBatchLaboratoryEvidence | null> {
+): Promise<LockedBatchEvidence | null> {
   // Primero el candado del par. A partir de acá, ninguna otra transacción
   // avanza sobre este mismo lote hasta que esta termine.
   await client.$executeRaw`
@@ -296,9 +321,10 @@ export async function lockBatchLaboratoryEvidence(
   // intentaría bloquear también `laboratories`, que no se está modificando.
   // Se conserva: para el lote que ya existe sigue siendo el lock correcto, y
   // cuesta nada teniendo ya el advisory.
-  const rows = await client.$queryRaw<LockedBatchLaboratoryEvidence[]>`
+  const rows = await client.$queryRaw<LockedBatchEvidence[]>`
     SELECT pb.id,
            pb."receivedLaboratoryId",
+           pb."expiresAt",
            l.name AS "receivedLaboratoryName"
     FROM product_batches pb
     LEFT JOIN laboratories l ON l.id = pb."receivedLaboratoryId"
@@ -322,10 +348,43 @@ function laboratoryEvidenceOf(params: UpsertBatchQuantityParams) {
   };
 }
 
+/**
+ * El código reservado solo lo escribe el SISTEMA, y solo con su propia fecha.
+ *
+ * `upsertBatchQuantity` es el único lugar por el que pasan todas las escrituras
+ * de lote del servicio de entradas, así que es acá donde el invariante se
+ * chequea una sola vez y vale para todas.
+ *
+ * La regla: si el código que llega tiene la forma reservada, tiene que ser
+ * EXACTAMENTE lo que la derivación produciría para el vencimiento que llega con
+ * él. Así un código interno pasa siempre, y uno escrito a mano —en un guion, en
+ * una migración de datos, en una prueba— se cae acá en vez de dejar un lote
+ * afirmando un vencimiento que no es el suyo.
+ *
+ * Se exige la forma canónica y no solo que "se lea igual": guardar
+ * "sin lote 2027-01-15" dejaría dos filas donde tiene que haber una, porque la
+ * clave única `(productId, batchCode)` distingue mayúsculas.
+ *
+ * No es un error de la persona que carga la caja —el formulario ya la rechaza
+ * con un mensaje— sino un error de programación, y por eso se lanza pelado.
+ */
+function assertReservedBatchCodeIsDerived(params: UpsertBatchQuantityParams): void {
+  if (!hasReservedBatchCodeShape(normalizeBatchCode(params.batchCode))) return;
+
+  const derived = deriveReservedBatchCode(params.expiresAt);
+  if (params.batchCode === derived) return;
+
+  throw new Error(
+    `Reserved batch code invariant violated: "${params.batchCode}" is not the derived code for its expiry (expected "${derived}")`,
+  );
+}
+
 export async function upsertBatchQuantity(
   client: Prisma.TransactionClient,
   params: UpsertBatchQuantityParams,
 ) {
+  assertReservedBatchCodeIsDerived(params);
+
   return client.productBatch.upsert({
     where: {
       productId_batchCode: {
@@ -369,6 +428,11 @@ export function reserveReceivedBatchQuantity(
 // Stock vendible: DISPONIBLE + con stock + no vencido. SUM por SQL, no en JS.
 // `client` permite leer el stock dentro de la misma transacción que lo consume
 // (pending.service), manteniendo la lectura consistente con las escrituras.
+//
+// Un lote SIN vencimiento cuenta: NULL es desconocido, no vencido. Sin el `OR`
+// la comparación contra NULL nunca da verdadero y esa mercadería desaparecía
+// del stock vendible estando en el estante. Es el mismo predicado que
+// `lot.repository.listEligibleLots` ya usa para el modelo canónico.
 export async function stockByProduct(
   productId: string,
   now: Date = new Date(),
@@ -379,7 +443,7 @@ export async function stockByProduct(
       productId,
       status: "DISPONIBLE",
       quantity: { gt: 0 },
-      expiresAt: { gt: now },
+      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
     },
     _sum: { quantity: true },
   });
@@ -406,10 +470,17 @@ export async function claimableStockForPending(
   requestedQuantity: number,
   now: Date = new Date(),
 ): Promise<number> {
+  // El mismo predicado que `stockByProduct`, en SQL: un lote sin vencimiento es
+  // stock reclamable. Las dos lecturas TIENEN que coincidir, porque el techo se
+  // calcula con una y las filas se bloquean con la otra.
+  //
+  // `ORDER BY ... ASC` en PostgreSQL es NULLS LAST, que es justo el orden que se
+  // quiere: primero lo que vence antes, y lo que no se sabe cuándo vence al
+  // final. Es lo mismo que `Lot` documenta en el esquema.
   await client.$queryRaw`
     SELECT id FROM product_batches
     WHERE "productId" = ${productId} AND status = 'DISPONIBLE'
-      AND quantity > 0 AND "expiresAt" > ${now}
+      AND quantity > 0 AND ("expiresAt" IS NULL OR "expiresAt" > ${now})
     ORDER BY "expiresAt" ASC, id ASC FOR UPDATE
   `;
 

@@ -142,7 +142,7 @@ function failureEchoing(message: string) {
   return (_prev: PendingFormState, formData: FormData): PendingFormState => {
     const values = Object.fromEntries(
       [
-        "productId", "manualName", "manualUnit", "manualMode", "quantity",
+        "productId", "manualName", "manualMode", "manualSellerName", "quantity",
         "promisedAt", "customerName", "customerPhone", "customerAddress",
         "note", "zone", "totalAmount", "paidAmount", "paymentMethod",
         "idempotencyKey",
@@ -236,7 +236,7 @@ describe("PendingForm · un fallo NUNCA borra lo cargado", () => {
     expect(value(container, "note")).toBe(CARGA.note);
   });
 
-  it("conserva el producto manual y su unidad, no solo la rama de catálogo", async () => {
+  it("conserva el producto manual y el vendedor escrito, no solo la rama de catálogo", async () => {
     mocks.createPendingAction.mockImplementation(failureEchoing("Falló."));
     const user = userEvent.setup();
     const { container } = renderForm();
@@ -245,19 +245,45 @@ describe("PendingForm · un fallo NUNCA borra lo cargado", () => {
       screen.getByLabelText("El producto no está en el catálogo (cargarlo manual)"),
     );
     await user.type(screen.getByLabelText("Producto (manual)"), "ILANA CREMA VAGINAL X 40 GR");
-    await user.type(screen.getByLabelText("Presentación (opcional)"), "tubo");
     // Un producto manual no existe todavía, así que nunca tiene código: su
     // identidad es obligatoria y sin ella el envío ni sale.
     await user.type(screen.getByLabelText("Código de Orión"), "ORN-7788");
     await user.type(screen.getByLabelText("Cliente"), CARGA.customerName);
     await user.type(screen.getByLabelText("Teléfono"), CARGA.customerPhone);
+    await user.type(screen.getByLabelText("Vendedor (opcional)"), "Carlos Gómez");
     await submitWithEnter(user);
 
     await screen.findByRole("alert");
     expect(value(container, "manualName")).toBe("ILANA CREMA VAGINAL X 40 GR");
-    expect(value(container, "manualUnit")).toBe("tubo");
+    expect(value(container, "manualSellerName")).toBe("Carlos Gómez");
     // El modo manual sigue activo: volver a la rama de catálogo perdería el dato.
     expect(value(container, "manualMode")).toBe("on");
+  });
+
+  // Reunión de cierre: "esto de presentación hay que quitarlo". El producto
+  // manual se describe con su nombre.
+  it("el producto manual ya no pide presentación ni la postea", async () => {
+    mocks.createPendingAction.mockResolvedValue(success());
+    const user = userEvent.setup();
+    const { container } = renderForm();
+
+    await user.click(
+      screen.getByLabelText("El producto no está en el catálogo (cargarlo manual)"),
+    );
+
+    expect(screen.queryByLabelText("Presentación (opcional)")).toBeNull();
+    expect(value(container, "manualUnit")).toBe("<AUSENTE>");
+
+    await user.type(screen.getByLabelText("Producto (manual)"), "ILANA CREMA VAGINAL X 40 GR");
+    await user.type(screen.getByLabelText("Código de Orión"), "ORN-7788");
+    await user.type(screen.getByLabelText("Cliente"), CARGA.customerName);
+    await user.type(screen.getByLabelText("Teléfono"), CARGA.customerPhone);
+    await submitWithEnter(user);
+    await waitFor(() => expect(mocks.createPendingAction).toHaveBeenCalledTimes(1));
+
+    expect(lastFormData().has("manualUnit")).toBe(false);
+    // Sin escribir vendedor, el campo viaja vacío: el servidor lo guarda nulo.
+    expect(lastFormData().get("manualSellerName")).toBe("");
   });
 
   it("muestra un código de soporte copiable y no expone detalles internos", async () => {

@@ -116,11 +116,15 @@ describe("Revisión de pendientes · cobertura del remanente", () => {
     expect(html).toContain(">Sin stock</span>");
   });
 
-  it("explica la cobertura parcial sin afirmar que alcanza", () => {
+  // Regla única (U4): lo cargado y sin facturar SE PUEDE facturar, aunque no
+  // cubra el pedido. Antes esta llegada parcial salía en rojo "Sin stock
+  // suficiente" mientras el botón de facturar sí se ofrecía: dos reglas que se
+  // contradecían sobre la misma fila.
+  it("una cobertura parcial facturable dice cuánto se factura de cuánto", () => {
     const html = renderDetail(pending({ inventoryReadyQuantity: 4 }));
 
-    expect(html).toContain("Sin stock suficiente · 4 de 10 restantes disponibles");
-    expect(html).not.toContain("Listo para facturar: 4 de 10");
+    expect(html).toContain("Listo para facturar: 4 de 10");
+    expect(html).not.toContain("Sin stock");
   });
 
   it("conserva el aviso actual cuando hay cobertura suficiente", () => {
@@ -138,11 +142,15 @@ describe("Revisión de pendientes · cobertura del remanente", () => {
     expect(html).not.toContain("Sin stock");
   });
 
+  // Con lo cargado ya facturado no queda nada que facturar: el rojo parcial
+  // sigue aplicando y descuenta lo entregado.
   it("descuenta lo entregado al comparar contra el remanente", () => {
     const html = renderDetail(
       pending({
         status: "PARCIAL",
+        customerStatus: "FACTURADO",
         deliveredQuantity: 4,
+        invoicedQuantity: 7,
         inventoryReadyQuantity: 7,
       }),
     );
@@ -158,7 +166,7 @@ describe("Revisión de pendientes · cobertura del remanente", () => {
   );
 
   it("mantiene la misma salida en la tarjeta móvil y la tabla de escritorio", () => {
-    const label = "Sin stock suficiente · 4 de 10 restantes disponibles";
+    const label = "Listo para facturar: 4 de 10";
 
     expect(countOccurrences(renderCompact(pending({ inventoryReadyQuantity: 4 })), label)).toBe(2);
   });

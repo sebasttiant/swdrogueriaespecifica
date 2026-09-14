@@ -43,6 +43,17 @@ describe("formatAuditAction", () => {
     expect(formatAuditAction("admin.change")).toBe("Cambio administrativo");
   });
 
+  it("distingue la facturación sin stock en la bitácora", () => {
+    expect(formatAuditAction("pending.invoiced_without_stock")).toBe("Facturación sin stock");
+    expect(
+      buildAuditSummary({
+        actor: "Ana",
+        action: "pending.invoiced_without_stock",
+        result: "SUCCESS",
+      }),
+    ).toBe("Ana facturó un pendiente sin stock.");
+  });
+
   it("humaniza de forma segura una acción no contemplada", () => {
     expect(formatAuditAction("inventory.bulk_adjust")).toBe(
       "Inventory bulk adjust",

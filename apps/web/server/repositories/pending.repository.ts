@@ -104,6 +104,11 @@ export type PendingListItem = {
   // duplicado en la fila: si el usuario se renombra, esto sigue siendo cierto.
   // Null cuando el usuario ya no resuelve o el pendiente es anterior al dato.
   createdBy: { id: string; name: string } | null;
+  // Vendedor ESCRITO a mano en una cuenta compartida (el mostrador). Se muestra
+  // junto a `createdBy`, nunca en su lugar: quién anotó y de quién es el
+  // pendiente lo sigue diciendo la relación. Opcional como las demás columnas
+  // nuevas.
+  manualSellerName?: string | null;
 };
 
 export type CreatePendingData = {
@@ -114,6 +119,7 @@ export type CreatePendingData = {
   customerPhone?: string;
   customerAddress?: string;
   note?: string;
+  manualSellerName?: string;
   // Ya canonizada por el schema (`normalizeZone`): el repositorio no normaliza.
   zone?: string;
   totalAmount?: number;
@@ -166,6 +172,7 @@ const LIST_SELECT = {
   requestedLaboratory: { select: { id: true, name: true } },
   product: { select: { id: true, name: true, code: true, unit: true, orionCode: true } },
   createdBy: { select: { id: true, name: true } },
+  manualSellerName: true,
 } as const;
 
 // T4.3: el historial es la AUDITORÍA de cómo se cerró, no solo qué se cerró.
@@ -217,6 +224,9 @@ export type PendingAxisFilters = {
   // estado sino una comparación contra el reloj, así que se resuelve con
   // `deadlineWhere` —la MISMA condición que cuenta el chip de la barra—.
   deadline?: PendingDeadlineWindow;
+  // Listos para facturar (U4). También derivado: dos comparaciones entre
+  // columnas de la misma fila, resueltas en `readyToInvoiceWhere`.
+  invoice?: "listos";
 };
 
 function axisWhere(
@@ -224,6 +234,13 @@ function axisWhere(
   now: Date | undefined,
 ): Prisma.PendingWhereInput {
   if (!axes) return {};
+  // Las condiciones DERIVADAS van juntas en UN solo `AND`. Derramar un
+  // `{ AND: [...] }` por cada una pisaría en silencio la anterior: con la
+  // entrega y "listos para facturar" activos, quedaría solo la última.
+  const derived: Prisma.PendingWhereInput[] = [
+    ...(axes.deadline ? [deadlineWhere(axes.deadline, now)] : []),
+    ...(axes.invoice ? [readyToInvoiceWhere()] : []),
+  ];
   return {
     ...(axes.purchase ? { purchaseStatus: axes.purchase } : {}),
     ...(axes.availability ? { availabilityStatus: axes.availability } : {}),
@@ -238,8 +255,43 @@ function axisWhere(
     // mismo que cuenta el chip, y que el chip y la lista digan lo mismo importa
     // más que ofrecer un cruce que nadie pide: para ver los agotados está su
     // propio eje, solo.
-    ...(axes.deadline ? { AND: [deadlineWhere(axes.deadline, now)] } : {}),
+    ...(derived.length > 0 ? { AND: derived } : {}),
   };
+}
+
+/**
+ * Listo para facturar: la regla única de `invoiceableQuantity`
+ * (`features/pendientes/fulfillment-notice.ts`) traducida a Prisma.
+ *
+ *   X = max(min(quantity - invoiced, ready - invoiced), 0) > 0
+ *     ⇔ invoiced < quantity  Y  invoiced < inventoryReady
+ *   y no terminal (los mismos estados que `isTerminal`).
+ *
+ * Las dos comparaciones son sobre la MISMA columna, así que van en un `AND`:
+ * como claves de un objeto, la segunda pisaría a la primera.
+ */
+export function readyToInvoiceWhere(): Prisma.PendingWhereInput {
+  return {
+    AND: [
+      { invoicedQuantity: { lt: prisma.pending.fields.quantity } },
+      { invoicedQuantity: { lt: prisma.pending.fields.inventoryReadyQuantity } },
+    ],
+    status: { notIn: HISTORY_STATUSES },
+    customerStatus: { notIn: ["ENTREGADO", "CANCELADO"] },
+  };
+}
+
+/**
+ * Cuántos pendientes están listos para facturar dentro del alcance del usuario:
+ * la vista activa, recortada al dueño cuando no ve la cola entera. Es el MISMO
+ * `where` que la lista filtrada por `facturar=listos` sin otros filtros, así que
+ * el contador del chip y la lista no pueden decir cosas distintas. Cuenta
+ * pendientes, no unidades.
+ */
+export function countReadyToInvoicePendings(ownerId?: string): Promise<number> {
+  return prisma.pending.count({
+    where: viewWhere({ scope: "active", ownerId, axes: { invoice: "listos" } }),
+  });
 }
 
 /** Qué filas contiene una vista: su scope, su dueño, sus ejes y la espera. */
@@ -586,6 +638,7 @@ export async function createPending(
       customerPhone: data.customerPhone ?? null,
       customerAddress: data.customerAddress ?? null,
       note: data.note ?? null,
+      manualSellerName: data.manualSellerName ?? null,
       zone: data.zone ?? null,
       totalAmount: data.totalAmount ?? null,
       // Cero, no null: "no abonó" es un hecho conocido, no un dato ausente.
@@ -887,6 +940,7 @@ export type UpdatePendingDetailsData = {
   customerPhone: string;
   customerAddress?: string;
   note?: string;
+  manualSellerName?: string;
   zone?: string;
   totalAmount?: number;
   paidAmount?: number;
@@ -906,6 +960,7 @@ export async function updatePendingDetails(
       ...fields,
       customerAddress: fields.customerAddress ?? null,
       note: fields.note ?? null,
+      manualSellerName: fields.manualSellerName ?? null,
       zone: fields.zone ?? null,
       totalAmount: fields.totalAmount ?? null,
       paidAmount: fields.paidAmount ?? 0,
@@ -933,6 +988,7 @@ export type PendingForEdit = {
   customerPhone: string | null;
   customerAddress: string | null;
   note: string | null;
+  manualSellerName: string | null;
   zone: string | null;
   totalAmount: number | null;
   paidAmount: number;
@@ -947,7 +1003,7 @@ export async function lockPendingForEdit(
   const rows = await client.$queryRaw<PendingForEdit[]>`
     SELECT id, "productId", quantity, status, "createdById", "deliveredQuantity",
            "invoicedQuantity", "sellerEditedAt", "customerName", "customerPhone",
-           "customerAddress", note, zone, "totalAmount", "paidAmount",
+           "customerAddress", note, "manualSellerName", zone, "totalAmount", "paidAmount",
            "paymentMethod", "promisedAt"
     FROM pendings WHERE id = ${id} FOR UPDATE
   `;

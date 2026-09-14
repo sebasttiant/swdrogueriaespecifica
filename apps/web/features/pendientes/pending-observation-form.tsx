@@ -63,9 +63,12 @@ export function PendingObservationView({
   if (!summary) return null;
 
   return (
-    <div className="rounded-lg border border-border bg-muted/40 px-3 py-2">
+    // Tinte cian PROPIO del bloque (mismo recurso que el tono `accent` de
+    // `badge.tsx`: paleta de Tailwind + `dark:`). Así no se confunde con el
+    // borde de estado de la tarjeta y los dos se leen a la vez.
+    <div className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 dark:border-cyan-400/30 dark:bg-cyan-400/15">
       <p className="[overflow-wrap:anywhere] text-sm text-text">
-        <span className="font-semibold">Gerencia:</span> {summary}
+        <span className="font-semibold">Observación gerencia:</span> {summary}
       </p>
       {/* El resumen recorta; el texto completo nunca queda fuera de alcance.
           Sin hover: en el celular no existe. */}

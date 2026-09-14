@@ -1,7 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { prismaMock } = vi.hoisted(() => ({
-  prismaMock: { pending: { count: vi.fn(), findMany: vi.fn() } },
+  prismaMock: {
+    pending: {
+      count: vi.fn(),
+      findMany: vi.fn(),
+      // Referencias a columnas (`prisma.pending.fields.*`): el eje de listos
+      // para facturar compara dos columnas de la misma fila.
+      fields: {
+        quantity: { name: "quantity" },
+        inventoryReadyQuantity: { name: "inventoryReadyQuantity" },
+      },
+    },
+  },
 }));
 
 vi.mock("@/lib/db/prisma", () => ({ prisma: prismaMock }));
@@ -9,9 +20,11 @@ vi.mock("@/lib/db/prisma", () => ({ prisma: prismaMock }));
 import {
   alertablePendingWhere,
   countOverduePendings,
+  countReadyToInvoicePendings,
   countUpcomingPendings,
   deadlineWhere,
   listPendings,
+  readyToInvoiceWhere,
 } from "./pending.repository";
 
 const NOW = new Date("2026-09-06T17:00:00.000Z");
@@ -111,5 +124,54 @@ describe("listPendings con eje de entrega", () => {
     await listPendings({ now: NOW });
 
     expect(prismaMock.pending.findMany.mock.calls[0]![0].where.AND).toBeUndefined();
+  });
+});
+
+// --------------------------------------------------------------------------
+// U4 — listos para facturar. Es otro eje DERIVADO que va dentro de `AND`, y
+// derramar un segundo `{ AND: [...] }` pisaría en silencio el de la entrega.
+// --------------------------------------------------------------------------
+describe("listPendings con listos para facturar", () => {
+  it("combinado con la entrega conserva LAS DOS condiciones", async () => {
+    await listPendings({ axes: { deadline: "atrasadas", invoice: "listos" }, now: NOW });
+
+    const where = prismaMock.pending.findMany.mock.calls[0]![0].where;
+    expect(where.AND).toEqual([deadlineWhere("atrasadas", NOW), readyToInvoiceWhere()]);
+  });
+
+  it("solo, va dentro de AND sin pisar el status del scope", async () => {
+    await listPendings({ axes: { invoice: "listos" } });
+
+    const where = prismaMock.pending.findMany.mock.calls[0]![0].where;
+    expect(where.status).toEqual({ in: expect.any(Array) });
+    expect(where.AND).toEqual([readyToInvoiceWhere()]);
+  });
+
+  it("la condición es la regla única: dos comparaciones de columna y los terminales afuera", () => {
+    expect(readyToInvoiceWhere()).toEqual({
+      AND: [
+        { invoicedQuantity: { lt: { name: "quantity" } } },
+        { invoicedQuantity: { lt: { name: "inventoryReadyQuantity" } } },
+      ],
+      status: { notIn: ["ENTREGADO", "CANCELADO", "CLOSED_PARTIAL"] },
+      customerStatus: { notIn: ["ENTREGADO", "CANCELADO"] },
+    });
+  });
+
+  // El contador y la lista preguntan lo mismo: vista activa, mismo dueño, eje.
+  it("el contador usa el MISMO where que la lista filtrada, con el recorte por dueño", async () => {
+    await countReadyToInvoicePendings("seller-1");
+    await listPendings({ ownerId: "seller-1", axes: { invoice: "listos" } });
+
+    expect(prismaMock.pending.count.mock.calls[0]![0].where).toEqual(
+      prismaMock.pending.findMany.mock.calls[0]![0].where,
+    );
+    expect(prismaMock.pending.count.mock.calls[0]![0].where.createdById).toBe("seller-1");
+  });
+
+  it("sin dueño cuenta la cola entera", async () => {
+    await countReadyToInvoicePendings();
+
+    expect(prismaMock.pending.count.mock.calls[0]![0].where).not.toHaveProperty("createdById");
   });
 });

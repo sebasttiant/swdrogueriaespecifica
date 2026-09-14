@@ -63,10 +63,64 @@ describe("inventoryEntryCreateSchema · laboratorio recibido", () => {
   it("sigue exigiendo lo que ya era obligatorio", () => {
     expect(inventoryEntryCreateSchema.safeParse({
       ...BASE,
-      batchCode: "",
+      productId: "",
       receivedLaboratoryName: "MK",
     }).success).toBe(false);
   });
+});
+
+// --------------------------------------------------------------------------
+// El lote es OPCIONAL: una caja puede llegar sin número impreso.
+//
+// Lo que NO puede llegar es el código reservado escrito a mano. Ese código lo
+// deriva el sistema y lleva el vencimiento adentro; escrito a mano, el lote
+// termina afirmando un vencimiento que no es el suyo.
+// --------------------------------------------------------------------------
+describe("inventoryEntryCreateSchema · código de lote", () => {
+  const RESERVADO = /reservado/i;
+
+  it("acepta una entrada SIN código de lote", () => {
+    const parsed = inventoryEntryCreateSchema.safeParse({
+      ...BASE,
+      batchCode: "",
+    });
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.batchCode).toBeUndefined();
+  });
+
+  it("acepta que el campo no viaje en absoluto", () => {
+    const { batchCode: _sinLote, ...sinCampo } = BASE;
+
+    const parsed = inventoryEntryCreateSchema.safeParse(sinCampo);
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.batchCode).toBeUndefined();
+  });
+
+  it.each([
+    ["SIN LOTE"],
+    ["sin lote"],
+    ["  SIN   LOTE  "],
+    ["SIN LOTE 2027-01-15"],
+  ])("rechaza el código reservado escrito a mano: %s", (batchCode) => {
+    const parsed = inventoryEntryCreateSchema.safeParse({ ...BASE, batchCode });
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error?.issues[0]?.message).toMatch(RESERVADO);
+  });
+
+  // El rechazo es la forma EXACTA, no un prefijo: estos dos son códigos que
+  // alguien puede tener impresos en una caja de verdad.
+  it.each([["L-2027-001"], ["SIN LOTES DEL PROVEEDOR"]])(
+    "acepta un código real: %s",
+    (batchCode) => {
+      const parsed = inventoryEntryCreateSchema.safeParse({ ...BASE, batchCode });
+
+      expect(parsed.success).toBe(true);
+      expect(parsed.data?.batchCode).toBe(batchCode);
+    },
+  );
 });
 
 // --------------------------------------------------------------------------
@@ -83,14 +137,14 @@ describe("inventoryEntryCreateSchema · fecha de vencimiento", () => {
     expect(parsed.success).toBe(true);
     // 00:00 en Bogotá (UTC-5) es 05:00 UTC: el instante cae dentro del día que
     // la persona eligió, que es lo que después lee `expiryLevel`.
-    expect(parsed.data?.expiresAt.toISOString()).toBe("2027-01-01T05:00:00.000Z");
+    expect(parsed.data?.expiresAt?.toISOString()).toBe("2027-01-01T05:00:00.000Z");
   });
 
   it("sigue aceptando el formato viejo con hora", () => {
     const parsed = inventoryEntryCreateSchema.safeParse(BASE);
 
     expect(parsed.success).toBe(true);
-    expect(parsed.data?.expiresAt.toISOString()).toBe("2027-01-01T15:00:00.000Z");
+    expect(parsed.data?.expiresAt?.toISOString()).toBe("2027-01-01T15:00:00.000Z");
   });
 
   it("rechaza una fecha que no existe", () => {
@@ -100,5 +154,26 @@ describe("inventoryEntryCreateSchema · fecha de vencimiento", () => {
     });
 
     expect(parsed.success).toBe(false);
+  });
+
+  // El vencimiento es OPCIONAL: hay mercadería que no vence, y hay cajas que no
+  // lo traen impreso. Vacío es NULL —desconocido—, nunca una fecha inventada.
+  it("acepta una entrada SIN vencimiento y la deja en null", () => {
+    const parsed = inventoryEntryCreateSchema.safeParse({
+      ...BASE,
+      expiresAt: "",
+    });
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.expiresAt).toBeNull();
+  });
+
+  it("acepta que el campo no viaje en absoluto", () => {
+    const { expiresAt: _sinFecha, ...sinCampo } = BASE;
+
+    const parsed = inventoryEntryCreateSchema.safeParse(sinCampo);
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.expiresAt).toBeNull();
   });
 });

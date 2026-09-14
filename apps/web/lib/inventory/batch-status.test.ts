@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   EXPIRY_CRITICAL_DAYS,
   EXPIRY_WARNING_DAYS,
+  bogotaCalendarDaysUntil,
   expiryLevel,
   isAgotado,
   isSellable,
@@ -187,5 +188,40 @@ describe("isSellable", () => {
     // A batch expiring in 15 days is CRITICAL tier, but still sellable if DISPONIBLE
     const critical = bogotaDatePlusDays(REF_NOW, 15);
     expect(isSellable({ ...base, expiresAt: critical }, REF_NOW)).toBe(true);
+  });
+});
+
+// --------------------------------------------------------------------------
+// Vencimiento DESCONOCIDO (`expiresAt` null).
+//
+// Una caja puede llegar sin fecha impresa, y desde que `ProductBatch.expiresAt`
+// acepta NULL hay lotes que no la tienen. NULL es DESCONOCIDO, y desconocido no
+// es vencido: si estas funciones lo trataran como vencido, ese stock
+// desaparecería de la góndola sin que nadie lo haya sacado del estante.
+// --------------------------------------------------------------------------
+describe("vencimiento desconocido", () => {
+  const base = { status: "DISPONIBLE" as const, quantity: 10 };
+
+  it("expiryLevel informa 'unknown', no 'expired'", () => {
+    expect(expiryLevel(null, REF_NOW)).toBe("unknown");
+  });
+
+  it("isSellable no explota y el lote SIGUE siendo vendible", () => {
+    expect(isSellable({ ...base, expiresAt: null }, REF_NOW)).toBe(true);
+  });
+
+  // Las otras dos condiciones de venta siguen mandando: lo desconocido no
+  // convierte en vendible un lote agotado ni uno retenido.
+  it("sin fecha, un lote agotado o retenido sigue sin ser vendible", () => {
+    expect(isSellable({ ...base, quantity: 0, expiresAt: null }, REF_NOW)).toBe(
+      false,
+    );
+    expect(
+      isSellable({ status: "RETENIDO", quantity: 10, expiresAt: null }, REF_NOW),
+    ).toBe(false);
+  });
+
+  it("la cuenta de días no inventa un número", () => {
+    expect(bogotaCalendarDaysUntil(null, REF_NOW)).toBeNull();
   });
 });

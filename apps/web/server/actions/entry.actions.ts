@@ -9,6 +9,7 @@ import {
   recordAudit,
 } from "@/server/services/audit.service";
 import {
+  BatchExpiryConflictError,
   LaboratoryEvidenceConflictError,
   LaboratoryNameResolutionError,
   ProductIdentityRequiredError,
@@ -17,6 +18,7 @@ import {
   registerInventoryEntry,
 } from "@/server/services/inventory-entry.service";
 import { inventoryEntryCreateSchema } from "@/features/entradas/schema";
+import { batchExpiryLabel } from "@/features/productos/batch-labels";
 
 // --------------------------------------------------------------------------
 // Server Actions de entradas de inventario: Zod → requireCapability →
@@ -146,8 +148,11 @@ export async function createInventoryEntryAction(
       after: {
         productId: entryData.productId,
         quantity: entryData.quantity,
-        batchCode: entryData.batchCode,
-        expiresAt: entryData.expiresAt.toISOString(),
+        batchCode: entryData.batchCode ?? null,
+        // `null` cuando la caja no traía la fecha. La auditoría registra lo que
+        // se declaró, y "no se sabe" es una declaración: inventar una fecha acá
+        // haría que el registro afirmara un dato que nadie tuvo delante.
+        expiresAt: entryData.expiresAt?.toISOString() ?? null,
         // La identidad AUTORITATIVA contra la que se escribio, con las dos
         // versiones que se validaron: es lo que permite reconstruir despues
         // contra que producto entro esta caja.
@@ -223,6 +228,19 @@ export async function createInventoryEntryAction(
     if (error instanceof LaboratoryNameResolutionError) {
       return {
         error: `No se pudo registrar "${error.requestedName}" como laboratorio. Buscalo en la lista y seleccionalo.`,
+        ok: false,
+      };
+    }
+    // El conflicto de VENCIMIENTO se muestra igual que el de laboratorio: es el
+    // mismo tipo de problema —un dato del lote que no cuadra con lo que ya está
+    // registrado— y la salida también es la misma, usar otro código de lote.
+    if (error instanceof BatchExpiryConflictError) {
+      return {
+        error: `El lote ${error.batchCode} ya se recibió ${
+          error.existingExpiresAt
+            ? `con vencimiento ${batchExpiryLabel(error.existingExpiresAt)}`
+            : "sin fecha de vencimiento"
+        }. Verificá la caja: si el vencimiento es distinto, usá otro código de lote.`,
         ok: false,
       };
     }

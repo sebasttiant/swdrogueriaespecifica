@@ -233,7 +233,7 @@ describe("EntryForm · después de adoptar los datos actualizados", () => {
     );
     const form = container.querySelector("form") as HTMLFormElement;
     await userEvent.selectOptions(screen.getByLabelText("Producto"), "prod-frasco");
-    await userEvent.type(screen.getByLabelText("Código de lote"), "LOTE-777");
+    await userEvent.type(screen.getByLabelText(/Código de lote/i), "LOTE-777");
 
     await userEvent.click(
       screen.getByRole("button", { name: "Usar los datos actualizados" }),
@@ -410,20 +410,39 @@ describe("EntryForm · el selector sale de la misma fotografía", () => {
 });
 
 // --------------------------------------------------------------------------
-// El vencimiento se captura SIN hora (reunión 2026-10-04).
+// El vencimiento se captura SIN hora (reunión 2026-10-04) y SIN exigirlo.
 //
 // El campo era `datetime-local`, así que bodega tenía que completar una hora
 // que el remito no trae y que después nadie lee: `expiryLevel` compara fechas
 // de calendario, nunca horas. Un campo obligatorio que no aporta un dato es un
 // campo que se completa con cualquier cosa.
+//
+// Por lo mismo dejó de ser obligatorio: hay mercadería que no vence y cajas que
+// no traen la fecha impresa. Exigirla obligaba a inventarla, y una fecha
+// inventada decide después qué se vende y qué se tira. Lo mismo con el lote.
 // --------------------------------------------------------------------------
-describe("EntryForm · vencimiento sin hora", () => {
+describe("EntryForm · vencimiento sin hora y opcional", () => {
   it("captura la fecha de vencimiento con un campo de solo fecha", () => {
     render(createElement(EntryForm, { products: [FRASCO, SOBRE] }));
 
     const campo = screen.getByLabelText(/Fecha de vencimiento/i) as HTMLInputElement;
 
     expect(campo.type).toBe("date");
-    expect(campo.required).toBe(true);
+  });
+
+  it("no exige la fecha de vencimiento", () => {
+    render(createElement(EntryForm, { products: [FRASCO, SOBRE] }));
+
+    const campo = screen.getByLabelText(/Fecha de vencimiento/i) as HTMLInputElement;
+
+    expect(campo.required).toBe(false);
+  });
+
+  it("no exige el código de lote", () => {
+    render(createElement(EntryForm, { products: [FRASCO, SOBRE] }));
+
+    const campo = screen.getByLabelText(/Código de lote/i) as HTMLInputElement;
+
+    expect(campo.required).toBe(false);
   });
 });

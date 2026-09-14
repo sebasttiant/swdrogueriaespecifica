@@ -28,7 +28,7 @@ vi.mock("@/server/repositories/product-batch.repository", () => ({
   reserveReceivedBatchQuantity: vi.fn(),
   reserveBatchForPending: vi.fn(),
   upsertBatchQuantity: vi.fn(),
-  lockBatchLaboratoryEvidence: vi.fn(),
+  lockBatchForEntry: vi.fn(),
 }));
 vi.mock("@/server/repositories/inventory-entry.repository", () => ({
   createInventoryEntry: vi.fn(),
@@ -51,7 +51,7 @@ vi.mock("@/server/services/notification-outbox.service", () => ({
 
 import { lockProductForEntry } from "@/server/repositories/product.repository";
 import {
-  lockBatchLaboratoryEvidence,
+  lockBatchForEntry,
   reserveReceivedBatchQuantity,
   upsertBatchQuantity,
 } from "@/server/repositories/product-batch.repository";
@@ -63,6 +63,7 @@ import {
 import { closeMissingItemsByEntry } from "@/server/repositories/missing-item.repository";
 import { markReportsReceivedByMissingItemIds } from "@/server/repositories/missing-report.repository";
 import {
+  BatchExpiryConflictError,
   IdempotencyPayloadConflictError,
   LaboratoryEvidenceConflictError,
   registerInventoryEntry,
@@ -96,7 +97,7 @@ beforeEach(() => {
   });
   vi.mocked(upsertBatchQuantity).mockResolvedValue({ id: "batch_1" } as never);
   // Por defecto el lote no existe todavía: la entrada lo crea.
-  vi.mocked(lockBatchLaboratoryEvidence).mockResolvedValue(null);
+  vi.mocked(lockBatchForEntry).mockResolvedValue(null);
   vi.mocked(createInventoryEntry).mockResolvedValue({ id: "entry_1" } as never);
   vi.mocked(findInventoryEntryByIdempotencyKey).mockResolvedValue(null);
   vi.mocked(closeMissingItemsByEntry).mockResolvedValue(["m1", "m2"]);
@@ -324,6 +325,18 @@ describe("registerInventoryEntry", () => {
       tx,
     );
   });
+
+  // Un faltante INFORMATIVO (`originId` nulo) no tiene a nadie esperando: la
+  // entrada no le reparte unidades. Si el candidato lo incluyera, uno viejo de
+  // estantería se quedaba con lo que un cliente ya estaba esperando.
+  it("el reparto FIFO solo toma faltantes ligados a una venta", async () => {
+    await registerInventoryEntry({ ...BASE_INPUT, idempotencyKey: "solo-ventas" });
+
+    const sql = tx.$queryRaw.mock.calls
+      .map((call) => (call[0] as readonly string[]).join("?"))
+      .find((text) => text.includes("FROM missing_items"));
+    expect(sql).toMatch(/WHERE[\s\S]*"originId" IS NOT NULL[\s\S]*ORDER BY/);
+  });
 });
 
 // --------------------------------------------------------------------------
@@ -351,8 +364,9 @@ describe("registerInventoryEntry · laboratorio recibido", () => {
   });
 
   it("acepta la primera evidencia sobre un lote histórico sin laboratorio", async () => {
-    vi.mocked(lockBatchLaboratoryEvidence).mockResolvedValue({
+    vi.mocked(lockBatchForEntry).mockResolvedValue({
       id: "batch_1",
+      expiresAt: BASE_INPUT.expiresAt,
       receivedLaboratoryId: null,
       receivedLaboratoryName: null,
     });
@@ -370,8 +384,9 @@ describe("registerInventoryEntry · laboratorio recibido", () => {
   });
 
   it("acepta una recepción repetida del MISMO laboratorio", async () => {
-    vi.mocked(lockBatchLaboratoryEvidence).mockResolvedValue({
+    vi.mocked(lockBatchForEntry).mockResolvedValue({
       id: "batch_1",
+      expiresAt: BASE_INPUT.expiresAt,
       receivedLaboratoryId: "lab_mk",
       receivedLaboratoryName: "MK",
     });
@@ -386,8 +401,9 @@ describe("registerInventoryEntry · laboratorio recibido", () => {
   });
 
   it("RECHAZA la entrada cuando el lote ya fue recibido con otro laboratorio", async () => {
-    vi.mocked(lockBatchLaboratoryEvidence).mockResolvedValue({
+    vi.mocked(lockBatchForEntry).mockResolvedValue({
       id: "batch_1",
+      expiresAt: BASE_INPUT.expiresAt,
       receivedLaboratoryId: "lab_mk",
       receivedLaboratoryName: "MK",
     });
@@ -400,8 +416,9 @@ describe("registerInventoryEntry · laboratorio recibido", () => {
   });
 
   it("no escribe NADA cuando rechaza el conflicto", async () => {
-    vi.mocked(lockBatchLaboratoryEvidence).mockResolvedValue({
+    vi.mocked(lockBatchForEntry).mockResolvedValue({
       id: "batch_1",
+      expiresAt: BASE_INPUT.expiresAt,
       receivedLaboratoryId: "lab_mk",
       receivedLaboratoryName: "MK",
     });
@@ -417,8 +434,9 @@ describe("registerInventoryEntry · laboratorio recibido", () => {
   });
 
   it("expone el NOMBRE del laboratorio en conflicto, nunca su id", async () => {
-    vi.mocked(lockBatchLaboratoryEvidence).mockResolvedValue({
+    vi.mocked(lockBatchForEntry).mockResolvedValue({
       id: "batch_1",
+      expiresAt: BASE_INPUT.expiresAt,
       receivedLaboratoryId: "lab_mk",
       receivedLaboratoryName: "MK",
     });
@@ -445,8 +463,9 @@ describe("registerInventoryEntry · laboratorio recibido", () => {
   });
 
   it("una entrada SIN laboratorio no toca la evidencia ya observada del lote", async () => {
-    vi.mocked(lockBatchLaboratoryEvidence).mockResolvedValue({
+    vi.mocked(lockBatchForEntry).mockResolvedValue({
       id: "batch_1",
+      expiresAt: BASE_INPUT.expiresAt,
       receivedLaboratoryId: "lab_mk",
       receivedLaboratoryName: "MK",
     });
@@ -536,5 +555,179 @@ describe("getInventoryEntries", () => {
 
     expect(listInventoryEntries).toHaveBeenCalledWith({ cursor: "abc" });
     expect(result).toEqual(fakePaginated);
+  });
+});
+
+// --------------------------------------------------------------------------
+// El lote y el vencimiento son OPCIONALES, y ninguno de los dos se inventa.
+//
+// Dos reglas, y las dos se deciden bajo el mismo candado sobre el par
+// `(productId, batchCode)`:
+//
+//   1. Sin número de lote, el código lo DERIVA el sistema y lleva el
+//      vencimiento adentro. Dos cajas sin lote con fechas distintas son dos
+//      lotes distintos.
+//   2. Un lote REAL que ya está registrado con un vencimiento no acepta otro.
+//      No lo hereda, no lo pisa: rechaza la entrada entera.
+// --------------------------------------------------------------------------
+describe("registerInventoryEntry · sin lote y sin vencimiento", () => {
+  const SIN_LOTE = { ...BASE_INPUT, batchCode: undefined };
+
+  it("sin lote informado, deriva el código reservado con la fecha adentro", async () => {
+    await registerInventoryEntry({ ...SIN_LOTE, idempotencyKey: "der-fecha" });
+
+    expect(upsertBatchQuantity).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({ batchCode: "SIN LOTE 2027-01-01" }),
+    );
+  });
+
+  it("sin lote y sin vencimiento, deriva la forma pelada y guarda null", async () => {
+    await registerInventoryEntry({
+      ...SIN_LOTE,
+      expiresAt: null,
+      idempotencyKey: "der-pelada",
+    });
+
+    expect(upsertBatchQuantity).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({ batchCode: "SIN LOTE", expiresAt: null }),
+    );
+  });
+
+  // Una cadena vacía no es un lote llamado "": es la ausencia de lote. Un
+  // llamador programático puede mandarla aunque el formulario ya la normalice.
+  it("trata la cadena vacía como ausencia de lote", async () => {
+    await registerInventoryEntry({
+      ...BASE_INPUT,
+      batchCode: "",
+      idempotencyKey: "der-vacia",
+    });
+
+    expect(upsertBatchQuantity).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({ batchCode: "SIN LOTE 2027-01-01" }),
+    );
+  });
+
+  it("el lote se busca bajo candado con el código YA derivado", async () => {
+    await registerInventoryEntry({ ...SIN_LOTE, idempotencyKey: "der-candado" });
+
+    expect(lockBatchForEntry).toHaveBeenCalledWith(tx, {
+      productId: BASE_INPUT.productId,
+      batchCode: "SIN LOTE 2027-01-01",
+    });
+  });
+
+  // El candado se tomaba solo cuando la recepción informaba un laboratorio. La
+  // regla del vencimiento aplica a TODA entrada, así que ahora se toma siempre:
+  // sin eso, dos recepciones simultáneas del mismo lote nuevo pasarían las dos.
+  it("toma el candado incluso sin laboratorio informado", async () => {
+    await registerInventoryEntry({ ...BASE_INPUT, idempotencyKey: "candado-sin-lab" });
+
+    expect(lockBatchForEntry).toHaveBeenCalledOnce();
+  });
+});
+
+describe("registerInventoryEntry · conflicto de vencimiento", () => {
+  const OTRA_FECHA = new Date("2027-06-15T05:00:00.000Z");
+
+  function loteRegistradoCon(expiresAt: Date | null) {
+    vi.mocked(lockBatchForEntry).mockResolvedValue({
+      id: "batch_1",
+      expiresAt,
+      receivedLaboratoryId: null,
+      receivedLaboratoryName: null,
+    });
+  }
+
+  it("RECHAZA el mismo lote con otra fecha", async () => {
+    loteRegistradoCon(OTRA_FECHA);
+
+    await expect(
+      registerInventoryEntry({ ...BASE_INPUT, idempotencyKey: "venc-distinto" }),
+    ).rejects.toBeInstanceOf(BatchExpiryConflictError);
+  });
+
+  it("RECHAZA pasar de una fecha conocida a ninguna", async () => {
+    loteRegistradoCon(OTRA_FECHA);
+
+    await expect(
+      registerInventoryEntry({
+        ...BASE_INPUT,
+        expiresAt: null,
+        idempotencyKey: "venc-a-nada",
+      }),
+    ).rejects.toBeInstanceOf(BatchExpiryConflictError);
+  });
+
+  it("RECHAZA pasar de ninguna fecha a una conocida", async () => {
+    loteRegistradoCon(null);
+
+    await expect(
+      registerInventoryEntry({ ...BASE_INPUT, idempotencyKey: "nada-a-venc" }),
+    ).rejects.toBeInstanceOf(BatchExpiryConflictError);
+  });
+
+  it("no escribe NADA cuando rechaza el conflicto", async () => {
+    loteRegistradoCon(OTRA_FECHA);
+
+    await expect(
+      registerInventoryEntry({ ...BASE_INPUT, idempotencyKey: "venc-sin-escritura" }),
+    ).rejects.toBeInstanceOf(BatchExpiryConflictError);
+
+    expect(upsertBatchQuantity).not.toHaveBeenCalled();
+    expect(createInventoryEntry).not.toHaveBeenCalled();
+  });
+
+  it("expone el CÓDIGO de lote y la fecha registrada, nunca un id", async () => {
+    loteRegistradoCon(OTRA_FECHA);
+
+    let error: unknown;
+    try {
+      await registerInventoryEntry({ ...BASE_INPUT, idempotencyKey: "venc-mensaje" });
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(BatchExpiryConflictError);
+    const conflict = error as BatchExpiryConflictError;
+    expect(conflict.batchCode).toBe(BASE_INPUT.batchCode);
+    expect(conflict.existingExpiresAt).toEqual(OTRA_FECHA);
+    expect(`${conflict.message} ${conflict.batchCode}`).not.toContain("batch_1");
+  });
+
+  it("la MISMA fecha suma cantidad sobre la misma fila", async () => {
+    loteRegistradoCon(BASE_INPUT.expiresAt);
+
+    await expect(
+      registerInventoryEntry({ ...BASE_INPUT, idempotencyKey: "venc-igual" }),
+    ).resolves.toEqual(expect.objectContaining({ idempotent: false }));
+
+    expect(upsertBatchQuantity).toHaveBeenCalledOnce();
+  });
+
+  // Las filas viejas quedaron guardadas con hora: el formulario pedía
+  // `datetime-local` hasta el 2026-10-04. Comparar instantes rechazaría una
+  // recepción legítima del mismo lote por una hora que nadie eligió.
+  it("el MISMO día con otra hora no es un conflicto", async () => {
+    loteRegistradoCon(new Date("2027-01-01T15:00:00.000Z")); // 10:00 Bogotá
+
+    await expect(
+      registerInventoryEntry({ ...BASE_INPUT, idempotencyKey: "venc-misma-fecha-otra-hora" }),
+    ).resolves.toEqual(expect.objectContaining({ idempotent: false }));
+  });
+
+  it("dos lotes SIN vencimiento son el mismo vencimiento", async () => {
+    loteRegistradoCon(null);
+
+    await expect(
+      registerInventoryEntry({
+        ...BASE_INPUT,
+        batchCode: undefined,
+        expiresAt: null,
+        idempotencyKey: "venc-ambos-nulos",
+      }),
+    ).resolves.toEqual(expect.objectContaining({ idempotent: false }));
   });
 });

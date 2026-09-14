@@ -362,41 +362,24 @@ function PendingFormFields({
 
       <div className="grid gap-4 sm:grid-cols-2">
         {manual ? (
-          <>
-            <Field
-              label="Producto (manual)"
-              htmlFor="manualName"
-              className="sm:col-span-2"
-              hint="No está en el catálogo. Se creará marcado para revisión de un administrador."
-            >
-              <Input
-                id="manualName"
-                name="manualName"
-                required
-                maxLength={120}
-                placeholder="Nombre del producto"
-                defaultValue={previous.manualName ?? ""}
-              />
-            </Field>
-            {/* Presentación de un producto que NO está en el catálogo: acá SÍ
-                se escribe, porque el producto se está creando en este mismo
-                gesto y todavía no hay dato compartido que pisar. Sigue siendo
-                opcional; `schema.ts` completa "unidad" cuando queda vacía. */}
-            <Field
-              label={`${PRESENTATION_LABEL} (opcional)`}
-              htmlFor="manualUnit"
-              className="sm:col-span-2"
-              hint="Cómo viene el producto: Frasco, Sobre, Caja, Blíster, Ampolla."
-            >
-              <Input
-                id="manualUnit"
-                name="manualUnit"
-                maxLength={40}
-                placeholder="Frasco"
-                defaultValue={previous.manualUnit ?? ""}
-              />
-            </Field>
-          </>
+          // Sin campo de presentación: el nombre ya describe el producto
+          // (reunión de cierre). Nace sin presentación y quien la conozca la
+          // carga desde el catálogo.
+          <Field
+            label="Producto (manual)"
+            htmlFor="manualName"
+            className="sm:col-span-2"
+            hint="No está en el catálogo. Se creará marcado para revisión de un administrador."
+          >
+            <Input
+              id="manualName"
+              name="manualName"
+              required
+              maxLength={120}
+              placeholder="Nombre del producto"
+              defaultValue={previous.manualName ?? ""}
+            />
+          </Field>
         ) : (
           <Field label="Producto" htmlFor="productId" className="sm:col-span-2">
             <Select
@@ -789,6 +772,25 @@ function PendingFormFields({
             </p>
           ) : null}
         </div>
+
+        {/* Vendedor escrito a mano: para las cuentas compartidas del mostrador.
+            Se DIGITA —no hay lista de usuarios— y es solo descriptivo: el
+            pendiente sigue siendo de la cuenta que inició sesión. */}
+        <Field
+          label="Vendedor (opcional)"
+          htmlFor="manualSellerName"
+          className="sm:col-span-2"
+          hint="Si este computador es compartido, escribí quién atendió."
+        >
+          <Input
+            id="manualSellerName"
+            name="manualSellerName"
+            maxLength={120}
+            autoComplete="off"
+            placeholder="Nombre de quien atendió"
+            defaultValue={previous.manualSellerName ?? ""}
+          />
+        </Field>
 
         <Field label="Nota (opcional)" htmlFor="note" className="sm:col-span-2">
           <Input

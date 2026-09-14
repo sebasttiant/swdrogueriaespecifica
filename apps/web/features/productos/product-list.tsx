@@ -16,11 +16,16 @@ type ProductListProps = {
 
 // Spanish labels and tones for each expiry tier.
 // Labels and tone map live in the feature layer — lib stays language-free.
+// `unknown` (lote sin fecha) no llega acá: `worstExpiresAt` ya es el peor
+// vencimiento CONOCIDO y, cuando no hay ninguno, la insignia no se pinta. Los
+// mapas lo nombran igual porque son totales sobre `ExpiryLevel`, y eso es lo
+// que impide que un nivel nuevo caiga en silencio en otro.
 const EXPIRY_LABEL: Record<ExpiryLevel, string> = {
   expired: "Vencido",
   critical: "Crítico",
   warning: "Por vencer",
   ok: "Vigente",
+  unknown: "Sin vencimiento",
 };
 
 const EXPIRY_TONE: Record<ExpiryLevel, "danger" | "warning" | "success" | "neutral"> = {
@@ -28,6 +33,7 @@ const EXPIRY_TONE: Record<ExpiryLevel, "danger" | "warning" | "success" | "neutr
   critical: "danger",
   warning: "warning",
   ok: "success",
+  unknown: "neutral",
 };
 
 // Listado presentacional (server component). Mobile-first: tarjetas apiladas.

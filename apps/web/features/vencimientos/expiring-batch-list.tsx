@@ -4,11 +4,16 @@ import { CalendarCheck } from "lucide-react";
 import { Badge } from "@/app/_components/ui/badge";
 import { Card } from "@/app/_components/ui/card";
 import { EmptyState } from "@/app/_components/ui/empty-state";
-import { formatBogotaDate } from "@/lib/datetime/bogota";
 import {
   bogotaCalendarDaysUntil,
   type ExpiryTier,
 } from "@/lib/inventory/batch-status";
+import {
+  SIN_VENCIMIENTO_LABEL,
+  batchCodeLabel,
+  batchCodeTitle,
+  batchExpiryLabel,
+} from "@/features/productos/batch-labels";
 import type { ExpiringBatchListItem } from "@/server/repositories/product-batch.repository";
 
 import {
@@ -59,17 +64,24 @@ export function ExpiringBatchList({
   }
 
   const tone = EXPIRY_TIER_TONE[tier];
-  const rows = items.map((batch) => ({
-    batch,
-    days: bogotaCalendarDaysUntil(batch.expiresAt, now),
-    date: formatBogotaDate(batch.expiresAt, { style: "date" }),
-  }));
+  // Un lote sin fecha no entra en ninguna franja (`expiryTierWhere` lo excluye),
+  // así que acá no debería aparecer. Se contempla igual porque el tipo lo
+  // admite: una lista que reciba uno tiene que decir qué es, no romperse ni
+  // afirmar un plazo que nadie conoce.
+  const rows = items.map((batch) => {
+    const days = bogotaCalendarDaysUntil(batch.expiresAt, now);
+    return {
+      batch,
+      countdown: days === null ? SIN_VENCIMIENTO_LABEL : expiryCountdownLabel(days),
+      date: batchExpiryLabel(batch.expiresAt),
+    };
+  });
 
   return (
     <div className="space-y-3">
       {/* Celular: una tarjeta por lote. */}
       <div className="space-y-3 lg:hidden">
-        {rows.map(({ batch, days, date }) => (
+        {rows.map(({ batch, countdown, date }) => (
           <Card key={batch.id} className="space-y-2">
             <div className="flex items-start justify-between gap-3">
               <Link
@@ -79,10 +91,10 @@ export function ExpiringBatchList({
               >
                 {batch.product.name}
               </Link>
-              <Badge tone={tone}>{expiryCountdownLabel(days)}</Badge>
+              <Badge tone={tone}>{countdown}</Badge>
             </div>
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
-              <span>Lote {batch.batchCode}</span>
+              <span>{batchCodeTitle(batch.batchCode)}</span>
               <span>Vence: {date}</span>
               <span>
                 Cantidad: {batch.quantity} {batch.product.unit}
@@ -105,7 +117,7 @@ export function ExpiringBatchList({
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ batch, days, date }) => (
+            {rows.map(({ batch, countdown, date }) => (
               <tr key={batch.id} className="border-b border-border last:border-0">
                 <td className="px-3 py-2 font-medium text-text">
                   <Link
@@ -119,10 +131,12 @@ export function ExpiringBatchList({
                     {batch.product.code}
                   </span>
                 </td>
-                <td className="px-3 py-2 text-muted-foreground">{batch.batchCode}</td>
+                <td className="px-3 py-2 text-muted-foreground">
+                  {batchCodeLabel(batch.batchCode)}
+                </td>
                 <td className="px-3 py-2 text-muted-foreground">{date}</td>
                 <td className="px-3 py-2">
-                  <Badge tone={tone}>{expiryCountdownLabel(days)}</Badge>
+                  <Badge tone={tone}>{countdown}</Badge>
                 </td>
                 <td className="px-3 py-2 text-muted-foreground">
                   {batch.quantity} {batch.product.unit}

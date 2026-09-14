@@ -124,8 +124,8 @@ function conflictState(holder: { productId: string; productName: string }): Pend
     values: {
       productId: "p2",
       manualName: "",
-      manualUnit: "",
       manualMode: "off",
+      manualSellerName: "",
       quantity: "7",
       promisedAt: "2026-08-25T12:00",
       customerName: "Ana Pérez",
@@ -367,8 +367,8 @@ describe("PendingForm · identidad Orion", () => {
       values: {
         productId: "p2",
         manualName: "",
-        manualUnit: "",
         manualMode: "off",
+        manualSellerName: "",
         quantity: "2",
         promisedAt: "",
         customerName: "Ana",
@@ -398,8 +398,8 @@ describe("PendingForm · identidad Orion", () => {
       values: {
         productId: "p2",
         manualName: "",
-        manualUnit: "",
         manualMode: "off",
+        manualSellerName: "",
         quantity: "2",
         promisedAt: "",
         customerName: "Ana",

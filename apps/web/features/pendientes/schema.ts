@@ -42,6 +42,19 @@ const optionalText = (max: number) =>
 // lo escribe este esquema y lo reconoce `presentationLabel` para NO mostrarlo
 // como si fuera un dato que alguien cargó.
 
+// Vendedor escrito a mano: quién atendió cuando la cuenta es compartida (los
+// computadores del mostrador no tienen un perfil fijo). Opcional y SOLO
+// descriptivo: el dueño del pendiente sigue siendo `createdById`, que sale de
+// la sesión, y ninguna regla de visibilidad ni permiso lo mira. Se escribe, no
+// se elige de los usuarios registrados. Mismo largo que el nombre del cliente,
+// con mensaje propio para que el mostrador sepa qué campo recortar.
+const optionalSellerName = z
+  .string()
+  .trim()
+  .max(120, { error: "El nombre del vendedor es demasiado largo." })
+  .optional()
+  .transform((value) => (value && value.length > 0 ? value : undefined));
+
 // Cota de cordura de un monto: cien millones de pesos. No es un límite
 // comercial, frena un tipeo accidental (ej. un código de barras en el campo).
 export const MAX_PENDING_AMOUNT = 100_000_000;
@@ -183,8 +196,10 @@ function identityOf(data: {
 // como string desde el FormData, por eso se coerciona. El producto puede venir
 // de dos formas EXCLUYENTES:
 //   1. `productId` → un producto ya existente en el catálogo.
-//   2. `manualName` (+ `manualUnit` opcional) → un producto que NO está en el
-//      catálogo; el service lo creará al vuelo marcado para revisión de un ADMIN.
+//   2. `manualName` → un producto que NO está en el catálogo; el service lo
+//      creará al vuelo marcado para revisión de un ADMIN. Sin presentación: la
+//      captura ya no la pide ("el nombre ya contiene el producto"), y una que
+//      llegue de un formulario viejo se descarta.
 // Exactamente una de las dos debe venir (XOR): ni ambas (ambiguo) ni ninguna.
 export const pendingCreateSchema = z
   .object({
@@ -194,7 +209,7 @@ export const pendingCreateSchema = z
       .optional()
       .transform((value) => (value && value.length > 0 ? value : undefined)),
     manualName: optionalText(120),
-    manualUnit: optionalText(40),
+    manualSellerName: optionalSellerName,
     quantity: z.coerce
       .number()
       .int("La cantidad debe ser un número entero")
@@ -405,6 +420,7 @@ export const pendingCreateSchema = z
       customerPhone: data.customerPhone,
       customerAddress: data.customerAddress,
       note: data.note,
+      manualSellerName: data.manualSellerName,
       // Se persiste la forma canónica, no lo que se tipeó: ver `zone.ts`.
       zone: data.zone ? (normalizeZone(data.zone) ?? undefined) : undefined,
       totalAmount: data.totalAmount,
@@ -432,9 +448,11 @@ export const pendingCreateSchema = z
     return {
       ...base,
       productId: undefined,
+      // Nace con el mismo relleno que cuando el campo de presentación quedaba
+      // vacío: el alta y la huella del intento no cambian.
       manual: {
         name: data.manualName as string,
-        unit: data.manualUnit ?? MANUAL_UNIT_FALLBACK,
+        unit: MANUAL_UNIT_FALLBACK,
       },
     } as const;
   });
@@ -562,6 +580,8 @@ export const pendingUpdateSchema = z
       }),
     customerAddress: optionalText(200),
     note: optionalText(280),
+    // Se corrige acá, con el mismo permiso que el resto de la corrección.
+    manualSellerName: optionalSellerName,
     zone: optionalText(MAX_ZONE_LENGTH),
     totalAmount: optionalTotalAmount,
     paidAmount: optionalPaidAmount,

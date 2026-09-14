@@ -518,8 +518,18 @@ model ProductBatch {
   id                  String                        @id @default(cuid())
   product             Product                       @relation(fields: [productId], references: [id])
   productId           String
-  batchCode           String // número de lote del proveedor
-  expiresAt           DateTime // vencimiento de ESTE lote
+  // Número de lote del proveedor. Cuando la caja no lo trae impreso, el
+  // sistema guarda acá el código RESERVADO que representa "sin lote" —con el
+  // vencimiento adentro— para que dos cajas sin lote y con vencimientos
+  // distintos no terminen sumadas en la misma fila. Ver
+  // `lib/inventory/reserved-batch-code.ts`.
+  batchCode           String
+  // Vencimiento de ESTE lote. NULL = DESCONOCIDO, y desconocido NO es vencido:
+  // el lote se sigue vendiendo y se consume AL FINAL (`ORDER BY expiresAt ASC`
+  // en PostgreSQL es NULLS LAST, igual que documenta `Lot`). Hay mercadería que
+  // no vence y cajas que no lo traen impreso; inventar una fecha para poder
+  // guardarla era afirmar un dato que nadie tiene.
+  expiresAt           DateTime?
   quantity            Int // stock físico de ESTE lote
   location            String? // ubicación física (estante, depósito)
   // --------------------------------------------------------------------
@@ -610,6 +620,11 @@ model Pending {
   // nombre y el teléfono.
   customerAddress           String?
   note                      String?
+  // Vendedor ESCRITO a mano cuando la cuenta es compartida (los computadores
+  // del mostrador no tienen un perfil fijo). Solo descriptivo: el dueño, el
+  // alcance y los permisos siguen saliendo de `createdById`. No es una relación
+  // con `User` a propósito: se digita, no se elige.
+  manualSellerName          String?
   // --------------------------------------------------------------------
   // Observación de gerencia sobre ESTE pendiente.
   //

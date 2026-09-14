@@ -190,7 +190,14 @@ describe("Ya pedidos · el chulito deriva la cantidad esperada (D10)", () => {
   });
 });
 
-describe("Ya pedidos · recepción parcial", () => {
+// --------------------------------------------------------------------------
+// Los ítems de este archivo son INFORMATIVOS (`newItem` no les da pendiente).
+// La entrada de inventario ya no les asigna stock: solo reparte a los ligados a
+// una venta. Un informativo pedido queda en "Ya pedidos" como historial, y
+// ninguna entrada lo mueve. La recepción parcial de un ligado a venta se prueba
+// en `pending-reception-flow.pg.test.ts` y `manual-missing-item-receipt.pg.test.ts`.
+// --------------------------------------------------------------------------
+describe("Ya pedidos · la entrada no recibe informativos", () => {
   async function receive(quantity: number): Promise<void> {
     await registerInventoryEntry({
       productId,
@@ -202,38 +209,33 @@ describe("Ya pedidos · recepción parcial", () => {
     });
   }
 
-  it("una recepción parcial deja el ítem en PEDIDO y DENTRO de la cola activa", async () => {
+  it("una entrada no toca un PEDIDO informativo: sigue sin recibido y DENTRO de la cola", async () => {
     const id = await newItem({ status: "PEDIDO", quantity: 10, orderedQuantity: 10 });
 
     await receive(4);
 
     const item = await prisma.missingItem.findUniqueOrThrow({ where: { id } });
-    expect(item.receivedQuantity).toBe(4);
-    // EN_BODEGA significa "recepción intentada, no confirmada". Un parcial YA
-    // se confirmó: sigue siendo un pedido al que le falta mercadería.
+    expect(item.receivedQuantity).toBe(0);
     expect(item.status).toBe("PEDIDO");
     expect(await activeQueueIds()).toEqual([id]);
   });
 
-  it("al completarse pasa a RECIBIDO y SALE de la cola activa", async () => {
+  it("aunque entre todo lo pedido, NO pasa a RECIBIDO", async () => {
     const id = await newItem({ status: "PEDIDO", quantity: 10, orderedQuantity: 10 });
 
-    await receive(4);
-    await receive(6);
+    await receive(10);
 
     const item = await prisma.missingItem.findUniqueOrThrow({ where: { id } });
-    expect(item.receivedQuantity).toBe(10);
-    expect(item.status).toBe("RECIBIDO");
-    expect(await activeQueueIds()).toEqual([]);
+    expect(item.receivedQuantity).toBe(0);
+    expect(item.status).toBe("PEDIDO");
+    expect(await activeQueueIds()).toEqual([id]);
   });
 
-  // REGRESIÓN: al dejar de escribir EN_BODEGA en un parcial, estos ítems se
-  // caían de la pantalla de entradas y bodega perdía de vista lo que llegó a
-  // medias. `listArrivedMissingItems` los nombra explícitamente.
+  // REGRESIÓN (D10): al dejar de escribir EN_BODEGA en un parcial, estos ítems
+  // se caían de la pantalla de entradas. La consulta sigue igual; el parcial se
+  // arma escribiendo el estado porque una entrada ya no produce uno informativo.
   it("un parcial sigue visible en la pantalla de entradas, con lo que falta", async () => {
-    const id = await newItem({ status: "PEDIDO", quantity: 10, orderedQuantity: 10 });
-
-    await receive(4);
+    const id = await newItem({ status: "PEDIDO", quantity: 10, orderedQuantity: 10, receivedQuantity: 4 });
 
     const enBodega = await listArrivedMissingItems();
     const item = enBodega.find((row) => row.id === id);
@@ -241,22 +243,20 @@ describe("Ya pedidos · recepción parcial", () => {
     expect(item?.pendingQuantity).toBe(6);
   });
 
-  it("al completarse desaparece de la pantalla de entradas", async () => {
-    const id = await newItem({ status: "PEDIDO", quantity: 10, orderedQuantity: 10 });
-
-    await receive(10);
+  it("uno completo no aparece en la pantalla de entradas", async () => {
+    const id = await newItem({ status: "RECIBIDO", quantity: 10, orderedQuantity: 10, receivedQuantity: 10 });
 
     const enBodega = await listArrivedMissingItems();
     expect(enBodega.map((row) => row.id)).not.toContain(id);
   });
 
-  it("un FALTANTE que recibe parcial NO se convierte en pedido: nadie lo pidió", async () => {
+  it("un FALTANTE informativo no recibe nada de la entrada", async () => {
     const id = await newItem({ status: "FALTANTE", quantity: 10, orderedQuantity: 10 });
 
     await receive(4);
 
     const item = await prisma.missingItem.findUniqueOrThrow({ where: { id } });
-    expect(item.receivedQuantity).toBe(4);
+    expect(item.receivedQuantity).toBe(0);
     expect(item.status).toBe("FALTANTE");
   });
 });

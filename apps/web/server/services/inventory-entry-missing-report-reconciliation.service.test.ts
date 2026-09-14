@@ -10,6 +10,12 @@ const { prismaMock, tx } = vi.hoisted(() => {
     // reconciliación de reportes, no la identidad: el producto está
     // identificado.
     product: { findUnique: vi.fn() },
+    // Toda entrada toma el candado del par `(productId, batchCode)` antes de
+    // tocar el lote, para decidir laboratorio y vencimiento sin carrera. Acá el
+    // lote no existe todavía —la lectura devuelve vacío—, así que no hay
+    // evidencia previa que contradecir.
+    $executeRaw: vi.fn(),
+    $queryRaw: vi.fn(async () => []),
   };
   const prismaMock = {
     $transaction: vi.fn((fn: (client: typeof tx) => unknown) => fn(tx)),

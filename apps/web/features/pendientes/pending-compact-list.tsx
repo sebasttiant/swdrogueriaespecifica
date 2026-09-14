@@ -12,10 +12,13 @@ import type { PendingListItem } from "@/server/repositories/pending.repository";
 import { computeDeadlineStatus } from "./deadline-status";
 import { derivePaymentState } from "./payment-state";
 import {
+  canInvoiceWithoutStock,
   fulfillmentNotice,
+  invoiceableQuantity,
   invoiceAffordance,
   isTerminal,
   outstanding,
+  pendingStateTone,
   type PendingViewer,
 } from "./fulfillment-notice";
 import { identityWarning } from "./identity-warning";
@@ -35,6 +38,13 @@ import {
   PendingObservationForm,
   PendingObservationView,
 } from "./pending-observation-form";
+
+// Color de estado LOCAL de la fila: un borde izquierdo con los tokens del tema.
+// La regla vive en `pendingStateTone`; acá solo se pinta.
+const STATE_BORDER = {
+  ready: "border-l-4 border-l-warning",
+  soldOut: "border-l-4 border-l-danger",
+} as const;
 
 // --------------------------------------------------------------------------
 // Vista LISTADO de pendientes — la que pidió el gerente en la reunión del
@@ -261,14 +271,20 @@ function customerActions(item: PendingListItem, ctx: CustomerActionsContext) {
   // aplicar el service. Móvil y escritorio la comparten porque comparten esta
   // función: fue la divergencia entre las dos vistas la que dejó al vendedor
   // sin acciones en el computador.
+  //
+  // U5: también sin mercadería cargada si queda saldo (`canInvoiceWithoutStock`),
+  // para la excepción sin stock que el formulario confirma en un segundo paso.
   const invoice =
-    invoiceAffordance(item, ctx.viewer).canInvoice && showsCustomerActions(item) ? (
+    (invoiceAffordance(item, ctx.viewer).canInvoice ||
+      canInvoiceWithoutStock(item, ctx.viewer)) &&
+    showsCustomerActions(item) ? (
       <PendingCustomerLifecycleForm
         key="invoice"
         pendingId={item.id}
         customerStatus={item.customerStatus}
         quantity={item.quantity}
         invoicedQuantity={item.invoicedQuantity ?? 0}
+        invoiceableQuantity={invoiceableQuantity(item)}
       />
     ) : null;
 
@@ -384,6 +400,7 @@ export function PendingCompactList({
             computeDeadlineStatus(pending.promisedAt, pending.status, now)
           ];
           const notice = fulfillmentNotice(pending);
+          const stateTone = pendingStateTone(pending);
           const identityNotice = identityWarning(pending);
           const lifecycle = lifecycleLabel(pending);
           const purchase = purchaseNote(pending);
@@ -406,7 +423,10 @@ export function PendingCompactList({
             //
             // El ancla vive solo en `PendingList` (Revisión de pendientes), que
             // pinta una sola variante por fila. Nada enlaza acá con fragmento.
-            <Card key={pending.id} className="space-y-2 p-3">
+            <Card
+              key={pending.id}
+              className={cn("space-y-2 p-3", stateTone && STATE_BORDER[stateTone])}
+            >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="break-words font-medium text-text">
@@ -423,6 +443,9 @@ export function PendingCompactList({
                   <LaboratoryLine item={pending} />
                   <p className="break-words text-xs text-muted-foreground">
                     {pending.createdBy?.name ?? "Sin vendedor"}
+                    {pending.manualSellerName
+                      ? ` · Vendedor: ${pending.manualSellerName}`
+                      : null}
                     {" · "}
                     {/* Quien hace seguimiento necesita la HORA comprometida, no
                         solo el día: "para hoy" y "para hoy a las 4" son dos
@@ -518,6 +541,7 @@ export function PendingCompactList({
                 computeDeadlineStatus(pending.promisedAt, pending.status, now)
               ];
               const notice = fulfillmentNotice(pending);
+              const stateTone = pendingStateTone(pending);
               const identityNotice = identityWarning(pending);
               const lifecycle = lifecycleLabel(pending);
               const purchase = purchaseNote(pending);
@@ -531,7 +555,14 @@ export function PendingCompactList({
               });
               return (
                 <tr key={pending.id} className="border-b border-border last:border-0">
-                  <td className="px-3 py-2 font-medium text-text">
+                  {/* El borde de estado va en la primera CELDA: sobre el `<tr>`
+                      no se pinta con la tabla en bordes separados. */}
+                  <td
+                    className={cn(
+                      "px-3 py-2 font-medium text-text",
+                      stateTone && STATE_BORDER[stateTone],
+                    )}
+                  >
                     {pending.product.name}
                     <OrionCodeLine item={pending} />
                     {identityNotice ? (
@@ -569,6 +600,11 @@ export function PendingCompactList({
                   </td>
                   <td className="px-3 py-2 text-muted-foreground">
                     {pending.createdBy?.name ?? "—"}
+                    {pending.manualSellerName ? (
+                      <span className="block break-words text-xs">
+                        {`Vendedor: ${pending.manualSellerName}`}
+                      </span>
+                    ) : null}
                   </td>
                   <td className={cn("px-3 py-2 whitespace-nowrap", urgency.tone === "danger" && "font-semibold text-danger")}>
                     {formatBogotaDate(pending.promisedAt, {

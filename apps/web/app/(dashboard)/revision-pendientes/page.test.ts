@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 const mocks = vi.hoisted(() => ({
   requireCapability: vi.fn(),
   getPendings: vi.fn(),
+  getReadyToInvoiceCount: vi.fn(),
   listPendingReception: vi.fn(),
   countPendingReception: vi.fn(),
   listStockoutProducts: vi.fn(),
@@ -15,6 +16,7 @@ vi.mock("@/lib/auth/require-role", () => ({
 }));
 vi.mock("@/server/services/pending.service", () => ({
   getPendings: mocks.getPendings,
+  getReadyToInvoiceCount: mocks.getReadyToInvoiceCount,
 }));
 vi.mock("@/server/services/pending-reception.service", () => ({
   listPendingReception: mocks.listPendingReception,
@@ -41,6 +43,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.requireCapability.mockResolvedValue(GERENCIA);
   mocks.getPendings.mockResolvedValue({ items: [], nextCursor: null });
+  mocks.getReadyToInvoiceCount.mockResolvedValue(0);
   mocks.listPendingReception.mockResolvedValue([]);
   mocks.countPendingReception.mockResolvedValue(0);
   mocks.listStockoutProducts.mockResolvedValue([]);
@@ -155,6 +158,49 @@ describe("RevisionPendientesPage · ejes de revisión", () => {
     expect(html).toContain('href="/revision-pendientes?');
     expect(html).not.toContain('href="/pendientes?');
     expect(html).not.toContain('href="/pendientes"');
+  });
+
+  // U4 — "Listos para facturar" dentro de los filtros, con su contador. El
+  // contador es un total dentro del alcance del usuario: el vendedor cuenta los
+  // suyos, gerencia la cola entera.
+  it("muestra el chip de listos para facturar con el contador", async () => {
+    mocks.getReadyToInvoiceCount.mockResolvedValue(3);
+
+    const html = renderToStaticMarkup(
+      await RevisionPendientesPage({ searchParams: searchParams() }),
+    );
+
+    expect(html).toContain("Listos para facturar");
+    expect(html).toContain("(3)");
+    expect(html).toContain('href="/revision-pendientes?view=detalle&amp;facturar=listos"');
+  });
+
+  it("al vendedor le cuenta solo los suyos", async () => {
+    mocks.requireCapability.mockResolvedValue(VENDEDOR);
+
+    await RevisionPendientesPage({ searchParams: searchParams() });
+
+    expect(mocks.getReadyToInvoiceCount).toHaveBeenCalledWith({ ownerId: "vendedor-1" });
+  });
+
+  it("a gerencia le cuenta la cola entera", async () => {
+    await RevisionPendientesPage({ searchParams: searchParams() });
+
+    expect(mocks.getReadyToInvoiceCount).toHaveBeenCalledWith({ ownerId: undefined });
+  });
+
+  it("no cuenta en la mitad física, donde no hay filtros de seguimiento", async () => {
+    await RevisionPendientesPage({ searchParams: searchParams({ tab: "abastecimiento" }) });
+
+    expect(mocks.getReadyToInvoiceCount).not.toHaveBeenCalled();
+  });
+
+  it("reenvía facturar=listos a la consulta del listado", async () => {
+    await RevisionPendientesPage({ searchParams: searchParams({ facturar: "listos" }) });
+
+    expect(mocks.getPendings).toHaveBeenCalledWith(
+      expect.objectContaining({ axes: { invoice: "listos" } }),
+    );
   });
 
   it("reenvía un eje de la URL a la consulta, no lo filtra en la pantalla", async () => {

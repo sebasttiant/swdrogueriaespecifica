@@ -39,6 +39,40 @@ export function outstanding(item: PendingListItem): { toInvoice: number; toDeliv
 }
 
 /**
+ * Cuánto de este pendiente se puede facturar AHORA: lo cargado que todavía no
+ * se facturó, acotado a lo pedido. Cero en un pendiente terminal.
+ *
+ * Es LA regla de "listo para facturar", una sola vez: la usan el aviso, el botón
+ * (`invoiceAffordance`), el color de la tarjeta y —traducida a Prisma en
+ * `readyToInvoiceWhere`— el filtro "Listos para facturar" y su contador. Es la
+ * MISMA cuenta que valida `invoicePending` en el servidor.
+ *
+ * No mira `customerStatus === "FACTURADO"` a propósito: `invoicePending` lo
+ * escribe en CADA factura, también en la parcial, así que un pendiente
+ * facturado a medias con carga nueva sigue teniendo algo que facturar.
+ */
+export function invoiceableQuantity(item: PendingListItem): number {
+  if (isTerminal(item)) return 0;
+  const invoiced = item.invoicedQuantity ?? 0;
+  const ready = item.inventoryReadyQuantity ?? 0;
+  return Math.max(Math.min(item.quantity - invoiced, ready - invoiced), 0);
+}
+
+/**
+ * El color de estado de la tarjeta. La ACCIÓN posible manda:
+ *
+ *   "ready"    se puede facturar algo — gana aunque compras lo marcó AGOTADO.
+ *   "soldOut"  no hay nada que facturar y está agotado (`purchaseStatus`, la
+ *              columna viva; el AGOTADO de `status` es legado).
+ *   null       ninguno de los dos, o el pendiente ya terminó.
+ */
+export function pendingStateTone(item: PendingListItem): "ready" | "soldOut" | null {
+  if (invoiceableQuantity(item) > 0) return "ready";
+  if (!isTerminal(item) && item.purchaseStatus === "AGOTADO") return "soldOut";
+  return null;
+}
+
+/**
  * Quién está mirando la fila. Es lo que separa DOS preguntas que la pantalla
  * venía mezclando: si el pendiente está listo (un hecho de la mercadería) y si
  * esta persona puede facturarlo (un hecho de sus permisos).
@@ -83,20 +117,15 @@ export function canContactRow(item: PendingListItem, viewer: PendingViewer): boo
  * lo que pasó el 2026-10-04: la fila decía "Cargado · podés facturar" y abajo no
  * había botón.
  *
- * `invoiceable` es la MISMA cuenta que hace `invoicePending` en el service. La
- * pantalla no decide nada por su cuenta: solo evita ofrecer un gesto que el
- * servidor va a rechazar.
+ * `invoiceable` sale de `invoiceableQuantity`, la MISMA cuenta que hace
+ * `invoicePending` en el service. La pantalla no decide nada por su cuenta: solo
+ * evita ofrecer un gesto que el servidor va a rechazar.
  */
 export function invoiceAffordance(
   item: PendingListItem,
   viewer: PendingViewer,
 ): { canInvoice: boolean; invoiceable: number } {
-  const invoiced = item.invoicedQuantity ?? 0;
-  const ready = item.inventoryReadyQuantity ?? 0;
-  const invoiceable = Math.max(
-    Math.min(item.quantity - invoiced, ready - invoiced),
-    0,
-  );
+  const invoiceable = invoiceableQuantity(item);
 
   if (isTerminal(item)) return { canInvoice: false, invoiceable: 0 };
   // Alcance acotado al dueño: BODEGA y OPERADOR ven filas ajenas —bodega por
@@ -107,6 +136,22 @@ export function invoiceAffordance(
   // Sin mercadería cargada no se ofrece el gesto: es la misma condición que el
   // service aplica, adelantada a la pantalla para no prometer un rechazo.
   return { canInvoice: invoiceable > 0, invoiceable };
+}
+
+/**
+ * U5 — si a ESTA persona se le muestra el formulario de facturar aunque no haya
+ * stock facturable: la excepción sin stock.
+ *
+ * Es aditiva a `invoiceAffordance` y NO la reemplaza: "listo para facturar"
+ * (aviso, color, filtro y contador) sigue siendo `invoiceableQuantity`. Acá
+ * solo se pregunta si queda saldo por facturar y si la fila está en el alcance
+ * de quien mira. La segunda confirmación la pide el formulario, y el servidor
+ * vuelve a decidir todo bajo el lock.
+ */
+export function canInvoiceWithoutStock(item: PendingListItem, viewer: PendingViewer): boolean {
+  if (isTerminal(item)) return false;
+  if (!withinScope(item, viewer.invoiceScope, viewer.userId)) return false;
+  return outstanding(item).toInvoice > 0;
 }
 
 // El aviso que le faltaba al vendedor. Sin esto un pendiente se ve EXACTAMENTE
@@ -135,6 +180,24 @@ export function fulfillmentNotice(
 ): { label: string; tone: "success" | "primary" | "warning" | "danger" } | null {
   if (isTerminal(item)) return null;
 
+  // AMARILLO — hay algo que facturar AHORA. Va PRIMERO: es la acción posible, y
+  // la regla es `invoiceableQuantity`, la misma del botón. Antes una llegada
+  // parcial caía en el rojo de abajo mientras el botón sí facturaba, y un
+  // pendiente facturado a medias no volvía nunca al amarillo.
+  //
+  // Mismo molde que "Listo para entregar", que es el peldaño siguiente: los dos
+  // dicen qué se puede hacer con el pendiente, no qué puede hacer el lector.
+  const invoiceable = invoiceableQuantity(item);
+  if (invoiceable > 0) {
+    return {
+      label:
+        invoiceable === item.quantity
+          ? "Listo para facturar"
+          : `Listo para facturar: ${invoiceable} de ${item.quantity}`,
+      tone: "warning",
+    };
+  }
+
   const available = item.inventoryReadyQuantity ?? 0;
   const remaining = item.quantity - item.deliveredQuantity - item.cancelledQuantity;
   const readyForRemaining = Math.max(available - item.deliveredQuantity, 0);
@@ -148,21 +211,6 @@ export function fulfillmentNotice(
     return {
       label: `Sin stock suficiente · ${readyForRemaining} de ${remaining} restantes disponibles`,
       tone: "danger",
-    };
-  }
-
-  // AMARILLO — bodega ya lo subió al sistema. Es el aviso que espera el
-  // vendedor: "ya te llegó, te lo vamos a mandar".
-  //
-  // Mismo molde que "Listo para entregar", que es el peldaño siguiente: los dos
-  // dicen qué se puede hacer con el pendiente, no qué puede hacer el lector.
-  if (notInvoiced && available > 0) {
-    const parcial = available < item.quantity;
-    return {
-      label: parcial
-        ? `Listo para facturar: ${available} de ${item.quantity}`
-        : "Listo para facturar",
-      tone: "warning",
     };
   }
 

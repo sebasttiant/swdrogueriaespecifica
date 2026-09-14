@@ -86,6 +86,7 @@ import type {
 } from "@/server/repositories/pending.repository";
 import type { SessionRole } from "@/lib/auth/session";
 import { USER_ROLES } from "@/lib/auth/permissions";
+import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
 
 // `promisedAt` va como instante UTC EXPLÍCITO (con la Z). Sin ella, JavaScript
 // interpreta el literal como hora LOCAL, y el `toISOString()` con el que se arma
@@ -332,6 +333,115 @@ describe("registerPending", () => {
     const result = await registerPending(baseInput);
 
     expect(result).toMatchObject({ pending: { id: "pend_winner" }, replayed: true });
+  });
+
+  // ------------------------------------------------------------------------
+  // Captura manual SIN presentación.
+  //
+  // El producto manual no se busca ni se deduplica por nombre ni por
+  // presentación: SIEMPRE se crea uno nuevo, con código `MAN-` aleatorio. Por
+  // eso quitar el campo no puede atar la captura a otro producto existente:
+  // el único camino es el `create`, con el mismo relleno de siempre.
+  // ------------------------------------------------------------------------
+  it("producto manual sin presentación: nace con el relleno de siempre y sin buscar otro producto", async () => {
+    const { productId: _omit, ...withoutProduct } = baseInput;
+    // Intento nuevo: ninguna fila tiene todavía esta clave.
+    prismaMock.pending.findUnique.mockResolvedValue(null);
+    tx.product.create.mockResolvedValue({ id: "prod_manual", needsReview: true });
+    tx.pending.create.mockResolvedValue({ id: "pend_m", productId: "prod_manual" });
+    tx.missingItem.create.mockResolvedValue({ id: "miss_m" });
+    mockStock(0);
+
+    await registerPending({
+      ...withoutProduct,
+      manual: { name: "Ilana crema vaginal x 40 gr", unit: "unidad" },
+    });
+
+    expect(tx.product.create).toHaveBeenCalledTimes(1);
+    expect(tx.product.create.mock.calls[0]![0].data).toMatchObject({
+      name: "Ilana crema vaginal x 40 gr",
+      unit: "unidad",
+      needsReview: true,
+      code: expect.stringMatching(/^MAN-/),
+    });
+    expect(tx.pending.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ productId: "prod_manual" }),
+      }),
+    );
+  });
+
+  // ------------------------------------------------------------------------
+  // Vendedor escrito a mano (cuentas compartidas, como el mostrador).
+  //
+  // Es texto descriptivo y nada más: quién es el dueño del pendiente lo sigue
+  // diciendo `createdById`, que viene de la sesión.
+  // ------------------------------------------------------------------------
+  describe("vendedor escrito a mano", () => {
+    beforeEach(() => {
+      // Intento nuevo: ninguna fila tiene todavía esta clave.
+      prismaMock.pending.findUnique.mockResolvedValue(null);
+      tx.pending.create.mockResolvedValue({ id: "pend_s" });
+      mockStock(10);
+    });
+
+    it("lo guarda cuando viene, sin tocar quién creó el pendiente", async () => {
+      await registerPending({ ...baseInput, manualSellerName: "Carlos Gómez" });
+
+      expect(tx.pending.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            manualSellerName: "Carlos Gómez",
+            createdById: "user_1",
+          }),
+        }),
+      );
+    });
+
+    it("lo guarda en null cuando no viene", async () => {
+      await registerPending(baseInput);
+
+      expect(tx.pending.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ manualSellerName: null, createdById: "user_1" }),
+        }),
+      );
+    });
+
+    // La idempotencia existe para impedir un pendiente DUPLICADO, no para
+    // juzgar el vendedor escrito: queda FUERA de la huella. Si alguien lo
+    // corrige entre un intento y su reintento, el reintento sigue cayendo
+    // sobre la misma fila, y el nombre se corrige desde la edición normal.
+    it("NO forma parte de la huella: la huella es la misma con o sin vendedor", async () => {
+      await registerPending({ ...baseInput, manualSellerName: "Carlos Gómez" });
+      await registerPending({ ...baseInput, idempotencyKey: "00000000-0000-4000-8000-000000000002" });
+      const [withSeller, withoutSeller] = tx.pending.create.mock.calls.map(
+        (call) => call[0].data.requestFingerprint as string,
+      );
+
+      expect(withSeller).toBe(withoutSeller);
+      expect(withSeller).not.toContain("manualSellerName");
+      expect(withSeller).not.toContain("Carlos");
+    });
+
+    it("un reintento con la misma clave sigue sin duplicar, aunque cambie el vendedor", async () => {
+      await registerPending({ ...baseInput, manualSellerName: "Carlos Gómez" });
+      const stored = tx.pending.create.mock.calls[0]![0].data.requestFingerprint as string;
+      tx.pending.create.mockClear();
+
+      prismaMock.pending.findUnique.mockResolvedValue({
+        id: "pend_s",
+        quantity: 5,
+        inventoryReadyQuantity: 5,
+        requestFingerprint: stored,
+      });
+      prismaMock.missingItem.findFirst.mockResolvedValue(null);
+
+      const replay = await registerPending({ ...baseInput, manualSellerName: "Otra persona" });
+
+      expect(replay).toMatchObject({ replayed: true, pending: { id: "pend_s" } });
+      expect(tx.pending.create).not.toHaveBeenCalled();
+    });
   });
 });
 
@@ -947,7 +1057,7 @@ describe("customer lifecycle ownership and incremental invoice", () => {
 
   it("factura lo que ya llegó y quedaba por facturar", async () => {
     mockLockedPending(pendingForDelivery({ status: "PARCIAL", deliveredQuantity: 6, inventoryReadyQuantity: 10, invoicedQuantity: 6, customerStatus: "FACTURADO" }));
-    await expect(invoicePending({ id: "pend-1", actorId: "op-1", scope: "own", quantity: 4 }, now)).resolves.toBeNull();
+    await expect(invoicePending({ id: "pend-1", actorId: "op-1", scope: "own", quantity: 4, expectedInvoicedQuantity: 6 }, now)).resolves.toEqual({ mode: "NORMAL" });
     expect(tx.pending.update).toHaveBeenCalledWith({ where: { id: "pend-1" }, data: expect.objectContaining({ customerStatus: "FACTURADO", invoicedQuantity: 10 }) });
   });
 
@@ -960,7 +1070,7 @@ describe("customer lifecycle ownership and incremental invoice", () => {
     );
 
     await expect(
-      invoicePending({ id: "pend-1", actorId: "op-1", scope: "own", quantity: 10 }, now),
+      invoicePending({ id: "pend-1", actorId: "op-1", scope: "own", quantity: 10, expectedInvoicedQuantity: 0 }, now),
     ).resolves.toBe("NO_STOCK");
     expect(tx.pending.update).not.toHaveBeenCalled();
   });
@@ -971,7 +1081,7 @@ describe("customer lifecycle ownership and incremental invoice", () => {
     );
 
     await expect(
-      invoicePending({ id: "pend-1", actorId: "op-1", scope: "own", quantity: 4 }, now),
+      invoicePending({ id: "pend-1", actorId: "op-1", scope: "own", quantity: 4, expectedInvoicedQuantity: 0 }, now),
     ).resolves.toBe("NO_STOCK");
     expect(tx.pending.update).not.toHaveBeenCalled();
   });
@@ -982,8 +1092,8 @@ describe("customer lifecycle ownership and incremental invoice", () => {
     );
 
     await expect(
-      invoicePending({ id: "pend-1", actorId: "op-1", scope: "own", quantity: 3 }, now),
-    ).resolves.toBeNull();
+      invoicePending({ id: "pend-1", actorId: "op-1", scope: "own", quantity: 3, expectedInvoicedQuantity: 0 }, now),
+    ).resolves.toEqual({ mode: "NORMAL" });
     expect(tx.pending.update).toHaveBeenCalledWith({
       where: { id: "pend-1" },
       data: expect.objectContaining({ invoicedQuantity: 3 }),
@@ -998,8 +1108,8 @@ describe("customer lifecycle ownership and incremental invoice", () => {
     );
 
     await expect(
-      invoicePending({ id: "pend-1", actorId: "op-1", scope: "own" }, now),
-    ).resolves.toBeNull();
+      invoicePending({ id: "pend-1", actorId: "op-1", scope: "own", expectedInvoicedQuantity: 0 }, now),
+    ).resolves.toEqual({ mode: "NORMAL" });
     expect(tx.pending.update).toHaveBeenCalledWith({
       where: { id: "pend-1" },
       data: expect.objectContaining({ invoicedQuantity: 3 }),
@@ -1010,7 +1120,7 @@ describe("customer lifecycle ownership and incremental invoice", () => {
     mockLockedPending(pendingForDelivery({ quantity: 10, inventoryReadyQuantity: 10, invoicedQuantity: 8 }));
 
     await expect(
-      invoicePending({ id: "pend-1", actorId: "op-1", scope: "own", quantity: 5 }, now),
+      invoicePending({ id: "pend-1", actorId: "op-1", scope: "own", quantity: 5, expectedInvoicedQuantity: 8 }, now),
     ).resolves.toBe("INVALID_QUANTITY");
     expect(tx.pending.update).not.toHaveBeenCalled();
   });
@@ -1019,7 +1129,7 @@ describe("customer lifecycle ownership and incremental invoice", () => {
     mockLockedPending(pendingForDelivery({ customerStatus: "CANCELADO" }));
 
     await expect(
-      invoicePending({ id: "pend-1", actorId: "op-1", scope: "own", quantity: 1 }, now),
+      invoicePending({ id: "pend-1", actorId: "op-1", scope: "own", quantity: 1, expectedInvoicedQuantity: 10 }, now),
     ).resolves.toBe("ALREADY_TERMINAL");
     expect(tx.pending.update).not.toHaveBeenCalled();
   });
@@ -1029,7 +1139,7 @@ describe("customer lifecycle ownership and incremental invoice", () => {
     mockLockedPending(pendingForDelivery({ createdById: "otro-vendedor", inventoryReadyQuantity: 10 }));
 
     await expect(
-      invoicePending({ id: "pend-1", actorId: "op-1", scope: "own", quantity: 1 }, now),
+      invoicePending({ id: "pend-1", actorId: "op-1", scope: "own", quantity: 1, expectedInvoicedQuantity: 10 }, now),
     ).resolves.toBe("NOT_OWNER");
     expect(tx.pending.update).not.toHaveBeenCalled();
   });
@@ -1043,8 +1153,8 @@ describe("customer lifecycle ownership and incremental invoice", () => {
     );
 
     await expect(
-      invoicePending({ id: "pend-1", actorId: "supervisor-1", scope: "all", quantity: 5 }, now),
-    ).resolves.toBeNull();
+      invoicePending({ id: "pend-1", actorId: "supervisor-1", scope: "all", quantity: 5, expectedInvoicedQuantity: 0 }, now),
+    ).resolves.toEqual({ mode: "NORMAL" });
     expect(tx.pending.update).toHaveBeenCalledWith({
       where: { id: "pend-1" },
       data: expect.objectContaining({ invoicedQuantity: 5, invoicedById: "supervisor-1" }),
@@ -1059,7 +1169,7 @@ describe("customer lifecycle ownership and incremental invoice", () => {
     );
 
     await expect(
-      invoicePending({ id: "pend-1", actorId: "supervisor-1", scope: "all", quantity: 1 }, now),
+      invoicePending({ id: "pend-1", actorId: "supervisor-1", scope: "all", quantity: 1, expectedInvoicedQuantity: 10 }, now),
     ).resolves.toBe("NO_STOCK");
     expect(tx.pending.update).not.toHaveBeenCalled();
   });
@@ -1068,9 +1178,204 @@ describe("customer lifecycle ownership and incremental invoice", () => {
   // lock de la fila, porque no hay nada que decidir.
   it("sin autoridad no factura ni el pendiente propio", async () => {
     await expect(
-      invoicePending({ id: "pend-1", actorId: "op-1", scope: "none", quantity: 1 }, now),
+      invoicePending({ id: "pend-1", actorId: "op-1", scope: "none", quantity: 1, expectedInvoicedQuantity: 0 }, now),
     ).resolves.toBe("NOT_AUTHORIZED");
     expect(tx.pending.update).not.toHaveBeenCalled();
+  });
+});
+
+// --------------------------------------------------------------------------
+// U5 — facturación EXCEPCIONAL sin stock, y el token de concurrencia.
+//
+// El token (`expectedInvoicedQuantity`) es lo facturado que la persona vio. Si
+// bajo el lock ya no coincide, el intento es viejo: un doble clic o un
+// reintento factura una sola vez. NO es autorización: alcance y capacidad
+// siguen decidiendo solos.
+//
+// La excepción solo existe con la marca explícita y solo para lo que excede el
+// stock facturable. Deja su propia auditoría ADENTRO de la transacción.
+// --------------------------------------------------------------------------
+describe("invoicePending · U5 sin stock y token", () => {
+  const now = new Date("2026-09-14T12:00:00.000Z");
+
+  function writeAuditMock() {
+    return vi.fn().mockResolvedValue(undefined);
+  }
+
+  function expectNoStockWrites() {
+    expect(tx.productBatch.update).not.toHaveBeenCalled();
+    expect(tx.pendingInventoryReservation.upsert).not.toHaveBeenCalled();
+    expect(tx.pendingInventoryReservation.update).not.toHaveBeenCalled();
+    expect(tx.pendingInventoryReservation.delete).not.toHaveBeenCalled();
+    expect(tx.pendingInventoryReservation.deleteMany).not.toHaveBeenCalled();
+    expect(tx.pendingDelivery.create).not.toHaveBeenCalled();
+  }
+
+  it("un token viejo se rechaza como STALE sin escribir nada", async () => {
+    mockLockedPending(pendingForDelivery({ quantity: 10, inventoryReadyQuantity: 10, invoicedQuantity: 3, customerStatus: "FACTURADO" }));
+    const writeAudit = writeAuditMock();
+
+    await expect(
+      invoicePending(
+        { id: "pend-1", actorId: "op-1", scope: "own", quantity: 2, expectedInvoicedQuantity: 0, allowWithoutStock: true },
+        now,
+        { writeAudit },
+      ),
+    ).resolves.toBe("STALE");
+    expect(tx.pending.update).not.toHaveBeenCalled();
+    expect(writeAudit).not.toHaveBeenCalled();
+  });
+
+  it("sin la marca, pasar el stock sigue siendo NO_STOCK", async () => {
+    mockLockedPending(pendingForDelivery({ quantity: 10, inventoryReadyQuantity: 3, invoicedQuantity: 0, customerStatus: "POR_CONTACTAR" }));
+    const writeAudit = writeAuditMock();
+
+    await expect(
+      invoicePending(
+        { id: "pend-1", actorId: "op-1", scope: "own", quantity: 5, expectedInvoicedQuantity: 0, allowWithoutStock: false },
+        now,
+        { writeAudit },
+      ),
+    ).resolves.toBe("NO_STOCK");
+    expect(tx.pending.update).not.toHaveBeenCalled();
+    expect(writeAudit).not.toHaveBeenCalled();
+  });
+
+  it("con la marca factura sin stock hasta el saldo y audita en la transacción", async () => {
+    mockLockedPending(pendingForDelivery({ quantity: 10, inventoryReadyQuantity: 0, invoicedQuantity: 0, customerStatus: "POR_CONTACTAR" }));
+    const writeAudit = writeAuditMock();
+
+    await expect(
+      invoicePending(
+        { id: "pend-1", actorId: "op-1", scope: "own", quantity: 10, expectedInvoicedQuantity: 0, allowWithoutStock: true },
+        now,
+        { writeAudit },
+      ),
+    ).resolves.toEqual({ mode: "WITHOUT_STOCK" });
+
+    // La MISMA escritura que una factura normal: cuatro campos, nada más.
+    expect(tx.pending.update).toHaveBeenCalledTimes(1);
+    expect(tx.pending.update).toHaveBeenCalledWith({
+      where: { id: "pend-1" },
+      data: {
+        customerStatus: "FACTURADO",
+        invoicedQuantity: 10,
+        invoicedAt: now,
+        invoicedById: "op-1",
+      },
+    });
+    expectNoStockWrites();
+    expect(writeAudit).toHaveBeenCalledTimes(1);
+    expect(writeAudit).toHaveBeenCalledWith(tx, {
+      action: AUDIT_ACTIONS.PENDING_INVOICED_WITHOUT_STOCK,
+      module: AUDIT_MODULES.PENDIENTES,
+      entity: "Pending",
+      entityId: "pend-1",
+      result: "SUCCESS",
+      after: {
+        invoicedQuantity: 10,
+        stockAtInvoice: 0,
+        totalInvoicedQuantity: 10,
+        customerStatus: "FACTURADO",
+      },
+      context: { userId: "op-1" },
+    });
+  });
+
+  it("con stock parcial registra cuánto había al facturar", async () => {
+    mockLockedPending(pendingForDelivery({ quantity: 10, inventoryReadyQuantity: 7, invoicedQuantity: 4, customerStatus: "FACTURADO" }));
+    const writeAudit = writeAuditMock();
+
+    await expect(
+      invoicePending(
+        { id: "pend-1", actorId: "op-1", scope: "own", quantity: 6, expectedInvoicedQuantity: 4, allowWithoutStock: true },
+        now,
+        { writeAudit },
+      ),
+    ).resolves.toEqual({ mode: "WITHOUT_STOCK" });
+    expect(writeAudit).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({
+        after: { invoicedQuantity: 6, stockAtInvoice: 3, totalInvoicedQuantity: 10, customerStatus: "FACTURADO" },
+      }),
+    );
+  });
+
+  it("con la marca, por encima del saldo es INVALID_QUANTITY", async () => {
+    mockLockedPending(pendingForDelivery({ quantity: 10, inventoryReadyQuantity: 0, invoicedQuantity: 0, customerStatus: "POR_CONTACTAR" }));
+    const writeAudit = writeAuditMock();
+
+    await expect(
+      invoicePending(
+        { id: "pend-1", actorId: "op-1", scope: "own", quantity: 11, expectedInvoicedQuantity: 0, allowWithoutStock: true },
+        now,
+        { writeAudit },
+      ),
+    ).resolves.toBe("INVALID_QUANTITY");
+    expect(tx.pending.update).not.toHaveBeenCalled();
+    expect(writeAudit).not.toHaveBeenCalled();
+  });
+
+  it("con la marca pero stock suficiente es una factura normal", async () => {
+    mockLockedPending(pendingForDelivery({ quantity: 10, inventoryReadyQuantity: 10, invoicedQuantity: 0, customerStatus: "POR_CONTACTAR" }));
+    const writeAudit = writeAuditMock();
+
+    await expect(
+      invoicePending(
+        { id: "pend-1", actorId: "op-1", scope: "own", quantity: 3, expectedInvoicedQuantity: 0, allowWithoutStock: true },
+        now,
+        { writeAudit },
+      ),
+    ).resolves.toEqual({ mode: "NORMAL" });
+    expect(tx.pending.update).toHaveBeenCalledTimes(1);
+    expect(writeAudit).not.toHaveBeenCalled();
+  });
+
+  it("NOT_OWNER gana con la marca y con un token viejo", async () => {
+    mockLockedPending(pendingForDelivery({ createdById: "otro-vendedor", quantity: 10, inventoryReadyQuantity: 0, invoicedQuantity: 0 }));
+    const writeAudit = writeAuditMock();
+
+    await expect(
+      invoicePending(
+        { id: "pend-1", actorId: "op-1", scope: "own", quantity: 1, expectedInvoicedQuantity: 9, allowWithoutStock: true },
+        now,
+        { writeAudit },
+      ),
+    ).resolves.toBe("NOT_OWNER");
+    expect(tx.pending.update).not.toHaveBeenCalled();
+    expect(writeAudit).not.toHaveBeenCalled();
+  });
+
+  it("ALREADY_TERMINAL gana con la marca y con un token viejo", async () => {
+    mockLockedPending(pendingForDelivery({ customerStatus: "ENTREGADO", quantity: 10, inventoryReadyQuantity: 0, invoicedQuantity: 0 }));
+    const writeAudit = writeAuditMock();
+
+    await expect(
+      invoicePending(
+        { id: "pend-1", actorId: "op-1", scope: "own", quantity: 1, expectedInvoicedQuantity: 9, allowWithoutStock: true },
+        now,
+        { writeAudit },
+      ),
+    ).resolves.toBe("ALREADY_TERMINAL");
+    expect(tx.pending.update).not.toHaveBeenCalled();
+    expect(writeAudit).not.toHaveBeenCalled();
+  });
+
+  // La auditoría va adentro de la transacción: si no se puede escribir, la
+  // factura no puede quedar. El doble de `$transaction` re-propaga el error
+  // igual que la transacción real, que además revierte la fila.
+  it("si la auditoría transaccional falla, la llamada entera falla", async () => {
+    mockLockedPending(pendingForDelivery({ quantity: 10, inventoryReadyQuantity: 0, invoicedQuantity: 0, customerStatus: "POR_CONTACTAR" }));
+    const writeAudit = vi.fn().mockRejectedValue(new Error("audit unavailable"));
+
+    await expect(
+      invoicePending(
+        { id: "pend-1", actorId: "op-1", scope: "own", quantity: 4, expectedInvoicedQuantity: 0, allowWithoutStock: true },
+        now,
+        { writeAudit },
+      ),
+    ).rejects.toThrow("audit unavailable");
+    expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -1495,6 +1800,58 @@ describe("updatePending", () => {
     );
 
     expect(result.rejection).toBe("BELOW_COMMITTED");
+    expect(tx.pending.update).not.toHaveBeenCalled();
+  });
+
+  // La corrección no es la captura: nunca escribe el PRODUCTO, que es donde
+  // vive la presentación guardada. Un pendiente viejo con presentación se
+  // corrige sin que esa presentación se pierda.
+  it("corregir no toca la presentación guardada en el producto", async () => {
+    lockedForEdit();
+
+    const result = await updatePending(
+      { ...correction, id: "pend-1", actorId: "adm-1", canManageAll: true },
+      now,
+    );
+
+    expect(result.rejection).toBeNull();
+    expect(tx.product.create).not.toHaveBeenCalled();
+    const [update] = tx.pending.update.mock.calls[0]!;
+    expect(update.data).not.toHaveProperty("unit");
+    expect(update.data).not.toHaveProperty("product");
+  });
+
+  // El vendedor escrito se corrige por acá, con el MISMO permiso que el resto
+  // de la corrección: el dueño una vez, gerencia siempre. Vaciarlo lo borra.
+  it("corrige el vendedor escrito con el mismo cupo, y vacío lo guarda en null", async () => {
+    lockedForEdit();
+    await updatePending(
+      { ...correction, manualSellerName: "Carlos Gómez", id: "pend-1", actorId: "op-1", canManageAll: false },
+      now,
+    );
+    expect(tx.pending.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ manualSellerName: "Carlos Gómez", sellerEditedAt: now }),
+      }),
+    );
+
+    tx.pending.update.mockClear();
+    lockedForEdit();
+    await updatePending({ ...correction, id: "pend-1", actorId: "adm-1", canManageAll: true }, now);
+    expect(tx.pending.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ manualSellerName: null }) }),
+    );
+  });
+
+  it("corregir el vendedor escrito de un pendiente ajeno se rechaza igual que cualquier dato", async () => {
+    lockedForEdit({ createdById: "otro" });
+
+    const result = await updatePending(
+      { ...correction, manualSellerName: "Carlos Gómez", id: "pend-1", actorId: "op-1", canManageAll: false },
+      now,
+    );
+
+    expect(result.rejection).toBe("NOT_OWNER");
     expect(tx.pending.update).not.toHaveBeenCalled();
   });
 

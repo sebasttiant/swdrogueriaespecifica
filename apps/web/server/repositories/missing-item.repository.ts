@@ -122,9 +122,10 @@ export type MissingItemScope =
 //   all      sin filtrar. Es el default para no cambiar en silencio lo que ve
 //            un llamador que todavía no eligió eje.
 //
-// El motor NO distingue: la entrada de inventario recorre `missing_items` por
-// producto y llega al pendiente por `originId`. Este eje es de LECTURA, para
-// decidir qué pantalla muestra qué. Ver `inventory-entry.service.ts`.
+// La entrada de inventario SÍ distingue: solo reparte stock a los ligados a una
+// venta (`originId` no nulo) y llega al pendiente por `originId`; un faltante
+// informativo nunca recibe asignación. Fuera de eso, este eje es de LECTURA,
+// para decidir qué pantalla muestra qué. Ver `inventory-entry.service.ts`.
 // --------------------------------------------------------------------------
 export const MISSING_ORIGINS = ["pending", "shelf", "all"] as const;
 
@@ -433,17 +434,48 @@ function whereForScope(scope: MissingItemScope | undefined) {
   }
 }
 
+// --------------------------------------------------------------------------
+// "ABIERTO" DEPENDE DEL ORIGEN, y por eso se decide acá y no en `OPEN_STATUSES`.
+//
+//   Informativo (`originId` nulo): abierto = TODAVÍA NO PEDIDO, la misma regla
+//   que la cola "Por pedir" (`ACTIONABLE_STATUSES`). La entrada de inventario ya
+//   no le asigna stock, así que un PEDIDO de estantería no espera nada que lo
+//   vaya a cerrar: "Ya lo pedí" es su cierre para contadores y export.
+//
+//   Ligado a venta: `OPEN_STATUSES`, como siempre. Hay un cliente esperando la
+//   mercadería, y ese PEDIDO sigue abierto hasta que la entrada lo complete.
+//
+// Sin eje suma las dos reglas: el KPI de reportería llama sin argumento.
+// Sacar PEDIDO de `OPEN_STATUSES` en vez de esto rompería a los ligados a venta
+// (ver la advertencia junto a esa constante).
+// --------------------------------------------------------------------------
+function openWhereForOrigin(
+  origin: MissingItemOrigin,
+): Prisma.MissingItemWhereInput {
+  const shelf = {
+    originId: null,
+    confirmedAt: null,
+    status: { in: ACTIONABLE_STATUSES },
+  };
+  const pending = {
+    originId: { not: null },
+    confirmedAt: null,
+    status: { in: OPEN_STATUSES },
+  };
+  switch (origin) {
+    case "shelf":
+      return shelf;
+    case "pending":
+      return pending;
+    default:
+      return { OR: [shelf, pending] };
+  }
+}
+
 export function countOpenMissingItems(
   origin: MissingItemOrigin = "all",
 ): Promise<number> {
-  const originWhere = whereForOrigin(origin);
-  return prisma.missingItem.count({
-    where: {
-      confirmedAt: null,
-      status: { in: OPEN_STATUSES },
-      ...(originWhere ?? {}),
-    },
-  });
+  return prisma.missingItem.count({ where: openWhereForOrigin(origin) });
 }
 
 /**
@@ -471,13 +503,10 @@ const EXPORT_MAX = 2000;
 export function listOpenMissingItemsForExport(
   origin: MissingItemOrigin = "all",
 ): Promise<MissingItemListItem[]> {
-  const originWhere = whereForOrigin(origin);
   return prisma.missingItem.findMany({
-    where: {
-      confirmedAt: null,
-      status: { in: OPEN_STATUSES },
-      ...(originWhere ?? {}),
-    },
+    // La misma regla por origen que `countOpenMissingItems`: el export y el
+    // contador tienen que hablar de las mismas filas.
+    where: openWhereForOrigin(origin),
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: EXPORT_MAX,
     select: LIST_SELECT,
@@ -713,19 +742,18 @@ export async function markMissingItemArrived(
   tx: Prisma.TransactionClient,
   data: { id: string; arrivedById: string; arrivedAt: Date },
 ): Promise<number> {
-  // El origen decide desde qué estados se admite la llegada, así que se lee
-  // ANTES de intentar el compare-and-set. Una fila de estantería sigue
-  // exigiendo PEDIDO: sin orden de compra nadie debería estar recibiéndola.
+  // El origen decide si se admite la llegada, así que se lee ANTES de intentar
+  // el compare-and-set. Un faltante informativo (`originId` null: estantería,
+  // manual o reporte del vendedor) nunca se recibe, así que "ya llegó" lo
+  // rechaza sin escribir nada, aunque esté PEDIDO y aunque se invoque directo.
   const target = await tx.missingItem.findUnique({
     where: { id: data.id },
     select: { originId: true },
   });
-  if (!target) return 0;
-
-  const allowed = target.originId ? ARRIVABLE_FROM_PENDING : ARRIVABLE_FROM_ORDER;
+  if (!target || !target.originId) return 0;
 
   const { count } = await tx.missingItem.updateMany({
-    where: { id: data.id, status: { in: [...allowed] }, confirmedAt: null },
+    where: { id: data.id, status: { in: [...ARRIVABLE_FROM_PENDING] }, confirmedAt: null },
     data: { status: "EN_BODEGA", arrivedById: data.arrivedById, arrivedAt: data.arrivedAt },
   });
   if (count === 0) return 0;
@@ -837,6 +865,9 @@ export async function closeMissingItemsByEntry(
       productId: params.productId,
       status: { in: RECONCILABLE_STATUSES },
       confirmedAt: null,
+      // Solo ligados a una venta: un faltante informativo no espera mercadería
+      // para nadie y la entrada no lo cierra (mismo criterio que el reparto FIFO).
+      originId: { not: null },
     },
     orderBy: { createdAt: "asc" },
     select: {

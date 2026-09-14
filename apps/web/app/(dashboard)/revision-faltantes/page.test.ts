@@ -30,7 +30,10 @@ vi.mock("@/server/services/missing-receiver.service", async (original) => {
   return { ...actual, listReceiverQueue: mocks.listReceiverQueue };
 });
 
+import { Children, isValidElement, type ReactElement } from "react";
+
 import { UNCLOSED_MISSING_ALERT_HOURS } from "@/features/faltantes/missing-stale";
+import { ReceiverQueue } from "@/features/faltantes/receiver-queue";
 import { MAX_REVIEW_QUEUE_PAGE } from "@/features/faltantes/report-queue-paging";
 import { DEFAULT_PAGE_SIZE } from "@/lib/pagination";
 
@@ -357,33 +360,50 @@ describe("RevisionFaltantesPage · el eje de demora", () => {
 // la llegada y carga la entrada sin cambiar de pantalla.
 // --------------------------------------------------------------------------
 describe("RevisionFaltantesPage · la recepción de estantería", () => {
+  /** La cola que la página le entrega a bodega, tal como la va a pintar. */
+  async function colaDeBodega(params: { scope?: string } = {}) {
+    const page = (await RevisionFaltantesPage({
+      searchParams: searchParams(params),
+    })) as ReactElement<{ children: ReactElement[] }>;
+    const cola = Children.toArray(page.props.children).find(
+      (child): child is ReactElement<{ items: unknown[]; scope: string }> =>
+        isValidElement(child) && child.type === ReceiverQueue,
+    );
+    expect(cola).toBeDefined();
+    return cola!.props;
+  }
+
   it("a BODEGA le arma la cola física, no la de reportes", async () => {
     sesion("BODEGA");
 
-    await RevisionFaltantesPage({ searchParams: searchParams() });
+    await colaDeBodega();
 
-    expect(mocks.listReceiverQueue).toHaveBeenCalled();
     expect(mocks.getMissingReportQueue).not.toHaveBeenCalled();
     expect(mocks.getMissingItems).not.toHaveBeenCalled();
   });
 
-  // EL TEST QUE SOSTIENE LA SEPARACIÓN. Si esta cola trajera también los
-  // pedidos de clientes, bodega los recibiría desde acá y volvería a haber dos
-  // pantallas para completar un pendiente.
-  it("le pide SOLO la reposición de estantería", async () => {
+  // Un faltante de estantería es INFORMATIVO: la entrada ya no le asigna stock,
+  // así que no hay nada que bodega tenga que recibir por acá. Y los pedidos de
+  // clientes se reciben en Revisión de pendientes: traerlos a esta cola abriría
+  // una segunda pantalla para completar un pendiente.
+  it("la cola sale vacía y no consulta faltantes de ningún origen", async () => {
     sesion("BODEGA");
+    mocks.listReceiverQueue.mockResolvedValue([{ id: "no-deberia-verse" }]);
 
-    await RevisionFaltantesPage({ searchParams: searchParams() });
+    const cola = await colaDeBodega();
 
-    expect(mocks.listReceiverQueue).toHaveBeenCalledWith("PEDIDO", "shelf");
+    expect(cola.items).toEqual([]);
+    expect(mocks.listReceiverQueue).not.toHaveBeenCalled();
   });
 
-  it("puede abrir 'En bodega', siempre acotado a estantería", async () => {
+  it("puede abrir 'En bodega', también vacía", async () => {
     sesion("BODEGA");
 
-    await RevisionFaltantesPage({ searchParams: searchParams({ scope: "arrived" }) });
+    const cola = await colaDeBodega({ scope: "arrived" });
 
-    expect(mocks.listReceiverQueue).toHaveBeenCalledWith("EN_BODEGA", "shelf");
+    expect(cola.scope).toBe("EN_BODEGA");
+    expect(cola.items).toEqual([]);
+    expect(mocks.listReceiverQueue).not.toHaveBeenCalled();
   });
 
   // Esconder pestañas no alcanza: quien escribe la URL a mano tiene que caer en
@@ -393,9 +413,19 @@ describe("RevisionFaltantesPage · la recepción de estantería", () => {
     async (scope) => {
       sesion("BODEGA");
 
-      await RevisionFaltantesPage({ searchParams: searchParams({ scope }) });
+      const cola = await colaDeBodega({ scope });
 
-      expect(mocks.listReceiverQueue).toHaveBeenCalledWith("PEDIDO", "shelf");
+      expect(cola.scope).toBe("PEDIDO");
+      expect(cola.items).toEqual([]);
+      expect(mocks.listReceiverQueue).not.toHaveBeenCalled();
     },
   );
+
+  it("sigue protegida por la capability de recepción", async () => {
+    sesion("BODEGA");
+
+    await colaDeBodega();
+
+    expect(mocks.requireCapability).toHaveBeenCalledWith("canReceiveMissingItems");
+  });
 });

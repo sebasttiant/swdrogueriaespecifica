@@ -59,7 +59,19 @@ it("gerencia ve el gesto de alta cuando la fila todavía no tiene observación",
   mount();
   expect(screen.getByText("Agregar observación")).toBeTruthy();
   // Sin bloque de lectura: no hay nada que leer todavía.
+  expect(screen.queryByText(/^Observación gerencia:/)).toBeNull();
+});
+
+// U4: el bloque se distingue del borde de estado de la tarjeta — rótulo
+// explícito y un tinte propio, para que los dos se lean a la vez.
+it("rotula el bloque como observación de gerencia, con su tinte propio", () => {
+  const { container } = mountView("Llega el lunes");
+  expect(screen.getByText("Observación gerencia:")).toBeTruthy();
   expect(screen.queryByText(/^Gerencia:/)).toBeNull();
+  const block = container.firstElementChild as HTMLElement;
+  expect(block.className).toContain("bg-cyan-");
+  expect(block.className).toContain("dark:");
+  expect(block.className).not.toContain("bg-muted/40");
 });
 
 it("con observación cargada el gesto pasa a ser de edición", () => {
