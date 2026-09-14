@@ -5,19 +5,19 @@
 # Postgres usa Alpine en docker-compose (patrón validado).
 #
 # Stages:
-#   base     -> node trixie + pnpm 11.10.0 (Corepack)
+#   base     -> node trixie + pnpm 12.3.4 (Corepack)
 #   deps     -> instala dependencias (frozen lockfile)
 #   builder  -> prisma generate + next build (standalone)
 #   migrate  -> aplica migraciones (corre y termina; usado por compose)
 #   seed     -> carga datos iniciales (corre y termina; usado por compose)
-#   runner   -> imagen final mínima, usuario no-root
+#   runner   -> imagen final mínima (trixie-slim), usuario no-root
 # ==========================================================================
 
 # ---------- base ----------
 FROM node:24.21.0-trixie AS base
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
-RUN corepack enable && corepack prepare pnpm@11.18.0 --activate
+RUN corepack enable && corepack prepare pnpm@12.3.4 --activate
 WORKDIR /app
 
 # ---------- deps ----------
@@ -72,11 +72,26 @@ USER node
 CMD ["node_modules/.bin/prisma", "db", "seed"]
 
 # ---------- runner ----------
-FROM node:24.21.0-trixie AS runner
+FROM node:24.21.0-trixie-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
+
+# Endurecimiento de la imagen que se despliega (lo exige el escaneo de Trivy
+# en CI, que bloquea HIGH/CRITICAL con parche disponible):
+# - `apt-get upgrade`: la imagen oficial de Node se publica con los paquetes de
+#   Debian de ese día; los parches de seguridad posteriores (+deb13uN) llegan
+#   por trixie-security y solo entran si se actualizan al construir.
+# - Se quitan npm y Corepack: el runner ejecuta `node server.js` y nada más.
+#   El npm que trae la imagen arrastra sus propias dependencias vulnerables
+#   (tar, ip-address, brace-expansion), y lo que no está instalado no se puede
+#   explotar. El healthcheck y deploy.sh solo usan `node`.
+RUN apt-get update \
+  && apt-get upgrade -y --no-install-recommends \
+  && rm -rf /var/lib/apt/lists/* \
+  && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+  && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 
 # Salida standalone (incluye server.js + node_modules mínimos).
 COPY --from=builder --chown=node:node /app/apps/web/.next/standalone ./

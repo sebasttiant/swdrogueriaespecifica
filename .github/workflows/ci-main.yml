@@ -13,7 +13,7 @@ jobs:
     name: Lint · Typecheck · Test · Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: ./.github/actions/setup
 
@@ -57,7 +57,7 @@ jobs:
           --health-retries 10
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: ./.github/actions/setup
 
@@ -71,16 +71,22 @@ jobs:
   docker:
     name: Docker build
     runs-on: ubuntu-latest
+    # `security-events: write` solo para subir el SARIF de Trivy a Code scanning.
+    permissions:
+      contents: read
+      security-events: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
       - name: Build imagen web
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: apps/web/Dockerfile
           target: runner
           push: false
+          # Deja la imagen en el daemon del runner para que Trivy la escanee.
+          load: true
           tags: drogueria-especifica-web:main
           # SHA COMPLETO del commit. El build del cliente se marca con él, y esa
           # marca es lo único que después permite detectar que una pestaña vieja
@@ -88,6 +94,89 @@ jobs:
           # `unknown` y el guard no puede comparar nada.
           build-args: |
             APP_VERSION=${{ github.sha }}
+
+      # Fijado por SHA y no por tag: en marzo de 2026 se secuestraron tags de las
+      # actions de Trivy en un incidente de cadena de suministro. Un tag se puede
+      # mover; un SHA no.
+      - name: Instalar Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.74.0
+
+      # Escanea la imagen que se despliega (paquetes de Debian + node_modules del
+      # standalone). Solo bloquea lo HIGH/CRITICAL que ya tiene parche.
+      - name: Trivy · imagen
+        run: |
+          trivy image drogueria-especifica-web:main \
+            --scanners vuln \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --ignorefile .trivyignore \
+            --exit-code 1 \
+            --format sarif \
+            --output trivy-image.sarif
+
+      # `always()`: el reporte se sube también cuando Trivy encontró algo, que es
+      # justo cuando más interesa verlo en Code scanning.
+      - name: Subir SARIF de Trivy (imagen)
+        if: always() && hashFiles('trivy-image.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image
+
+  # Advisories de npm sobre el lockfile. Los transitivos se corrigen con los
+  # `overrides` de pnpm-workspace.yaml, no ignorándolos.
+  audit:
+    name: Audit de dependencias
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup
+
+      - name: pnpm audit (HIGH y CRITICAL)
+        run: pnpm audit --audit-level=high
+
+  # Trivy sobre el repositorio: vulnerabilidades del lockfile (otra base de
+  # advisories que `audit`) y secretos en el árbol actual. gitleaks sigue
+  # mirando el historial. No instala dependencias: le basta pnpm-lock.yaml.
+  trivy-fs:
+    name: Trivy · dependencias y secretos
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+
+      # Fijado por SHA y no por tag: en marzo de 2026 se secuestraron tags de las
+      # actions de Trivy en un incidente de cadena de suministro. Un tag se puede
+      # mover; un SHA no.
+      - name: Instalar Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.74.0
+
+      - name: Trivy · filesystem
+        run: |
+          trivy fs . \
+            --scanners vuln,secret \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --ignorefile .trivyignore \
+            --exit-code 1 \
+            --format sarif \
+            --output trivy-fs.sarif
+
+      - name: Subir SARIF de Trivy (filesystem)
+        if: always() && hashFiles('trivy-fs.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs
 
   # Despliegue: preparado, sin deploy real todavía (Fase posterior).
   deploy:

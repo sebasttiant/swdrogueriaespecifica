@@ -8,7 +8,7 @@ runs:
   steps:
     # La versión NO se escribe acá: se lee de .nvmrc, que es el mismo archivo
     # que usa `nvm use` en la máquina de quien desarrolla. Una sola fuente.
-    - uses: actions/setup-node@v4
+    - uses: actions/setup-node@v7
       with:
         node-version-file: .nvmrc
 
