@@ -64,6 +64,9 @@ export const AUDIT_ACTIONS = {
   // La observación de gerencia. Registra la VERSIÓN, nunca el texto: la
   // observación puede nombrar al cliente y la auditoría se exporta.
   PENDING_OBSERVATION: "pending.observation",
+  // El depósito de compra (dónde se pidió). Guarda el antes y el después: es un
+  // código de bodega, no un dato del cliente.
+  PENDING_PURCHASE_DEPOSIT_UPDATED: "pending.purchase_deposit.updated",
   // Faltantes
   MISSING_AUTO_CREATE: "missing.auto.create",
   MISSING_CREATE: "missing.create",

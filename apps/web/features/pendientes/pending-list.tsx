@@ -45,6 +45,7 @@ import {
   PendingObservationView,
 } from "./pending-observation-form";
 import { PendingCustomerLifecycleForm } from "./pending-customer-lifecycle-form";
+import { PendingPurchaseDepositForm } from "./pending-purchase-deposit-form";
 
 // Color de estado LOCAL de la tarjeta: un borde izquierdo con los tokens del
 // tema. La regla vive en `pendingStateTone`; acá solo se pinta.
@@ -67,6 +68,10 @@ type PendingListProps = {
   // Autoridad de gerencia sobre la observación (`canWriteManagementObservation`).
   // LEERLA no necesita permiso: la observación es para el vendedor.
   canWriteObservation: boolean;
+  // Depósito de compra (`canManagePurchaseDeposit`): gerencia y bodega lo ven y
+  // lo escriben. Sin esto no se pinta NADA del depósito, y en `false` por
+  // defecto: olvidarlo esconde el dato, nunca lo muestra.
+  canManagePurchaseDeposit?: boolean;
   // Quién mira. Reemplaza al viejo `canContactOrInvoice`, que era un booleano
   // de rol: no sabía de quién era la fila, así que no podía distinguir un
   // pendiente propio de uno ajeno ni un pendiente cargado de uno sin stock.
@@ -136,6 +141,7 @@ export function PendingList({
   canCancel,
   canManageStatus,
   canWriteObservation,
+  canManagePurchaseDeposit = false,
   viewer,
   scope,
   pageHref,
@@ -380,6 +386,20 @@ export function PendingList({
                 observedByName={pending.managementObservationBy?.name ?? null}
               />
             )}
+
+            {/* Depósito de compra: dónde se pidió. Solo gerencia y bodega; la
+                consulta ni siquiera lo trae para los demás. En un pendiente
+                cerrado se lee, pero ya no se cambia. */}
+            {canManagePurchaseDeposit && isOpen ? (
+              <PendingPurchaseDepositForm
+                pendingId={pending.id}
+                deposit={pending.purchaseDeposit ?? null}
+              />
+            ) : canManagePurchaseDeposit && pending.purchaseDeposit ? (
+              <p className="break-words text-sm text-muted-foreground">
+                {`Depósito: ${pending.purchaseDeposit}`}
+              </p>
+            ) : null}
 
             {showManagement || showDeliverCancel ? (
               <div className="flex flex-col gap-3 border-t border-border pt-3">

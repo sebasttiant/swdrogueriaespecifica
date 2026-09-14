@@ -648,6 +648,10 @@ model Pending {
   managementObservationAt      DateTime?
   managementObservationBy      User?     @relation("PendingObservationBy", fields: [managementObservationById], references: [id])
   managementObservationById    String?
+  // Depósito de compra: dónde se pidió el producto (N1, N3, Depósito 2). Texto
+  // libre y opcional de gerencia y bodega. Solo lo leen los roles con
+  // `canManagePurchaseDeposit`: los listados lo seleccionan únicamente para ellos.
+  purchaseDeposit           String?
   // Aplazamiento de identidad: el vendedor capturó sin el código. Vive en el
   // PENDIENTE porque es un hecho de ESTA venta, no del catálogo. El aviso se
   // DERIVA de este motivo más `product.orionCode IS NULL`, así que se cura solo

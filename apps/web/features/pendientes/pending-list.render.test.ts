@@ -18,11 +18,13 @@ vi.mock("@/server/actions/pending.actions", () => ({
   cancelPendingAction: vi.fn(),
   updatePendingManagementStatusAction: vi.fn(),
   invoicePendingAction: vi.fn(),
+  updatePendingPurchaseDepositAction: vi.fn(),
 }));
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
+import { can } from "@/lib/auth/permissions";
 import type { PendingListItem } from "@/server/repositories/pending.repository";
 import { IDENTITY_WARNING_LABEL } from "./identity-warning";
 
@@ -79,6 +81,7 @@ function renderList(
     canCancel: boolean;
     canManageStatus: boolean;
     canWriteObservation: boolean;
+    canManagePurchaseDeposit: boolean;
     items: PendingListItem[];
     nextCursor: string | null;
     scope: "active" | "history";
@@ -97,6 +100,7 @@ function renderList(
       canCancel: props.canCancel ?? true,
       canManageStatus: props.canManageStatus ?? false,
       canWriteObservation: props.canWriteObservation ?? false,
+      canManagePurchaseDeposit: props.canManagePurchaseDeposit ?? false,
       scope,
       // La página es la que arma el enlace, porque es la única que conoce la
       // vista completa. Acá se usa el mismo constructor que en producción.
@@ -917,4 +921,57 @@ describe("PendingList · medio de pago", () => {
     expect(html).not.toContain("Transferencia");
     expect(html).not.toContain("Efectivo");
   });
+});
+
+// El depósito de compra es de gerencia y bodega. Para el resto no existe: ni
+// el texto, ni el campo, ni un input oculto con el valor.
+describe("PendingList · depósito de compra", () => {
+  const DEPOSIT = "N3 Bodega sur";
+
+  it("quien lo gestiona ve el valor y el formulario para cambiarlo", () => {
+    const html = renderList({
+      items: [pending({ status: "PENDIENTE", purchaseDeposit: DEPOSIT })],
+      canManagePurchaseDeposit: true,
+    });
+
+    expect(html).toContain("Depósito");
+    expect(html).toContain('name="deposit"');
+    expect(html).toContain(`value="${DEPOSIT}"`);
+    expect(html).toContain("Guardar");
+  });
+
+  it("sin valor todavía también ofrece el campo", () => {
+    const html = renderList({
+      items: [pending({ status: "PENDIENTE", purchaseDeposit: null })],
+      canManagePurchaseDeposit: true,
+    });
+
+    expect(html).toContain('name="deposit"');
+  });
+
+  it("en un pendiente cerrado muestra el valor sin formulario", () => {
+    const html = renderList({
+      items: [pending({ status: "ENTREGADO", purchaseDeposit: DEPOSIT })],
+      canManagePurchaseDeposit: true,
+      scope: "history",
+    });
+
+    expect(html).toContain(`Depósito: ${DEPOSIT}`);
+    expect(html).not.toContain('name="deposit"');
+  });
+
+  it.each(["OPERADOR", "SUPERVISOR"] as const)(
+    "%s no recibe nada del depósito, aunque la fila lo trajera",
+    (role) => {
+      const html = renderList({
+        items: [pending({ status: "PENDIENTE", purchaseDeposit: DEPOSIT })],
+        canManagePurchaseDeposit: can(role, "canManagePurchaseDeposit"),
+      });
+
+      expect(html).not.toContain("Depósito");
+      expect(html).not.toContain(DEPOSIT);
+      expect(html).not.toContain('name="deposit"');
+      expect(html).not.toContain("purchase-deposit");
+    },
+  );
 });

@@ -876,3 +876,29 @@ describe("alcance de facturación por rol", () => {
     expect(invoiceScopeFor("BODEGA")).toBe("own");
   });
 });
+
+// --------------------------------------------------------------------------
+// Depósito de compra: dónde se pidió el producto. Es información de compras y
+// de bodega, no del vendedor ni de supervisión: quien no la tiene no la ve ni
+// la escribe.
+// --------------------------------------------------------------------------
+describe("canManagePurchaseDeposit (depósito de compra)", () => {
+  it("la tienen gerencia y bodega, nunca supervisión ni el vendedor", () => {
+    expect(rolesWithCapability("canManagePurchaseDeposit")).toEqual([
+      "SUPERADMIN",
+      "ADMIN",
+      "BODEGA",
+    ]);
+    expect(can("SUPERVISOR", "canManagePurchaseDeposit")).toBe(false);
+    expect(can("OPERADOR", "canManagePurchaseDeposit")).toBe(false);
+  });
+
+  it("no se deriva de operar la cola completa", () => {
+    // Supervisión opera todos los pendientes y aun así no ve el depósito;
+    // bodega no opera los ajenos y aun así lo escribe en cualquiera.
+    expect(can("SUPERVISOR", "canManageAllPendings")).toBe(true);
+    expect(can("SUPERVISOR", "canManagePurchaseDeposit")).toBe(false);
+    expect(can("BODEGA", "canManageAllPendings")).toBe(false);
+    expect(can("BODEGA", "canManagePurchaseDeposit")).toBe(true);
+  });
+});

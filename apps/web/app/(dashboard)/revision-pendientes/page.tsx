@@ -114,6 +114,9 @@ export default async function RevisionPendientesPage({
   // Eje propio: supervisión opera la cola entera y aun así no habla en
   // nombre de gerencia. Solo ADMIN/SUPERADMIN escriben la observación.
   const canWriteObservation = can(session.user.role, "canWriteManagementObservation");
+  // Depósito de compra: gerencia y bodega. El MISMO booleano decide si la
+  // consulta lee la columna y si la lista la pinta.
+  const canManagePurchaseDeposit = can(session.user.role, "canManagePurchaseDeposit");
 
   const { cursor, scope: rawScope, tab: rawTab, focus: rawFocus, ...rawAxes } = await searchParams;
 
@@ -187,6 +190,7 @@ export default async function RevisionPendientesPage({
           scope,
           axes,
           canViewCustomerIdentity,
+          canViewPurchaseDeposit: canManagePurchaseDeposit,
           ownerId,
           now,
         }),
@@ -217,6 +221,7 @@ export default async function RevisionPendientesPage({
           scope,
           axes,
           canViewCustomerIdentity,
+          canViewPurchaseDeposit: canManagePurchaseDeposit,
           ownerId,
         })
       : null;
@@ -277,6 +282,7 @@ export default async function RevisionPendientesPage({
                 canCancel={canCancel}
                 canManageStatus={canManageStatus}
                 canWriteObservation={canWriteObservation}
+                canManagePurchaseDeposit={canManagePurchaseDeposit}
                 viewer={viewer}
                 scope={scope}
                 pageHref={() => ""}
@@ -291,6 +297,7 @@ export default async function RevisionPendientesPage({
             canCancel={canCancel}
             canManageStatus={canManageStatus}
             canWriteObservation={canWriteObservation}
+            canManagePurchaseDeposit={canManagePurchaseDeposit}
             viewer={viewer}
             scope={scope}
             pageHref={(nextCursor) =>

@@ -72,6 +72,9 @@ export default async function PendientesPage({
   // capability que pedir un faltante, no la de cancelar.
   const canManageStatus = can(session.user.role, "canOrderMissingItems");
   const canWriteObservation = can(session.user.role, "canWriteManagementObservation");
+  // Depósito de compra: gerencia y bodega. El MISMO booleano decide si la
+  // consulta lee la columna y si la lista la pinta.
+  const canManagePurchaseDeposit = can(session.user.role, "canManagePurchaseDeposit");
 
   // Los avisos de llegada son SIEMPRE los propios: `listArrivalNotices` filtra
   // por `createdById`, así que ver toda la cola no da derecho a ver los avisos
@@ -103,6 +106,7 @@ export default async function PendientesPage({
       scope,
       axes,
       canViewCustomerIdentity,
+      canViewPurchaseDeposit: canManagePurchaseDeposit,
       ownerId: canSeeAll ? undefined : session.user.id,
       now: new Date(),
     }),
@@ -211,6 +215,7 @@ export default async function PendientesPage({
           items={pendings.items}
           canOrder={canManageStatus}
           canWriteObservation={canWriteObservation}
+          canViewPurchaseDeposit={canManagePurchaseDeposit}
           canDeliver={canDeliver}
           viewer={viewer}
           canCancel={canCancel}
@@ -237,6 +242,7 @@ export default async function PendientesPage({
           canCancel={canCancel}
           canManageStatus={canManageStatus}
           canWriteObservation={canWriteObservation}
+          canManagePurchaseDeposit={canManagePurchaseDeposit}
           viewer={viewer}
           scope={scope}
           pageHref={(nextCursor) =>

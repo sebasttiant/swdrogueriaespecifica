@@ -270,6 +270,17 @@ export const CAPABILITIES = [
   // LEER la observación no necesita capacidad: quien ya tiene el pendiente
   // delante lo ve entero. La restricción es sobre quién ESCRIBE.
   "canWriteManagementObservation",
+  // Ver y escribir el DEPÓSITO DE COMPRA de un pendiente: dónde se pidió el
+  // producto (N1, N3, Depósito 2). Es información de compras y de bodega, no
+  // del vendedor ni de supervisión, así que es UNA capacidad para las dos
+  // cosas: quien no la tiene no recibe el dato en ningún payload. Mismo
+  // mecanismo que `canViewCustomerIdentity`: la minimización ocurre en la
+  // CONSULTA, no escondiendo el campo en el render.
+  //
+  // Es un eje distinto de `canManageAllPendings`: bodega la escribe sobre
+  // CUALQUIER pendiente sin poder operar los ajenos, porque es dato del pedido
+  // al proveedor y no una acción sobre el cliente.
+  "canManagePurchaseDeposit",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -400,6 +411,9 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     "canDeliverPendings",
     "canCancelPendings",
     "canReviewPendings",
+    // Depósito de compra: bodega recibe lo que se pidió y anota de qué depósito
+    // viene, en cualquier pendiente. Ver `canManagePurchaseDeposit`.
+    "canManagePurchaseDeposit",
   ],
 };
 

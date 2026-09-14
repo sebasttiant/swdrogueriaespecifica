@@ -44,6 +44,8 @@ export default async function ListaDeEsperaPage({
     : true;
 
   const canManageAll = can(role, "canManageAllPendings");
+  // Depósito de compra: gerencia y bodega. Decide si la consulta lee la columna.
+  const canViewPurchaseDeposit = can(role, "canManagePurchaseDeposit");
   const viewer: PendingViewer = {
     invoiceScope: invoiceScopeFor(role),
     contactScope: contactScopeFor(role),
@@ -59,6 +61,7 @@ export default async function ListaDeEsperaPage({
     scope: "active",
     waitlisted: true,
     canViewCustomerIdentity,
+    canViewPurchaseDeposit,
     ownerId: canSeeAll ? undefined : session.user.id,
   });
 
@@ -73,6 +76,7 @@ export default async function ListaDeEsperaPage({
         items={pendings.items}
         canOrder={can(role, "canOrderMissingItems")}
         canWriteObservation={can(role, "canWriteManagementObservation")}
+        canViewPurchaseDeposit={canViewPurchaseDeposit}
         canDeliver={can(role, "canDeliverPendings")}
         viewer={viewer}
         canCancel={can(role, "canCancelPendings")}
