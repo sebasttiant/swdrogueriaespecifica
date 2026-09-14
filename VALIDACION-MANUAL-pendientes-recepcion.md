@@ -14,7 +14,7 @@ Los resultados anteriores se conservan como antecedentes suministrados para el c
 
 | Unidad | Estado de cierre |
 | --- | --- |
-| U2 — depósito | Pendiente de implementación: falta definir quién lo ve y lo edita. No se prueba en esta versión |
+| U2 — depósito | Implementado (PR #285): lo ven y editan SUPERADMIN, ADMIN y BODEGA; OPERADOR y SUPERVISOR no. Se prueba con el caso 9 |
 | U6 | Parcial; falta completar y registrar el recorrido integrado |
 | U7 | Documentos preparados solamente; video, capacitación y aceptación no acreditados |
 
@@ -44,7 +44,7 @@ Cada fila es una prueba **pendiente**, no un resultado observado. Completar obse
 | 7c. Comparar pendientes propios y ajenos en Seguimiento | OPERADOR: propios. SUPERVISOR/ADMIN/SUPERADMIN: toda la cola y operación. BODEGA: lectura global sin identidad del cliente; acciones de cliente solo sobre propios. | Pendiente | ______ | ______ |
 | 8. ADMIN: revisar pestañas, contador Por pedir y export de `/revision-faltantes` | Los registros originados en pendientes de clientes no aparecen ni se cuentan/exportan como faltantes de estantería. Un mismo producto podría tener un faltante independiente: contrastar origen, no solo nombre. | Pendiente | ______ | ______ |
 | 8b. Dashboard frente a colas, con iguales filtros y alcance | Faltantes de estantería y pendientes por abastecer se distinguen. Contrastar contadores con el conjunto correspondiente, no solo la primera página. | Pendiente | ______ | ______ |
-| 9. Depósito (U2) | No implementado en esta versión: no hay nada que probar. Registrar que queda pendiente de definir quién lo ve y lo edita. | No aplica | ______ | ______ |
+| 9. Depósito (U2): ADMIN o BODEGA escribe «N3» en **Depósito** de un pendiente abierto (vista detallada) y guarda; luego lo borra dejándolo vacío. Consultar el mismo pendiente como OPERADOR y SUPERVISOR | ADMIN, SUPERADMIN y BODEGA ven «Depósito: N3»; guardar vacío lo borra; el campo no admite más de 80 caracteres; un pendiente cerrado lo muestra sin permitir cambiarlo. OPERADOR y SUPERVISOR no ven el campo ni el valor en ninguna vista. La auditoría registra «Depósito de compra actualizado» con el valor anterior y el nuevo. | Pendiente | ______ | ______ |
 | 10. OPERADOR: capturar un pendiente de producto manual, con y sin el campo **Vendedor**; editar un pendiente antiguo que tenía presentación | La captura no pide presentación. El vendedor escrito se ve junto a quien anotó; vacío no muestra nada. El pendiente antiguo abre y guarda sin perder su presentación. | Pendiente | ______ | ______ |
 | 11. BODEGA: registrar una entrada sin lote ni vencimiento; luego otra del mismo lote real con otra fecha | La primera se guarda («Sin lote» / «Sin vencimiento») y el stock queda vendible. La segunda se rechaza con mensaje claro, sin cambios. | Pendiente | ______ | ______ |
 | 12. OPERADOR reporta un faltante de estantería; ADMIN marca **Ya lo pedí** | Queda en «Ya pedidos» y deja de contar como abierto. No aparece en la cola de recepción de bodega y una entrada del mismo producto no lo consume. | Pendiente | ______ | ______ |

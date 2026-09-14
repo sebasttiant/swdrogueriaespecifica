@@ -27,6 +27,7 @@ import {
 // código válido es exactamente cómo nace un validador que acepta lo que la
 // base rechaza: el incidente de `totalAmount` de agosto de 2026, otra vez.
 import { normalizeOrionCode } from "@/server/domain/catalog/sku-identity";
+import { PURCHASE_DEPOSIT_MAX_LENGTH } from "@/features/pendientes/purchase-deposit";
 
 // Texto opcional que llega desde FormData: se normaliza vacío/espacios a
 // `undefined` para no persistir cadenas vacías como si fueran datos.
@@ -527,6 +528,23 @@ export const pendingObservationSchema = z.object({
 });
 
 export type PendingObservationInput = z.infer<typeof pendingObservationSchema>;
+
+// --------------------------------------------------------------------------
+// Depósito de compra de un pendiente (N1, N3, Depósito 2).
+//
+// Se recorta, y vacío o solo espacios significa "sin depósito": se guarda
+// `null`, nunca una cadena vacía que parezca un dato.
+// --------------------------------------------------------------------------
+export const pendingPurchaseDepositSchema = z.object({
+  id: z.string().trim().min(1, "Falta el id del pendiente"),
+  deposit: z
+    .string()
+    .trim()
+    .max(PURCHASE_DEPOSIT_MAX_LENGTH, {
+      error: `El depósito admite hasta ${PURCHASE_DEPOSIT_MAX_LENGTH} caracteres.`,
+    })
+    .transform((value) => (value.length > 0 ? value : null)),
+});
 
 // --------------------------------------------------------------------------
 // Edición de un pendiente por parte de quien administra.

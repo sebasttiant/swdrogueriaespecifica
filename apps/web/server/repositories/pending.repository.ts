@@ -109,6 +109,11 @@ export type PendingListItem = {
   // pendiente lo sigue diciendo la relación. Opcional como las demás columnas
   // nuevas.
   manualSellerName?: string | null;
+  // Depósito de compra: dónde se pidió el producto. Solo gerencia y bodega lo
+  // ven, así que NO está en los select de siempre: se lee únicamente cuando la
+  // consulta lo pide con `canViewPurchaseDeposit`. Para los demás roles la
+  // propiedad no existe en la fila, ni siquiera vacía.
+  purchaseDeposit?: string | null;
 };
 
 export type CreatePendingData = {
@@ -196,6 +201,15 @@ const HISTORY_SELECT = {
     orderBy: { deliveredAt: "asc" as const },
   },
 } as const;
+
+// El select de una vista. El depósito de compra se agrega SOLO cuando quien
+// mira puede verlo (`canManagePurchaseDeposit`): lo que no se lee de la base no
+// puede viajar en ningún payload. Sin el flag no se lee, así que olvidarse de
+// pasarlo esconde el dato, nunca lo filtra.
+function viewSelect(scope: PendingScope | undefined, canViewPurchaseDeposit: boolean | undefined) {
+  const base = scope === "history" ? HISTORY_SELECT : LIST_SELECT;
+  return canViewPurchaseDeposit ? { ...base, purchaseDeposit: true as const } : base;
+}
 
 // Mismo eje que `MissingItemScope`: "active" es la vista operativa (lo que
 // todavía se trabaja) e "history" abre los estados cerrados. El default es
@@ -352,14 +366,14 @@ function viewWhere(params: PendingViewParams): Prisma.PendingWhereInput {
  * existe" de "no es tuyo", porque distinguirlos ya diría de quién es.
  */
 export async function findPendingInView(
-  params: PendingViewParams & { id: string },
+  params: PendingViewParams & { id: string; canViewPurchaseDeposit?: boolean },
 ): Promise<PendingListItem | null> {
-  const { id, ...view } = params;
+  const { id, canViewPurchaseDeposit, ...view } = params;
   if (!id) return null;
 
   return prisma.pending.findFirst({
     where: { ...viewWhere(view), id },
-    select: view.scope === "history" ? HISTORY_SELECT : LIST_SELECT,
+    select: viewSelect(view.scope, canViewPurchaseDeposit),
   });
 }
 
@@ -371,6 +385,8 @@ export async function listPendings(params: {
   axes?: PendingAxisFilters;
   waitlisted?: boolean;
   now?: Date;
+  // Decide QUÉ columnas se leen, nunca QUÉ filas. Ver `viewSelect`.
+  canViewPurchaseDeposit?: boolean;
 }): Promise<Paginated<PendingListItem>> {
   const take = clampTake(params.take);
   let cursorId = params.cursor ? decodeCursor(params.cursor) : null;
@@ -400,7 +416,7 @@ export async function listPendings(params: {
     ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
     where,
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    select: params.scope === "history" ? HISTORY_SELECT : LIST_SELECT,
+    select: viewSelect(params.scope, params.canViewPurchaseDeposit),
   });
 
   const hasMore = rows.length > take;
@@ -920,6 +936,47 @@ export async function setPendingManagementObservation(
     },
   });
   return count;
+}
+
+// --------------------------------------------------------------------------
+// Depósito de compra de un pendiente.
+//
+// Se lee con la fila BLOQUEADA (`FOR UPDATE`) dentro de la transacción del
+// service: el "antes" que queda auditado es exactamente el valor que se
+// reemplaza, aunque dos personas guarden a la vez. El UPDATE repite además la
+// condición de estado, así que un pendiente cerrado no se toca por ningún
+// camino.
+// --------------------------------------------------------------------------
+export type PendingPurchaseDepositRow = {
+  id: string;
+  status: PendingStatus;
+  purchaseDeposit: string | null;
+};
+
+export async function lockPendingPurchaseDeposit(
+  client: Prisma.TransactionClient,
+  id: string,
+): Promise<PendingPurchaseDepositRow | null> {
+  const rows = await client.$queryRaw<PendingPurchaseDepositRow[]>`
+    SELECT id, status, "purchaseDeposit" FROM pendings WHERE id = ${id} FOR UPDATE
+  `;
+  return rows[0] ?? null;
+}
+
+export async function updatePendingPurchaseDeposit(
+  client: Prisma.TransactionClient,
+  data: { id: string; deposit: string | null },
+): Promise<number> {
+  const { count } = await client.pending.updateMany({
+    where: { id: data.id, status: { notIn: HISTORY_STATUSES } },
+    data: { purchaseDeposit: data.deposit },
+  });
+  return count;
+}
+
+/** Si el estado es de cierre: el mismo conjunto que abre el historial. */
+export function isClosedPendingStatus(status: PendingStatus): boolean {
+  return HISTORY_STATUSES.includes(status);
 }
 
 // --------------------------------------------------------------------------

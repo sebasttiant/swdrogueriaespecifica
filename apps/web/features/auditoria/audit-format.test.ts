@@ -54,6 +54,19 @@ describe("formatAuditAction", () => {
     ).toBe("Ana facturó un pendiente sin stock.");
   });
 
+  it("nombra el cambio del depósito de compra", () => {
+    expect(formatAuditAction("pending.purchase_deposit.updated")).toBe(
+      "Depósito de compra actualizado",
+    );
+    expect(
+      buildAuditSummary({
+        actor: "Bodega",
+        action: "pending.purchase_deposit.updated",
+        result: "SUCCESS",
+      }),
+    ).toBe("Bodega actualizó el depósito de un pendiente.");
+  });
+
   it("humaniza de forma segura una acción no contemplada", () => {
     expect(formatAuditAction("inventory.bulk_adjust")).toBe(
       "Inventory bulk adjust",

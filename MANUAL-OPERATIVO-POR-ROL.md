@@ -30,7 +30,7 @@ Una entrada parcial mantiene el déficit pendiente. La cola de clientes está en
 - **Entradas:** lote y vencimiento son opcionales. Sin lote se registra como «Sin lote»; un lote ya registrado con otro vencimiento se rechaza.
 - **Faltantes de estantería (informativos):** los reporta el vendedor y los gestiona compras. Cuando compras marca **Ya lo pedí**, el faltante queda terminado; bodega no lo recibe.
 - **Revisión de pendientes:** filtro **Listos para facturar (N)**, donde N es la cantidad de pendientes. Borde amarillo cuando hay algo para facturar; borde rojo con la palabra **Agotado** cuando compras lo marcó agotado y no hay nada para facturar. Línea verde **Ya llegó a bodega** o **Ya llegó parte a bodega**. La **Observación gerencia** se ve en un recuadro celeste.
-- **Depósito:** no está incluido en esta versión; queda pendiente de definir quién lo ve y lo edita.
+- **Depósito:** campo de texto libre en cada pendiente para anotar dónde se pidió el producto (por ejemplo «N3»). Lo ven y lo editan SUPERADMIN, ADMIN y BODEGA, desde la vista detallada de Pendientes o desde Revisión de pendientes; la vista compacta y la lista de espera solo lo muestran. OPERADOR y SUPERVISOR no lo ven. Guardarlo vacío lo borra y un pendiente cerrado ya no se puede cambiar.
 - **Reportes:** descarga en Excel; «Descargar PDF» abre la impresión del navegador.
 
 ## Guion breve de demostración / video

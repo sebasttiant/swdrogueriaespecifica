@@ -50,6 +50,9 @@ import {
   setPendingManagementObservation,
   updatePendingDetails,
   type PendingForEdit,
+  isClosedPendingStatus,
+  lockPendingPurchaseDeposit,
+  updatePendingPurchaseDeposit,
 } from "@/server/repositories/pending.repository";
 import { createProduct } from "@/server/repositories/product.repository";
 import { normalizeOrionCode } from "@/server/domain/catalog/sku-identity";
@@ -66,6 +69,7 @@ import {
   recordAuditInTransaction,
   type TransactionalAuditWriter,
 } from "@/server/services/transactional-audit.service";
+import type { AuditContext } from "@/server/services/audit.service";
 import type { Paginated } from "@/lib/pagination";
 import {
   can,
@@ -212,6 +216,9 @@ export async function getPendings(params: {
   // Requerido (sin default): que falte el flag debe ser un error de tipos,
   // nunca una fuga silenciosa de PII. `false` fuerza la minimización abajo.
   canViewCustomerIdentity: boolean;
+  // Depósito de compra: viaja al repositorio, que lee la columna SOLO con esto
+  // en `true`. Opcional a propósito: ausente, el dato no se lee.
+  canViewPurchaseDeposit?: boolean;
   ownerId?: string;
   // Ejes de revisión: acotan QUÉ se lista, nunca QUIÉN puede verlo. El recorte
   // por dueño y la minimización de identidad siguen mandando igual.
@@ -256,6 +263,7 @@ export async function getReadyToInvoiceCount(params: { ownerId?: string }): Prom
 export async function getPendingInView(params: {
   id: string;
   canViewCustomerIdentity: boolean;
+  canViewPurchaseDeposit?: boolean;
   scope?: PendingScope;
   ownerId?: string;
   axes?: PendingAxisFilters;
@@ -1350,6 +1358,68 @@ export async function setPendingObservation(
   }
 
   return { rejection: null, changed: true, version: input.expectedVersion + 1 };
+}
+
+// --------------------------------------------------------------------------
+// Depósito de compra: dónde se pidió el producto.
+//
+// Lo escriben gerencia o bodega sobre CUALQUIER pendiente abierto: es dato del
+// pedido al proveedor, no una acción sobre el cliente, así que no hay recorte
+// por dueño. Un pendiente cerrado ya no se toca, y guardar el mismo valor no
+// escribe ni audita.
+//
+// El cambio y su auditoría (antes y después) van en la MISMA transacción: un
+// depósito cambiado sin rastro no se puede explicar después. El texto llega ya
+// validado por el schema (recortado, vacío = null, largo máximo); acá solo se
+// decide sobre el estado del pendiente.
+// --------------------------------------------------------------------------
+export type SetPendingPurchaseDepositInput = {
+  id: string;
+  deposit: string | null;
+  actorId: string;
+  /** Quién y desde dónde, para el asiento. Sin esto queda solo el actor. */
+  context?: AuditContext;
+};
+
+export type SetPendingPurchaseDepositRejection = "NOT_FOUND" | "CLOSED";
+
+export type SetPendingPurchaseDepositResult = {
+  rejection: SetPendingPurchaseDepositRejection | null;
+  /** `false` cuando no hubo escritura: un rechazo o el mismo valor. */
+  changed: boolean;
+};
+
+export async function setPendingPurchaseDeposit(
+  input: SetPendingPurchaseDepositInput,
+  deps: { writeAudit?: TransactionalAuditWriter } = {},
+): Promise<SetPendingPurchaseDepositResult> {
+  return prisma.$transaction(async (tx): Promise<SetPendingPurchaseDepositResult> => {
+    const writeAudit = deps.writeAudit ?? recordAuditInTransaction;
+    const current = await lockPendingPurchaseDeposit(tx, input.id);
+    if (!current) return { rejection: "NOT_FOUND", changed: false };
+    if (isClosedPendingStatus(current.status)) return { rejection: "CLOSED", changed: false };
+    if (current.purchaseDeposit === input.deposit) return { rejection: null, changed: false };
+
+    const written = await updatePendingPurchaseDeposit(tx, {
+      id: input.id,
+      deposit: input.deposit,
+    });
+    if (written !== 1) return { rejection: "CLOSED", changed: false };
+
+    // Mismo cliente de transacción: si el asiento no se escribe, el cambio se
+    // revierte con él.
+    await writeAudit(tx, {
+      action: AUDIT_ACTIONS.PENDING_PURCHASE_DEPOSIT_UPDATED,
+      module: AUDIT_MODULES.PENDIENTES,
+      entity: "Pending",
+      entityId: input.id,
+      result: "SUCCESS",
+      before: { purchaseDeposit: current.purchaseDeposit },
+      after: { purchaseDeposit: input.deposit },
+      context: input.context ?? { userId: input.actorId },
+    });
+    return { rejection: null, changed: true };
+  });
 }
 
 // --------------------------------------------------------------------------

@@ -31,6 +31,8 @@ import {
   registerPending,
   setPendingManagementStatus,
   setPendingObservation,
+  setPendingPurchaseDeposit,
+  type SetPendingPurchaseDepositRejection,
 } from "@/server/services/pending.service";
 import { linkOrionCodeAtCapture, linkOrionCode } from "@/server/services/sku-onboarding.service";
 import { findProductById } from "@/server/repositories/product.repository";
@@ -48,6 +50,7 @@ import {
   pendingDeliverSchema,
   pendingManagementStatusSchema,
   pendingObservationSchema,
+  pendingPurchaseDepositSchema,
   pendingUpdateSchema,
 } from "@/features/pendientes/schema";
 
@@ -1181,6 +1184,70 @@ export async function updatePendingObservationAction(
   }
 
   for (const path of ["/pendientes", "/revision-pendientes"]) {
+    try {
+      revalidatePath(path);
+    } catch (error) {
+      logPendingError(null, error);
+    }
+  }
+
+  return { error: null, ok: true };
+}
+
+// --------------------------------------------------------------------------
+// Depósito de compra: dónde se pidió el producto (N1, N3, Depósito 2).
+//
+// Mismo borde que la observación: el permiso se comprueba ACÁ con
+// `requireCapability`, no escondiendo el campo. El cambio y su auditoría los
+// escribe el service en una sola transacción.
+// --------------------------------------------------------------------------
+const PURCHASE_DEPOSIT_REJECTION_MESSAGES: Record<SetPendingPurchaseDepositRejection, string> = {
+  NOT_FOUND: "No se encontró el pendiente. Actualizá la pantalla.",
+  CLOSED: "El pendiente ya está cerrado: el depósito no se puede cambiar.",
+};
+
+export async function updatePendingPurchaseDepositAction(
+  _prev: PendingFormState,
+  formData: FormData,
+): Promise<PendingFormState> {
+  const session = await requireCapability("canManagePurchaseDeposit");
+
+  const parsed = pendingPurchaseDepositSchema.safeParse({
+    id: formData.get("id"),
+    deposit: formData.get("deposit") ?? "",
+  });
+
+  if (!parsed.success) {
+    const depositIssue = parsed.error.issues.find((issue) => issue.path[0] === "deposit");
+    return {
+      error: depositIssue?.message ?? "No se pudo identificar el pendiente.",
+      ok: false,
+    };
+  }
+
+  let result: Awaited<ReturnType<typeof setPendingPurchaseDeposit>>;
+  try {
+    result = await setPendingPurchaseDeposit({
+      id: parsed.data.id,
+      deposit: parsed.data.deposit,
+      actorId: session.user.id,
+      context: await auditContextFromHeaders(session.user.id),
+    });
+  } catch (error) {
+    logPendingError(null, error);
+    return { error: "No se pudo guardar el depósito. Intentá de nuevo.", ok: false };
+  }
+
+  if (result.rejection) {
+    return { error: PURCHASE_DEPOSIT_REJECTION_MESSAGES[result.rejection], ok: false };
+  }
+
+  // Mismo valor: éxito sin novedad, nada que revalidar.
+  if (!result.changed) {
+    return { error: null, ok: true };
+  }
+
+  for (const path of ["/pendientes", "/revision-pendientes", "/lista-de-espera"]) {
     try {
       revalidatePath(path);
     } catch (error) {

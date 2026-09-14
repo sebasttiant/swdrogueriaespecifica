@@ -94,6 +94,9 @@ type PendingCompactListProps = {
   canFollowUp?: boolean;
   // Autoridad de gerencia sobre la observación. LEERLA no necesita permiso.
   canWriteObservation?: boolean;
+  // Depósito de compra, SOLO para leer (`canManagePurchaseDeposit`). Sin esto no
+  // se pinta nada del depósito; se edita en la vista detallada.
+  canViewPurchaseDeposit?: boolean;
 };
 
 // Urgencia como texto + color, nunca solo color: la mitad de las decisiones se
@@ -387,6 +390,7 @@ export function PendingCompactList({
   canManageAll = false,
   canFollowUp = false,
   canWriteObservation = false,
+  canViewPurchaseDeposit = false,
 }: PendingCompactListProps) {
   if (items.length === 0) {
     return (
@@ -482,6 +486,11 @@ export function PendingCompactList({
                       observedByName={pending.managementObservationBy?.name ?? null}
                     />
                   )}
+                  {canViewPurchaseDeposit && pending.purchaseDeposit ? (
+                    <p className="break-words text-xs text-muted-foreground">
+                      {`Depósito: ${pending.purchaseDeposit}`}
+                    </p>
+                  ) : null}
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1">
                   <p className="font-bold tabular-nums text-text">
@@ -603,6 +612,11 @@ export function PendingCompactList({
                         observedByName={pending.managementObservationBy?.name ?? null}
                       />
                     )}
+                    {canViewPurchaseDeposit && pending.purchaseDeposit ? (
+                      <span className="block break-words text-xs font-normal text-muted-foreground">
+                        {`Depósito: ${pending.purchaseDeposit}`}
+                      </span>
+                    ) : null}
                   </td>
                   <td className="px-3 py-2 tabular-nums text-muted-foreground">
                     <span className="inline-flex items-center gap-2">

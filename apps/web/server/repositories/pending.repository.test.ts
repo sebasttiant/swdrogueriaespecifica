@@ -23,6 +23,7 @@ import {
   countOverduePendings,
   countUpcomingPendings,
   findPendingDeliveryByIdempotencyKey,
+  findPendingInView,
   listPendings,
   listUrgentPendings,
   lockPendingForUpdate,
@@ -661,5 +662,72 @@ describe("decodeQueueCursor · borde del rango de int4", () => {
     const nul = String.fromCharCode(0);
     expect(decodeQueueCursor(encodeCursor(`5:${nul}x`))).toBeNull();
     expect(decodeQueueCursor(encodeCursor(`5${nul}:x`))).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Depósito de compra: minimización en la CONSULTA. Sin el permiso la columna
+// ni siquiera se lee de la base, así que no puede viajar en ningún payload.
+// ---------------------------------------------------------------------------
+describe("listPendings · depósito de compra", () => {
+  it.each(["active", "history"] as const)(
+    "no selecciona purchaseDeposit sin el permiso (scope %s)",
+    async (scope) => {
+      await listPendings({ scope });
+      await listPendings({ scope, canViewPurchaseDeposit: false });
+
+      for (const call of prismaMock.pending.findMany.mock.calls) {
+        expect(call[0].select).not.toHaveProperty("purchaseDeposit");
+      }
+    },
+  );
+
+  it.each(["active", "history"] as const)(
+    "lo selecciona con el permiso, sin perder el resto de la fila (scope %s)",
+    async (scope) => {
+      await listPendings({ scope, canViewPurchaseDeposit: true });
+
+      const args = prismaMock.pending.findMany.mock.calls[0]![0];
+      expect(args.select.purchaseDeposit).toBe(true);
+      expect(args.select.managementObservation).toBe(true);
+      expect(args.select.product).toEqual({
+        select: { id: true, name: true, code: true, unit: true, orionCode: true },
+      });
+      // El permiso decide QUÉ columnas se leen, nunca QUÉ filas.
+      expect(args.where).not.toHaveProperty("canViewPurchaseDeposit");
+    },
+  );
+});
+
+describe("findPendingInView · depósito de compra", () => {
+  it("no selecciona purchaseDeposit sin el permiso", async () => {
+    prismaMock.pending.findFirst.mockResolvedValue(null);
+
+    await findPendingInView({ id: "pend-1" });
+
+    const args = prismaMock.pending.findFirst.mock.calls[0]![0];
+    expect(args.select).not.toHaveProperty("purchaseDeposit");
+    expect(args.where).not.toHaveProperty("canViewPurchaseDeposit");
+  });
+
+  it("lo selecciona con el permiso", async () => {
+    prismaMock.pending.findFirst.mockResolvedValue(null);
+
+    await findPendingInView({ id: "pend-1", scope: "history", canViewPurchaseDeposit: true });
+
+    const args = prismaMock.pending.findFirst.mock.calls[0]![0];
+    expect(args.select.purchaseDeposit).toBe(true);
+    expect(args.select.cancelReason).toBe(true);
+  });
+});
+
+describe("listUrgentPendings · depósito de compra", () => {
+  // El dashboard lo ven todos los roles y no muestra el depósito: la consulta
+  // no lo lee nunca.
+  it("no selecciona purchaseDeposit", async () => {
+    await listUrgentPendings(5);
+
+    const args = prismaMock.pending.findMany.mock.calls[0]![0];
+    expect(args.select).not.toHaveProperty("purchaseDeposit");
   });
 });

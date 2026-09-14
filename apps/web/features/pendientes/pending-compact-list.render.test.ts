@@ -18,6 +18,7 @@ vi.mock("@/server/actions/pending.actions", () => ({
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
+import { can } from "@/lib/auth/permissions";
 import type { PendingListItem } from "@/server/repositories/pending.repository";
 import { IDENTITY_WARNING_LABEL } from "./identity-warning";
 
@@ -68,6 +69,7 @@ function render(
     // porque ofrecer facturar depende también de de quién es la fila.
     canInvoice?: boolean;
     canFollowUp?: boolean;
+    canViewPurchaseDeposit?: boolean;
     // Para probar el alcance propio; si viene, gana sobre `canInvoice`.
     viewer?: PendingViewer;
   } = {},
@@ -80,6 +82,7 @@ function render(
       viewer:
         capabilities.viewer ?? (capabilities.canInvoice ? globalViewer() : noAuthorityViewer),
       canFollowUp: capabilities.canFollowUp,
+      canViewPurchaseDeposit: capabilities.canViewPurchaseDeposit,
       nextCursor,
       pageHref: (cursor) => `/pendientes?cursor=${encodeURIComponent(cursor)}&view=lista`,
     }),
@@ -837,4 +840,38 @@ describe("PendingCompactList · qué pasó con el pendiente", () => {
 
     expect(countOccurrences(html, 'text-xs text-muted-foreground">Solicitado</span>')).toBe(2);
   });
+});
+
+// El listado muestra el depósito SOLO para leer, y solo a gerencia y bodega.
+describe("PendingCompactList · depósito de compra", () => {
+  const DEPOSIT = "N3 Bodega sur";
+
+  it("quien lo puede ver lo lee en la tarjeta y en la tabla, sin campo", () => {
+    const html = render([pending({ purchaseDeposit: DEPOSIT })], false, null, {
+      canViewPurchaseDeposit: true,
+    });
+
+    expect(countOccurrences(html, `Depósito: ${DEPOSIT}`)).toBe(2);
+    expect(html).not.toContain('name="deposit"');
+  });
+
+  it("sin valor no pinta la línea", () => {
+    const html = render([pending({ purchaseDeposit: null })], false, null, {
+      canViewPurchaseDeposit: true,
+    });
+
+    expect(html).not.toContain("Depósito:");
+  });
+
+  it.each(["OPERADOR", "SUPERVISOR"] as const)(
+    "%s no recibe nada del depósito, aunque la fila lo trajera",
+    (role) => {
+      const html = render([pending({ purchaseDeposit: DEPOSIT })], false, null, {
+        canViewPurchaseDeposit: can(role, "canManagePurchaseDeposit"),
+      });
+
+      expect(html).not.toContain("Depósito");
+      expect(html).not.toContain(DEPOSIT);
+    },
+  );
 });
