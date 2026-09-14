@@ -52,7 +52,7 @@ Resultado observado: ______ · Referencia de evidencia sin datos personales: ___
 
 Anotá paso, rol, resultado esperado/observado y referencia técnica sanitizada en [Validación manual](VALIDACION-MANUAL-pendientes-recepcion.md). No adjuntes contactos, credenciales, datos personales ni capturas a estos documentos.
 
-Consultá el [Runbook de restauración](RUNBOOK-RESTAURACION.md) como referencia técnica, no como autorización de ejecución. **No se demostró un ensayo de restauración para este cierre TEST**; la afirmación histórica del runbook no sustituye evidencia actual. El script de restauración independiente pertenece a `feat/restore-operativo`: no se presenta como integrado aquí. Este manual no fija compromisos de soporte, recuperación ni condiciones comerciales.
+Consultá el [Runbook de restauración](RUNBOOK-RESTAURACION.md) como referencia técnica, no como autorización de ejecución. **No se demostró un ensayo de restauración para este cierre TEST**; la afirmación histórica del runbook no sustituye evidencia actual. La restauración guiada de la base (`scripts/restore-data.sh`, sección 4 del runbook) está integrada en el repositorio; que funcione en un servidor real todavía no está demostrado. Este manual no fija compromisos de soporte, recuperación ni condiciones comerciales.
 
 ## Base verificada
 

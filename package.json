@@ -28,6 +28,8 @@
     "data:seed:operational:dry": "bash scripts/seed-operational-data.sh --dry-run",
     "data:seed:operational": "bash scripts/seed-operational-data.sh --execute",
     "data:restore:drill": "bash scripts/restore-drill.sh",
+    "data:restore": "bash scripts/restore-data.sh",
+    "data:restore:test": "bash scripts/restore-data.test.sh",
     "docker:build": "docker build -f apps/web/Dockerfile -t drogueria-especifica-web:local ."
   }
 }

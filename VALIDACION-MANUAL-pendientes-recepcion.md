@@ -64,7 +64,7 @@ Cada fila es una prueba **pendiente**, no un resultado observado. Completar obse
 - Código consultado para instrucciones y permisos: ver **Base verificada** del manual. Lectura de código no equivale a resultado manual en TEST.
 - Concurrencia: los resultados PostgreSQL reportados son evidencia automatizada, no un ensayo manual reproducido aquí.
 - Persistencia y destinatario de avisos, inventario tras entrega, permisos efectivos y recorrido completo deben confirmarse con las filas anteriores.
-- [Runbook de restauración](RUNBOOK-RESTAURACION.md): referencia separada. **Ensayo de restauración no demostrado para este cierre**, aunque el texto histórico indique un ensayo previo. El script independiente está en `feat/restore-operativo`, no se declara integrado. No ejecutar restauraciones desde esta planilla.
+- [Runbook de restauración](RUNBOOK-RESTAURACION.md): referencia separada. **Ensayo de restauración no demostrado para este cierre**, aunque el texto histórico indique un ensayo previo. El script de restauración guiada (`scripts/restore-data.sh`) está integrado, pero su uso en pruebas o producción no está demostrado todavía. No ejecutar restauraciones desde esta planilla.
 
 ## Acta borrador de entrega / aceptación de TEST
 
