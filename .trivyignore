@@ -1,0 +1,17 @@
+# ==========================================================================
+# .trivyignore — exclusiones de Trivy (jobs `trivy-fs` y `docker` de CI)
+#
+# Hoy NO hay exclusiones activas: todo hallazgo HIGH/CRITICAL con parche
+# bloquea CI. Se prefiere corregir (bump u `overrides` en pnpm-workspace.yaml)
+# antes que excluir.
+#
+# Si alguna vez hace falta excluir, cada id va con un comentario justo encima
+# que diga:
+#   - el id del advisory (CVE-… o GHSA-…);
+#   - la justificación: por qué no aplica o por qué no se puede parchear ya;
+#   - el plan para retirarla;
+#   - la fecha de revisión (AAAA-MM-DD).
+#
+# Se revisa cada trimestre. Una exclusión vencida o sin plan se borra y el
+# hallazgo vuelve a bloquear.
+# ==========================================================================

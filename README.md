@@ -20,20 +20,20 @@ dockerizado desde el inicio y **auditable**.
 
 | Capa        | Tecnología            | Versión        |
 | ----------- | --------------------- | -------------- |
-| Runtime     | Node.js               | 24.18.0        |
-| Package mgr | pnpm (vía Corepack)   | 11.10.0         |
-| Framework   | Next.js (App Router)  | 16.2.10        |
-| UI          | React / react-dom     | 19.2.7         |
-| Estilos     | Tailwind CSS          | 4.3.2          |
+| Runtime     | Node.js               | 24.21.0        |
+| Package mgr | pnpm (vía Corepack)   | 12.3.4         |
+| Framework   | Next.js (App Router)  | 16.3.4         |
+| UI          | React / react-dom     | 19.2.8         |
+| Estilos     | Tailwind CSS          | 4.3.3          |
 | Lenguaje    | TypeScript (strict)   | 6.0.3          |
-| ORM         | Prisma + @prisma/client | 7.8.0        |
-| Driver DB   | @prisma/adapter-pg    | 7.8.0          |
+| ORM         | Prisma + @prisma/client | 7.10.0       |
+| Driver DB   | @prisma/adapter-pg    | 7.10.0         |
 | Base datos  | PostgreSQL (Docker)   | 18.4-alpine    |
-| Validación  | Zod                   | 4.4.3          |
-| Gráficas    | Recharts              | 3.9.2          |
-| Auth (JWT)  | jose                  | 6.2.3          |
-| Hash passwd | @node-rs/argon2       | 2.0.2          |
-| App runtime | Debian 13 "trixie"    | node:24.18.0-trixie |
+| Validación  | Zod                   | 4.5.4          |
+| Gráficas    | Recharts              | 3.10.1         |
+| Auth (JWT)  | jose                  | 6.2.12         |
+| Hash passwd | @node-rs/argon2       | 2.2.0          |
+| App runtime | Debian 13 "trixie"    | node:24.21.0-trixie-slim |
 
 > **Auth (Fase 2):** sesión **JWT stateless** en cookie httpOnly — `jose` (firma
 > Edge-safe, verificable en el middleware sin tocar la DB) + `@node-rs/argon2`
@@ -43,31 +43,31 @@ dockerizado desde el inicio y **auditable**.
 
 ## Requisitos
 
-- Node.js 24.18.0 (ver `.nvmrc`).
-- Corepack (incluido en Node) para activar pnpm 11.10.0.
+- Node.js 24.21.0 (ver `.nvmrc`).
+- Corepack (incluido en Node) para activar pnpm 12.3.4.
 - Docker + Docker Compose (para levantar la base y la app).
 
-### Bootstrap del toolchain (pnpm 11.10.0) — IMPORTANTE
+### Bootstrap del toolchain (pnpm 12.3.4) — IMPORTANTE
 
-Este proyecto **exige pnpm 11.10.0** (campo `packageManager`). Hay un detalle de
+Este proyecto **exige pnpm 12.3.4** (campo `packageManager`). Hay un detalle de
 entorno a tener en cuenta:
 
-> Si en tu máquina existe un pnpm global "standalone" más viejo que 11.10.0, ese
-> pnpm intenta auto-provisionar 11.10.0 usando tu config **global** (p. ej.
+> Si en tu máquina existe un pnpm global "standalone" más viejo que 12.3.4, ese
+> pnpm intenta auto-provisionar 12.3.4 usando tu config **global** (p. ej.
 > `minimumReleaseAge`) y puede quedar **bloqueado** antes de aplicar el `.npmrc`
 > del proyecto. La solución limpia es usar el pnpm de **Corepack** directo.
 
 **Solución reproducible (no toca ninguna config global):**
 
 ```bash
-# Opción A — un solo comando (recomendado): activa pnpm 11.10.0 + instala
+# Opción A — un solo comando (recomendado): activa pnpm 12.3.4 + instala
 ./scripts/bootstrap.sh
 
 # Opción B — manual:
 corepack enable
-corepack prepare pnpm@11.10.0 --activate
+corepack prepare pnpm@12.3.4 --activate
 export PATH="$(dirname "$(command -v corepack)"):$PATH"   # prioriza el pnpm de Corepack
-pnpm -v   # debe imprimir 11.10.0
+pnpm -v   # debe imprimir 12.3.4
 pnpm install
 ```
 
@@ -88,12 +88,12 @@ pnpm check:toolchain   # o: node scripts/check-toolchain.mjs
 ## Puesta en marcha (local, sin Docker)
 
 ```bash
-./scripts/bootstrap.sh     # activa pnpm 11.10.0 + instala (ver "Bootstrap del toolchain")
+./scripts/bootstrap.sh     # activa pnpm 12.3.4 + instala (ver "Bootstrap del toolchain")
 cp env.example .env        # completá los valores (ver nota de .env más abajo)
 pnpm dev                   # http://localhost:3000  ->  /login (rutas privadas protegidas)
 ```
 
-> Si ya tenés pnpm 11.10.0 activo, podés usar `pnpm install` directamente en vez
+> Si ya tenés pnpm 12.3.4 activo, podés usar `pnpm install` directamente en vez
 > del bootstrap.
 
 > **Nota sobre `.env`:** el archivo de ejemplo se llama **`env.example`** (sin
@@ -317,7 +317,7 @@ privadas y redirige a `/login` sin sesión. Login/logout quedan auditados
 - **`minimumReleaseAge`**: el `.npmrc` del proyecto lo fija en `0` porque el stack
   usa versiones recién publicadas. Mitigación: versiones exactas + lockfile.
   Recomendado subirlo (p. ej. a 1 día) cuando el stack madure.
-- **pnpm**: si en tu máquina hay un pnpm global más viejo que 11.10.0, su
+- **pnpm**: si en tu máquina hay un pnpm global más viejo que 12.3.4, su
   auto-provisión puede quedar bloqueada por `minimumReleaseAge`. Usá
   `./scripts/bootstrap.sh` (o el fix de PATH de la sección _Bootstrap del
   toolchain_) y verificá con `pnpm check:toolchain`.
