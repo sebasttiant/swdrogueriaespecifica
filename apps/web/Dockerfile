@@ -5,7 +5,7 @@
 # Postgres usa Alpine en docker-compose (patrón validado).
 #
 # Stages:
-#   base     -> node trixie + pnpm 12.3.4 (Corepack)
+#   base     -> node trixie + pnpm 12.4.1 (Corepack)
 #   deps     -> instala dependencias (frozen lockfile)
 #   builder  -> prisma generate + next build (standalone)
 #   migrate  -> aplica migraciones (corre y termina; usado por compose)
@@ -17,7 +17,7 @@
 FROM node:24.21.0-trixie AS base
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
-RUN corepack enable && corepack prepare pnpm@12.3.4 --activate
+RUN corepack enable && corepack prepare pnpm@12.4.1 --activate
 WORKDIR /app
 
 # ---------- deps ----------

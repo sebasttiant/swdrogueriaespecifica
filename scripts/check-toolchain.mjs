@@ -8,7 +8,7 @@
 import { execSync } from "node:child_process";
 
 const REQUIRED_NODE = "24.21.0";
-const REQUIRED_PNPM = "12.3.4";
+const REQUIRED_PNPM = "12.4.1";
 
 const green = (s) => `\x1b[32m${s}\x1b[0m`;
 const red = (s) => `\x1b[31m${s}\x1b[0m`;
