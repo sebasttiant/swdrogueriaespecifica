@@ -20,6 +20,7 @@ import { formatPhone } from "./phone";
 import { deliverySummary, remainingQuantity } from "./delivery-rules";
 import { canSetManagementStatus } from "./management-status";
 import {
+  arrivalNotice,
   canInvoiceWithoutStock,
   fulfillmentNotice,
   invoiceableQuantity,
@@ -189,6 +190,7 @@ export function PendingList({
         // El aviso de que la mercancía llegó. Es la razón por la que alguien
         // abre esta pantalla: saber sobre cuáles ya se puede actuar.
         const notice = fulfillmentNotice(pending);
+        const arrival = arrivalNotice(pending);
         const identityNotice = identityWarning(pending);
         const stateTone = pendingStateTone(pending);
 
@@ -329,6 +331,11 @@ export function PendingList({
               <div className="flex shrink-0 flex-col items-end gap-1.5">
                 <Badge tone={deadline.tone}>{deadline.label}</Badge>
                 <Badge tone={status.tone}>{status.label}</Badge>
+                {/* El borde rojo nunca va solo: siempre lo acompaña la palabra,
+                    salvo que la insignia legada ya la diga. */}
+                {stateTone === "soldOut" && status.label !== "Agotado" ? (
+                  <Badge tone="danger">Agotado</Badge>
+                ) : null}
                 {payment ? <Badge tone={payment.tone}>{payment.label}</Badge> : null}
                 {/* Se apaga solo el día que alguien le cargue el código al
                     producto: la condición se deriva del estado actual, no de
@@ -341,7 +348,13 @@ export function PendingList({
                 ("Cargado: 4 de 10 · podés facturar") y en la columna de badges
                 apretaría el nombre del producto, que es lo que #157 acaba de
                 dejar de cortar en el celular. */}
-            {notice ? (
+            {/* La llegada a bodega, como línea que se parte en el celular. Reemplaza
+                al viejo aviso verde "Llegó a la droguería · sin cargar"; los
+                avisos amarillo, rojo y azul siguen igual. */}
+            {arrival ? (
+              <p className="min-w-0 max-w-full whitespace-normal break-words text-sm font-medium text-success">{arrival}</p>
+            ) : null}
+            {notice && notice.tone !== "success" ? (
               <Badge tone={notice.tone} className="w-full justify-center">
                 {notice.label}
               </Badge>

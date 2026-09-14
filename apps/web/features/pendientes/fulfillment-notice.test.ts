@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { PendingListItem } from "@/server/repositories/pending.repository";
 
 import {
+  arrivalNotice,
   canInvoiceWithoutStock,
   fulfillmentNotice,
   invoiceableQuantity,
@@ -295,5 +296,43 @@ describe("pendingStateTone", () => {
     expect(
       pendingStateTone(pending({ purchaseStatus: "AGOTADO", inventoryReadyQuantity: 3, ...overrides })),
     ).toBeNull();
+  });
+});
+
+// --------------------------------------------------------------------------
+// La llegada a bodega, dicha con palabras. Es independiente de lo facturable:
+// una fila puede haber llegado y además estar lista para facturar.
+// --------------------------------------------------------------------------
+describe("arrivalNotice", () => {
+  it.each([
+    ["LLEGO_BODEGA", "Ya llegó a bodega"],
+    ["DISPONIBLE_COMPLETO", "Ya llegó a bodega"],
+    ["DISPONIBLE_PARCIAL", "Ya llegó parte a bodega"],
+  ] as const)("%s dice %s", (availabilityStatus, label) => {
+    expect(arrivalNotice(pending({ availabilityStatus }))).toBe(label);
+  });
+
+  it("todavía esperando: nada", () => {
+    expect(arrivalNotice(pending({ availabilityStatus: "ESPERANDO" }))).toBeNull();
+    expect(arrivalNotice(pending())).toBeNull();
+  });
+
+  it.each([
+    { status: "ENTREGADO" as const },
+    { status: "CANCELADO" as const },
+    { status: "CLOSED_PARTIAL" as const },
+    { customerStatus: "ENTREGADO" as const },
+    { customerStatus: "CANCELADO" as const },
+  ])("terminal (%o): nada aunque haya llegado", (overrides) => {
+    expect(
+      arrivalNotice(pending({ availabilityStatus: "DISPONIBLE_COMPLETO", ...overrides })),
+    ).toBeNull();
+  });
+
+  it("convive con listo para facturar: se dicen las dos cosas", () => {
+    const fila = pending({ availabilityStatus: "DISPONIBLE_COMPLETO", inventoryReadyQuantity: 10 });
+
+    expect(arrivalNotice(fila)).toBe("Ya llegó a bodega");
+    expect(fulfillmentNotice(fila)).toEqual({ label: "Listo para facturar", tone: "warning" });
   });
 });

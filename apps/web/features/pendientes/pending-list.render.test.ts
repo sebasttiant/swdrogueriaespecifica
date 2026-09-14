@@ -28,7 +28,7 @@ import { IDENTITY_WARNING_LABEL } from "./identity-warning";
 
 import { PendingList } from "./pending-list";
 import { reviewPageHref, type ReviewAxes } from "./review-axes";
-import type { PendingViewer } from "./fulfillment-notice";
+import { fulfillmentNotice, type PendingViewer } from "./fulfillment-notice";
 import { globalViewer, noAuthorityViewer, OWNER_ID, ownerViewer } from "./pending-viewer.fixture";
 
 type ActionState = { error: string | null; ok: boolean };
@@ -648,6 +648,132 @@ describe("PendingList · color de estado", () => {
 
     expect(klass).not.toContain("border-l-warning");
     expect(klass).not.toContain("border-l-danger");
+  });
+});
+
+// --------------------------------------------------------------------------
+// Cada pendiente DICE lo que pasó, no solo lo pinta. La llegada a bodega va en
+// su propia línea verde, que se parte en el celular; el borde rojo va siempre
+// acompañado de la palabra "Agotado".
+// --------------------------------------------------------------------------
+describe("PendingList · qué pasó con el pendiente", () => {
+  const arrivalLine = (label: string) =>
+    `<p class="min-w-0 max-w-full whitespace-normal break-words text-sm font-medium text-success">${label}</p>`;
+  const SOLD_OUT_BADGE = 'text-danger">Agotado</span>';
+
+  it("dice que ya llegó a bodega, antes del aviso rojo que sigue igual", () => {
+    const html = renderList({
+      items: [pending({ status: "PENDIENTE", deliveredQuantity: 0, availabilityStatus: "LLEGO_BODEGA" })],
+    });
+
+    expect(html).toContain(arrivalLine("Ya llegó a bodega"));
+    expect(html).toContain("Sin stock");
+    expect(html.indexOf(arrivalLine("Ya llegó a bodega"))).toBeLessThan(html.indexOf("Sin stock"));
+  });
+
+  it("dice que llegó una parte, junto al amarillo de listo para facturar", () => {
+    const html = renderList({
+      items: [
+        pending({
+          status: "PENDIENTE",
+          deliveredQuantity: 0,
+          availabilityStatus: "DISPONIBLE_PARCIAL",
+          inventoryReadyQuantity: 6,
+        }),
+      ],
+    });
+
+    expect(html).toContain(arrivalLine("Ya llegó parte a bodega"));
+    expect(html).toContain("Listo para facturar: 6 de 10");
+  });
+
+  it("no dice nada de llegada mientras sigue esperando", () => {
+    const html = renderList({ items: [pending({ availabilityStatus: "ESPERANDO" })] });
+
+    expect(html).not.toContain("Ya llegó");
+  });
+
+  it("la línea de llegada reemplaza al viejo aviso verde", () => {
+    const fila = pending({
+      availabilityStatus: "LLEGO_BODEGA",
+      customerStatus: "CONTACTADO",
+      deliveredQuantity: 6,
+      cancelledQuantity: 4,
+    });
+    // La fila produce de verdad el aviso verde legado: sin esto el test no
+    // discriminaría.
+    expect(fulfillmentNotice(fila)?.tone).toBe("success");
+
+    const html = renderList({ items: [fila] });
+
+    expect(html).toContain(arrivalLine("Ya llegó a bodega"));
+    expect(html).not.toContain("Llegó a la droguería");
+  });
+
+  it("el azul de listo para entregar sigue al lado de la llegada", () => {
+    const html = renderList({
+      items: [
+        pending({
+          availabilityStatus: "DISPONIBLE_COMPLETO",
+          customerStatus: "FACTURADO",
+          inventoryReadyQuantity: 10,
+          invoicedQuantity: 10,
+        }),
+      ],
+    });
+
+    expect(html).toContain(arrivalLine("Ya llegó a bodega"));
+    expect(html).toContain("Listo para entregar");
+  });
+
+  it("la línea de llegada se parte en pantallas angostas", () => {
+    const html = renderList({
+      items: [pending({ availabilityStatus: "LLEGO_BODEGA", inventoryReadyQuantity: 0 })],
+    });
+
+    expect(html).toMatch(/<p class="[^"]*whitespace-normal[^"]*break-words[^"]*">Ya llegó a bodega</);
+  });
+
+  it("dice Agotado junto al borde rojo", () => {
+    const html = renderList({
+      items: [
+        pending({
+          status: "PENDIENTE",
+          deliveredQuantity: 0,
+          purchaseStatus: "AGOTADO",
+          inventoryReadyQuantity: 0,
+        }),
+      ],
+    });
+
+    expect(html).toContain("border-l-danger");
+    expect(html.split(SOLD_OUT_BADGE)).toHaveLength(2);
+    expect(html).toContain(">Pendiente</span>");
+  });
+
+  it("no repite Agotado cuando la insignia legada ya lo dice", () => {
+    const html = renderList({
+      items: [
+        pending({
+          status: "AGOTADO",
+          deliveredQuantity: 0,
+          purchaseStatus: "AGOTADO",
+          inventoryReadyQuantity: 0,
+        }),
+      ],
+    });
+
+    expect(html).toContain("border-l-danger");
+    expect(html.split(">Agotado</span>")).toHaveLength(2);
+  });
+
+  it("no dice Agotado cuando está listo para facturar: el amarillo gana", () => {
+    const html = renderList({
+      items: [pending({ purchaseStatus: "AGOTADO", inventoryReadyQuantity: 8, invoicedQuantity: 4 })],
+    });
+
+    expect(html).toContain("Listo para facturar");
+    expect(html).not.toContain(">Agotado<");
   });
 });
 

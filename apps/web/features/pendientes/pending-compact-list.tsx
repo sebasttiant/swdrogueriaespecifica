@@ -12,6 +12,7 @@ import type { PendingListItem } from "@/server/repositories/pending.repository";
 import { computeDeadlineStatus } from "./deadline-status";
 import { derivePaymentState } from "./payment-state";
 import {
+  arrivalNotice,
   canInvoiceWithoutStock,
   fulfillmentNotice,
   invoiceableQuantity,
@@ -197,6 +198,16 @@ function PresentationLine({ item }: { item: PendingListItem }) {
     <p className="break-words text-xs text-muted-foreground">
       {PRESENTATION_LABEL}: {presentationLabel(item.product.unit)}
     </p>
+  );
+}
+
+// La llegada a bodega, dicha con palabras. Una sola pieza para la tarjeta y la
+// tabla, y una línea que se parte en el celular en vez de empujar el ancho.
+function ArrivalLine({ item }: { item: PendingListItem }) {
+  const arrival = arrivalNotice(item);
+  if (!arrival) return null;
+  return (
+    <p className="min-w-0 max-w-full whitespace-normal break-words text-sm font-medium text-success">{arrival}</p>
   );
 }
 
@@ -490,7 +501,9 @@ export function PendingCompactList({
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge tone={lifecycle.tone}>{lifecycle.label}</Badge>
-                  {purchase ? (
+                  {stateTone === "soldOut" ? (
+                    <Badge tone="danger">Agotado</Badge>
+                  ) : purchase ? (
                     <span className="text-xs text-muted-foreground">{purchase}</span>
                   ) : null}
                   {decision ? (
@@ -505,7 +518,8 @@ export function PendingCompactList({
                   />
                 ) : null}
               </div>
-              {notice ? (
+              <ArrivalLine item={pending} />
+              {notice && notice.tone !== "success" ? (
                 <Badge tone={notice.tone} className="w-full justify-center">
                   {notice.label}
                 </Badge>
@@ -614,13 +628,18 @@ export function PendingCompactList({
                   <td className="px-3 py-2">
                     <div className="flex flex-col items-start gap-1">
                       <Badge tone={lifecycle.tone}>{lifecycle.label}</Badge>
-                      {purchase ? (
+                      {stateTone === "soldOut" ? (
+                        <Badge tone="danger">Agotado</Badge>
+                      ) : purchase ? (
                         <span className="text-xs text-muted-foreground">{purchase}</span>
                       ) : null}
                       {decision ? (
                         <span className="text-xs text-muted-foreground">{decision}</span>
                       ) : null}
-                      {notice ? <Badge tone={notice.tone}>{notice.label}</Badge> : null}
+                      <ArrivalLine item={pending} />
+                      {notice && notice.tone !== "success" ? (
+                        <Badge tone={notice.tone}>{notice.label}</Badge>
+                      ) : null}
                     </div>
                   </td>
                   {canOrder || viewer.invoiceScope !== "none" || canDeliver || canCancel || canEdit ? (

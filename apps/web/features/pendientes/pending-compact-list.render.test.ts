@@ -22,7 +22,7 @@ import type { PendingListItem } from "@/server/repositories/pending.repository";
 import { IDENTITY_WARNING_LABEL } from "./identity-warning";
 
 import { PendingCompactList } from "./pending-compact-list";
-import type { PendingViewer } from "./fulfillment-notice";
+import { fulfillmentNotice, type PendingViewer } from "./fulfillment-notice";
 import { globalViewer, noAuthorityViewer, ownerViewer } from "./pending-viewer.fixture";
 
 function pending(overrides: Partial<PendingListItem> = {}): PendingListItem {
@@ -735,5 +735,106 @@ describe("PendingCompactList · identidad pendiente", () => {
     const html = render([pending({ identitySkippedReason: "CODE_NOT_FOUND" })]);
 
     expect(html).toContain(`>${IDENTITY_WARNING_LABEL}<`);
+  });
+});
+
+// --------------------------------------------------------------------------
+// Cada pendiente DICE lo que pasó, no solo lo pinta, en la tarjeta del celular
+// Y en el renglón de la tabla. La llegada a bodega va en su propia línea verde;
+// el borde rojo va siempre acompañado de la palabra "Agotado".
+// --------------------------------------------------------------------------
+describe("PendingCompactList · qué pasó con el pendiente", () => {
+  const arrivalLine = (label: string) =>
+    `<p class="min-w-0 max-w-full whitespace-normal break-words text-sm font-medium text-success">${label}</p>`;
+  const SOLD_OUT_BADGE = 'text-danger">Agotado</span>';
+  const PURCHASE_TEXT = 'text-xs text-muted-foreground">Agotado</span>';
+
+  it("dice que ya llegó a bodega en las dos vistas, y el rojo sigue igual", () => {
+    const html = render([
+      pending({ availabilityStatus: "LLEGO_BODEGA", inventoryReadyQuantity: 0 }),
+    ]);
+
+    expect(countOccurrences(html, arrivalLine("Ya llegó a bodega"))).toBe(2);
+    expect(countOccurrences(html, "Sin stock")).toBe(2);
+  });
+
+  it("dice que llegó una parte en las dos vistas, junto al amarillo", () => {
+    const html = render([
+      pending({ quantity: 10, availabilityStatus: "DISPONIBLE_PARCIAL", inventoryReadyQuantity: 6 }),
+    ]);
+
+    expect(countOccurrences(html, arrivalLine("Ya llegó parte a bodega"))).toBe(2);
+    expect(countOccurrences(html, "Listo para facturar: 6 de 10")).toBe(2);
+  });
+
+  it("no dice nada de llegada mientras sigue esperando", () => {
+    expect(render([pending({ availabilityStatus: "ESPERANDO" })])).not.toContain("Ya llegó");
+  });
+
+  it("la línea de llegada reemplaza al viejo aviso verde en las dos vistas", () => {
+    const fila = pending({
+      status: "PARCIAL",
+      availabilityStatus: "LLEGO_BODEGA",
+      deliveredQuantity: 6,
+      cancelledQuantity: 4,
+    });
+    // La fila produce de verdad el aviso verde legado: sin esto el test no
+    // discriminaría.
+    expect(fulfillmentNotice(fila)?.tone).toBe("success");
+
+    const html = render([fila]);
+
+    expect(countOccurrences(html, arrivalLine("Ya llegó a bodega"))).toBe(2);
+    expect(html).not.toContain("Llegó a la droguería");
+  });
+
+  it("el azul de listo para entregar sigue al lado de la llegada", () => {
+    const html = render([
+      pending({
+        availabilityStatus: "DISPONIBLE_COMPLETO",
+        customerStatus: "FACTURADO",
+        inventoryReadyQuantity: 10,
+        invoicedQuantity: 10,
+      }),
+    ]);
+
+    expect(countOccurrences(html, arrivalLine("Ya llegó a bodega"))).toBe(2);
+    expect(countOccurrences(html, "Listo para entregar")).toBe(2);
+  });
+
+  it("la línea de llegada se parte en pantallas angostas, en tarjeta y tabla", () => {
+    const html = render([pending({ availabilityStatus: "LLEGO_BODEGA" })]);
+    const [card, table] = html.split("<table");
+
+    for (const representation of [card, table]) {
+      expect(representation).toMatch(
+        /<p class="[^"]*whitespace-normal[^"]*break-words[^"]*">Ya llegó a bodega</,
+      );
+    }
+  });
+
+  it("dice Agotado junto al borde rojo en las dos vistas, en vez del texto de compras", () => {
+    const html = render([pending({ purchaseStatus: "AGOTADO", inventoryReadyQuantity: 0 })], false);
+
+    expect(countOccurrences(html, "border-l-danger")).toBe(2);
+    expect(countOccurrences(html, SOLD_OUT_BADGE)).toBe(2);
+    expect(html).not.toContain(PURCHASE_TEXT);
+  });
+
+  it("no dice Agotado en rojo cuando está listo: el amarillo gana y el texto de compras queda", () => {
+    const html = render(
+      [pending({ purchaseStatus: "AGOTADO", inventoryReadyQuantity: 6, invoicedQuantity: 0 })],
+      false,
+    );
+
+    expect(countOccurrences(html, "Listo para facturar")).toBe(2);
+    expect(html).not.toContain(SOLD_OUT_BADGE);
+    expect(countOccurrences(html, PURCHASE_TEXT)).toBe(2);
+  });
+
+  it("deja igual el texto de compras que no es agotado", () => {
+    const html = render([pending({ purchaseStatus: "SOLICITADO" })], false);
+
+    expect(countOccurrences(html, 'text-xs text-muted-foreground">Solicitado</span>')).toBe(2);
   });
 });

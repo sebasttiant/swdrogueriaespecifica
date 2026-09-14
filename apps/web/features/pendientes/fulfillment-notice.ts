@@ -27,6 +27,18 @@ export function isTerminal(item: PendingListItem): boolean {
   );
 }
 
+// Si la mercancía ya llegó a bodega, dicho con palabras y no solo con un color.
+// Es independiente de lo facturable: una fila puede haber llegado y además estar
+// lista para facturar, y entonces se dicen las dos cosas.
+export function arrivalNotice(item: PendingListItem): string | null {
+  if (isTerminal(item)) return null;
+  if (item.availabilityStatus === "LLEGO_BODEGA" || item.availabilityStatus === "DISPONIBLE_COMPLETO") {
+    return "Ya llegó a bodega";
+  }
+  if (item.availabilityStatus === "DISPONIBLE_PARCIAL") return "Ya llegó parte a bodega";
+  return null;
+}
+
 // Cuánto de este pendiente ya está en bodega y todavía no se facturó, y cuánto
 // se facturó y todavía no se entregó. Son las dos cifras que definen qué puede
 // hacer el vendedor ahora mismo; el resto de la fila es contexto.
