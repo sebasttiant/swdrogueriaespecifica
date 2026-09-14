@@ -17,12 +17,24 @@ export const EXPIRY_CRITICAL_DAYS = 30; // > today AND <= today+30
 
 const BOGOTA_TZ = "America/Bogota";
 
-// 4-tier expiry classification (calendar-day, Bogota):
+// 5-tier expiry classification (calendar-day, Bogota):
 //   expired  = expiresAt calendar date <= today (Bogota)
 //   critical = calendar date > today AND <= today+30 days
 //   warning  = calendar date > today+30 AND <= today+90 days
 //   ok       = calendar date > today+90 days
-export type ExpiryLevel = "expired" | "critical" | "warning" | "ok";
+//   unknown  = expiresAt is NULL
+//
+// `unknown` es un nivel del MISMO vocabulario y no una excepción aparte a
+// propósito: así el compilador obliga a cada mapa de la pantalla a nombrarlo, y
+// ningún sitio puede caer en silencio en "expired" por no haberlo previsto. Un
+// lote sin fecha es lo que nadie sabe cuándo vence, que es otra cosa que un
+// lote vencido: se sigue vendiendo y no entra en ningún aviso.
+export type ExpiryLevel =
+  | "expired"
+  | "critical"
+  | "warning"
+  | "ok"
+  | "unknown";
 
 // Las tres franjas que se ALERTAN, en orden de urgencia. Es `ExpiryLevel` sin
 // "ok": un lote vigente no es un aviso, y ofrecerlo como pestaña sería una
@@ -71,6 +83,7 @@ function addBogotaCalendarDays(ymd: string, days: number): string {
  * DATE in Bogota against today's calendar date in Bogota plus offsets.
  *
  * First-match ordering:
+ *   0. expiresAt === null                        → "unknown"
  *   1. expiresAt calendar date (Bogota) <= today → "expired"
  *   2. <= today + 30 calendar days              → "critical"
  *   3. <= today + 90 calendar days              → "warning"
@@ -80,9 +93,13 @@ function addBogotaCalendarDays(ymd: string, days: number): string {
  * Do NOT conflate the two — this function is for DISPLAY/ALERTING only.
  */
 export function expiryLevel(
-  expiresAt: Date,
+  expiresAt: Date | null,
   now: Date = new Date(),
 ): ExpiryLevel {
+  // Sin fecha no hay nada que comparar. Devolver "expired" acá haría
+  // desaparecer de la góndola un stock que nadie sacó del estante.
+  if (expiresAt === null) return "unknown";
+
   const expiresYMD = bogotaYMD(expiresAt);
   const todayYMD = bogotaYMD(now);
   const critical30YMD = addBogotaCalendarDays(todayYMD, EXPIRY_CRITICAL_DAYS);
@@ -102,29 +119,34 @@ export function isAgotado(quantity: number): boolean {
 // isSellable — UNCHANGED. Transactional sell gate (timestamp-based).
 //
 // This is the SEPARATE sell gate at point of transaction:
-//   DISPONIBLE && qty > 0 && expiresAt > now (timestamp comparison).
+//   DISPONIBLE && qty > 0 && (expiresAt === null || expiresAt > now).
+//
+// `expiresAt` NULL es vencimiento DESCONOCIDO, y desconocido NO es vencido: la
+// mercadería está en el estante y se vende. Tratarlo como vencido sería hacer
+// desaparecer stock real por un dato que la caja no traía impreso.
 //
 // "critical" tier does NOT affect sellability — it is an informational display
 // tier only. A batch expiring in 15 days is critical for alerts but still
 // sellable at the counter (DISPONIBLE + qty > 0 + not timestamp-expired).
 // ---------------------------------------------------------------------------
 export function isSellable(
-  batch: { status: BatchStatus; quantity: number; expiresAt: Date },
+  batch: { status: BatchStatus; quantity: number; expiresAt: Date | null },
   now: Date = new Date(),
 ): boolean {
   return (
     batch.status === "DISPONIBLE" &&
     batch.quantity > 0 &&
-    batch.expiresAt.getTime() > now.getTime()
+    (batch.expiresAt === null || batch.expiresAt.getTime() > now.getTime())
   );
 }
 
 /**
  * Días de CALENDARIO Bogotá entre hoy y el vencimiento del lote.
  *
- *   > 0  faltan tantos días
- *   = 0  vence hoy
- *   < 0  venció hace tantos días
+ *   > 0   faltan tantos días
+ *   = 0   vence hoy
+ *   < 0   venció hace tantos días
+ *   null  no se sabe cuándo vence
  *
  * Calendario y no milisegundos, a propósito: un lote que vence "mañana" tiene
  * que decir 1 tanto a las 8 de la mañana como a las 11 de la noche. Restar
@@ -136,9 +158,14 @@ export function isSellable(
  * del borde.
  */
 export function bogotaCalendarDaysUntil(
-  expiresAt: Date,
+  expiresAt: Date | null,
   now: Date = new Date(),
-): number {
+): number | null {
+  // Sin fecha no hay cuenta que dar. Se devuelve `null` y no un número grande
+  // para que la pantalla tenga que decidir qué escribir: cualquier número
+  // afirmaría un plazo que nadie conoce.
+  if (expiresAt === null) return null;
+
   const utcNoonOf = (ymd: string): number => {
     const [y, m, d] = ymd.split("-").map(Number) as [number, number, number];
     return Date.UTC(y, m - 1, d, 12, 0, 0);

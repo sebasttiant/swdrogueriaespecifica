@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { prisma } from "@/lib/db/prisma";
-import { lockBatchLaboratoryEvidence } from "@/server/repositories/product-batch.repository";
+import { lockBatchForEntry } from "@/server/repositories/product-batch.repository";
 
 // --------------------------------------------------------------------------
 // La carrera de la PRIMERA recepción de un lote.
@@ -49,14 +49,14 @@ function barrera(): { esperar: Promise<void>; abrir: () => void } {
   return { esperar, abrir };
 }
 
-describe("lockBatchLaboratoryEvidence · el lote todavía no existe", () => {
+describe("lockBatchForEntry · el lote todavía no existe", () => {
   it("serializa dos primeras recepciones simultáneas del mismo lote", async () => {
     const primeraTomo = barrera();
     const segundaIntento = barrera();
     const orden: string[] = [];
 
     const primera = prisma.$transaction(async (tx) => {
-      await lockBatchLaboratoryEvidence(tx, { productId, batchCode: BATCH });
+      await lockBatchForEntry(tx, { productId, batchCode: BATCH });
       orden.push("A tomó el candado");
       primeraTomo.abrir();
 
@@ -81,7 +81,7 @@ describe("lockBatchLaboratoryEvidence · el lote todavía no existe", () => {
       const t = prisma.$transaction(async (tx) => {
         orden.push("B pide el candado");
         segundaIntento.abrir();
-        const visto = await lockBatchLaboratoryEvidence(tx, {
+        const visto = await lockBatchForEntry(tx, {
           productId,
           batchCode: BATCH,
         });
@@ -107,7 +107,7 @@ describe("lockBatchLaboratoryEvidence · el lote todavía no existe", () => {
     const aTomo = barrera();
 
     const a = prisma.$transaction(async (tx) => {
-      await lockBatchLaboratoryEvidence(tx, { productId, batchCode: BATCH });
+      await lockBatchForEntry(tx, { productId, batchCode: BATCH });
       aTomo.abrir();
       // Se queda adentro mientras B trabaja: si el candado fuera global, B se
       // colgaría acá y la prueba se iría en timeout.
@@ -117,7 +117,7 @@ describe("lockBatchLaboratoryEvidence · el lote todavía no existe", () => {
     const b = (async () => {
       await aTomo.esperar;
       return prisma.$transaction(async (tx) =>
-        lockBatchLaboratoryEvidence(tx, { productId, batchCode: otroLote }),
+        lockBatchForEntry(tx, { productId, batchCode: otroLote }),
       );
     })();
 
@@ -131,13 +131,13 @@ describe("lockBatchLaboratoryEvidence · el lote todavía no existe", () => {
 
   it("el candado se suelta al terminar la transacción", async () => {
     await prisma.$transaction(async (tx) => {
-      await lockBatchLaboratoryEvidence(tx, { productId, batchCode: BATCH });
+      await lockBatchForEntry(tx, { productId, batchCode: BATCH });
     });
 
     // Si el advisory lock fuera de sesión y no transaccional, esta segunda
     // toma se colgaría para siempre sobre el mismo pool.
     const segunda = await prisma.$transaction(async (tx) =>
-      lockBatchLaboratoryEvidence(tx, { productId, batchCode: BATCH }),
+      lockBatchForEntry(tx, { productId, batchCode: BATCH }),
     );
 
     expect(segunda).toBeNull();
@@ -156,7 +156,7 @@ describe("lockBatchLaboratoryEvidence · el lote todavía no existe", () => {
     });
 
     const visto = await prisma.$transaction(async (tx) =>
-      lockBatchLaboratoryEvidence(tx, { productId, batchCode: BATCH }),
+      lockBatchForEntry(tx, { productId, batchCode: BATCH }),
     );
 
     expect(visto?.receivedLaboratoryId).toBe(lab.id);

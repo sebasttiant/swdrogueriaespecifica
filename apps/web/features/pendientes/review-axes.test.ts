@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   hasActiveAxis,
+  INVOICE_AXIS_LABELS,
   parseReviewAxes,
   reviewHref,
   reviewPageHref,
@@ -45,9 +46,31 @@ describe("parseReviewAxes", () => {
   });
 });
 
+describe("parseReviewAxes · listos para facturar", () => {
+  it("acepta facturar=listos", () => {
+    expect(parseReviewAxes({ facturar: "listos" })).toEqual({ invoice: "listos" });
+  });
+
+  it("ignora cualquier otro valor de facturar", () => {
+    expect(parseReviewAxes({ facturar: "todos" })).toEqual({});
+    expect(parseReviewAxes({ facturar: "LISTOS" })).toEqual({});
+  });
+
+  it("convive con la ventana de entrega", () => {
+    expect(parseReviewAxes({ facturar: "listos", entrega: "atrasadas" })).toEqual({
+      invoice: "listos",
+      deadline: "atrasadas",
+    });
+  });
+});
+
 describe("hasActiveAxis", () => {
   it("es falso sin ningún eje", () => {
     expect(hasActiveAxis({})).toBe(false);
+  });
+
+  it("listos para facturar cuenta como filtro activo", () => {
+    expect(hasActiveAxis({ invoice: "listos" })).toBe(true);
   });
 
   it("es verdadero con uno solo", () => {
@@ -73,6 +96,17 @@ describe("reviewHref", () => {
   // Cambiar de filtro cambia el conjunto: el cursor viejo apunta a una fila que
   // el filtro nuevo puede no contener, y arrastrarlo mostraría una página del
   // medio como si fuera la primera.
+  it("escribe listos para facturar como facturar=listos junto a la entrega", () => {
+    expect(
+      reviewHref({
+        scope: "active",
+        view: "detalle",
+        axes: { deadline: "proximas", invoice: "listos" },
+        basePath: "/revision-pendientes",
+      }),
+    ).toBe("/revision-pendientes?view=detalle&entrega=proximas&facturar=listos");
+  });
+
   it("nunca arrastra el cursor", () => {
     const href = reviewHref({
       scope: "active",
@@ -111,6 +145,10 @@ describe("reviewPageHref", () => {
 });
 
 describe("etiquetas", () => {
+  it("nombra el filtro derivado como lo dice el aviso de la fila", () => {
+    expect(INVOICE_AXIS_LABELS.listos).toBe("Listos para facturar");
+  });
+
   // El filtro y la fila tienen que decir lo mismo, o parecen dos cosas
   // distintas. Por eso las de gestión se reusan en vez de reescribirse.
   it("reusa las etiquetas de gestión y agrega la que faltaba", () => {

@@ -33,6 +33,7 @@ import {
   countUnclosedActionableMissingItemsBefore,
   createMissingItem,
   listMissingItems,
+  listOpenMissingItemsForExport,
   lockMissingItemForUpdate,
   orderMissingItem,
 } from "./missing-item.repository";
@@ -685,8 +686,9 @@ function withoutOrigin(where: Where): unknown {
 }
 
 describe("eje de origen en los contadores", () => {
+  // "abiertos" ya no está acá: su regla CAMBIA con el origen (ver el describe
+  // de abajo), así que estantería y clientes no difieren solo en `originId`.
   const COUNTERS = [
-    { name: "abiertos", run: countOpenMissingItems },
     { name: "por pedir", run: countActionableMissingItems },
     { name: "pedidos", run: countOrderedMissingItems },
     { name: "confirmados", run: countConfirmedMissingItems },
@@ -754,6 +756,119 @@ describe("eje de origen en los contadores", () => {
     // Siempre acotado a pendientes, sin forma de pedir otra cosa: la firma no
     // expone eje de origen, así que este WHERE es el único que puede salir.
     expect(where.originId).toEqual({ not: null });
+  });
+});
+
+// --------------------------------------------------------------------------
+// "ABIERTO" DEPENDE DEL ORIGEN.
+//
+//   Informativo (estantería, `originId` nulo): abierto = TODAVÍA NO PEDIDO.
+//   La entrada de inventario ya no le asigna stock, así que un PEDIDO de
+//   estantería no espera nada: "Ya lo pedí" lo cierra para los contadores y el
+//   export. Queda en "Ya pedidos" como historial.
+//
+//   Ligado a venta (`originId` no nulo): abierto = FALTANTE o PEDIDO sin
+//   confirmar, como siempre. Hay un cliente esperando la mercadería.
+//
+// Se evalúa el WHERE contra filas de ejemplo y no se afirma su forma: lo que
+// importa es QUÉ filas cuenta. El evaluador rechaza cualquier clave que no
+// conozca, así que una condición nueva no puede pasar sin que alguien la mire.
+// --------------------------------------------------------------------------
+describe("abiertos · la regla depende del origen", () => {
+  type Row = {
+    id: string;
+    originId: string | null;
+    status: string;
+    confirmedAt: Date | null;
+  };
+
+  function matches(where: Where, row: Row): boolean {
+    return Object.entries(where).every(([key, condition]) => {
+      switch (key) {
+        case "OR":
+          return (condition as Where[]).some((part) => matches(part, row));
+        case "AND":
+          return (condition as Where[]).every((part) => matches(part, row));
+        case "originId":
+          return condition === null
+            ? row.originId === null
+            : (condition as { not: null }).not === null && row.originId !== null;
+        case "confirmedAt":
+          if (condition !== null) throw new Error("confirmedAt no soportado");
+          return row.confirmedAt === null;
+        case "status":
+          return (condition as { in: string[] }).in.includes(row.status);
+        default:
+          throw new Error(`clave de WHERE sin evaluar: ${key}`);
+      }
+    });
+  }
+
+  const confirmado = new Date("2026-09-01T00:00:00Z");
+  const ROWS: Row[] = [
+    { id: "info-faltante", originId: null, status: "FALTANTE", confirmedAt: null },
+    { id: "info-pedido", originId: null, status: "PEDIDO", confirmedAt: null },
+    { id: "info-faltante-confirmado", originId: null, status: "FALTANTE", confirmedAt: confirmado },
+    { id: "info-en-bodega", originId: null, status: "EN_BODEGA", confirmedAt: null },
+    { id: "info-recibido", originId: null, status: "RECIBIDO", confirmedAt: null },
+    { id: "venta-faltante", originId: "pending-1", status: "FALTANTE", confirmedAt: null },
+    { id: "venta-pedido", originId: "pending-2", status: "PEDIDO", confirmedAt: null },
+    { id: "venta-pedido-confirmado", originId: "pending-3", status: "PEDIDO", confirmedAt: confirmado },
+    { id: "venta-recibido", originId: "pending-4", status: "RECIBIDO", confirmedAt: null },
+    { id: "venta-cancelado", originId: "pending-5", status: "CANCELADO", confirmedAt: null },
+  ];
+
+  const ESPERADO = {
+    shelf: ["info-faltante"],
+    pending: ["venta-faltante", "venta-pedido"],
+    all: ["info-faltante", "venta-faltante", "venta-pedido"],
+  } as const;
+
+  const idsFor = (where: Where) =>
+    ROWS.filter((row) => matches(where, row)).map((row) => row.id);
+
+  const LECTURAS = [
+    {
+      name: "el contador",
+      run: countOpenMissingItems,
+      where: () => prismaMock.missingItem.count.mock.calls.at(-1)![0].where as Where,
+    },
+    {
+      name: "el export",
+      run: listOpenMissingItemsForExport,
+      where: () => prismaMock.missingItem.findMany.mock.calls.at(-1)![0].where as Where,
+    },
+  ] as const;
+
+  it.each(LECTURAS)("$name de estantería cuenta lo NO pedido y no un PEDIDO informativo", async ({ run, where }) => {
+    await run("shelf");
+
+    expect(idsFor(where())).toEqual(ESPERADO.shelf);
+  });
+
+  it.each(LECTURAS)("$name de clientes sigue contando el PEDIDO ligado a una venta", async ({ run, where }) => {
+    await run("pending");
+
+    expect(idsFor(where())).toEqual(ESPERADO.pending);
+  });
+
+  // El KPI `missing.open` de reportería llama sin argumento: tiene que sumar
+  // las dos reglas, no aplicar una sola a todo.
+  it.each(LECTURAS)("$name sin eje suma las dos reglas", async ({ run, where }) => {
+    await run();
+    expect(idsFor(where())).toEqual(ESPERADO.all);
+
+    await run("all");
+    expect(idsFor(where())).toEqual(ESPERADO.all);
+  });
+
+  // El export conserva tope y orden: el cambio es QUÉ entra, no cómo sale.
+  it("el export mantiene orden y tope", async () => {
+    await listOpenMissingItemsForExport("shelf");
+
+    const args = prismaMock.missingItem.findMany.mock.calls.at(-1)![0];
+    expect(args.orderBy).toEqual([{ createdAt: "desc" }, { id: "desc" }]);
+    expect(args.take).toBe(2000);
   });
 });
 

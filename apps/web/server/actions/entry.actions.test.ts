@@ -16,6 +16,7 @@ const {
   recordAudit,
   auditContextFromHeaders,
   revalidatePath,
+  BatchExpiryConflictError,
   LaboratoryEvidenceConflictError,
   LaboratoryNameResolutionError,
   ProductIdentityRequiredError,
@@ -72,12 +73,22 @@ const {
       this.existingLaboratoryName = params.existingLaboratoryName;
     }
   },
+  BatchExpiryConflictError: class extends Error {
+    readonly batchCode: string;
+    readonly existingExpiresAt: Date | null;
+    constructor(params: { batchCode: string; existingExpiresAt: Date | null }) {
+      super("batch already received with a different expiry");
+      this.batchCode = params.batchCode;
+      this.existingExpiresAt = params.existingExpiresAt;
+    }
+  },
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath }));
 vi.mock("@/lib/auth/require-role", () => ({ requireCapability }));
 vi.mock("@/server/services/inventory-entry.service", () => ({
   registerInventoryEntry,
+  BatchExpiryConflictError,
   LaboratoryEvidenceConflictError,
   LaboratoryNameResolutionError,
   ProductIdentityRequiredError,
@@ -247,6 +258,60 @@ describe("createInventoryEntryAction · conflicto de evidencia", () => {
 
   it("no revalida ninguna ruta cuando rechaza", async () => {
     await createInventoryEntryAction(PREV, formData({ receivedLaboratoryId: "lab-genfar" }));
+
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+});
+
+// --------------------------------------------------------------------------
+// El lote ya está registrado con OTRO vencimiento.
+//
+// Se muestra igual que el conflicto de laboratorio: es el mismo tipo de
+// problema —un dato del lote que no cuadra con lo que ya está registrado— y la
+// salida también es la misma, usar otro código de lote.
+// --------------------------------------------------------------------------
+describe("createInventoryEntryAction · conflicto de vencimiento", () => {
+  it("nombra el lote y la fecha ya registrada", async () => {
+    registerInventoryEntry.mockRejectedValue(
+      new BatchExpiryConflictError({
+        batchCode: "LOTE-001",
+        existingExpiresAt: new Date("2027-01-15T05:00:00.000Z"),
+      }),
+    );
+
+    const result = await createInventoryEntryAction(PREV, formData());
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("LOTE-001");
+    expect(result.error).toContain("15/1/2027");
+  });
+
+  // Lo registrado puede ser justamente la AUSENCIA de fecha. Decir "ya se
+  // recibió con vencimiento null" no le dice nada a nadie.
+  it("dice que el lote se recibió SIN fecha cuando así está registrado", async () => {
+    registerInventoryEntry.mockRejectedValue(
+      new BatchExpiryConflictError({
+        batchCode: "LOTE-001",
+        existingExpiresAt: null,
+      }),
+    );
+
+    const result = await createInventoryEntryAction(PREV, formData());
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/sin fecha de vencimiento/i);
+    expect(result.error).not.toContain("null");
+  });
+
+  it("no revalida ninguna ruta cuando rechaza", async () => {
+    registerInventoryEntry.mockRejectedValue(
+      new BatchExpiryConflictError({
+        batchCode: "LOTE-001",
+        existingExpiresAt: new Date("2027-01-15T05:00:00.000Z"),
+      }),
+    );
+
+    await createInventoryEntryAction(PREV, formData());
 
     expect(revalidatePath).not.toHaveBeenCalled();
   });

@@ -23,7 +23,11 @@ import {
   listPendingReception,
 } from "@/server/services/pending-reception.service";
 import { listStockoutProducts } from "@/server/services/stockout.service";
-import { getPendingInView, getPendings } from "@/server/services/pending.service";
+import {
+  getPendingInView,
+  getPendings,
+  getReadyToInvoiceCount,
+} from "@/server/services/pending.service";
 
 export const metadata: Metadata = { title: "Revisión de pendientes" };
 
@@ -69,6 +73,8 @@ export default async function RevisionPendientesPage({
      * de recepción.
      */
     entrega?: string;
+    /** `listos`: solo los pendientes con algo que facturar ahora (U4). */
+    facturar?: string;
     /** Qué mitad de la pantalla: seguimiento o abastecimiento. */
     tab?: string;
     /**
@@ -170,16 +176,22 @@ export default async function RevisionPendientesPage({
   // descartarla.
   const ownerId = canSeeAll ? undefined : session.user.id;
 
-  const pendings = showingSupply
-    ? null
-    : await getPendings({
-        cursor,
-        scope,
-        axes,
-        canViewCustomerIdentity,
-        ownerId,
-        now,
-      });
+  // El contador de "Listos para facturar" va con el listado porque se pinta en
+  // sus filtros. Mismo alcance (`ownerId`) y ningún otro filtro: es el total de
+  // lo que este usuario puede ir a facturar, no el de la vista filtrada.
+  const [pendings, readyToInvoiceCount] = await Promise.all([
+    showingSupply
+      ? Promise.resolve(null)
+      : getPendings({
+          cursor,
+          scope,
+          axes,
+          canViewCustomerIdentity,
+          ownerId,
+          now,
+        }),
+    showingSupply ? Promise.resolve(undefined) : getReadyToInvoiceCount({ ownerId }),
+  ]);
 
   // --------------------------------------------------------------------------
   // La fila que alguien vino a ver.
@@ -244,6 +256,7 @@ export default async function RevisionPendientesPage({
             scope={scope}
             view="detalle"
             basePath={BASE_PATH}
+            readyToInvoiceCount={readyToInvoiceCount}
           />
 
           {/* Fuera de la página cargada: se muestra aparte y se dice por qué,

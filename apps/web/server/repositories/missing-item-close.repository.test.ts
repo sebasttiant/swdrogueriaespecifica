@@ -138,7 +138,7 @@ describe("closeMissingItemsByEntry · FIFO quantity-aware close", () => {
     expect(updateArgs.data.status).not.toBe("CANCELADO");
   });
 
-  it("queries only OPEN, unconfirmed items for the given productId, ordered by createdAt ASC", async () => {
+  it("queries only OPEN, unconfirmed, sale-linked items for the given productId, ordered by createdAt ASC", async () => {
     txMock.missingItem.findMany.mockResolvedValue([]);
 
     await closeMissingItemsByEntry(txMock as never, {
@@ -151,6 +151,7 @@ describe("closeMissingItemsByEntry · FIFO quantity-aware close", () => {
         productId: "prod_abc",
         status: { in: ["FALTANTE", "PEDIDO", "EN_BODEGA"] },
         confirmedAt: null,
+        originId: { not: null },
       },
       orderBy: { createdAt: "asc" },
       select: {
@@ -228,6 +229,33 @@ describe("closeMissingItemsByEntry · FIFO quantity-aware close", () => {
       }),
     ).resolves.toEqual([]);
     expect(txMock.missingItem.updateMany).not.toHaveBeenCalled();
+  });
+
+  // Un faltante INFORMATIVO (`originId` nulo) no espera mercadería para nadie:
+  // la entrada heredada tampoco lo cierra. El doble filtra como la base, así
+  // que si la consulta volviera a traerlo, el más viejo se llevaría la entrada.
+  it("ignores informative rows: an older informative item never takes the entry", async () => {
+    const rows = [
+      { id: "informativo", status: "PEDIDO", quantity: 1, originId: null, orderedQuantity: 3 },
+      { id: "venta", status: "FALTANTE", quantity: 3, originId: "pending-1", orderedQuantity: null },
+    ];
+    txMock.missingItem.findMany.mockImplementation(
+      async (args: { where: { originId?: { not: null } } }) =>
+        args.where.originId?.not === null
+          ? rows.filter((row) => row.originId !== null)
+          : rows,
+    );
+
+    const result = await closeMissingItemsByEntry(txMock as never, {
+      productId: "prod_1",
+      availableQuantity: 3,
+    });
+
+    expect(result).toEqual(["venta"]);
+    expect(txMock.missingItem.updateMany).toHaveBeenCalledTimes(1);
+    expect(txMock.missingItem.updateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ id: "informativo" }) }),
+    );
   });
 
   it("does not count a lost compare-and-set and uses the quantity on the next FIFO item", async () => {

@@ -17,6 +17,7 @@ vi.mock("@/server/actions/pending.actions", () => ({
   deliverPendingAction: vi.fn(),
   cancelPendingAction: vi.fn(),
   updatePendingManagementStatusAction: vi.fn(),
+  invoicePendingAction: vi.fn(),
 }));
 
 import { createElement } from "react";
@@ -27,7 +28,8 @@ import { IDENTITY_WARNING_LABEL } from "./identity-warning";
 
 import { PendingList } from "./pending-list";
 import { reviewPageHref, type ReviewAxes } from "./review-axes";
-import { noAuthorityViewer } from "./pending-viewer.fixture";
+import { fulfillmentNotice, type PendingViewer } from "./fulfillment-notice";
+import { globalViewer, noAuthorityViewer, OWNER_ID, ownerViewer } from "./pending-viewer.fixture";
 
 type ActionState = { error: string | null; ok: boolean };
 
@@ -81,13 +83,14 @@ function renderList(
     nextCursor: string | null;
     scope: "active" | "history";
     axes: ReviewAxes;
+    viewer: PendingViewer;
   }> = {},
 ): string {
   const scope = props.scope ?? "active";
   const axes = props.axes ?? {};
   return renderToStaticMarkup(
     createElement(PendingList, {
-      viewer: noAuthorityViewer,
+      viewer: props.viewer ?? noAuthorityViewer,
       items: props.items ?? [pending()],
       nextCursor: props.nextCursor ?? null,
       canDeliver: props.canDeliver ?? true,
@@ -133,6 +136,35 @@ describe("PendingList · Orion SKU", () => {
     const html = renderList({ items: [pending({ product: { ...pending().product, orionCode: code } })] });
     expect(html).toContain(`SKU / Código Orion: ${code}</p>`);
     expect(html).toMatch(/<p class="[^"]*\[overflow-wrap:anywhere\][^"]*text-xs[^"]*">SKU \/ Código Orion:/);
+  });
+});
+
+describe("PendingList · vendedor escrito a mano", () => {
+  it("lo muestra junto a quien anotó el pendiente", () => {
+    const html = renderList({
+      items: [
+        pending({ createdBy: { id: "u-m", name: "Mostrador" }, manualSellerName: "Carlos Gómez" }),
+      ],
+    });
+
+    expect(html).toContain("Anotado por Mostrador");
+    expect(html).toContain("Vendedor: Carlos Gómez");
+    expect(html).not.toContain('name="manualSellerName"');
+  });
+
+  it("también cuando la cuenta que lo anotó ya no resuelve", () => {
+    const html = renderList({ items: [pending({ createdBy: null, manualSellerName: "Carlos" })] });
+
+    expect(html).toContain("Vendedor: Carlos");
+  });
+
+  it.each([null, undefined])("sin vendedor escrito (%s) no pinta la línea", (manualSellerName) => {
+    const html = renderList({
+      items: [pending({ createdBy: { id: "u-1", name: "Juan" }, manualSellerName })],
+    });
+
+    expect(html).toContain("Anotado por Juan");
+    expect(html).not.toContain("Vendedor:");
   });
 });
 
@@ -541,14 +573,23 @@ describe("PendingList · aviso de llegada", () => {
     expect(html).toContain("Listo para facturar");
   });
 
-  it("dice cuánto cubre cuando bodega cargó solo una parte", () => {
+  // Regla única (U4): X = lo cargado sin facturar, Y = lo pedido. Con 4
+  // entregadas (y por lo tanto facturadas) y 8 cargadas, quedan 4 por facturar.
+  // Antes decía "Sin stock suficiente" en rojo aunque el botón facturaba.
+  it("dice cuánto se puede facturar cuando bodega cargó solo una parte", () => {
     const html = renderList({
       items: [
-        pending({ inventoryReadyQuantity: 8, quantity: 10, customerStatus: "CONTACTADO" }),
+        pending({
+          inventoryReadyQuantity: 8,
+          invoicedQuantity: 4,
+          quantity: 10,
+          customerStatus: "FACTURADO",
+        }),
       ],
     });
 
-    expect(html).toContain("Sin stock suficiente · 4 de 6 restantes disponibles");
+    expect(html).toContain("Listo para facturar: 4 de 10");
+    expect(html).not.toContain("Sin stock");
   });
 
   it("calla sobre un pendiente ya cerrado: no queda nada que facturar", () => {
@@ -563,6 +604,228 @@ describe("PendingList · aviso de llegada", () => {
     });
 
     expect(html).not.toContain("Cargado");
+  });
+});
+
+// --------------------------------------------------------------------------
+// U4 — el color de estado de la tarjeta: un borde izquierdo LOCAL. Amarillo si
+// se puede facturar (gana aunque esté agotado), rojo si está agotado y no hay
+// nada que facturar.
+// --------------------------------------------------------------------------
+describe("PendingList · color de estado", () => {
+  function cardClass(item: PendingListItem): string {
+    const html = renderList({ items: [item] });
+    const match = html.match(/<div class="([^"]*)" id="pendiente-[^"]*"/);
+    return match?.[1] ?? "";
+  }
+
+  it("amarillo cuando está listo para facturar", () => {
+    expect(cardClass(pending({ inventoryReadyQuantity: 8, invoicedQuantity: 4 }))).toContain(
+      "border-l-warning",
+    );
+  });
+
+  it("el amarillo gana sobre el agotado", () => {
+    const klass = cardClass(
+      pending({ purchaseStatus: "AGOTADO", inventoryReadyQuantity: 8, invoicedQuantity: 4 }),
+    );
+
+    expect(klass).toContain("border-l-warning");
+    expect(klass).not.toContain("border-l-danger");
+  });
+
+  it("rojo cuando está agotado y no hay nada que facturar", () => {
+    const klass = cardClass(
+      pending({ purchaseStatus: "AGOTADO", inventoryReadyQuantity: 4, invoicedQuantity: 4 }),
+    );
+
+    expect(klass).toContain("border-l-4");
+    expect(klass).toContain("border-l-danger");
+  });
+
+  it("sin color cuando no está listo ni agotado", () => {
+    const klass = cardClass(pending({ inventoryReadyQuantity: 4, invoicedQuantity: 4 }));
+
+    expect(klass).not.toContain("border-l-warning");
+    expect(klass).not.toContain("border-l-danger");
+  });
+});
+
+// --------------------------------------------------------------------------
+// Cada pendiente DICE lo que pasó, no solo lo pinta. La llegada a bodega va en
+// su propia línea verde, que se parte en el celular; el borde rojo va siempre
+// acompañado de la palabra "Agotado".
+// --------------------------------------------------------------------------
+describe("PendingList · qué pasó con el pendiente", () => {
+  const arrivalLine = (label: string) =>
+    `<p class="min-w-0 max-w-full whitespace-normal break-words text-sm font-medium text-success">${label}</p>`;
+  const SOLD_OUT_BADGE = 'text-danger">Agotado</span>';
+
+  it("dice que ya llegó a bodega, antes del aviso rojo que sigue igual", () => {
+    const html = renderList({
+      items: [pending({ status: "PENDIENTE", deliveredQuantity: 0, availabilityStatus: "LLEGO_BODEGA" })],
+    });
+
+    expect(html).toContain(arrivalLine("Ya llegó a bodega"));
+    expect(html).toContain("Sin stock");
+    expect(html.indexOf(arrivalLine("Ya llegó a bodega"))).toBeLessThan(html.indexOf("Sin stock"));
+  });
+
+  it("dice que llegó una parte, junto al amarillo de listo para facturar", () => {
+    const html = renderList({
+      items: [
+        pending({
+          status: "PENDIENTE",
+          deliveredQuantity: 0,
+          availabilityStatus: "DISPONIBLE_PARCIAL",
+          inventoryReadyQuantity: 6,
+        }),
+      ],
+    });
+
+    expect(html).toContain(arrivalLine("Ya llegó parte a bodega"));
+    expect(html).toContain("Listo para facturar: 6 de 10");
+  });
+
+  it("no dice nada de llegada mientras sigue esperando", () => {
+    const html = renderList({ items: [pending({ availabilityStatus: "ESPERANDO" })] });
+
+    expect(html).not.toContain("Ya llegó");
+  });
+
+  it("la línea de llegada reemplaza al viejo aviso verde", () => {
+    const fila = pending({
+      availabilityStatus: "LLEGO_BODEGA",
+      customerStatus: "CONTACTADO",
+      deliveredQuantity: 6,
+      cancelledQuantity: 4,
+    });
+    // La fila produce de verdad el aviso verde legado: sin esto el test no
+    // discriminaría.
+    expect(fulfillmentNotice(fila)?.tone).toBe("success");
+
+    const html = renderList({ items: [fila] });
+
+    expect(html).toContain(arrivalLine("Ya llegó a bodega"));
+    expect(html).not.toContain("Llegó a la droguería");
+  });
+
+  it("el azul de listo para entregar sigue al lado de la llegada", () => {
+    const html = renderList({
+      items: [
+        pending({
+          availabilityStatus: "DISPONIBLE_COMPLETO",
+          customerStatus: "FACTURADO",
+          inventoryReadyQuantity: 10,
+          invoicedQuantity: 10,
+        }),
+      ],
+    });
+
+    expect(html).toContain(arrivalLine("Ya llegó a bodega"));
+    expect(html).toContain("Listo para entregar");
+  });
+
+  it("la línea de llegada se parte en pantallas angostas", () => {
+    const html = renderList({
+      items: [pending({ availabilityStatus: "LLEGO_BODEGA", inventoryReadyQuantity: 0 })],
+    });
+
+    expect(html).toMatch(/<p class="[^"]*whitespace-normal[^"]*break-words[^"]*">Ya llegó a bodega</);
+  });
+
+  it("dice Agotado junto al borde rojo", () => {
+    const html = renderList({
+      items: [
+        pending({
+          status: "PENDIENTE",
+          deliveredQuantity: 0,
+          purchaseStatus: "AGOTADO",
+          inventoryReadyQuantity: 0,
+        }),
+      ],
+    });
+
+    expect(html).toContain("border-l-danger");
+    expect(html.split(SOLD_OUT_BADGE)).toHaveLength(2);
+    expect(html).toContain(">Pendiente</span>");
+  });
+
+  it("no repite Agotado cuando la insignia legada ya lo dice", () => {
+    const html = renderList({
+      items: [
+        pending({
+          status: "AGOTADO",
+          deliveredQuantity: 0,
+          purchaseStatus: "AGOTADO",
+          inventoryReadyQuantity: 0,
+        }),
+      ],
+    });
+
+    expect(html).toContain("border-l-danger");
+    expect(html.split(">Agotado</span>")).toHaveLength(2);
+  });
+
+  it("no dice Agotado cuando está listo para facturar: el amarillo gana", () => {
+    const html = renderList({
+      items: [pending({ purchaseStatus: "AGOTADO", inventoryReadyQuantity: 8, invoicedQuantity: 4 })],
+    });
+
+    expect(html).toContain("Listo para facturar");
+    expect(html).not.toContain(">Agotado<");
+  });
+});
+
+// --------------------------------------------------------------------------
+// U5 — facturar sin stock: el formulario aparece aunque no haya nada cargado,
+// siempre que quede saldo y la fila esté en el alcance de quien mira. El aviso
+// y el color de U4 no cambian.
+// --------------------------------------------------------------------------
+describe("PendingList · facturar sin stock", () => {
+  const TOKEN_INPUT = /name="expectedInvoicedQuantity" value="0"/;
+
+  function sinCarga(overrides: Partial<PendingListItem> = {}): PendingListItem {
+    return pending({
+      status: "PENDIENTE",
+      customerStatus: "POR_CONTACTAR",
+      deliveredQuantity: 0,
+      inventoryReadyQuantity: 0,
+      invoicedQuantity: 0,
+      createdBy: { id: OWNER_ID, name: "Vendedora" },
+      ...overrides,
+    });
+  }
+
+  it("ofrece el formulario a quien tiene alcance global", () => {
+    const html = renderList({ items: [sinCarga()], viewer: globalViewer() });
+
+    expect(html).toMatch(TOKEN_INPUT);
+    expect(html).toContain("Facturar");
+    expect(html).toContain("Sin stock");
+    expect(html).not.toContain("border-l-warning");
+  });
+
+  it("ofrece el formulario al dueño con alcance propio", () => {
+    expect(renderList({ items: [sinCarga()], viewer: ownerViewer() })).toMatch(TOKEN_INPUT);
+  });
+
+  it("no lo ofrece fuera del alcance ni sin autoridad", () => {
+    expect(
+      renderList({ items: [sinCarga()], viewer: ownerViewer("otro-vendedor") }),
+    ).not.toContain("expectedInvoicedQuantity");
+    expect(renderList({ items: [sinCarga()], viewer: noAuthorityViewer })).not.toContain(
+      "expectedInvoicedQuantity",
+    );
+  });
+
+  it("no lo ofrece sin saldo por facturar", () => {
+    const html = renderList({
+      items: [sinCarga({ customerStatus: "FACTURADO", invoicedQuantity: 10 })],
+      viewer: globalViewer(),
+    });
+
+    expect(html).not.toContain("expectedInvoicedQuantity");
   });
 });
 

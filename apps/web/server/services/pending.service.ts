@@ -27,6 +27,7 @@ import {
   cancelPending,
   countOpenPendings,
   countOverduePendings,
+  countReadyToInvoicePendings,
   countUpcomingPendings,
   createPending,
   createPendingDelivery,
@@ -103,6 +104,10 @@ export type RegisterPendingInput = {
   customerPhone?: string;
   customerAddress?: string;
   note?: string;
+  // Vendedor escrito a mano (cuentas compartidas). Solo descriptivo: NO entra
+  // en la huella del intento —la idempotencia impide duplicados, no juzga este
+  // texto— y nunca reemplaza a `createdById`.
+  manualSellerName?: string;
   // Seguimiento del cliente. `zone` llega ya canonizada desde el schema.
   zone?: string;
   totalAmount?: number;
@@ -221,6 +226,18 @@ export async function getPendings(params: {
   const { canViewCustomerIdentity, ...listParams } = params;
   const { items, nextCursor } = await listPendings(listParams);
   return { items: minimizeCustomerIdentity(items, canViewCustomerIdentity), nextCursor };
+}
+
+/**
+ * El contador del chip "Listos para facturar" de Revisión de pendientes.
+ *
+ * Mismo alcance que el listado: la página pasa el `ownerId` del vendedor que no
+ * ve la cola entera. Es un total dentro de ese alcance, independiente de los
+ * otros filtros activos. No devuelve filas, así que no hay identidad que
+ * minimizar.
+ */
+export async function getReadyToInvoiceCount(params: { ownerId?: string }): Promise<number> {
+  return countReadyToInvoicePendings(params.ownerId);
 }
 
 /**
@@ -565,6 +582,7 @@ function createPendingRegistration(
         productId, quantity: data.quantity, promisedAt: data.promisedAt,
         customerName: data.customerName, customerPhone: data.customerPhone,
         customerAddress: data.customerAddress, note: data.note, zone: data.zone,
+        manualSellerName: data.manualSellerName,
         totalAmount: data.totalAmount, paidAmount: data.paidAmount,
         paymentMethod: data.paymentMethod,
         createdById: data.createdById ?? null,
@@ -1058,6 +1076,19 @@ export type InvoicePendingInput = {
    */
   scope: PendingActionScope;
   quantity?: number;
+  /**
+   * Token de concurrencia: el `invoicedQuantity` que la persona VIO al decidir.
+   * Si bajo el lock ya no coincide, el intento es viejo —un doble clic, un
+   * reintento, otra pestaña— y se rechaza sin escribir. Así el mismo intento
+   * factura una sola vez. NO es autorización: el alcance sigue decidiendo solo.
+   */
+  expectedInvoicedQuantity: number;
+  /**
+   * U5 — la excepción: facturar por encima del stock facturable. Solo cuenta
+   * cuando la cantidad EXCEDE ese stock; hasta ahí la factura es normal aunque
+   * la marca venga puesta.
+   */
+  allowWithoutStock?: boolean;
 };
 
 export type InvoicePendingRejection =
@@ -1065,7 +1096,18 @@ export type InvoicePendingRejection =
   | "NOT_OWNER"
   | "ALREADY_TERMINAL"
   | "INVALID_QUANTITY"
-  | "NO_STOCK";
+  | "NO_STOCK"
+  | "STALE";
+
+/**
+ * Cómo quedó facturado. La acción lo necesita para no auditar dos veces: la
+ * factura sin stock ya dejó su asiento adentro de la transacción.
+ */
+export type InvoicePendingSuccess = { mode: "NORMAL" | "WITHOUT_STOCK" };
+
+export type InvoicePendingDependencies = {
+  writeAudit?: TransactionalAuditWriter;
+};
 
 /**
  * Facturarle al cliente lo que ya llegó de su pendiente.
@@ -1097,55 +1139,102 @@ export type InvoicePendingRejection =
  * segunda lee el `invoicedQuantity` que dejó la primera y se rechaza sola si ya
  * no queda stock. Sin ese lock, las dos leerían el mismo cero y facturarían el
  * doble de lo que llegó.
+ *
+ * TOKEN (U5). Además del lock, cada intento trae `expectedInvoicedQuantity`:
+ * lo facturado que vio la persona. Se compara bajo el lock, después de las
+ * reglas de alcance y de estado terminal y antes de mirar cantidades. Si no
+ * coincide, `STALE` sin escribir nada: el lock serializa, el token evita que el
+ * segundo intento —ya serializado— vuelva a facturar sobre lo que dejó el
+ * primero.
+ *
+ * EXCEPCIÓN SIN STOCK (U5). Con `allowWithoutStock`, la parte que excede el
+ * stock facturable se factura igual, hasta el saldo del cliente. Es la MISMA
+ * escritura de cuatro campos que una factura normal: no crea stock, no reserva
+ * ni toca lotes, y por eso tampoco habilita la entrega (`deliverPending` sigue
+ * exigiendo reservas reales). Deja su propio asiento de auditoría ADENTRO de la
+ * transacción: una excepción sin testigo no puede quedar.
  */
 export async function invoicePending(
   input: InvoicePendingInput,
   now = new Date(),
-): Promise<InvoicePendingRejection | null> {
+  deps: InvoicePendingDependencies = {},
+): Promise<InvoicePendingRejection | InvoicePendingSuccess> {
   // El rol que no factura se rechaza antes de tocar la base: no hay fila que
   // mirar ni lock que tomar si la autoridad no existe.
   if (input.scope === "none") return "NOT_AUTHORIZED";
 
-  return prisma.$transaction(async (tx) => {
-    const pending = await lockPendingForUpdate(tx, input.id);
-    if (!pending) throw new Error("Pending not found");
-    if (input.scope === "own" && pending.createdById !== input.actorId) {
-      return "NOT_OWNER";
-    }
-    if (pending.customerStatus === "ENTREGADO" || pending.customerStatus === "CANCELADO") {
-      return "ALREADY_TERMINAL";
-    }
+  return prisma.$transaction(
+    async (tx): Promise<InvoicePendingRejection | InvoicePendingSuccess> => {
+      const writeAudit = deps.writeAudit ?? recordAuditInTransaction;
+      const pending = await lockPendingForUpdate(tx, input.id);
+      if (!pending) throw new Error("Pending not found");
+      if (input.scope === "own" && pending.createdById !== input.actorId) {
+        return "NOT_OWNER";
+      }
+      if (pending.customerStatus === "ENTREGADO" || pending.customerStatus === "CANCELADO") {
+        return "ALREADY_TERMINAL";
+      }
 
-    const pendingToInvoice = Math.max(pending.quantity - pending.invoicedQuantity, 0);
-    const stockToInvoice = Math.max(
-      pending.inventoryReadyQuantity - pending.invoicedQuantity,
-      0,
-    );
+      // Lo que la persona vio ya no es lo que hay: otro intento facturó
+      // primero. Nada de lo que sigue puede decidirse sobre un dato viejo.
+      if (pending.invoicedQuantity !== input.expectedInvoicedQuantity) return "STALE";
 
-    // Sin mercadería cargada no hay nada que facturar, y decirlo con su propio
-    // código evita que la pantalla muestre "revisá la cantidad" cuando la
-    // cantidad estaba bien y lo que falta es el stock.
-    if (stockToInvoice <= 0) return "NO_STOCK";
+      const pendingToInvoice = Math.max(pending.quantity - pending.invoicedQuantity, 0);
+      const stockToInvoice = Math.max(
+        pending.inventoryReadyQuantity - pending.invoicedQuantity,
+        0,
+      );
 
-    // Sin cantidad explícita se factura todo lo facturable, que es el menor de
-    // los dos techos y no "todo lo que el cliente pidió".
-    const quantity = input.quantity ?? Math.min(pendingToInvoice, stockToInvoice);
-    if (!Number.isInteger(quantity) || quantity <= 0 || quantity > pendingToInvoice) {
-      return "INVALID_QUANTITY";
-    }
-    if (quantity > stockToInvoice) return "NO_STOCK";
+      // Sin mercadería cargada no hay nada que facturar, y decirlo con su propio
+      // código evita que la pantalla muestre "revisá la cantidad" cuando la
+      // cantidad estaba bien y lo que falta es el stock. Salvo la excepción
+      // pedida explícitamente.
+      if (stockToInvoice <= 0 && !input.allowWithoutStock) return "NO_STOCK";
 
-    await tx.pending.update({
-      where: { id: pending.id },
-      data: {
-        customerStatus: "FACTURADO",
-        invoicedQuantity: pending.invoicedQuantity + quantity,
-        invoicedAt: now,
-        invoicedById: input.actorId,
-      },
-    });
-    return null;
-  });
+      // Sin cantidad explícita se factura todo lo facturable, que es el menor de
+      // los dos techos y no "todo lo que el cliente pidió".
+      const quantity = input.quantity ?? Math.min(pendingToInvoice, stockToInvoice);
+      if (!Number.isInteger(quantity) || quantity <= 0 || quantity > pendingToInvoice) {
+        return "INVALID_QUANTITY";
+      }
+
+      // Hasta el stock facturable es una factura NORMAL, venga o no la marca.
+      // Por encima, solo con la marca.
+      const withoutStock = quantity > stockToInvoice;
+      if (withoutStock && !input.allowWithoutStock) return "NO_STOCK";
+
+      const invoicedQuantity = pending.invoicedQuantity + quantity;
+      await tx.pending.update({
+        where: { id: pending.id },
+        data: {
+          customerStatus: "FACTURADO",
+          invoicedQuantity,
+          invoicedAt: now,
+          invoicedById: input.actorId,
+        },
+      });
+
+      if (!withoutStock) return { mode: "NORMAL" };
+
+      // Mismo cliente de transacción: si este asiento no se puede escribir, la
+      // factura se revierte con él.
+      await writeAudit(tx, {
+        action: AUDIT_ACTIONS.PENDING_INVOICED_WITHOUT_STOCK,
+        module: AUDIT_MODULES.PENDIENTES,
+        entity: "Pending",
+        entityId: pending.id,
+        result: "SUCCESS",
+        after: {
+          invoicedQuantity: quantity,
+          stockAtInvoice: stockToInvoice,
+          totalInvoicedQuantity: invoicedQuantity,
+          customerStatus: "FACTURADO",
+        },
+        context: { userId: input.actorId },
+      });
+      return { mode: "WITHOUT_STOCK" };
+    },
+  );
 }
 
 // --------------------------------------------------------------------------
@@ -1288,6 +1377,7 @@ export type UpdatePendingInput = {
   customerPhone: string;
   customerAddress?: string;
   note?: string;
+  manualSellerName?: string;
   zone?: string;
   totalAmount?: number;
   paidAmount?: number;
@@ -1344,6 +1434,7 @@ export async function updatePending(
       customerPhone: input.customerPhone,
       customerAddress: input.customerAddress,
       note: input.note,
+      manualSellerName: input.manualSellerName,
       zone: input.zone,
       totalAmount: input.totalAmount,
       paidAmount: input.paidAmount,
@@ -1403,6 +1494,7 @@ export async function getPendingForEdit(params: {
       customerPhone: true,
       customerAddress: true,
       note: true,
+      manualSellerName: true,
       zone: true,
       totalAmount: true,
       paidAmount: true,

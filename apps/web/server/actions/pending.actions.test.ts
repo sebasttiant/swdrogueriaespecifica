@@ -155,7 +155,6 @@ function createCatalogFormData(overrides: Record<string, string> = {}) {
 function createManualFormData(overrides: Record<string, string> = {}) {
   const data = new FormData();
   data.set("manualName", "Ibuprofeno jarabe");
-  data.set("manualUnit", "frasco");
   data.set("quantity", "2");
   data.set("promisedAt", "2099-01-02T12:00");
   data.set("customerName", "Ana Pérez");
@@ -221,9 +220,65 @@ describe("createPendingAction", () => {
     expect(mocks.registerPending).toHaveBeenCalledWith(
       expect.objectContaining({
         productId: undefined,
-        manual: { name: "Ibuprofeno jarabe", unit: "frasco" },
+        manual: { name: "Ibuprofeno jarabe", unit: "unidad" },
       }),
     );
+  });
+
+  // Un formulario viejo abierto en otra pestaña todavía puede postear la
+  // presentación: se descarta, y el producto nace como si el campo hubiera
+  // quedado vacío.
+  it("descarta la presentación que postee un formulario viejo", async () => {
+    await createPendingAction(
+      PREV,
+      createManualFormData({ manualUnit: "frasco", identitySkippedReason: "CODE_NOT_FOUND" }),
+    );
+
+    expect(mocks.registerPending).toHaveBeenCalledWith(
+      expect.objectContaining({ manual: { name: "Ibuprofeno jarabe", unit: "unidad" } }),
+    );
+  });
+
+  // ------------------------------------------------------------------------
+  // Vendedor escrito a mano. Solo describe: el dueño es la SESIÓN.
+  // ------------------------------------------------------------------------
+  describe("vendedor escrito a mano", () => {
+    it("viaja recortado y NO reemplaza a quien inició sesión como creador", async () => {
+      mocks.checkCapability.mockResolvedValue({
+        ok: true,
+        session: { user: { id: "mostrador-1", role: "OPERADOR", email: "mostrador@drogueria.test" } },
+      });
+
+      const result = await createPendingAction(
+        PREV,
+        createCatalogFormData({ manualSellerName: "  Carlos Gómez " }),
+      );
+
+      expectSuccess(result);
+      expect(mocks.registerPending).toHaveBeenCalledWith(
+        expect.objectContaining({ manualSellerName: "Carlos Gómez", createdById: "mostrador-1" }),
+      );
+    });
+
+    it("en blanco no viaja", async () => {
+      await createPendingAction(PREV, createCatalogFormData({ manualSellerName: "   " }));
+
+      const [input] = mocks.registerPending.mock.calls[0] as [Record<string, unknown>];
+      expect(input.manualSellerName).toBeUndefined();
+      expect(input.createdById).toBe("op-1");
+    });
+
+    it("demasiado largo se rechaza sin registrar y conserva lo escrito", async () => {
+      const result = await createPendingAction(
+        PREV,
+        createCatalogFormData({ manualSellerName: "a".repeat(121) }),
+      );
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("El nombre del vendedor es demasiado largo.");
+      expect(mocks.registerPending).not.toHaveBeenCalled();
+      expect(result.values?.manualSellerName).toBe("a".repeat(121));
+    });
   });
 
   // ------------------------------------------------------------------------
@@ -294,8 +349,8 @@ describe("createPendingAction", () => {
       expect(result.values).toEqual({
         productId: "prod-1",
         manualName: "",
-        manualUnit: "",
         manualMode: "",
+        manualSellerName: "",
         quantity: "2",
         promisedAt: "2099-01-02T12:00",
         customerName: "Ana Pérez",
@@ -339,7 +394,7 @@ describe("createPendingAction", () => {
       expect(mocks.linkOrionCodeAtCapture).not.toHaveBeenCalled();
       expect(mocks.registerPending).toHaveBeenCalledWith(
         expect.objectContaining({
-          manual: { name: "Ibuprofeno jarabe", unit: "frasco", orionCode: "ORN-2002" },
+          manual: { name: "Ibuprofeno jarabe", unit: "unidad", orionCode: "ORN-2002" },
         }),
       );
     });
@@ -405,8 +460,8 @@ describe("createPendingAction", () => {
       expect(result.values).toEqual({
         productId: "",
         manualName: "Ibuprofeno jarabe",
-        manualUnit: "frasco",
         manualMode: "on",
+        manualSellerName: "",
         quantity: "2",
         promisedAt: "2099-01-02T12:00",
         customerName: "Ana Pérez",
@@ -1480,6 +1535,8 @@ describe("contactPendingAction / invoicePendingAction", () => {
   function lifecycleFormData(overrides: Record<string, string> = {}) {
     const data = new FormData();
     data.set("id", "pend-1");
+    // U5: el formulario SIEMPRE manda lo facturado que la persona vio.
+    data.set("expectedInvoicedQuantity", "0");
     for (const [key, value] of Object.entries(overrides)) data.set(key, value);
     return data;
   }
@@ -1489,7 +1546,7 @@ describe("contactPendingAction / invoicePendingAction", () => {
   // mano: deriva el alcance de la matriz de permisos.
   it("la supervisión factura con alcance global", async () => {
     mocks.requireCapability.mockResolvedValue({ user: { id: "sup-1", role: "SUPERVISOR" } });
-    mocks.invoicePending.mockResolvedValue(null);
+    mocks.invoicePending.mockResolvedValue({ mode: "NORMAL" });
 
     const result = await invoicePendingAction(PREV, lifecycleFormData({ quantity: "3" }));
 
@@ -1497,6 +1554,8 @@ describe("contactPendingAction / invoicePendingAction", () => {
     expect(mocks.invoicePending).toHaveBeenCalledWith({
       id: "pend-1",
       quantity: 3,
+      expectedInvoicedQuantity: 0,
+      allowWithoutStock: false,
       actorId: "sup-1",
       scope: "all",
     });
@@ -1538,7 +1597,7 @@ describe("contactPendingAction / invoicePendingAction", () => {
 
   it("registra la factura con actor, cantidad y estado resultante", async () => {
     mocks.requireCapability.mockResolvedValue({ user: { id: "sel-1", role: "OPERADOR" } });
-    mocks.invoicePending.mockResolvedValue(null);
+    mocks.invoicePending.mockResolvedValue({ mode: "NORMAL" });
 
     const result = await invoicePendingAction(PREV, lifecycleFormData({ quantity: "6" }));
 
@@ -1546,6 +1605,8 @@ describe("contactPendingAction / invoicePendingAction", () => {
     expect(mocks.invoicePending).toHaveBeenCalledWith({
       id: "pend-1",
       quantity: 6,
+      expectedInvoicedQuantity: 0,
+      allowWithoutStock: false,
       actorId: "sel-1",
       // El vendedor manda alcance PROPIO. Antes viajaba `canManageAll: false`,
       // un booleano que no distinguía "acotado a lo suyo" de "sin autoridad".
@@ -1580,7 +1641,7 @@ describe("contactPendingAction / invoicePendingAction", () => {
 
   it("no le pide a nadie que reintente una factura ya registrada", async () => {
     mocks.requireCapability.mockResolvedValue({ user: { id: "sel-1", role: "OPERADOR" } });
-    mocks.invoicePending.mockResolvedValue(null);
+    mocks.invoicePending.mockResolvedValue({ mode: "NORMAL" });
     mocks.recordAudit.mockRejectedValueOnce(new Error("audit unavailable"));
     mocks.revalidatePath.mockImplementationOnce(() => {
       throw new Error("cache unavailable");
@@ -1610,6 +1671,121 @@ describe("contactPendingAction / invoicePendingAction", () => {
       expect(result.ok).toBe(false);
     }
     expect(mocks.invoicePending).not.toHaveBeenCalled();
+  });
+
+  // ------------------------------------------------------------------
+  // U5 — token de concurrencia y facturación excepcional sin stock.
+  // ------------------------------------------------------------------
+
+  it("exige la capacidad de facturar antes de mirar el formulario", async () => {
+    mocks.requireCapability.mockRejectedValueOnce(new Error("forbidden"));
+
+    await expect(
+      invoicePendingAction(PREV, lifecycleFormData({ quantity: "1" })),
+    ).rejects.toThrow("forbidden");
+    expect(mocks.requireCapability).toHaveBeenCalledWith("canInvoicePendings");
+    expect(mocks.invoicePending).not.toHaveBeenCalled();
+  });
+
+  it("sin token, o con un token inválido, no llama al servicio ni escribe", async () => {
+    mocks.requireCapability.mockResolvedValue({ user: { id: "sel-1", role: "OPERADOR" } });
+
+    const missing = lifecycleFormData({ quantity: "1" });
+    missing.delete("expectedInvoicedQuantity");
+    expect((await invoicePendingAction(PREV, missing)).ok).toBe(false);
+
+    for (const token of ["", " ", "-1", "1.5", "abc", "1e2"]) {
+      const result = await invoicePendingAction(
+        PREV,
+        lifecycleFormData({ quantity: "1", expectedInvoicedQuantity: token }),
+      );
+      expect(result).toEqual({ error: "Revisá la cantidad a facturar.", ok: false });
+    }
+    expect(mocks.invoicePending).not.toHaveBeenCalled();
+    expect(mocks.recordAudit).not.toHaveBeenCalled();
+  });
+
+  it("pasa el token que vio la persona", async () => {
+    mocks.requireCapability.mockResolvedValue({ user: { id: "sel-1", role: "OPERADOR" } });
+    mocks.invoicePending.mockResolvedValue({ mode: "NORMAL" });
+
+    await invoicePendingAction(
+      PREV,
+      lifecycleFormData({ quantity: "2", expectedInvoicedQuantity: "7" }),
+    );
+
+    expect(mocks.invoicePending).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedInvoicedQuantity: 7 }),
+    );
+  });
+
+  it("la marca de excepción vale solo con el valor exacto", async () => {
+    mocks.requireCapability.mockResolvedValue({ user: { id: "sel-1", role: "OPERADOR" } });
+    mocks.invoicePending.mockResolvedValue({ mode: "NORMAL" });
+
+    await invoicePendingAction(PREV, lifecycleFormData({ quantity: "1", allowWithoutStock: "1" }));
+    expect(mocks.invoicePending).toHaveBeenLastCalledWith(
+      expect.objectContaining({ allowWithoutStock: true }),
+    );
+
+    for (const flag of ["true", "on", "yes", "0", "", " 1", "1 "]) {
+      await invoicePendingAction(PREV, lifecycleFormData({ quantity: "1", allowWithoutStock: flag }));
+      expect(mocks.invoicePending).toHaveBeenLastCalledWith(
+        expect.objectContaining({ allowWithoutStock: false }),
+      );
+    }
+  });
+
+  // La excepción ya quedó auditada ADENTRO de la transacción. Escribir además
+  // el `pending.invoiced` de éxito contaría la misma factura dos veces.
+  it("una factura sin stock no escribe la auditoría de éxito normal", async () => {
+    mocks.requireCapability.mockResolvedValue({ user: { id: "sel-1", role: "OPERADOR" } });
+    mocks.invoicePending.mockResolvedValue({ mode: "WITHOUT_STOCK" });
+
+    const result = await invoicePendingAction(
+      PREV,
+      lifecycleFormData({ quantity: "4", allowWithoutStock: "1" }),
+    );
+
+    expect(result).toEqual({ error: null, ok: true });
+    expect(mocks.recordAudit).not.toHaveBeenCalled();
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/pendientes");
+  });
+
+  it("una factura normal sigue escribiendo su auditoría de éxito", async () => {
+    mocks.requireCapability.mockResolvedValue({ user: { id: "sel-1", role: "OPERADOR" } });
+    mocks.invoicePending.mockResolvedValue({ mode: "NORMAL" });
+
+    await invoicePendingAction(PREV, lifecycleFormData({ quantity: "2", allowWithoutStock: "1" }));
+
+    expect(mocks.recordAudit).toHaveBeenCalledTimes(1);
+    expect(mocks.recordAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: AUDIT_ACTIONS.PENDING_INVOICED,
+        result: "SUCCESS",
+        after: { invoicedQuantity: 2, customerStatus: "FACTURADO" },
+      }),
+    );
+  });
+
+  it("un intento viejo se explica y deja su rastro de rechazo", async () => {
+    mocks.requireCapability.mockResolvedValue({ user: { id: "sel-1", role: "OPERADOR" } });
+    mocks.invoicePending.mockResolvedValue("STALE");
+
+    const result = await invoicePendingAction(PREV, lifecycleFormData({ quantity: "2" }));
+
+    expect(result).toEqual({
+      error:
+        "Este pendiente se facturó o cambió mientras lo veías. Actualizá la lista antes de volver a facturar.",
+      ok: false,
+    });
+    expect(mocks.recordAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: AUDIT_ACTIONS.PENDING_INVOICED,
+        result: "FAILURE",
+        after: { reason: "STALE", attemptedQuantity: 2 },
+      }),
+    );
   });
 });
 

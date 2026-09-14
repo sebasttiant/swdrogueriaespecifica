@@ -29,11 +29,13 @@ import {
   type EntryProductSnapshot,
 } from "@/server/repositories/product.repository";
 import {
-  lockBatchLaboratoryEvidence,
+  lockBatchForEntry,
   reserveReceivedBatchQuantity,
   reserveBatchForPending,
   upsertBatchQuantity,
 } from "@/server/repositories/product-batch.repository";
+import { deriveReservedBatchCode } from "@/lib/inventory/reserved-batch-code";
+import { bogotaDayKey } from "@/lib/datetime/bogota";
 import {
   createInventoryEntry,
   findInventoryEntryByIdempotencyKey,
@@ -48,8 +50,19 @@ import {
 export type RegisterInventoryEntryInput = {
   productId: string;
   quantity: number;
-  batchCode: string;
-  expiresAt: Date;
+  /**
+   * Número de lote del proveedor. AUSENTE cuando la caja no lo trae impreso: en
+   * ese caso el servicio deriva el código reservado que representa "sin lote"
+   * (ver `lib/inventory/reserved-batch-code.ts`). Nunca se guarda una cadena
+   * vacía: "" no es un lote llamado así, es la ausencia de lote.
+   */
+  batchCode?: string;
+  /**
+   * Vencimiento del lote, o `null` cuando no se conoce. NULL es DESCONOCIDO, no
+   * vencido: el lote se sigue vendiendo y se consume al final. No se inventa una
+   * fecha para poder guardarla.
+   */
+  expiresAt: Date | null;
   note?: string;
   createdById?: string | null;
   idempotencyKey?: string;
@@ -130,6 +143,40 @@ export class LaboratoryEvidenceConflictError extends Error {
     super("batch already received with a different laboratory");
     this.batchCode = params.batchCode;
     this.existingLaboratoryName = params.existingLaboratoryName;
+  }
+}
+
+/**
+ * El lote ya fue recibido con OTRO vencimiento.
+ *
+ * Es el MISMO dilema que `LaboratoryEvidenceConflictError` y se resuelve igual,
+ * por la misma razón. `upsertBatchQuantity` identifica al lote por
+ * `(productId, batchCode)` y en la rama de actualización incrementa la cantidad
+ * SIN tocar `expiresAt`, así que las dos alternativas silenciosas eran:
+ * conservar la primera fecha —el lote termina afirmando un vencimiento que no
+ * es el de la mercadería que acaba de entrar— o pisarla —y entonces lo que se
+ * pierde es el de la que ya estaba—. Las dos dejan stock mezclado bajo una
+ * fecha que no le corresponde a una parte, y eso no se descubre hasta que ya no
+ * se puede reconstruir quién trajo qué.
+ *
+ * Se rechaza la entrada entera, y eso incluye los tres casos: dos fechas
+ * distintas, conocida y después desconocida, y desconocida y después conocida.
+ * Un vencimiento no se hereda ni se pierde en silencio.
+ *
+ * Si la caja trae de verdad otro vencimiento, es otro lote: se registra con otro
+ * código.
+ *
+ * Lleva el CÓDIGO de lote y la fecha ya registrada —nunca ids internos— porque
+ * el destinatario del mensaje es la persona que está cargando la caja.
+ */
+export class BatchExpiryConflictError extends Error {
+  readonly batchCode: string;
+  readonly existingExpiresAt: Date | null;
+
+  constructor(params: { batchCode: string; existingExpiresAt: Date | null }) {
+    super("batch already received with a different expiry");
+    this.batchCode = params.batchCode;
+    this.existingExpiresAt = params.existingExpiresAt;
   }
 }
 
@@ -216,7 +263,9 @@ export class LaboratoryNameResolutionError extends Error {
 function requestFingerprint(data: RegisterInventoryEntryInput): string {
   return JSON.stringify({
     productId: data.productId, quantity: data.quantity, batchCode: data.batchCode,
-    expiresAt: data.expiresAt.toISOString(),
+    // `null` y no la clave omitida: una entrada sin vencimiento es una carga
+    // distinta de una con fecha, y el reintento tiene que poder distinguirlas.
+    expiresAt: data.expiresAt?.toISOString() ?? null,
     note: data.note?.trim() || null,
     createdById: data.createdById ?? null,
     // La clave se OMITE cuando no hay laboratorio, y va al final a propósito.
@@ -280,6 +329,40 @@ async function resolveLaboratoryName(
   return { ...resto, receivedLaboratoryId: resolved.laboratory.id };
 }
 
+/**
+ * El código con el que se va a guardar el lote.
+ *
+ * Sin número de lote informado, lo DERIVA el sistema: el código reservado lleva
+ * el vencimiento adentro, así que dos cajas sin lote con fechas distintas son
+ * dos lotes distintos y cada una queda en su fila con su propia fecha. Sin eso
+ * caerían las dos en la misma fila y la segunda heredaría el vencimiento de la
+ * primera, que es justo lo que no puede pasar.
+ *
+ * `||` y no `??`: el esquema del formulario ya normaliza el campo vacío a
+ * `undefined`, pero un llamador programático puede mandar `""`, y una cadena
+ * vacía tampoco es un lote.
+ */
+function resolveBatchCode(data: RegisterInventoryEntryInput): string {
+  return data.batchCode || deriveReservedBatchCode(data.expiresAt);
+}
+
+/**
+ * ¿Las dos fechas son el MISMO vencimiento?
+ *
+ * Se comparan por DÍA de calendario de Bogotá y no por instante. Un vencimiento
+ * se dice por día —"vence el 31 de diciembre"—, y hay filas viejas guardadas
+ * con hora: el formulario pedía `datetime-local` hasta el 2026-10-04. Comparar
+ * instantes haría que recibir otra vez uno de esos lotes, con la fecha
+ * correcta, se rechazara por una hora que nadie eligió.
+ *
+ * Dos desconocidos son el mismo vencimiento. Uno conocido y uno desconocido, no:
+ * eso es exactamente el caso que se rechaza.
+ */
+function sameExpiryDay(a: Date | null, b: Date | null): boolean {
+  if (a === null || b === null) return a === b;
+  return bogotaDayKey(a) === bogotaDayKey(b);
+}
+
 export async function registerInventoryEntry(
   data: RegisterInventoryEntryInput,
 ): Promise<RegisterInventoryEntryResult> {
@@ -291,8 +374,11 @@ export async function registerInventoryEntry(
     // escrito con otras mayúsculas, y cualquier fallo posterior revierte
     // también el laboratorio.
     const resolvedData = await resolveLaboratoryName(data, tx);
-    const fingerprint = requestFingerprint(resolvedData);
-    data = resolvedData;
+    // El código se resuelve ANTES del fingerprint: el reintento de una entrada
+    // sin lote tiene que producir el mismo fingerprint que la primera.
+    const batchCode = resolveBatchCode(resolvedData);
+    const fingerprint = requestFingerprint({ ...resolvedData, batchCode });
+    data = { ...resolvedData, batchCode };
     if (data.idempotencyKey) {
       const existing = await findInventoryEntryByIdempotencyKey(tx, data.idempotencyKey);
       if (existing) {
@@ -339,29 +425,61 @@ export async function registerInventoryEntry(
       throw new ProductVersionConflictError("catalog", product);
     }
 
-    // La evidencia de laboratorio se decide ANTES de tocar el lote. El lock es
-    // lo que hace que la comparación signifique algo bajo concurrencia.
-    if (data.receivedLaboratoryId) {
-      const locked = await lockBatchLaboratoryEvidence(tx, {
-        productId: data.productId,
-        batchCode: data.batchCode,
+    // ----------------------------------------------------------------------
+    // Las dos evidencias del lote —laboratorio y vencimiento— se deciden ANTES
+    // de tocar el lote y bajo el MISMO candado.
+    //
+    // POR QUÉ UN CANDADO Y NO UNA LECTURA. Leer y después escribir es una
+    // carrera: dos recepciones simultáneas del mismo lote nuevo leerían las dos
+    // que todavía no existe, las dos se creerían la primera, y la segunda
+    // heredaría o pisaría la fecha de la primera en silencio — exactamente lo
+    // que la regla de conflicto existe para impedir.
+    //
+    // El candado es el que YA vive en `lockBatchForEntry`: un advisory lock
+    // TRANSACCIONAL colgado del par `(productId, batchCode)`, que existe aunque
+    // la fila no exista y se suelta al cerrar la transacción. Se eligió ese y no
+    // el helper de violación de unicidad (`isUniqueViolation`, en
+    // `lot.repository`) porque P2002 solo avisa DESPUÉS de intentar escribir, y
+    // para entonces ya no se le puede nombrar a la persona la fecha que el lote
+    // tenía registrada — que es lo único que le sirve del mensaje. Tampoco se
+    // suman los dos: una sola carrera, un solo mecanismo.
+    //
+    // El candado se tomaba solo cuando la recepción informaba un laboratorio.
+    // Ahora se toma SIEMPRE, porque la regla del vencimiento aplica a toda
+    // entrada.
+    //
+    // Cualquiera de los dos rechazos revierte la transacción ENTERA: no queda
+    // la fila de ledger, ni la asignación FIFO, ni el laboratorio recién
+    // creado. Un rechazo a medias sería peor que el conflicto.
+    // ----------------------------------------------------------------------
+    const locked = await lockBatchForEntry(tx, {
+      productId: data.productId,
+      batchCode,
+    });
+
+    if (locked && !sameExpiryDay(locked.expiresAt, data.expiresAt)) {
+      throw new BatchExpiryConflictError({
+        batchCode,
+        existingExpiresAt: locked.expiresAt,
       });
-      // `null` en el lote es AUSENCIA de evidencia, no un valor en conflicto:
-      // un lote histórico acepta la primera observación que llegue.
-      if (
-        locked?.receivedLaboratoryId &&
-        locked.receivedLaboratoryId !== data.receivedLaboratoryId
-      ) {
-        throw new LaboratoryEvidenceConflictError({
-          batchCode: data.batchCode,
-          existingLaboratoryName: locked.receivedLaboratoryName,
-        });
-      }
+    }
+
+    // `null` en el lote es AUSENCIA de evidencia, no un valor en conflicto:
+    // un lote histórico acepta la primera observación que llegue.
+    if (
+      data.receivedLaboratoryId &&
+      locked?.receivedLaboratoryId &&
+      locked.receivedLaboratoryId !== data.receivedLaboratoryId
+    ) {
+      throw new LaboratoryEvidenceConflictError({
+        batchCode,
+        existingLaboratoryName: locked.receivedLaboratoryName,
+      });
     }
 
     const batch = await upsertBatchQuantity(tx, {
       productId: data.productId,
-      batchCode: data.batchCode,
+      batchCode,
       expiresAt: data.expiresAt,
       quantity: data.quantity,
       ...(data.receivedLaboratoryId
@@ -387,9 +505,11 @@ export async function registerInventoryEntry(
     // FIFO cuantitativo: se bloquean los faltantes del producto y cada unidad de
     // esta entrada queda ligada a exactamente un faltante. Los parciales quedan
     // registrados, nunca se salta una necesidad sin consumir cantidad.
+    // SOLO faltantes ligados a una venta: uno informativo (`originId` nulo) no
+    // tiene a nadie esperando y no puede quedarse con stock de un pendiente.
     const rows = await tx.$queryRaw<Array<{
       id: string; quantity: number; orderedQuantity: number | null; receivedQuantity: number; originId: string | null;
-    }>>`SELECT id, quantity, "orderedQuantity", "receivedQuantity", "originId" FROM missing_items WHERE "productId" = ${data.productId} AND status IN ('FALTANTE', 'PEDIDO', 'EN_BODEGA') AND "receivedQuantity" < CASE WHEN "originId" IS NULL THEN COALESCE("orderedQuantity", quantity) ELSE quantity END ORDER BY "createdAt" ASC, id ASC FOR UPDATE`;
+    }>>`SELECT id, quantity, "orderedQuantity", "receivedQuantity", "originId" FROM missing_items WHERE "productId" = ${data.productId} AND status IN ('FALTANTE', 'PEDIDO', 'EN_BODEGA') AND "originId" IS NOT NULL AND "receivedQuantity" < CASE WHEN "originId" IS NULL THEN COALESCE("orderedQuantity", quantity) ELSE quantity END ORDER BY "createdAt" ASC, id ASC FOR UPDATE`;
     let remaining = data.quantity;
     let reservedQuantity = 0;
     let allocatedMissingCount = 0;

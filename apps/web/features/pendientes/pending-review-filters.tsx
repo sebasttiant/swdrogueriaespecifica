@@ -10,6 +10,8 @@ import {
   DEADLINE_AXIS_LABELS,
   DEADLINE_AXIS_VALUES,
   hasActiveAxis,
+  INVOICE_AXIS_LABELS,
+  INVOICE_AXIS_VALUES,
   PURCHASE_AXIS_LABELS,
   PURCHASE_AXIS_VALUES,
   reviewHref,
@@ -33,6 +35,10 @@ type PendingReviewFiltersProps = {
   // Ruta sobre la que se arman los enlaces. Se omite en `/pendientes`, que es
   // el default; el módulo de revisión pasa la suya para no expulsar al usuario.
   basePath?: string;
+  // Cuántos pendientes están listos para facturar en el alcance del usuario.
+  // Solo lo pasa Revisión de pendientes: sin él, la fila "Listos para facturar"
+  // no se pinta y `/pendientes` —que comparte este componente— queda igual.
+  readyToInvoiceCount?: number;
 };
 
 export function PendingReviewFilters({
@@ -40,6 +46,7 @@ export function PendingReviewFilters({
   scope,
   view,
   basePath,
+  readyToInvoiceCount,
 }: PendingReviewFiltersProps) {
   return (
     <section aria-label="Filtros de revisión" className="space-y-3">
@@ -53,6 +60,16 @@ export function PendingReviewFilters({
         active={axes.deadline}
         hrefFor={(value) => reviewHref({ scope, view, basePath, axes: { ...axes, deadline: value } })}
       />
+      {readyToInvoiceCount !== undefined ? (
+        <AxisRow
+          legend="Facturación"
+          values={INVOICE_AXIS_VALUES}
+          labels={INVOICE_AXIS_LABELS}
+          active={axes.invoice}
+          counts={{ listos: readyToInvoiceCount }}
+          hrefFor={(value) => reviewHref({ scope, view, basePath, axes: { ...axes, invoice: value } })}
+        />
+      ) : null}
       <AxisRow
         legend="Compras"
         values={PURCHASE_AXIS_VALUES}
@@ -96,6 +113,9 @@ type AxisRowProps<T extends string> = {
   labels: Record<T, string>;
   active: T | undefined;
   hrefFor: (value: T | undefined) => string;
+  // Contador opcional junto a una opción. Hoy solo lo usa "Listos para
+  // facturar": un número de pendientes, no de unidades.
+  counts?: Partial<Record<T, number>>;
 };
 
 function AxisRow<T extends string>({
@@ -104,6 +124,7 @@ function AxisRow<T extends string>({
   labels,
   active,
   hrefFor,
+  counts,
 }: AxisRowProps<T>) {
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -117,11 +138,15 @@ function AxisRow<T extends string>({
         Todos
       </FilterLink>
 
-      {values.map((value) => (
-        <FilterLink key={value} href={hrefFor(value)} isActive={active === value}>
-          {labels[value]}
-        </FilterLink>
-      ))}
+      {values.map((value) => {
+        const count = counts?.[value];
+        return (
+          <FilterLink key={value} href={hrefFor(value)} isActive={active === value}>
+            {labels[value]}
+            {count !== undefined ? <span className="ml-1 tabular-nums">({count})</span> : null}
+          </FilterLink>
+        );
+      })}
     </div>
   );
 }

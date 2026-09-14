@@ -129,8 +129,8 @@ export type PendingFormState = {
 export type PendingSubmittedValues = {
   productId: string;
   manualName: string;
-  manualUnit: string;
   manualMode: string;
+  manualSellerName: string;
   quantity: string;
   promisedAt: string;
   customerName: string;
@@ -155,8 +155,8 @@ export type PendingSubmittedValues = {
 const SUBMITTED_FIELDS = [
   "productId",
   "manualName",
-  "manualUnit",
   "manualMode",
+  "manualSellerName",
   "quantity",
   "promisedAt",
   "customerName",
@@ -393,7 +393,9 @@ export async function createPendingAction(
     productId: formData.get("productId") ?? undefined,
     // Producto manual (opcional): cuando el operador carga uno fuera del catálogo.
     manualName: formData.get("manualName") ?? undefined,
-    manualUnit: formData.get("manualUnit") ?? undefined,
+    // Vendedor escrito a mano: solo describe. El creador sigue siendo la
+    // sesión (`createdById` más abajo), nunca este texto.
+    manualSellerName: formData.get("manualSellerName") ?? undefined,
     quantity: formData.get("quantity"),
     // FormData devuelve null cuando el campo no viene; lo normalizamos a
     // undefined para que el schema aplique sus reglas (texto opcional / fecha
@@ -1277,6 +1279,8 @@ const INVOICE_REJECTION_MESSAGES = {
   ALREADY_TERMINAL: "El pendiente ya está cerrado.",
   INVALID_QUANTITY: "Revisá la cantidad a facturar.",
   NO_STOCK: "Todavía no hay mercadería cargada para facturar.",
+  STALE:
+    "Este pendiente se facturó o cambió mientras lo veías. Actualizá la lista antes de volver a facturar.",
 } as const;
 
 // Auditoría y revalidación ocurren DESPUÉS del commit de negocio. Si alguna de
@@ -1368,15 +1372,31 @@ export async function invoicePendingAction(
   const session = await requireCapability("canInvoicePendings");
   const id = formData.get("id");
   const quantity = Number(formData.get("quantity"));
-  if (typeof id !== "string" || !Number.isInteger(quantity) || quantity <= 0) {
+  // Lo facturado que la persona vio: un entero no negativo escrito tal cual.
+  // `Number(null)` y `Number(" ")` dan 0, así que no alcanza con `Number`: un
+  // token ausente pasaría por "no había nada facturado".
+  const rawExpected = formData.get("expectedInvoicedQuantity");
+  const expectedInvoicedQuantity =
+    typeof rawExpected === "string" && /^\d+$/.test(rawExpected) ? Number(rawExpected) : null;
+  if (
+    typeof id !== "string" ||
+    !Number.isInteger(quantity) ||
+    quantity <= 0 ||
+    expectedInvoicedQuantity === null
+  ) {
     return { error: "Revisá la cantidad a facturar.", ok: false };
   }
+  // La excepción sin stock se pide con UN valor exacto, que solo manda el paso
+  // de confirmación del formulario. Cualquier otra cosa es una factura normal.
+  const allowWithoutStock = formData.get("allowWithoutStock") === "1";
 
-  let rejection: Awaited<ReturnType<typeof invoicePending>>;
+  let result: Awaited<ReturnType<typeof invoicePending>>;
   try {
-    rejection = await invoicePending({
+    result = await invoicePending({
       id,
       quantity,
+      expectedInvoicedQuantity,
+      allowWithoutStock,
       actorId: session.user.id,
       // El alcance se deriva de la matriz de permisos, no de una comparación de
       // roles suelta acá. El actor que queda auditado es SIEMPRE el de la
@@ -1388,23 +1408,27 @@ export async function invoicePendingAction(
     return { error: "No se pudo registrar la factura. Intentá de nuevo.", ok: false };
   }
 
-  if (rejection) {
+  if (typeof result === "string") {
     await recordPendingLifecycleAudit(
       AUDIT_ACTIONS.PENDING_INVOICED,
       id,
       session.user.id,
-      { reason: rejection, attemptedQuantity: quantity },
+      { reason: result, attemptedQuantity: quantity },
       "FAILURE",
     );
-    return { error: INVOICE_REJECTION_MESSAGES[rejection], ok: false };
+    return { error: INVOICE_REJECTION_MESSAGES[result], ok: false };
   }
 
-  await recordPendingLifecycleAudit(
-    AUDIT_ACTIONS.PENDING_INVOICED,
-    id,
-    session.user.id,
-    { invoicedQuantity: quantity, customerStatus: "FACTURADO" },
-  );
+  // La factura sin stock ya dejó su asiento ADENTRO de la transacción. Escribir
+  // además este contaría la misma factura dos veces en la bitácora.
+  if (result.mode === "NORMAL") {
+    await recordPendingLifecycleAudit(
+      AUDIT_ACTIONS.PENDING_INVOICED,
+      id,
+      session.user.id,
+      { invoicedQuantity: quantity, customerStatus: "FACTURADO" },
+    );
+  }
   revalidatePendingViews("Factura confirmada");
   return { error: null, ok: true };
 }
@@ -1510,6 +1534,7 @@ export async function updatePendingAction(
     customerPhone: formData.get("customerPhone") ?? undefined,
     customerAddress: formData.get("customerAddress") ?? undefined,
     note: formData.get("note") ?? undefined,
+    manualSellerName: formData.get("manualSellerName") ?? undefined,
     zone: formData.get("zone") ?? undefined,
     totalAmount: formData.get("totalAmount") ?? undefined,
     paidAmount: formData.get("paidAmount") ?? undefined,

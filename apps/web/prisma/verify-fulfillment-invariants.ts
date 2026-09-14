@@ -250,6 +250,7 @@ async function main() {
       actorId: seller.id,
       scope: "own",
       quantity: 5,
+      expectedInvoicedQuantity: 0,
     })) === "NO_STOCK",
     "sin mercadería cargada no se puede facturar",
   );
@@ -261,6 +262,7 @@ async function main() {
       id: sinStock.pending.id,
       actorId: "otro-vendedor",
       scope: "own",
+      expectedInvoicedQuantity: 0,
     })) === "NOT_OWNER",
     "el vendedor no factura el pendiente de otro",
   );
@@ -271,6 +273,7 @@ async function main() {
       id: sinStock.pending.id,
       actorId: seller.id,
       scope: "none",
+      expectedInvoicedQuantity: 0,
     })) === "NOT_AUTHORIZED",
     "un rol sin autoridad de facturación no factura ni el pendiente propio",
   );

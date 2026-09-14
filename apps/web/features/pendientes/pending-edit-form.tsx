@@ -33,6 +33,7 @@ export type PendingEditValues = {
   customerPhone: string | null;
   customerAddress: string | null;
   note: string | null;
+  manualSellerName: string | null;
   zone: string | null;
   totalAmount: number | null;
   paidAmount: number;
@@ -230,6 +231,18 @@ export function PendingEditForm({
             </Select>
           </Field>
         ) : null}
+
+        {/* Precargado: guardar sin tocarlo conserva el vendedor escrito, y
+            vaciarlo lo borra. Mismo permiso que el resto de la corrección. */}
+        <Field label="Vendedor (opcional)" htmlFor="manualSellerName" className="sm:col-span-2">
+          <Input
+            id="manualSellerName"
+            name="manualSellerName"
+            maxLength={120}
+            autoComplete="off"
+            defaultValue={pending.manualSellerName ?? ""}
+          />
+        </Field>
 
         <Field label="Nota (opcional)" htmlFor="note" className="sm:col-span-2">
           <Input

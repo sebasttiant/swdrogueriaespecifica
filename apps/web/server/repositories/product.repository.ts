@@ -36,7 +36,8 @@ export type ProductListItem = Pick<
   | "identityVersion"
   | "catalogVersion"
 > & {
-  // Earliest expiry among batches with quantity > 0. Null if no active batches.
+  // Earliest KNOWN expiry among batches with quantity > 0. Null when there are
+  // no active batches, or when none of them has a known expiry.
   // Used to compute per-product worst expiry tier in the catalog list (S3).
   worstExpiresAt: Date | null;
   // El laboratorio del catálogo. Desempata cuando dos productos se llaman
@@ -66,6 +67,12 @@ export type CreateProductData = {
 // Prisma does not support aggregate subqueries in select, so we include up to
 // one batch ordered by expiresAt asc — the first result is the worst tier.
 // This avoids N+1: one query per page, not one per product row.
+//
+// `nulls: "last"` va EXPLÍCITO desde que `expiresAt` acepta NULL. Es el default
+// de PostgreSQL para `ASC`, pero escrito dice lo que se quiere: el peor
+// vencimiento es el peor CONOCIDO, y un lote sin fecha no puede ocupar ese
+// lugar y dejar afuera a uno que sí vence. Cuando el producto solo tiene lotes
+// sin fecha, `worstExpiresAt` queda NULL y la insignia no se pinta.
 const LIST_SELECT = {
   id: true,
   code: true,
@@ -84,7 +91,7 @@ const LIST_SELECT = {
   batches: {
     where: { quantity: { gt: 0 } },
     select: { expiresAt: true },
-    orderBy: { expiresAt: "asc" as const },
+    orderBy: { expiresAt: { sort: "asc" as const, nulls: "last" as const } },
     take: 1,
   },
 } as const;

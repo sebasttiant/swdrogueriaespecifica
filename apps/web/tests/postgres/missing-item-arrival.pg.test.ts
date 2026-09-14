@@ -4,13 +4,22 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { prisma } from "@/lib/db/prisma";
 import { markMissingItemArrived } from "@/server/repositories/missing-item.repository";
+import {
+  markReportsArrivedAtWarehouse,
+  MissingReportResolveConflictError,
+} from "@/server/services/missing-report.service";
 
 // --------------------------------------------------------------------------
 // La llegada física: PEDIDO → EN_BODEGA.
 //
-// La transición es un compare-and-set: se escribe SOLO si la fila sigue en
-// PEDIDO. Eso es lo que hace que dos personas descargando el mismo pedido no
-// produzcan dos llegadas — la segunda ve `count === 0` y sabe que llegó tarde.
+// La transición es un compare-and-set: se escribe SOLO si la fila sigue en un
+// estado admitido. Eso es lo que hace que dos personas descargando el mismo
+// pedido no produzcan dos llegadas — la segunda ve `count === 0` y sabe que
+// llegó tarde.
+//
+// Solo se recibe lo que nació de un pendiente (`originId`). Un faltante
+// informativo —estantería, manual, reporte del vendedor— nunca se recibe, así
+// que "ya llegó" lo rechaza aunque esté PEDIDO y aunque se invoque directo.
 //
 // Y lo que NO hace importa igual: no crea inventario y no avisa al vendedor.
 // "Llegó a bodega" no es "disponible para entregar": eso lo da el registro de
@@ -39,6 +48,7 @@ beforeAll(async () => {
 });
 
 afterEach(async () => {
+  await prisma.missingReport.deleteMany({ where: { reporterId: vendedorId } });
   await prisma.missingItem.deleteMany({ where: { productId } });
   await prisma.pending.deleteMany({ where: { productId } });
 });
@@ -85,23 +95,46 @@ const marcar = (id: string) =>
   );
 
 describe("markMissingItemArrived · la transición", () => {
-  it("mueve PEDIDO a EN_BODEGA y firma quién recibió", async () => {
+  // Lo que nació de un pendiente se recibe desde PEDIDO y también desde
+  // FALTANTE: el cliente ya lo pidió (regla del 29-08-2026).
+  it.each(["PEDIDO", "FALTANTE"] as const)(
+    "mueve un faltante de pendiente de %s a EN_BODEGA, firma quién recibió y avanza el pendiente",
+    async (estado) => {
+      const id = await nuevoFaltante(estado, { conPendiente: true });
+
+      expect(await marcar(id)).toBe(1);
+
+      const fila = await prisma.missingItem.findUniqueOrThrow({ where: { id } });
+      expect(fila.status).toBe("EN_BODEGA");
+      expect(fila.arrivedById).toBe(bodegaId);
+      expect(fila.arrivedAt).not.toBeNull();
+      const pending = await prisma.pending.findUniqueOrThrow({
+        where: { id: fila.originId! },
+      });
+      expect(pending.availabilityStatus).toBe("LLEGO_BODEGA");
+    },
+  );
+
+  // Un faltante informativo nunca se recibe: ni siquiera PEDIDO. Sin esta
+  // guarda, llamar a la acción directo saltaba la regla de negocio.
+  it("rechaza un faltante informativo PEDIDO sin escribir nada", async () => {
     const id = await nuevoFaltante("PEDIDO");
 
-    expect(await marcar(id)).toBe(1);
+    expect(await marcar(id)).toBe(0);
 
     const fila = await prisma.missingItem.findUniqueOrThrow({ where: { id } });
-    expect(fila.status).toBe("EN_BODEGA");
-    expect(fila.arrivedById).toBe(bodegaId);
-    expect(fila.arrivedAt).not.toBeNull();
+    expect(fila.status).toBe("PEDIDO");
+    expect(fila.arrivedAt).toBeNull();
+    expect(fila.arrivedById).toBeNull();
   });
 
-  // Solo desde PEDIDO. Recibir algo que nadie compró, o volver a recibir lo ya
-  // recibido, son operaciones sin sentido y el CAS las rechaza sin escribir.
-  it.each(["FALTANTE", "EN_BODEGA", "RECIBIDO", "CANCELADO"] as const)(
+  // Volver a recibir lo ya recibido, o recibir lo cancelado, son operaciones
+  // sin sentido y el CAS las rechaza sin escribir — también para lo que nació
+  // de un pendiente, que es lo único que se puede recibir.
+  it.each(["EN_BODEGA", "RECIBIDO", "CANCELADO"] as const)(
     "rechaza desde %s sin tocar la fila",
     async (estado) => {
-      const id = await nuevoFaltante(estado);
+      const id = await nuevoFaltante(estado, { conPendiente: true });
 
       expect(await marcar(id)).toBe(0);
       expect(
@@ -162,7 +195,7 @@ function barrera(): { esperar: Promise<void>; abrir: () => void } {
 
 describe("markMissingItemArrived · dos personas descargando el mismo pedido", () => {
   it("solo una gana; la otra recibe conflicto", async () => {
-    const id = await nuevoFaltante("PEDIDO");
+    const id = await nuevoFaltante("PEDIDO", { conPendiente: true });
     const primeraEscribio = barrera();
     const segundaIntento = barrera();
     const orden: string[] = [];
@@ -204,12 +237,77 @@ describe("markMissingItemArrived · dos personas descargando el mismo pedido", (
   });
 
   it("una segunda llamada secuencial tampoco duplica", async () => {
-    const id = await nuevoFaltante("PEDIDO");
+    const id = await nuevoFaltante("PEDIDO", { conPendiente: true });
 
     expect(await marcar(id)).toBe(1);
     expect(await marcar(id)).toBe(0);
 
     const fila = await prisma.missingItem.findUniqueOrThrow({ where: { id } });
     expect(fila.status).toBe("EN_BODEGA");
+  });
+});
+
+// --------------------------------------------------------------------------
+// Compras resuelve un grupo de reportes del vendedor como "en bodega".
+//
+// Los reportes siempre enlazan un faltante informativo, así que la llegada del
+// faltante se rechaza y la transacción Serializable deshace TODO: también el
+// cambio de los reportes, que se escribe antes. Si no, "Mis reportes" pasaría
+// de "Pedido" a "En bodega" con el faltante todavía PEDIDO.
+// --------------------------------------------------------------------------
+describe("markReportsArrivedAtWarehouse · reportes enlazados a un faltante", () => {
+  const normalizedName = `ibuprofeno ${RUN.toLowerCase()}`;
+
+  async function grupoPedido(missingItemId: string): Promise<void> {
+    await prisma.missingReport.createMany({
+      data: [1, 2].map(() => ({
+        rawName: `Ibuprofeno ${RUN}`,
+        normalizedName,
+        reporterId: vendedorId,
+        status: "ORDERED" as const,
+        linkedProductId: productId,
+        linkedMissingItemId: missingItemId,
+        resolvedById: bodegaId,
+        resolvedAt: new Date(),
+      })),
+    });
+  }
+
+  it("rechaza con conflicto y no escribe nada si el faltante es informativo", async () => {
+    const id = await nuevoFaltante("PEDIDO");
+    await grupoPedido(id);
+
+    await expect(
+      markReportsArrivedAtWarehouse({ normalizedName, userId: bodegaId }),
+    ).rejects.toBeInstanceOf(MissingReportResolveConflictError);
+
+    const reportes = await prisma.missingReport.findMany({ where: { normalizedName } });
+    expect(reportes).toHaveLength(2);
+    for (const reporte of reportes) {
+      expect(reporte.status).toBe("ORDERED");
+      expect(reporte.arrivedAt).toBeNull();
+      expect(reporte.arrivedById).toBeNull();
+    }
+    const fila = await prisma.missingItem.findUniqueOrThrow({ where: { id } });
+    expect(fila.status).toBe("PEDIDO");
+    expect(fila.arrivedAt).toBeNull();
+    expect(fila.arrivedById).toBeNull();
+  });
+
+  // Control del armado: con el MISMO grupo, si el faltante enlazado sí se puede
+  // recibir, el servicio confirma. Sin esto, el rechazo de arriba podría venir
+  // de un grupo mal armado y no de la guarda.
+  it("control: con un faltante recibible el mismo grupo sí llega a bodega", async () => {
+    const id = await nuevoFaltante("PEDIDO", { conPendiente: true });
+    await grupoPedido(id);
+
+    const result = await markReportsArrivedAtWarehouse({ normalizedName, userId: bodegaId });
+
+    expect(result.resolved).toBe(2);
+    const reportes = await prisma.missingReport.findMany({ where: { normalizedName } });
+    expect(reportes.every((reporte) => reporte.status === "EN_BODEGA")).toBe(true);
+    expect(
+      (await prisma.missingItem.findUniqueOrThrow({ where: { id } })).status,
+    ).toBe("EN_BODEGA");
   });
 });

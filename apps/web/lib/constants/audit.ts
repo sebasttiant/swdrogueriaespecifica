@@ -53,6 +53,10 @@ export const AUDIT_ACTIONS = {
   // propia respuesta a quién, cuándo y por cuánto.
   PENDING_CONTACTED: "pending.contacted",
   PENDING_INVOICED: "pending.invoiced",
+  // La EXCEPCIÓN: facturar por encima del stock facturable, con confirmación
+  // explícita. Va aparte de `PENDING_INVOICED` para que la bitácora la separe
+  // de una factura normal, y se escribe adentro de la transacción de la factura.
+  PENDING_INVOICED_WITHOUT_STOCK: "pending.invoiced_without_stock",
   // Corregir los datos del pedido. Distinto de cambiar de estado: acá lo que se
   // reescribe es la promesa (producto, cantidad, fecha, cliente), y por eso la
   // auditoría guarda el ANTES además del después.

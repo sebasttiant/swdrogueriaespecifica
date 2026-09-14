@@ -118,7 +118,11 @@ describe("pendingCreateSchema", () => {
     }
   });
 
-  it("acepta un producto manual (sin productId) y usa la unidad indicada", () => {
+  // La presentación ya no es un campo de la captura (reunión de cierre: "el
+  // nombre ya contiene el producto"). Un formulario viejo abierto en otra
+  // pestaña todavía puede postearla: se ignora, y el producto nace igual que
+  // cuando el campo quedaba vacío.
+  it("acepta un producto manual (sin productId) e ignora una presentación que llegue", () => {
     const { productId: _omit, ...withoutProduct } = validInput;
     const result = pendingCreateSchema.safeParse({
       ...withoutProduct,
@@ -128,7 +132,7 @@ describe("pendingCreateSchema", () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.productId).toBeUndefined();
-      expect(result.data.manual).toEqual({ name: "Ibuprofeno jarabe", unit: "frasco" });
+      expect(result.data.manual).toEqual({ name: "Ibuprofeno jarabe", unit: "unidad" });
     }
   });
 
@@ -145,6 +149,71 @@ describe("pendingCreateSchema", () => {
         unit: "unidad",
       });
     }
+  });
+
+  // ------------------------------------------------------------------------
+  // Vendedor escrito a mano: opcional y solo descriptivo. Identifica a quien
+  // atendió cuando la cuenta es compartida (el mostrador).
+  // ------------------------------------------------------------------------
+
+  it("guarda el vendedor escrito, recortando los espacios", () => {
+    const result = pendingCreateSchema.safeParse({
+      ...validInput,
+      manualSellerName: "  Carlos Gómez ",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.manualSellerName).toBe("Carlos Gómez");
+  });
+
+  it.each([undefined, "", "    "])(
+    "deja el vendedor en undefined cuando no se escribió (%j)",
+    (manualSellerName) => {
+      const result = pendingCreateSchema.safeParse({ ...validInput, manualSellerName });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data.manualSellerName).toBeUndefined();
+    },
+  );
+
+  it("acota el vendedor igual que el nombre del cliente: 120 entra, 121 no", () => {
+    expect(
+      pendingCreateSchema.safeParse({ ...validInput, manualSellerName: "a".repeat(120) })
+        .success,
+    ).toBe(true);
+
+    const tooLong = pendingCreateSchema.safeParse({
+      ...validInput,
+      manualSellerName: "a".repeat(121),
+    });
+    expect(tooLong.success).toBe(false);
+    if (!tooLong.success) {
+      expect(tooLong.error.issues[0]?.message).toBe(
+        "El nombre del vendedor es demasiado largo.",
+      );
+    }
+  });
+
+  it("la corrección acepta el vendedor escrito con las mismas reglas que el alta", () => {
+    const base = {
+      id: "pend-1",
+      productId: "prod_123",
+      quantity: "5",
+      promisedAt: "2026-06-09T14:30",
+      customerName: "Ana Pérez",
+      customerPhone: "300 123 4567",
+    };
+
+    const typed = pendingUpdateSchema.safeParse({ ...base, manualSellerName: " Carlos " });
+    expect(typed.success && typed.data.manualSellerName).toBe("Carlos");
+
+    const blank = pendingUpdateSchema.safeParse({ ...base, manualSellerName: "  " });
+    expect(blank.success).toBe(true);
+    if (blank.success) expect(blank.data.manualSellerName).toBeUndefined();
+
+    // Un pendiente viejo sin el campo en el formulario se sigue guardando.
+    expect(pendingUpdateSchema.safeParse(base).success).toBe(true);
+    expect(
+      pendingUpdateSchema.safeParse({ ...base, manualSellerName: "a".repeat(121) }).success,
+    ).toBe(false);
   });
 
   it("rechaza cargar catálogo y manual a la vez (ambiguo)", () => {

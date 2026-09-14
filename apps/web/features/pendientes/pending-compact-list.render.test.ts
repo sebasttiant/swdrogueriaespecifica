@@ -22,7 +22,8 @@ import type { PendingListItem } from "@/server/repositories/pending.repository";
 import { IDENTITY_WARNING_LABEL } from "./identity-warning";
 
 import { PendingCompactList } from "./pending-compact-list";
-import { globalViewer, noAuthorityViewer } from "./pending-viewer.fixture";
+import { fulfillmentNotice, type PendingViewer } from "./fulfillment-notice";
+import { globalViewer, noAuthorityViewer, ownerViewer } from "./pending-viewer.fixture";
 
 function pending(overrides: Partial<PendingListItem> = {}): PendingListItem {
   return {
@@ -67,6 +68,8 @@ function render(
     // porque ofrecer facturar depende también de de quién es la fila.
     canInvoice?: boolean;
     canFollowUp?: boolean;
+    // Para probar el alcance propio; si viene, gana sobre `canInvoice`.
+    viewer?: PendingViewer;
   } = {},
 ): string {
   return renderToStaticMarkup(
@@ -74,7 +77,8 @@ function render(
       items,
       canOrder,
       canDeliver: capabilities.canDeliver,
-      viewer: capabilities.canInvoice ? globalViewer() : noAuthorityViewer,
+      viewer:
+        capabilities.viewer ?? (capabilities.canInvoice ? globalViewer() : noAuthorityViewer),
       canFollowUp: capabilities.canFollowUp,
       nextCursor,
       pageHref: (cursor) => `/pendientes?cursor=${encodeURIComponent(cursor)}&view=lista`,
@@ -237,6 +241,25 @@ describe("PendingCompactList", () => {
     expect(html).toContain("Sin vendedor");
   });
 
+  // La cuenta del mostrador es compartida: el nombre ESCRITO dice quién atendió,
+  // junto a la cuenta que lo registró, en las dos representaciones.
+  it("muestra el vendedor escrito a mano junto a la cuenta que lo registró", () => {
+    const html = render([
+      pending({ createdBy: { id: "u-m", name: "Mostrador" }, manualSellerName: "Carlos Gómez" }),
+    ]);
+
+    expect(countOccurrences(html, "Mostrador")).toBe(2);
+    expect(countOccurrences(html, "Vendedor: Carlos Gómez")).toBe(2);
+    // Solo lectura: no se ofrece ningún campo para cambiarlo desde el listado.
+    expect(html).not.toContain('name="manualSellerName"');
+  });
+
+  it.each([null, undefined])("sin vendedor escrito (%s) no pinta nada extra", (manualSellerName) => {
+    const html = render([pending({ manualSellerName })]);
+
+    expect(html).not.toContain("Vendedor:");
+  });
+
   it("preserva el formato compacto al pasar a la siguiente página", () => {
     const html = render([pending()], true, "next cursor");
 
@@ -274,10 +297,11 @@ describe("PendingCompactList", () => {
     expect(html).not.toContain("Ya lo pedí");
   });
 
-  // El defecto que reportó gerencia el 2026-10-04: se ofrecía "Facturar" sobre
-  // pendientes sin una sola unidad en bodega. La autoridad no alcanza; hace
-  // falta mercadería. Antes este caso mostraba el botón igual.
-  it("no ofrece facturar cuando no llegó mercadería, aunque tenga la autoridad", () => {
+  // U5: sin mercadería cargada el formulario SÍ se ofrece, porque la
+  // facturación excepcional sin stock existe (con su segunda confirmación en el
+  // cliente y su rastro en la auditoría). Lo que no cambia es el aviso: la fila
+  // sigue diciendo "Sin stock" y no se pinta de amarillo.
+  it("sin mercadería cargada ofrece el formulario, pero la fila sigue sin stock", () => {
     const html = render(
       [pending({ customerStatus: "POR_CONTACTAR", inventoryReadyQuantity: 0, purchaseStatus: "SOLICITADO" })],
       false,
@@ -285,8 +309,27 @@ describe("PendingCompactList", () => {
       { canInvoice: true },
     );
 
-    expect(html).not.toContain("Facturar");
+    expect(countOccurrences(html, 'name="expectedInvoicedQuantity" value="0"')).toBe(2);
+    expect(countOccurrences(html, "Sin stock")).toBe(2);
+    expect(html).not.toContain("Listo para facturar");
+    expect(html).not.toContain("border-l-warning");
     expect(html).not.toContain("podés facturar");
+  });
+
+  it("sin mercadería cargada no ofrece el formulario fuera del alcance", () => {
+    const fila = pending({ customerStatus: "POR_CONTACTAR", inventoryReadyQuantity: 0 });
+
+    expect(render([fila], false, null, { viewer: ownerViewer("otro-vendedor") })).not.toContain(
+      "expectedInvoicedQuantity",
+    );
+    expect(render([fila], false, null, {})).not.toContain("expectedInvoicedQuantity");
+    // La fila es de "u-1": su dueño con alcance propio sí la factura.
+    expect(
+      countOccurrences(
+        render([fila], false, null, { viewer: ownerViewer("u-1") }),
+        'name="expectedInvoicedQuantity"',
+      ),
+    ).toBe(2);
   });
 
   it("shows seller invoice actions in the desktop table", () => {
@@ -390,6 +433,9 @@ describe("PendingCompactList", () => {
     expect(countOccurrences(html, "Listo para facturar")).toBe(2);
   });
 
+  // Regla única (U4): la parcial cargada se puede facturar, así que es amarilla
+  // con "X de Y". Antes salía en rojo "Sin stock suficiente" con el botón de
+  // facturar debajo.
   it("distingue la cobertura parcial de la completa", () => {
     const html = render(
       [pending({ quantity: 10, customerStatus: "CONTACTADO", inventoryReadyQuantity: 6, invoicedQuantity: 0 })],
@@ -398,9 +444,8 @@ describe("PendingCompactList", () => {
       { canInvoice: true },
     );
 
-    expect(
-      countOccurrences(html, "Sin stock suficiente · 6 de 10 restantes disponibles"),
-    ).toBe(2);
+    expect(countOccurrences(html, "Listo para facturar: 6 de 10")).toBe(2);
+    expect(html).not.toContain("Sin stock");
   });
 
   it("no avisa disponibilidad sobre un pendiente ya cerrado", () => {
@@ -494,14 +539,37 @@ describe("PendingCompactList · señales de la reunión", () => {
     expect(conAutoridad).not.toContain("podés");
   });
 
+  // Misma regla única que arriba, sin autoridad: el aviso describe el pendiente.
   it("distingue la cobertura parcial de lo cargado", () => {
     const html = render([
       pending({ quantity: 10, availabilityStatus: "DISPONIBLE_PARCIAL", inventoryReadyQuantity: 6 }),
     ]);
 
-    expect(
-      countOccurrences(html, "Sin stock suficiente · 6 de 10 restantes disponibles"),
-    ).toBe(2);
+    expect(countOccurrences(html, "Listo para facturar: 6 de 10")).toBe(2);
+  });
+
+  // U4 — color de estado local: tarjeta del celular Y primera celda de la tabla.
+  it("pinta el borde amarillo en las dos vistas cuando está listo, aunque esté agotado", () => {
+    const html = render([
+      pending({ purchaseStatus: "AGOTADO", inventoryReadyQuantity: 6, invoicedQuantity: 0 }),
+    ]);
+
+    expect(countOccurrences(html, "border-l-warning")).toBe(2);
+    expect(html).not.toContain("border-l-danger");
+  });
+
+  it("pinta el borde rojo en las dos vistas cuando está agotado sin nada que facturar", () => {
+    const html = render([pending({ purchaseStatus: "AGOTADO", inventoryReadyQuantity: 0 })]);
+
+    expect(countOccurrences(html, "border-l-danger")).toBe(2);
+    expect(html).not.toContain("border-l-warning");
+  });
+
+  it("no pinta borde de estado en un pendiente sin acción ni agotado", () => {
+    const html = render([pending({ purchaseStatus: "SOLICITADO" })]);
+
+    expect(html).not.toContain("border-l-warning");
+    expect(html).not.toContain("border-l-danger");
   });
 
   it("marca cuando se piden varias unidades, no una sola", () => {
@@ -667,5 +735,106 @@ describe("PendingCompactList · identidad pendiente", () => {
     const html = render([pending({ identitySkippedReason: "CODE_NOT_FOUND" })]);
 
     expect(html).toContain(`>${IDENTITY_WARNING_LABEL}<`);
+  });
+});
+
+// --------------------------------------------------------------------------
+// Cada pendiente DICE lo que pasó, no solo lo pinta, en la tarjeta del celular
+// Y en el renglón de la tabla. La llegada a bodega va en su propia línea verde;
+// el borde rojo va siempre acompañado de la palabra "Agotado".
+// --------------------------------------------------------------------------
+describe("PendingCompactList · qué pasó con el pendiente", () => {
+  const arrivalLine = (label: string) =>
+    `<p class="min-w-0 max-w-full whitespace-normal break-words text-sm font-medium text-success">${label}</p>`;
+  const SOLD_OUT_BADGE = 'text-danger">Agotado</span>';
+  const PURCHASE_TEXT = 'text-xs text-muted-foreground">Agotado</span>';
+
+  it("dice que ya llegó a bodega en las dos vistas, y el rojo sigue igual", () => {
+    const html = render([
+      pending({ availabilityStatus: "LLEGO_BODEGA", inventoryReadyQuantity: 0 }),
+    ]);
+
+    expect(countOccurrences(html, arrivalLine("Ya llegó a bodega"))).toBe(2);
+    expect(countOccurrences(html, "Sin stock")).toBe(2);
+  });
+
+  it("dice que llegó una parte en las dos vistas, junto al amarillo", () => {
+    const html = render([
+      pending({ quantity: 10, availabilityStatus: "DISPONIBLE_PARCIAL", inventoryReadyQuantity: 6 }),
+    ]);
+
+    expect(countOccurrences(html, arrivalLine("Ya llegó parte a bodega"))).toBe(2);
+    expect(countOccurrences(html, "Listo para facturar: 6 de 10")).toBe(2);
+  });
+
+  it("no dice nada de llegada mientras sigue esperando", () => {
+    expect(render([pending({ availabilityStatus: "ESPERANDO" })])).not.toContain("Ya llegó");
+  });
+
+  it("la línea de llegada reemplaza al viejo aviso verde en las dos vistas", () => {
+    const fila = pending({
+      status: "PARCIAL",
+      availabilityStatus: "LLEGO_BODEGA",
+      deliveredQuantity: 6,
+      cancelledQuantity: 4,
+    });
+    // La fila produce de verdad el aviso verde legado: sin esto el test no
+    // discriminaría.
+    expect(fulfillmentNotice(fila)?.tone).toBe("success");
+
+    const html = render([fila]);
+
+    expect(countOccurrences(html, arrivalLine("Ya llegó a bodega"))).toBe(2);
+    expect(html).not.toContain("Llegó a la droguería");
+  });
+
+  it("el azul de listo para entregar sigue al lado de la llegada", () => {
+    const html = render([
+      pending({
+        availabilityStatus: "DISPONIBLE_COMPLETO",
+        customerStatus: "FACTURADO",
+        inventoryReadyQuantity: 10,
+        invoicedQuantity: 10,
+      }),
+    ]);
+
+    expect(countOccurrences(html, arrivalLine("Ya llegó a bodega"))).toBe(2);
+    expect(countOccurrences(html, "Listo para entregar")).toBe(2);
+  });
+
+  it("la línea de llegada se parte en pantallas angostas, en tarjeta y tabla", () => {
+    const html = render([pending({ availabilityStatus: "LLEGO_BODEGA" })]);
+    const [card, table] = html.split("<table");
+
+    for (const representation of [card, table]) {
+      expect(representation).toMatch(
+        /<p class="[^"]*whitespace-normal[^"]*break-words[^"]*">Ya llegó a bodega</,
+      );
+    }
+  });
+
+  it("dice Agotado junto al borde rojo en las dos vistas, en vez del texto de compras", () => {
+    const html = render([pending({ purchaseStatus: "AGOTADO", inventoryReadyQuantity: 0 })], false);
+
+    expect(countOccurrences(html, "border-l-danger")).toBe(2);
+    expect(countOccurrences(html, SOLD_OUT_BADGE)).toBe(2);
+    expect(html).not.toContain(PURCHASE_TEXT);
+  });
+
+  it("no dice Agotado en rojo cuando está listo: el amarillo gana y el texto de compras queda", () => {
+    const html = render(
+      [pending({ purchaseStatus: "AGOTADO", inventoryReadyQuantity: 6, invoicedQuantity: 0 })],
+      false,
+    );
+
+    expect(countOccurrences(html, "Listo para facturar")).toBe(2);
+    expect(html).not.toContain(SOLD_OUT_BADGE);
+    expect(countOccurrences(html, PURCHASE_TEXT)).toBe(2);
+  });
+
+  it("deja igual el texto de compras que no es agotado", () => {
+    const html = render([pending({ purchaseStatus: "SOLICITADO" })], false);
+
+    expect(countOccurrences(html, 'text-xs text-muted-foreground">Solicitado</span>')).toBe(2);
   });
 });

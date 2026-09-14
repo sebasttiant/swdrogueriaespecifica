@@ -354,27 +354,41 @@ export function EntryForm({
             defaultValue={selectedQuantity ?? 1}
           />
         </Field>
-        <Field label="Código de lote" htmlFor="batchCode">
+        {/* El lote va SIN `required` a propósito: hay cajas que no lo traen
+            impreso, y exigirlo obligaba a inventar un código —"S/L", "1", el
+            nombre del proveedor— que después no identifica nada. Vacío el
+            sistema guarda su propio código reservado, con el vencimiento
+            adentro, así que dos cajas sin lote y con fechas distintas siguen
+            siendo dos lotes separados. */}
+        <Field label="Código de lote (opcional)" htmlFor="batchCode">
           <Input
             id="batchCode"
             name="batchCode"
             placeholder="Ej: LOTE-2026-001"
-            required
             // Cuando se viene desde la cola de bodega, producto y cantidad ya
             // llegan resueltos: el cursor arranca donde sí hay que escribir,
             // que es lo único que se lee de la caja.
             autoFocus={selectedProductId !== undefined}
           />
           <p className="mt-1 text-xs text-muted-foreground">
-            Si el lote ya existe para este producto, se suma la cantidad.
+            Si la caja no lo trae, dejalo vacío. Si el lote ya existe para este
+            producto, se suma la cantidad.
           </p>
         </Field>
         {/* Solo fecha. Un vencimiento se dice por día —"vence el 31 de
             diciembre"— y la hora era un campo más que había que completar sin
             que nadie la leyera después. `expiryLevel` ya compara fechas de
-            calendario, así que sacarla no cambia el semáforo. */}
-        <Field label="Fecha de vencimiento" htmlFor="expiresAt">
-          <Input id="expiresAt" name="expiresAt" type="date" required />
+            calendario, así que sacarla no cambia el semáforo.
+
+            Tampoco es obligatoria: hay mercadería que no vence y cajas que no
+            la traen impresa. Vacío se guarda como DESCONOCIDO —no como
+            vencido—: el lote se sigue vendiendo y se consume al final. */}
+        <Field label="Fecha de vencimiento (opcional)" htmlFor="expiresAt">
+          <Input id="expiresAt" name="expiresAt" type="date" />
+          <p className="mt-1 text-xs text-muted-foreground">
+            Si la caja no la trae, dejala vacía. El lote se vende igual y se
+            entrega después de los que sí vencen.
+          </p>
         </Field>
         {/* Laboratorio de lo que LLEGÓ, que no siempre es el que se pidió.
             Es evidencia de la recepción: el servicio la compara contra el lote

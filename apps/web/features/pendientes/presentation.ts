@@ -15,10 +15,11 @@
 // De dónde sale el dato, para los DOS orígenes:
 //
 //   producto del catálogo  ->  `product.unit`, tal como está guardado.
-//   producto manual/nuevo  ->  también `product.unit`: lo que el vendedor
-//                              escribió en `manualUnit` se guarda en el
-//                              producto al crearlo (ver `schema.ts`, donde
-//                              `unit: data.manualUnit ?? MANUAL_UNIT_FALLBACK`).
+//   producto manual/nuevo  ->  también `product.unit`. La captura ya no pide
+//                              presentación, así que nace con
+//                              `MANUAL_UNIT_FALLBACK` (ver `schema.ts`) y se lee
+//                              como "Sin presentación". Los manuales anteriores
+//                              conservan la que se escribió al crearlos.
 //
 // Es decir: una sola fuente para los dos casos, sin columna nueva y sin
 // migración. Quien lee esto y espera encontrar dos caminos, no los hay.

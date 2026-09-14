@@ -12,10 +12,14 @@ import type { PendingListItem } from "@/server/repositories/pending.repository";
 import { computeDeadlineStatus } from "./deadline-status";
 import { derivePaymentState } from "./payment-state";
 import {
+  arrivalNotice,
+  canInvoiceWithoutStock,
   fulfillmentNotice,
+  invoiceableQuantity,
   invoiceAffordance,
   isTerminal,
   outstanding,
+  pendingStateTone,
   type PendingViewer,
 } from "./fulfillment-notice";
 import { identityWarning } from "./identity-warning";
@@ -35,6 +39,13 @@ import {
   PendingObservationForm,
   PendingObservationView,
 } from "./pending-observation-form";
+
+// Color de estado LOCAL de la fila: un borde izquierdo con los tokens del tema.
+// La regla vive en `pendingStateTone`; acá solo se pinta.
+const STATE_BORDER = {
+  ready: "border-l-4 border-l-warning",
+  soldOut: "border-l-4 border-l-danger",
+} as const;
 
 // --------------------------------------------------------------------------
 // Vista LISTADO de pendientes — la que pidió el gerente en la reunión del
@@ -190,6 +201,16 @@ function PresentationLine({ item }: { item: PendingListItem }) {
   );
 }
 
+// La llegada a bodega, dicha con palabras. Una sola pieza para la tarjeta y la
+// tabla, y una línea que se parte en el celular en vez de empujar el ancho.
+function ArrivalLine({ item }: { item: PendingListItem }) {
+  const arrival = arrivalNotice(item);
+  if (!arrival) return null;
+  return (
+    <p className="min-w-0 max-w-full whitespace-normal break-words text-sm font-medium text-success">{arrival}</p>
+  );
+}
+
 // --------------------------------------------------------------------------
 // La línea de SEGUIMIENTO.
 //
@@ -261,14 +282,20 @@ function customerActions(item: PendingListItem, ctx: CustomerActionsContext) {
   // aplicar el service. Móvil y escritorio la comparten porque comparten esta
   // función: fue la divergencia entre las dos vistas la que dejó al vendedor
   // sin acciones en el computador.
+  //
+  // U5: también sin mercadería cargada si queda saldo (`canInvoiceWithoutStock`),
+  // para la excepción sin stock que el formulario confirma en un segundo paso.
   const invoice =
-    invoiceAffordance(item, ctx.viewer).canInvoice && showsCustomerActions(item) ? (
+    (invoiceAffordance(item, ctx.viewer).canInvoice ||
+      canInvoiceWithoutStock(item, ctx.viewer)) &&
+    showsCustomerActions(item) ? (
       <PendingCustomerLifecycleForm
         key="invoice"
         pendingId={item.id}
         customerStatus={item.customerStatus}
         quantity={item.quantity}
         invoicedQuantity={item.invoicedQuantity ?? 0}
+        invoiceableQuantity={invoiceableQuantity(item)}
       />
     ) : null;
 
@@ -384,6 +411,7 @@ export function PendingCompactList({
             computeDeadlineStatus(pending.promisedAt, pending.status, now)
           ];
           const notice = fulfillmentNotice(pending);
+          const stateTone = pendingStateTone(pending);
           const identityNotice = identityWarning(pending);
           const lifecycle = lifecycleLabel(pending);
           const purchase = purchaseNote(pending);
@@ -406,7 +434,10 @@ export function PendingCompactList({
             //
             // El ancla vive solo en `PendingList` (Revisión de pendientes), que
             // pinta una sola variante por fila. Nada enlaza acá con fragmento.
-            <Card key={pending.id} className="space-y-2 p-3">
+            <Card
+              key={pending.id}
+              className={cn("space-y-2 p-3", stateTone && STATE_BORDER[stateTone])}
+            >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="break-words font-medium text-text">
@@ -423,6 +454,9 @@ export function PendingCompactList({
                   <LaboratoryLine item={pending} />
                   <p className="break-words text-xs text-muted-foreground">
                     {pending.createdBy?.name ?? "Sin vendedor"}
+                    {pending.manualSellerName
+                      ? ` · Vendedor: ${pending.manualSellerName}`
+                      : null}
                     {" · "}
                     {/* Quien hace seguimiento necesita la HORA comprometida, no
                         solo el día: "para hoy" y "para hoy a las 4" son dos
@@ -467,7 +501,9 @@ export function PendingCompactList({
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge tone={lifecycle.tone}>{lifecycle.label}</Badge>
-                  {purchase ? (
+                  {stateTone === "soldOut" ? (
+                    <Badge tone="danger">Agotado</Badge>
+                  ) : purchase ? (
                     <span className="text-xs text-muted-foreground">{purchase}</span>
                   ) : null}
                   {decision ? (
@@ -482,7 +518,8 @@ export function PendingCompactList({
                   />
                 ) : null}
               </div>
-              {notice ? (
+              <ArrivalLine item={pending} />
+              {notice && notice.tone !== "success" ? (
                 <Badge tone={notice.tone} className="w-full justify-center">
                   {notice.label}
                 </Badge>
@@ -518,6 +555,7 @@ export function PendingCompactList({
                 computeDeadlineStatus(pending.promisedAt, pending.status, now)
               ];
               const notice = fulfillmentNotice(pending);
+              const stateTone = pendingStateTone(pending);
               const identityNotice = identityWarning(pending);
               const lifecycle = lifecycleLabel(pending);
               const purchase = purchaseNote(pending);
@@ -531,7 +569,14 @@ export function PendingCompactList({
               });
               return (
                 <tr key={pending.id} className="border-b border-border last:border-0">
-                  <td className="px-3 py-2 font-medium text-text">
+                  {/* El borde de estado va en la primera CELDA: sobre el `<tr>`
+                      no se pinta con la tabla en bordes separados. */}
+                  <td
+                    className={cn(
+                      "px-3 py-2 font-medium text-text",
+                      stateTone && STATE_BORDER[stateTone],
+                    )}
+                  >
                     {pending.product.name}
                     <OrionCodeLine item={pending} />
                     {identityNotice ? (
@@ -569,6 +614,11 @@ export function PendingCompactList({
                   </td>
                   <td className="px-3 py-2 text-muted-foreground">
                     {pending.createdBy?.name ?? "—"}
+                    {pending.manualSellerName ? (
+                      <span className="block break-words text-xs">
+                        {`Vendedor: ${pending.manualSellerName}`}
+                      </span>
+                    ) : null}
                   </td>
                   <td className={cn("px-3 py-2 whitespace-nowrap", urgency.tone === "danger" && "font-semibold text-danger")}>
                     {formatBogotaDate(pending.promisedAt, {
@@ -578,13 +628,18 @@ export function PendingCompactList({
                   <td className="px-3 py-2">
                     <div className="flex flex-col items-start gap-1">
                       <Badge tone={lifecycle.tone}>{lifecycle.label}</Badge>
-                      {purchase ? (
+                      {stateTone === "soldOut" ? (
+                        <Badge tone="danger">Agotado</Badge>
+                      ) : purchase ? (
                         <span className="text-xs text-muted-foreground">{purchase}</span>
                       ) : null}
                       {decision ? (
                         <span className="text-xs text-muted-foreground">{decision}</span>
                       ) : null}
-                      {notice ? <Badge tone={notice.tone}>{notice.label}</Badge> : null}
+                      <ArrivalLine item={pending} />
+                      {notice && notice.tone !== "success" ? (
+                        <Badge tone={notice.tone}>{notice.label}</Badge>
+                      ) : null}
                     </div>
                   </td>
                   {canOrder || viewer.invoiceScope !== "none" || canDeliver || canCancel || canEdit ? (

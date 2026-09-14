@@ -42,10 +42,7 @@ import {
   getMissingReportQueue,
   getPendingReportGroupCount,
 } from "@/server/services/missing-report.service";
-import {
-  listReceiverQueue,
-  resolveReceiverScope,
-} from "@/server/services/missing-receiver.service";
+import { resolveReceiverScope } from "@/server/services/missing-receiver.service";
 
 export const metadata: Metadata = { title: "Revisión de faltantes" };
 
@@ -91,11 +88,15 @@ export default async function RevisionFaltantesPage({
   const reviewsPurchases = can(session.user.role, "canReviewMissingReports");
 
   if (!reviewsPurchases) {
-    // Bodega: solo la cola física de ESTANTERÍA. El scope se resuelve contra
-    // los estados permitidos, así que escribir `?scope=` a mano cae en "Ya
-    // pedidos" y la consulta nunca pide FALTANTE ni CANCELADO.
+    // Bodega: la cola física de ESTANTERÍA, que sale VACÍA a propósito. Un
+    // faltante de estantería es informativo: la entrada de inventario ya no le
+    // asigna stock, así que no hay nada que recibir por acá. Y NO se cambia a
+    // "pending" ni "all": los pedidos de clientes se reciben en Revisión de
+    // pendientes, y traerlos acá abriría una segunda puerta de recepción.
+    //
+    // El scope se sigue resolviendo contra los estados permitidos, así que las
+    // pestañas y un `?scope=` escrito a mano se comportan igual que antes.
     const receiverScope = resolveReceiverScope((await searchParams).scope);
-    const items = await listReceiverQueue(receiverScope, "shelf");
 
     return (
       <div className="space-y-4">
@@ -103,7 +104,7 @@ export default async function RevisionFaltantesPage({
           title="Revisión de faltantes"
           description="Reposición de estantería. Marcá la llegada y registrá la entrada."
         />
-        <ReceiverQueue items={items} scope={receiverScope} />
+        <ReceiverQueue items={[]} scope={receiverScope} />
       </div>
     );
   }

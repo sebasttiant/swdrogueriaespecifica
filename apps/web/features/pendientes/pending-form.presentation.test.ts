@@ -28,9 +28,10 @@ import { NO_PRESENTATION_LABEL } from "./presentation";
 //                              información compartida, y un vendedor que la
 //                              corrige desde acá se la cambia a todos, en
 //                              todos los pedidos, incluidos los ya cargados.
-//   producto MANUAL        ->  se ESCRIBE. El producto se está creando en este
-//                              mismo gesto; todavía no hay dato compartido que
-//                              pisar. Opcional.
+//   producto MANUAL        ->  NO se pide. Acordado en la reunión de cierre:
+//                              "el nombre ya lo tiene, ya contiene el
+//                              producto". El producto nace sin presentación y
+//                              quien la conozca la carga desde el catálogo.
 //
 // Ninguna de las dos formas bloquea la carga: un producto sin presentación se
 // puede pedir igual.
@@ -146,32 +147,42 @@ describe("PendingForm · producto existente SIN presentación", () => {
 });
 
 describe("PendingForm · producto manual", () => {
-  it("acá SÍ se escribe: el producto se está creando en este gesto", () => {
+  it("NO pide la presentación: el nombre ya describe el producto", () => {
     const html = enModoManual();
 
-    expect(html).toContain('name="manualUnit"');
+    expect(html).not.toContain('name="manualUnit"');
+    expect(html).not.toContain('id="manualUnit"');
+    expect(html).not.toContain("Presentación (opcional)");
   });
 
-  it("se llama Presentación y es opcional", () => {
+  it("sigue pidiendo el nombre del producto manual", () => {
     const html = enModoManual();
 
-    expect(html).toContain("Presentación (opcional)");
-    expect(html).not.toContain("Unidad (opcional)");
+    expect(html).toContain('name="manualName"');
   });
+});
 
-  it("da ejemplos de droguería, no una unidad de medida abstracta", () => {
-    const html = enModoManual();
+describe("PendingForm · vendedor escrito a mano", () => {
+  it.each([
+    ["catálogo", () => conProductoElegido(CON_PRESENTACION)],
+    ["manual", enModoManual],
+  ])("ofrece el campo opcional en modo %s", (_modo, pintar) => {
+    const html = pintar();
 
-    expect(html).toContain("Frasco");
-    expect(html).toContain("Sobre");
-    expect(html).toContain("Caja");
-  });
-
-  it("el campo no es obligatorio", () => {
-    const html = enModoManual();
-
-    const campo = html.slice(html.indexOf('id="manualUnit"'));
+    const campo = html.slice(html.indexOf('id="manualSellerName"'));
     const cierre = campo.slice(0, campo.indexOf(">"));
+    expect(cierre).toContain('name="manualSellerName"');
+    expect(cierre).toContain('maxLength="120"');
     expect(cierre).not.toContain("required");
+    expect(html).toContain("Vendedor (opcional)");
+  });
+
+  // Se ESCRIBE: no hay directorio de usuarios, ni sugerencias, ni búsqueda.
+  it("es texto libre: sin lista de sugerencias", () => {
+    const html = enModoManual();
+
+    const campo = html.slice(html.indexOf('id="manualSellerName"'));
+    const cierre = campo.slice(0, campo.indexOf(">"));
+    expect(cierre).not.toContain("list=");
   });
 });

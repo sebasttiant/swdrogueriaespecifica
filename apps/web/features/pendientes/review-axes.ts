@@ -41,8 +41,15 @@ export const CUSTOMER_AXIS_VALUES = [
 // lo que hace que tocar el aviso y ver la lista se sienta un solo gesto.
 export const DEADLINE_AXIS_VALUES = ["atrasadas", "proximas"] as const;
 
+// Listos para FACTURAR (U4). Tampoco es una columna: es la regla única de
+// `invoiceableQuantity` —lo cargado sin facturar— traducida a una consulta
+// (`readyToInvoiceWhere` en el repositorio). Un solo valor: la pregunta es
+// "¿cuáles puedo facturar ya?", y "Todos" es no filtrar.
+export const INVOICE_AXIS_VALUES = ["listos"] as const;
+
 export type PurchaseAxis = (typeof PURCHASE_AXIS_VALUES)[number];
 export type DeadlineAxis = (typeof DEADLINE_AXIS_VALUES)[number];
+export type InvoiceAxis = (typeof INVOICE_AXIS_VALUES)[number];
 export type AvailabilityAxis = (typeof AVAILABILITY_AXIS_VALUES)[number];
 export type CustomerAxis = (typeof CUSTOMER_AXIS_VALUES)[number];
 
@@ -51,6 +58,7 @@ export type ReviewAxes = {
   availability?: AvailabilityAxis;
   customer?: CustomerAxis;
   deadline?: DeadlineAxis;
+  invoice?: InvoiceAxis;
 };
 
 // Las etiquetas de gestión son las mismas que ya ve el vendedor en la fila: el
@@ -70,6 +78,11 @@ export const AVAILABILITY_AXIS_LABELS: Record<AvailabilityAxis, string> = {
 export const DEADLINE_AXIS_LABELS: Record<DeadlineAxis, string> = {
   atrasadas: "Atrasadas",
   proximas: "Próximas (24 h)",
+};
+
+// Las mismas palabras que el aviso amarillo de la fila: "Listo para facturar".
+export const INVOICE_AXIS_LABELS: Record<InvoiceAxis, string> = {
+  listos: "Listos para facturar",
 };
 
 export const CUSTOMER_AXIS_LABELS: Record<CustomerAxis, string> = {
@@ -100,22 +113,27 @@ export function parseReviewAxes(raw: {
   availability?: string;
   customer?: string;
   entrega?: string;
+  facturar?: string;
 }): ReviewAxes {
   const purchase = pick(PURCHASE_AXIS_VALUES, raw.purchase);
   const availability = pick(AVAILABILITY_AXIS_VALUES, raw.availability);
   const customer = pick(CUSTOMER_AXIS_VALUES, raw.customer);
   const deadline = pick(DEADLINE_AXIS_VALUES, raw.entrega);
+  const invoice = pick(INVOICE_AXIS_VALUES, raw.facturar);
 
   return {
     ...(purchase ? { purchase } : {}),
     ...(availability ? { availability } : {}),
     ...(customer ? { customer } : {}),
     ...(deadline ? { deadline } : {}),
+    ...(invoice ? { invoice } : {}),
   };
 }
 
 export function hasActiveAxis(axes: ReviewAxes): boolean {
-  return Boolean(axes.purchase || axes.availability || axes.customer || axes.deadline);
+  return Boolean(
+    axes.purchase || axes.availability || axes.customer || axes.deadline || axes.invoice,
+  );
 }
 
 /**
@@ -160,6 +178,7 @@ function buildHref(params: ReviewView, cursor: string | null): string {
   if (params.axes.availability) query.set("availability", params.axes.availability);
   if (params.axes.customer) query.set("customer", params.axes.customer);
   if (params.axes.deadline) query.set("entrega", params.axes.deadline);
+  if (params.axes.invoice) query.set("facturar", params.axes.invoice);
 
   const search = query.toString();
   const basePath = params.basePath ?? "/pendientes";
