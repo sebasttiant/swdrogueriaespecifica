@@ -83,6 +83,45 @@ el respaldo se tomó mal, aunque el restore no dé error.
 
 Recién con el paso 3 en verde.
 
+### Opción A — restauración guiada (recomendada)
+
+```bash
+pnpm data:restore backups/data/drogueria-data-backup-<fecha>.tar.gz
+# o, sin pnpm en el servidor:
+bash scripts/restore-data.sh backups/data/drogueria-data-backup-<fecha>.tar.gz
+```
+
+Hace los pasos 4.1 a 4.5 con controles que a mano se saltean fácil:
+
+- Copia el respaldo a una carpeta temporal antes de validarlo, así no
+  restaura un archivo que cambió mientras lo revisaba.
+- Verifica el `.sha256` si existe; sin él, pide aceptar explícitamente la
+  integridad no autenticada.
+- Rechaza rutas inseguras, enlaces y respaldos con `uploads`, porque solo
+  restaura la base.
+- Valida el `postgres.dump` (formato custom) con `pg_restore` sin ejecutar SQL.
+- Muestra el destino exacto (proyecto, contenedor, usuario y base) y exige
+  escribir `RESTAURAR <proyecto>/postgres/<base>`.
+- Hace un respaldo de seguridad del estado actual, que se puede omitir solo
+  escribiendo `SIN RESPALDO`.
+- Detiene web, recrea la base, restaura con `--exit-on-error` y vuelve a
+  levantar web esperando que quede saludable.
+- Si algo falla después de detener web, web queda detenida para no operar
+  sobre una base a medias.
+
+No ejecuta migraciones ni seed, no toca volúmenes y no reemplaza el paso 5:
+los conteos, `db:reconcile` y la prueba manual siguen siendo obligatorios.
+
+Acepta los `.tar.gz` de `scripts/backup-data.sh` (traen `postgres.dump`). El
+dump que `deploy.sh` deja antes de migrar (`drogueria-db-before-deploy-*.sql.gz`)
+es SQL plano: para ese, usá la opción B.
+
+Requisitos en el servidor: Docker Compose, Python 3.11 o superior (usa
+`hashlib.file_digest`) y el contenedor de PostgreSQL corriendo. Las pruebas
+del script no tocan Docker ni bases: `pnpm data:restore:test`.
+
+### Opción B — manual
+
 ```bash
 # 4.1 Respaldo del estado ACTUAL, por roto que parezca. Es tu vuelta atrás.
 bash scripts/backup-data.sh
