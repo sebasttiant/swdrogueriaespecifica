@@ -79,16 +79,22 @@ describe("listArrivalNoticesAction · aislamiento", () => {
 });
 
 describe("listArrivalNoticesAction · identidad del cliente", () => {
-  // CASO O — la PII se recorta en el SERVIDOR. Mandarla para que la pantalla la
-  // descarte sería mandarla igual: viaja por la red y queda en el payload.
-  it("no envía el nombre del cliente a quien no puede verlo", async () => {
-    mocks.checkCapability.mockResolvedValue(sesion("BODEGA"));
+  // CASO O — la identidad se decide por fila (2026-09-30): se ve si el rol
+  // tiene `canViewCustomerIdentity` o si el pendiente es propio. Los avisos de
+  // llegada son SIEMPRE propios —la consulta filtra por `createdById` de la
+  // sesión—, así que vendedor y bodega ven el nombre de SU cliente. Antes bodega
+  // lo perdía hasta en sus propios avisos.
+  it.each(["OPERADOR", "BODEGA"])(
+    "%s recibe el nombre de su propio cliente",
+    async (role) => {
+      mocks.checkCapability.mockResolvedValue(sesion(role));
 
-    const result = await listArrivalNoticesAction();
+      const result = await listArrivalNoticesAction();
 
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(result.notices[0]?.customerName).toBeNull();
-  });
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.notices[0]?.customerName).toBe("Doña Marta");
+    },
+  );
 
   it("lo envía a quien sí puede verlo", async () => {
     mocks.checkCapability.mockResolvedValue(sesion("ADMIN"));

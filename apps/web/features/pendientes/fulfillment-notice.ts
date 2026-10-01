@@ -1,4 +1,12 @@
-import type { PendingActionScope } from "@/lib/auth/permissions";
+import {
+  cancelScopeFor,
+  contactScopeFor,
+  deliverScopeFor,
+  editScopeFor,
+  invoiceScopeFor,
+  type PendingActionScope,
+} from "@/lib/auth/permissions";
+import type { SessionRole } from "@/lib/auth/session";
 import type { PendingListItem } from "@/server/repositories/pending.repository";
 
 // --------------------------------------------------------------------------
@@ -99,9 +107,37 @@ export type PendingViewer = {
    * hubiera decidido.
    */
   contactScope: PendingActionScope;
+  /**
+   * Alcance de entrega. Gatea también la respuesta de lista de espera, que la
+   * Server Action autoriza con la misma capacidad. Ver `deliverScopeFor`.
+   */
+  deliverScope: PendingActionScope;
+  /** Alcance de cancelación. Ver `cancelScopeFor`. */
+  cancelScope: PendingActionScope;
+  /**
+   * Alcance de corrección. Ver `editScopeFor`: lo abre `canManageAllPendings`
+   * o `canEditAllPendings`, sin arrastrar ninguna de las acciones de arriba.
+   */
+  editScope: PendingActionScope;
   /** Id del usuario autenticado, único modo de resolver el alcance "own". */
   userId: string;
 };
+
+/**
+ * El lector de un rol autenticado, derivado UNA vez de la matriz. Las tres
+ * pantallas que listan pendientes lo arman igual; si cada una copiara los
+ * alcances, la primera que se desincronice ofrecería un botón de más.
+ */
+export function pendingViewerFor(role: SessionRole, userId: string): PendingViewer {
+  return {
+    invoiceScope: invoiceScopeFor(role),
+    contactScope: contactScopeFor(role),
+    deliverScope: deliverScopeFor(role),
+    cancelScope: cancelScopeFor(role),
+    editScope: editScopeFor(role),
+    userId,
+  };
+}
 
 /** Si el alcance alcanza para operar ESTA fila. La regla de propiedad, una vez. */
 function withinScope(
@@ -112,6 +148,30 @@ function withinScope(
   if (scope === "none") return false;
   if (scope === "all") return true;
   return item.createdBy?.id === userId;
+}
+
+/** Si el alcance de entrega alcanza ESTA fila (y la respuesta de espera). */
+export function canDeliverRow(item: PendingListItem, viewer: PendingViewer): boolean {
+  return withinScope(item, viewer.deliverScope, viewer.userId);
+}
+
+/** Si el alcance de cancelación alcanza ESTA fila. */
+export function canCancelRow(item: PendingListItem, viewer: PendingViewer): boolean {
+  return withinScope(item, viewer.cancelScope, viewer.userId);
+}
+
+/**
+ * Si a esta persona se le ofrece CORREGIR esta fila.
+ *
+ * Con alcance "all" (`canManageAllPendings` o `canEditAllPendings`) se corrige
+ * cualquier fila y las veces que haga falta: la marca `sellerEditedAt` no le
+ * esconde el enlace. Con alcance "own" rige el cupo de una sola corrección
+ * sobre lo propio, igual que en el service.
+ */
+export function canEditRow(item: PendingListItem, viewer: PendingViewer): boolean {
+  if (viewer.editScope === "none") return false;
+  if (viewer.editScope === "all") return true;
+  return item.createdBy?.id === viewer.userId && item.sellerEditedAt == null;
 }
 
 /** Si a esta persona se le ofrece registrar el contacto con el cliente. */

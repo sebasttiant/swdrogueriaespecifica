@@ -74,6 +74,7 @@ import type { Paginated } from "@/lib/pagination";
 import {
   can,
   seesAllPendings,
+  seesCustomerIdentityOf,
   USER_ROLES,
   type PendingActionScope,
 } from "@/lib/auth/permissions";
@@ -184,38 +185,46 @@ export type CreatePendingResult = {
   replayed: boolean;
 };
 
-// Minimización server-side: el nombre del cliente nunca llega al cliente (ni
-// siquiera serializado en el HTML) para roles sin `canViewCustomerIdentity`.
+// Minimización server-side: la identidad del cliente (nombre, teléfono y
+// dirección) nunca llega al navegador —ni siquiera serializada en el HTML— para
+// quien no puede verla. La decisión es POR FILA (`seesCustomerIdentityOf`):
+// quien tiene `canViewCustomerIdentity` la ve siempre, y los demás solo en los
+// pendientes que crearon. Desde que todos leen la cola entera (2026-09-30), un
+// flag por pantalla solo podía elegir entre mostrarle a bodega los clientes de
+// todos o esconderle los suyos.
 //
 // `zone` y los montos NO se minimizan, y es una decisión deliberada: la zona es
 // un barrio (dato grueso de ruteo, no una dirección) y el saldo es lo que el
-// operador tiene que cobrar al entregar. Ocultárselos rompería justo el
-// seguimiento que se pidió, sin proteger a nadie: el operador que carga el
-// pendiente ya los escribió él mismo.
+// operador tiene que cobrar al entregar. Tampoco el texto libre operativo
+// —`note`, `managementObservation`, `cancelReason`—: gerencia aceptó (P1) que
+// lo vea todo el personal interno aunque pueda contener datos personales.
 // Nunca mutamos las filas del repositorio; devolvemos objetos nuevos. Helper
-// compartido por `getPendings` y `getPendingDashboard` para que la regla viva
-// en un solo lugar.
+// compartido por todas las lecturas para que la regla viva en un solo lugar.
+
+/**
+ * Quién mira, para decidir la identidad fila por fila. Obligatorio en cada
+ * lectura: que falte tiene que ser un error de tipos, nunca una fuga.
+ */
+export type CustomerIdentityViewer = { role: SessionRole; userId: string };
+
 function minimizeCustomerIdentity(
   items: PendingListItem[],
-  canViewCustomerIdentity: boolean,
+  viewer: CustomerIdentityViewer,
 ): PendingListItem[] {
-  return canViewCustomerIdentity
-    ? items
-    : items.map((item) => ({
-        ...item,
-        customerName: null,
-        customerPhone: null,
-        customerAddress: null,
-      }));
+  return items.map((item) =>
+    seesCustomerIdentityOf(viewer.role, viewer.userId, item.createdBy?.id)
+      ? item
+      : { ...item, customerName: null, customerPhone: null, customerAddress: null },
+  );
 }
 
 export async function getPendings(params: {
   cursor?: string | null;
   take?: number;
   scope?: PendingScope;
-  // Requerido (sin default): que falte el flag debe ser un error de tipos,
-  // nunca una fuga silenciosa de PII. `false` fuerza la minimización abajo.
-  canViewCustomerIdentity: boolean;
+  // Requerido (sin default): que falte debe ser un error de tipos, nunca una
+  // fuga silenciosa de PII. La minimización se decide fila por fila.
+  identityViewer: CustomerIdentityViewer;
   // Depósito de compra: viaja al repositorio, que lee la columna SOLO con esto
   // en `true`. Opcional a propósito: ausente, el dato no se lee.
   canViewPurchaseDeposit?: boolean;
@@ -230,9 +239,9 @@ export async function getPendings(params: {
   // contador del chip y las filas de la lista hablen del mismo instante.
   now?: Date;
 }): Promise<Paginated<PendingListItem>> {
-  const { canViewCustomerIdentity, ...listParams } = params;
+  const { identityViewer, ...listParams } = params;
   const { items, nextCursor } = await listPendings(listParams);
-  return { items: minimizeCustomerIdentity(items, canViewCustomerIdentity), nextCursor };
+  return { items: minimizeCustomerIdentity(items, identityViewer), nextCursor };
 }
 
 /**
@@ -257,21 +266,21 @@ export async function getReadyToInvoiceCount(params: { ownerId?: string }): Prom
  * veinte, y el navegador no hace nada — el mismo síntoma que ya arreglamos una
  * vez, reapareciendo solo con los pedidos más viejos.
  *
- * `canViewCustomerIdentity` es obligatorio por el mismo motivo que en
- * `getPendings`: que falte tiene que ser un error de tipos, nunca una fuga.
+ * `identityViewer` es obligatorio por el mismo motivo que en `getPendings`:
+ * que falte tiene que ser un error de tipos, nunca una fuga.
  */
 export async function getPendingInView(params: {
   id: string;
-  canViewCustomerIdentity: boolean;
+  identityViewer: CustomerIdentityViewer;
   canViewPurchaseDeposit?: boolean;
   scope?: PendingScope;
   ownerId?: string;
   axes?: PendingAxisFilters;
 }): Promise<PendingListItem | null> {
-  const { canViewCustomerIdentity, ...viewParams } = params;
+  const { identityViewer, ...viewParams } = params;
   const found = await findPendingInView(viewParams);
   if (!found) return null;
-  return minimizeCustomerIdentity([found], canViewCustomerIdentity)[0] ?? null;
+  return minimizeCustomerIdentity([found], identityViewer)[0] ?? null;
 }
 
 /**
@@ -298,12 +307,12 @@ const DASHBOARD_URGENT_PENDING_LIMIT = 5;
 // a un caller que mañana podría renderizarlo es cómo las fugas pasan por
 // costumbre — minimizamos en el boundary, igual que en `getPendings`.
 export async function getPendingDashboard(params: {
-  canViewCustomerIdentity: boolean;
+  identityViewer: CustomerIdentityViewer;
   scope?: "global" | "owner";
   ownerId?: string;
   now?: Date;
 }): Promise<PendingDashboard> {
-  const { canViewCustomerIdentity, scope = "global", ownerId, now = new Date() } = params;
+  const { identityViewer, scope = "global", ownerId, now = new Date() } = params;
   if (scope === "owner" && !ownerId) throw new Error("owner scope requires ownerId");
   const scopedOwnerId = scope === "owner" ? ownerId : undefined;
   const [openCount, overdueCount, upcomingCount, urgent] = await Promise.all([
@@ -316,7 +325,7 @@ export async function getPendingDashboard(params: {
     openCount,
     overdueCount,
     upcomingCount,
-    urgent: minimizeCustomerIdentity(urgent, canViewCustomerIdentity),
+    urgent: minimizeCustomerIdentity(urgent, identityViewer),
   };
 }
 

@@ -497,16 +497,18 @@ describe("BODEGA (matriz de perfil)", () => {
 // cumplimiento siguen gateando SOLO con `canManageAllPendings`.
 // --------------------------------------------------------------------------
 describe("canReadAllPendings (lectura global ≠ mutación)", () => {
-  // Bodega entra a la lista: recibe la mercadería y necesita ver qué espera
-  // cada vendedor para priorizar la descarga. El vendedor sigue afuera.
-  it("la tienen gerencia, supervisión y bodega, nunca el vendedor", () => {
+  // Gerencia (2026-09-30): todo el personal interno lee los pendientes de
+  // todos. El vendedor entra a la lista; operar lo ajeno sigue cerrado.
+  it("la tienen los cinco roles, incluido el vendedor", () => {
     expect(rolesWithCapability("canReadAllPendings")).toEqual([
       "SUPERADMIN",
       "ADMIN",
       "SUPERVISOR",
+      "OPERADOR",
       "BODEGA",
     ]);
-    expect(can("OPERADOR", "canReadAllPendings")).toBe(false);
+    expect(can("OPERADOR", "canReadAllPendings")).toBe(true);
+    expect(can("OPERADOR", "canManageAllPendings")).toBe(false);
   });
 
   it("leer la cola entera NO otorga poder sobre ella", () => {
@@ -529,24 +531,24 @@ describe("canReadAllPendings (lectura global ≠ mutación)", () => {
 // fija por rol: una tabla, no una muestra.
 // --------------------------------------------------------------------------
 describe("seesAllPendings (alcance de la cola, en una sola regla)", () => {
-  it("la cola completa la ven todos menos el vendedor", () => {
+  it("la cola completa la ven los cinco roles", () => {
     const alcance = USER_ROLES.map((role) => [role, seesAllPendings(role)] as const);
 
     expect(alcance).toEqual([
       ["SUPERADMIN", true],
       ["ADMIN", true],
       ["SUPERVISOR", true],
-      ["OPERADOR", false],
+      ["OPERADOR", true],
       ["BODEGA", true],
     ]);
   });
 
-  it("el vendedor entra al módulo de revisión, pero acotado a lo suyo", () => {
-    // Las dos mitades de la regla del negocio: puede revisar, y lo que revisa
-    // son sus propios pendientes. Separarlas es lo que evita las dos fallas
-    // opuestas —dejarlo afuera del módulo, o mostrarle la cola entera—.
+  it("el vendedor revisa la cola entera, pero sigue sin operar lo ajeno", () => {
+    // Leer todo y operar lo ajeno son ejes distintos: el vendedor ve todas las
+    // filas y sus acciones de cliente siguen acotadas a las propias.
     expect(can("OPERADOR", "canReviewPendings")).toBe(true);
-    expect(seesAllPendings("OPERADOR")).toBe(false);
+    expect(seesAllPendings("OPERADOR")).toBe(true);
+    expect(invoiceScopeFor("OPERADOR")).toBe("own");
   });
 
   it("la supervisión revisa la cola entera", () => {

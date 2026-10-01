@@ -192,6 +192,8 @@ describe("los filtros de la vista también mandan", () => {
 // El servicio, que es lo que usa la página: agrega la minimización de PII.
 // --------------------------------------------------------------------------
 describe("servicio · minimiza la identidad del cliente igual que el listado", () => {
+  // Identidad por fila: el pendiente es de `ownerId`, así que quien lo mira sin
+  // `canViewCustomerIdentity` y sin ser su dueño no ve al cliente.
   it("oculta el nombre a quien no puede verlo", async () => {
     const id = await newPending(new Date("2026-08-01T00:00:00Z"));
     await prisma.pending.update({
@@ -202,12 +204,12 @@ describe("servicio · minimiza la identidad del cliente igual que el listado", (
     const sinPermiso = await getPendingInView({
       id,
       ownerId,
-      canViewCustomerIdentity: false,
+      identityViewer: { role: "OPERADOR", userId: "otro-vendedor" },
     });
     const conPermiso = await getPendingInView({
       id,
       ownerId,
-      canViewCustomerIdentity: true,
+      identityViewer: { role: "SUPERVISOR", userId: "supervision" },
     });
 
     expect(conPermiso?.customerName).toBe("Doña Marta");
@@ -222,7 +224,7 @@ describe("servicio · minimiza la identidad del cliente igual que el listado", (
     const resultado = await getPendingInView({
       id: ajeno,
       ownerId,
-      canViewCustomerIdentity: true,
+      identityViewer: { role: "SUPERVISOR", userId: "supervision" },
     });
 
     expect(resultado).toBeNull();
@@ -234,7 +236,7 @@ describe("servicio · minimiza la identidad del cliente igual que el listado", (
     const resultado = await getPendingInView({
       id: objetivo,
       ownerId,
-      canViewCustomerIdentity: true,
+      identityViewer: { role: "SUPERVISOR", userId: "supervision" },
     });
 
     expect(resultado?.id).toBe(objetivo);

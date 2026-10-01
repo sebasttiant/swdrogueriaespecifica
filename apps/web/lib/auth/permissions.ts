@@ -299,9 +299,8 @@ export type Capability = (typeof CAPABILITIES)[number];
 // may do. SUPERADMIN and ADMIN currently share the full set; SUPERVISOR is the
 // operational middle tier with missing-item confirmation and full-queue scope;
 // OPERADOR is the basic operational subset; BODEGA operates at seller level
-// over its own pendings and reads the whole queue. Both OPERADOR and BODEGA
-// correct every pending, but get no customer PII and no foreign fulfilment
-// scope.
+// over its own pendings. Both OPERADOR and BODEGA read and correct every
+// pending, but get no customer PII and no foreign fulfilment scope.
 // Neither operational role gets reports/audit/user-management, snooze, or
 // catalog management.
 const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
@@ -371,9 +370,10 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     "canLinkProductIdentity",
     "canCreatePendientes",
     "canSubmitMissingReports",
-    // Corrige cualquier pendiente (gerencia, 2026-09-30), sin
-    // `canManageAllPendings` ni `canViewCustomerIdentity`: corrige las filas
-    // ajenas sin ver al cliente ni operarlo.
+    // Lee la cola completa y corrige cualquier pendiente (gerencia,
+    // 2026-09-30). Sin `canManageAllPendings` ni `canViewCustomerIdentity`:
+    // ve y corrige las filas ajenas sin ver al cliente ni operarlo.
+    "canReadAllPendings",
     "canEditAllPendings",
     // Contacta y factura, pero SIN `canManageAllPendings`: el alcance se
     // deriva en `invoiceScopeFor` y el service rechaza el pendiente ajeno.
@@ -466,6 +466,10 @@ export function rolesWithCapability(
  * cannot be copied four times: the day one copy drifts, exactly one screen
  * leaks, and it leaks quietly. Callers that need the owner filter derive it from
  * this: `ownerId: seesAllPendings(role) ? undefined : userId`.
+ *
+ * Since 2026-09-30 every role reads the whole queue, so this no longer tells
+ * roles apart: the alert bar derives its scope in `alertScopeFor`, and customer
+ * identity is decided per row by `seesCustomerIdentityOf`, never from this.
  */
 export function seesAllPendings(role: SessionRole): boolean {
   return can(role, "canManageAllPendings") || can(role, "canReadAllPendings");

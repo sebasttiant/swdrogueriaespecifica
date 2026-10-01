@@ -54,6 +54,7 @@ const { repo } = vi.hoisted(() => ({
     countOverduePendings: vi.fn(),
     countUpcomingPendings: vi.fn(),
     listPendings: vi.fn(),
+    findPendingInView: vi.fn(),
     listPendingIdentityQueue: vi.fn(),
     listUrgentPendings: vi.fn(),
     updatePendingManagementStatus: vi.fn(),
@@ -71,6 +72,7 @@ import {
   contactPending,
   deliverPending,
   getPendingDashboard,
+  getPendingInView,
   getPendings,
   getPendingIdentityQueue,
   PendingIdentityQueueForbiddenError,
@@ -145,6 +147,12 @@ function pendingRow(overrides: Partial<PendingListItem> = {}): PendingListItem {
     ...overrides,
   };
 }
+
+// Quién mira, para la minimización de identidad por fila. Las filas de
+// `pendingRow` las creó "user-1": el vendedor de acá NO es su dueño, así que
+// sin `canViewCustomerIdentity` no ve al cliente; la supervisión lo ve siempre.
+const FOREIGN_VIEWER = { role: "OPERADOR", userId: "someone-else" } as const;
+const FULL_VIEWER = { role: "SUPERVISOR", userId: "sup-1" } as const;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -866,36 +874,34 @@ describe("cancelPendingCommitment", () => {
 });
 
 describe("getPendings · scope", () => {
-  // `canViewCustomerIdentity` es del service (minimización de PII) y no debe
+  // `identityViewer` es del service (minimización de PII por fila) y no debe
   // filtrarse al repositorio; `scope` sí tiene que llegar entero.
-  it("forwards the scope to the repository without leaking the PII flag", async () => {
+  it("forwards the scope to the repository without leaking the identity viewer", async () => {
     repo.listPendings.mockResolvedValue({ items: [], nextCursor: null });
 
-    await getPendings({ canViewCustomerIdentity: false, scope: "history" });
+    await getPendings({ identityViewer: FOREIGN_VIEWER, scope: "history" });
 
     expect(repo.listPendings).toHaveBeenCalledWith(
       expect.objectContaining({ scope: "history" }),
     );
-    expect(repo.listPendings.mock.calls[0]![0]).not.toHaveProperty(
-      "canViewCustomerIdentity",
-    );
+    expect(repo.listPendings.mock.calls[0]![0]).not.toHaveProperty("identityViewer");
   });
 
   it("leaves the scope undefined when the caller does not ask for history", async () => {
     repo.listPendings.mockResolvedValue({ items: [], nextCursor: null });
 
-    await getPendings({ canViewCustomerIdentity: true });
+    await getPendings({ identityViewer: FULL_VIEWER });
 
     expect(repo.listPendings.mock.calls[0]![0].scope).toBeUndefined();
   });
 });
 
 describe("getPendings", () => {
-  it("nulls customerName AND customerPhone when canViewCustomerIdentity is false, keeping every other field intact", async () => {
+  it("nulls the identity of a foreign row for a viewer without canViewCustomerIdentity, keeping every other field intact", async () => {
     const row = pendingRow();
     repo.listPendings.mockResolvedValue({ items: [row], nextCursor: null });
 
-    const result = await getPendings({ canViewCustomerIdentity: false });
+    const result = await getPendings({ identityViewer: FOREIGN_VIEWER });
 
     expect(result.items).toHaveLength(1);
     expect(result.items[0]!.customerName).toBeNull();
@@ -905,11 +911,11 @@ describe("getPendings", () => {
     expect(result.items[0]).toEqual({ ...row, customerName: null, customerPhone: null, customerAddress: null });
   });
 
-  it("returns customerName verbatim when canViewCustomerIdentity is true", async () => {
+  it("returns customerName verbatim for a viewer with canViewCustomerIdentity", async () => {
     const row = pendingRow();
     repo.listPendings.mockResolvedValue({ items: [row], nextCursor: null });
 
-    const result = await getPendings({ canViewCustomerIdentity: true });
+    const result = await getPendings({ identityViewer: FULL_VIEWER });
 
     expect(result.items[0]!.customerName).toBe("Juan Pérez");
     expect(result.items[0]).toEqual(row);
@@ -919,21 +925,21 @@ describe("getPendings", () => {
     const row = pendingRow();
     repo.listPendings.mockResolvedValue({ items: [row], nextCursor: null });
 
-    await getPendings({ canViewCustomerIdentity: false });
+    await getPendings({ identityViewer: FOREIGN_VIEWER });
 
     // The object handed back by the mocked repo must still hold the
     // original customerName — the service must return NEW objects.
     expect(row.customerName).toBe("Juan Pérez");
   });
 
-  it("passes items with no customer identity through unchanged under both flags", async () => {
+  it("passes items with no customer identity through unchanged for both viewers", async () => {
     const row = pendingRow({ customerName: null, customerPhone: null, customerAddress: null });
     repo.listPendings.mockResolvedValue({ items: [row], nextCursor: null });
 
-    const resultDenied = await getPendings({ canViewCustomerIdentity: false });
+    const resultDenied = await getPendings({ identityViewer: FOREIGN_VIEWER });
     expect(resultDenied.items[0]).toEqual(row);
 
-    const resultAllowed = await getPendings({ canViewCustomerIdentity: true });
+    const resultAllowed = await getPendings({ identityViewer: FULL_VIEWER });
     expect(resultAllowed.items[0]).toEqual(row);
   });
 
@@ -944,7 +950,7 @@ describe("getPendings", () => {
     const result = await getPendings({
       cursor: "cursor-in",
       take: 20,
-      canViewCustomerIdentity: true,
+      identityViewer: FULL_VIEWER,
     });
 
     expect(repo.listPendings).toHaveBeenCalledWith({
@@ -952,6 +958,116 @@ describe("getPendings", () => {
       take: 20,
     });
     expect(result.nextCursor).toBe("cursor-abc");
+  });
+});
+
+// --------------------------------------------------------------------------
+// Identidad del cliente, fila por fila (gerencia, 2026-09-30).
+//
+// Todos leen la cola entera, así que la identidad ya no puede decidirse por
+// pantalla: se ve si el rol tiene `canViewCustomerIdentity` o si la fila es
+// propia. Lo que viaja al navegador es lo que devuelve el service, así que es
+// acá donde tiene que faltar la identidad ajena.
+// --------------------------------------------------------------------------
+describe("identidad del cliente por fila", () => {
+  const own = (viewerId: string) =>
+    pendingRow({ id: "own", createdBy: { id: viewerId, name: "Yo" } });
+  const foreign = pendingRow({
+    id: "foreign",
+    createdBy: { id: "otro", name: "Otro" },
+    note: "llamar después de las 5",
+    managementObservation: "cliente frecuente",
+  });
+  const ownerless = pendingRow({ id: "ownerless", createdBy: null });
+
+  it.each(["OPERADOR", "BODEGA"] as const)(
+    "%s ve la identidad de sus filas y no la de las ajenas; nota y observación quedan (P1)",
+    async (role) => {
+      repo.listPendings.mockResolvedValue({
+        items: [own("me"), foreign, ownerless],
+        nextCursor: "next",
+      });
+
+      const result = await getPendings({ identityViewer: { role, userId: "me" } });
+      const [mine, theirs, orphan] = result.items;
+
+      expect(mine!.customerName).toBe("Juan Pérez");
+      expect(mine!.customerPhone).toBe("3001234567");
+      expect(mine!.customerAddress).toBe("Calle 10 #43-20");
+      expect(theirs).toEqual({
+        ...foreign,
+        customerName: null,
+        customerPhone: null,
+        customerAddress: null,
+      });
+      // P1: el texto libre operativo lo ve todo el personal interno.
+      expect(theirs!.note).toBe("llamar después de las 5");
+      expect(theirs!.managementObservation).toBe("cliente frecuente");
+      expect(orphan!.customerName).toBeNull();
+      // Paginar no cambia por la minimización.
+      expect(result.nextCursor).toBe("next");
+    },
+  );
+
+  it.each(["SUPERVISOR", "ADMIN", "SUPERADMIN"] as const)(
+    "%s ve la identidad de todas las filas",
+    async (role) => {
+      repo.listPendings.mockResolvedValue({ items: [foreign, ownerless], nextCursor: null });
+
+      const result = await getPendings({ identityViewer: { role, userId: "me" } });
+
+      expect(result.items).toEqual([foreign, ownerless]);
+    },
+  );
+
+  it("la lectura global no le agrega filtro de dueño al repositorio", async () => {
+    repo.listPendings.mockResolvedValue({ items: [], nextCursor: null });
+
+    await getPendings({
+      identityViewer: { role: "OPERADOR", userId: "me" },
+      axes: { customer: "POR_CONTACTAR" },
+      cursor: "c-1",
+    });
+
+    expect(repo.listPendings).toHaveBeenCalledWith({
+      axes: { customer: "POR_CONTACTAR" },
+      cursor: "c-1",
+    });
+  });
+
+  it("la fila buscada por id se minimiza con la misma regla", async () => {
+    repo.findPendingInView.mockResolvedValue(foreign);
+
+    const denied = await getPendingInView({
+      id: "foreign",
+      identityViewer: { role: "BODEGA", userId: "me" },
+    });
+    expect(denied!.customerName).toBeNull();
+    expect(denied!.customerPhone).toBeNull();
+    expect(denied!.note).toBe("llamar después de las 5");
+
+    repo.findPendingInView.mockResolvedValue(own("me"));
+    const mine = await getPendingInView({
+      id: "own",
+      identityViewer: { role: "BODEGA", userId: "me" },
+    });
+    expect(mine!.customerName).toBe("Juan Pérez");
+  });
+
+  it("el dashboard minimiza sus urgentes fila por fila", async () => {
+    repo.countOpenPendings.mockResolvedValue(2);
+    repo.countOverduePendings.mockResolvedValue(0);
+    repo.countUpcomingPendings.mockResolvedValue(0);
+    repo.listUrgentPendings.mockResolvedValue([own("me"), foreign]);
+
+    const result = await getPendingDashboard({
+      identityViewer: { role: "OPERADOR", userId: "me" },
+      now: new Date("2026-07-09T10:00:00.000Z"),
+    });
+
+    expect(result.urgent[0]!.customerName).toBe("Juan Pérez");
+    expect(result.urgent[1]!.customerName).toBeNull();
+    expect(result.urgent[1]!.customerPhone).toBeNull();
   });
 });
 
@@ -964,11 +1080,11 @@ describe("getPendingDashboard", () => {
     repo.countUpcomingPendings.mockResolvedValue(2);
   });
 
-  it("nulls the customer identity of every `urgent` item when canViewCustomerIdentity is false, counts unchanged", async () => {
+  it("nulls the identity of foreign `urgent` items for a viewer without canViewCustomerIdentity, counts unchanged", async () => {
     const row = pendingRow();
     repo.listUrgentPendings.mockResolvedValue([row]);
 
-    const result = await getPendingDashboard({ canViewCustomerIdentity: false, now });
+    const result = await getPendingDashboard({ identityViewer: FOREIGN_VIEWER, now });
 
     expect(result.urgent[0]!.customerName).toBeNull();
     expect(result.urgent[0]).toEqual({ ...row, customerName: null, customerPhone: null, customerAddress: null });
@@ -977,11 +1093,11 @@ describe("getPendingDashboard", () => {
     expect(result.upcomingCount).toBe(2);
   });
 
-  it("keeps customerName verbatim in `urgent` when canViewCustomerIdentity is true", async () => {
+  it("keeps customerName verbatim in `urgent` for a viewer with canViewCustomerIdentity", async () => {
     const row = pendingRow();
     repo.listUrgentPendings.mockResolvedValue([row]);
 
-    const result = await getPendingDashboard({ canViewCustomerIdentity: true, now });
+    const result = await getPendingDashboard({ identityViewer: FULL_VIEWER, now });
 
     expect(result.urgent[0]!.customerName).toBe("Juan Pérez");
     expect(result.urgent[0]).toEqual(row);
@@ -991,23 +1107,23 @@ describe("getPendingDashboard", () => {
     const row = pendingRow();
     repo.listUrgentPendings.mockResolvedValue([row]);
 
-    await getPendingDashboard({ canViewCustomerIdentity: false, now });
+    await getPendingDashboard({ identityViewer: FOREIGN_VIEWER, now });
 
     expect(row.customerName).toBe("Juan Pérez");
   });
 
-  it("passes items with no customer identity through unchanged under both flags", async () => {
+  it("passes items with no customer identity through unchanged for both viewers", async () => {
     const row = pendingRow({ customerName: null, customerPhone: null, customerAddress: null });
     repo.listUrgentPendings.mockResolvedValue([row]);
 
     const resultDenied = await getPendingDashboard({
-      canViewCustomerIdentity: false,
+      identityViewer: FOREIGN_VIEWER,
       now,
     });
     expect(resultDenied.urgent[0]).toEqual(row);
 
     const resultAllowed = await getPendingDashboard({
-      canViewCustomerIdentity: true,
+      identityViewer: FULL_VIEWER,
       now,
     });
     expect(resultAllowed.urgent[0]).toEqual(row);
@@ -1016,7 +1132,7 @@ describe("getPendingDashboard", () => {
   it("forwards `now` verbatim to countOverduePendings and countUpcomingPendings", async () => {
     repo.listUrgentPendings.mockResolvedValue([]);
 
-    await getPendingDashboard({ canViewCustomerIdentity: true, now });
+    await getPendingDashboard({ identityViewer: FULL_VIEWER, now });
 
     // Exact reference/value check: a stray `new Date()` inside the service
     // would not equal the injected `now` and must fail this assertion.
@@ -1026,7 +1142,7 @@ describe("getPendingDashboard", () => {
 
   it("scopes every dashboard query to the owner for an OPERADOR", async () => {
     repo.listUrgentPendings.mockResolvedValue([]);
-    await getPendingDashboard({ canViewCustomerIdentity: true, now, scope: "owner", ownerId: "seller-1" });
+    await getPendingDashboard({ identityViewer: FULL_VIEWER, now, scope: "owner", ownerId: "seller-1" });
     expect(repo.countOpenPendings).toHaveBeenCalledWith("seller-1");
     expect(repo.countOverduePendings).toHaveBeenCalledWith(now, "seller-1");
     expect(repo.countUpcomingPendings).toHaveBeenCalledWith(now, "seller-1");

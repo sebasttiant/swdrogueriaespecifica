@@ -92,3 +92,31 @@ describe("DashboardPage · los dos negocios no se suman", () => {
     expect(kpis).not.toContain('href="/faltantes"');
   });
 });
+
+// --------------------------------------------------------------------------
+// Lectura global (2026-09-30): el vendedor ve las métricas de toda la cola, y
+// la identidad de los urgentes se decide fila por fila en el service.
+// --------------------------------------------------------------------------
+describe("DashboardPage · alcance e identidad", () => {
+  it.each([
+    ["OPERADOR", "vendedor-1"],
+    ["BODEGA", "bodega-1"],
+    ["SUPERVISOR", "supervisor-1"],
+    ["ADMIN", "admin-1"],
+  ] as const)("%s: métricas globales y quién mira para la identidad", async (role, id) => {
+    mocks.requireCapability.mockResolvedValue({ user: { id, role } });
+
+    await DashboardPage();
+
+    expect(mocks.getPendingDashboard).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope: "global",
+        ownerId: undefined,
+        identityViewer: { role, userId: id },
+      }),
+    );
+    expect(mocks.getPendingDashboard.mock.calls[0]![0]).not.toHaveProperty(
+      "canViewCustomerIdentity",
+    );
+  });
+});

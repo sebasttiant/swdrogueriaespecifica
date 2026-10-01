@@ -13,6 +13,9 @@ import { computeDeadlineStatus } from "./deadline-status";
 import { derivePaymentState } from "./payment-state";
 import {
   arrivalNotice,
+  canCancelRow,
+  canDeliverRow,
+  canEditRow,
   canInvoiceWithoutStock,
   fulfillmentNotice,
   invoiceableQuantity,
@@ -82,11 +85,10 @@ type PendingCompactListProps = {
   // donde el servidor iba a rechazar.
   viewer: PendingViewer;
   canCancel?: boolean;
-  // Corregir los datos del pedido. Gerencia sobre cualquiera; el vendedor sobre
-  // el suyo y una sola vez, límite que hace cumplir el servidor.
+  // Autoridad de corregir los datos del pedido (`canCreatePendientes`). Sobre
+  // CUÁLES filas y con qué cupo lo decide `viewer.editScope` (`canEditRow`); el
+  // límite real lo hace cumplir el servidor.
   canEdit?: boolean;
-  // Alcance global: decide si el límite de una corrección aplica a quien mira.
-  canManageAll?: boolean;
   // Seguimiento = VER la jornada completa. Quien administra necesita leer, sobre
   // la MISMA fila, a qué cliente va, a qué zona, cuánto falta cobrar y qué anotó
   // el vendedor. Sin eso supervisar es abrir el detalle de cada pendiente, uno
@@ -271,11 +273,11 @@ type CustomerActionsContext = {
   viewer: PendingViewer;
   canDeliver: boolean;
   canCancel: boolean;
-  // Gerencia corrige cualquier pendiente; el vendedor solo el suyo y una vez.
-  // Acá solo se decide si OFRECER el enlace: quién puede de verdad lo resuelve
-  // la página de edición y, en última instancia, la Server Action.
+  // Autoridad de corregir. Sobre qué filas lo decide `canEditRow` con el
+  // alcance del lector. Acá solo se decide si OFRECER el enlace: quién puede de
+  // verdad lo resuelve la página de edición y, en última instancia, la Server
+  // Action.
   canEdit: boolean;
-  canManageAll: boolean;
 };
 
 function customerActions(item: PendingListItem, ctx: CustomerActionsContext) {
@@ -302,8 +304,13 @@ function customerActions(item: PendingListItem, ctx: CustomerActionsContext) {
       />
     ) : null;
 
+  // Entregar, responder la lista de espera y cancelar son acciones sobre el
+  // CLIENTE: además de la capacidad exigen alcance sobre la fila. Quien lee la
+  // cola entera sin operarla (vendedor, bodega) no las ve en las filas ajenas.
+  const canDeliverHere = ctx.canDeliver && canDeliverRow(item, ctx.viewer);
+
   const deliver =
-    ctx.canDeliver && outstanding(item).toDeliver > 0 ? (
+    canDeliverHere && outstanding(item).toDeliver > 0 ? (
       <PendingDeliverForm
         key="deliver"
         pendingId={item.id}
@@ -320,7 +327,7 @@ function customerActions(item: PendingListItem, ctx: CustomerActionsContext) {
   // pantalla ofreciera el gesto con una y el servidor pidiera otra, el botón
   // aparecería y fallaría al tocarlo.
   const waitlistDecision =
-    ctx.canDeliver &&
+    canDeliverHere &&
     acceptsWaitlistDecision(item.status) &&
     item.quantity > item.deliveredQuantity &&
     // Ya respondida: preguntar de nuevo hacía ver la acción como si no hubiera
@@ -338,12 +345,16 @@ function customerActions(item: PendingListItem, ctx: CustomerActionsContext) {
       />
     ) : null;
 
-  const cancel = ctx.canCancel ? <PendingCancelForm key="cancel" pendingId={item.id} /> : null;
+  const cancel =
+    ctx.canCancel && canCancelRow(item, ctx.viewer) ? (
+      <PendingCancelForm key="cancel" pendingId={item.id} />
+    ) : null;
 
-  // Al vendedor que ya usó su única corrección no se le ofrece: antes el botón
-  // seguía ahí y lo llevaba a un 404 crudo, que parece un error del sistema y
-  // no el límite que es.
-  const edit = ctx.canEdit && (ctx.canManageAll || item.sellerEditedAt == null) ? (
+  // Corregir alcanza filas ajenas con `canEditAllPendings`. A quien solo corrige
+  // lo suyo y ya usó su única corrección no se le ofrece: antes el botón seguía
+  // ahí y lo llevaba a un 404 crudo, que parece un error del sistema y no el
+  // límite que es.
+  const edit = ctx.canEdit && canEditRow(item, ctx.viewer) ? (
     <Link prefetch={false}
       key="edit"
       href={`/pendientes/${item.id}/editar`}
@@ -387,7 +398,6 @@ export function PendingCompactList({
   viewer,
   canCancel = false,
   canEdit = false,
-  canManageAll = false,
   canFollowUp = false,
   canWriteObservation = false,
   canViewPurchaseDeposit = false,
@@ -425,7 +435,6 @@ export function PendingCompactList({
             canDeliver,
             canCancel,
             canEdit,
-            canManageAll,
           });
           return (
             // SIN ancla, a propósito. Esta lista pinta las DOS vistas —tarjetas
@@ -574,7 +583,6 @@ export function PendingCompactList({
                 canDeliver,
                 canCancel,
                 canEdit,
-                canManageAll,
               });
               return (
                 <tr key={pending.id} className="border-b border-border last:border-0">
