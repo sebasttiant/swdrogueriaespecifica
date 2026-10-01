@@ -9,13 +9,8 @@ import { resolveReviewTab } from "@/features/pendientes/review-tab";
 import { PendingReviewFilters } from "@/features/pendientes/pending-review-filters";
 import { parseReviewAxes, reviewPageHref } from "@/features/pendientes/review-axes";
 import { resolveFocusedPendingId } from "@/features/pendientes/pending-anchor";
-import {
-  can,
-  contactScopeFor,
-  invoiceScopeFor,
-  seesAllPendings,
-} from "@/lib/auth/permissions";
-import type { PendingViewer } from "@/features/pendientes/fulfillment-notice";
+import { can, invoiceScopeFor, seesAllPendings } from "@/lib/auth/permissions";
+import { pendingViewerFor } from "@/features/pendientes/fulfillment-notice";
 import { requireCapability } from "@/lib/auth/require-role";
 import type { PendingScope } from "@/server/repositories/pending.repository";
 import {
@@ -93,21 +88,15 @@ export default async function RevisionPendientesPage({
   // Ver la cola entera ≠ mutarla: la regla vive en `seesAllPendings`, una sola
   // vez. Las acciones de cumplimiento siguen gateando SOLO con `canManageAll`.
   const canSeeAll = seesAllPendings(session.user.role);
-  // Quien no ve toda la cola recibe la lista acotada a sus propias filas, así
-  // que ve los datos de SUS clientes: son los que tiene que llamar. Ver los de
-  // todos es lo que exige la capacidad.
-  const canViewCustomerIdentity = canSeeAll
-    ? can(session.user.role, "canViewCustomerIdentity")
-    : true;
+  // La identidad del cliente se decide FILA POR FILA en el service: cada uno ve
+  // la de sus propios pendientes, y la de los ajenos solo con
+  // `canViewCustomerIdentity`. La pantalla solo le dice quién mira.
+  const identityViewer = { role: session.user.role, userId: session.user.id };
   const canDeliver = can(session.user.role, "canDeliverPendings");
   const canCancel = can(session.user.role, "canCancelPendings");
   // Mismo viewer que /pendientes, misma derivación: las dos pantallas muestran
-  // las mismas filas y no pueden discrepar sobre quién factura cuál.
-  const viewer: PendingViewer = {
-    invoiceScope: invoiceScopeFor(session.user.role),
-    contactScope: contactScopeFor(session.user.role),
-    userId: session.user.id,
-  };
+  // las mismas filas y no pueden discrepar sobre quién opera cuál.
+  const viewer = pendingViewerFor(session.user.role, session.user.id);
   // Estado de gestión: autoridad de compras (gerencia). Reusa la misma
   // capability que pedir un faltante, no la de cancelar.
   const canManageStatus = can(session.user.role, "canOrderMissingItems");
@@ -181,20 +170,29 @@ export default async function RevisionPendientesPage({
 
   // El contador de "Listos para facturar" va con el listado porque se pinta en
   // sus filtros. Mismo alcance (`ownerId`) y ningún otro filtro: es el total de
-  // lo que este usuario puede ir a facturar, no el de la vista filtrada.
-  const [pendings, readyToInvoiceCount] = await Promise.all([
+  // lo listo para facturar en la cola que este usuario ve, no el de la vista
+  // filtrada.
+  //
+  // Quien factura solo lo suyo (`invoiceScopeFor` "own") ve la cola entera por
+  // la lectura global, así que se le cuenta además lo que ÉL puede facturar:
+  // mismo predicado, acotado a sus filas. Con alcance "all" es el mismo número.
+  const countsOwnInvoices = !showingSupply && invoiceScopeFor(session.user.role) === "own";
+  const [pendings, readyToInvoiceCount, readyToInvoiceOwnCount] = await Promise.all([
     showingSupply
       ? Promise.resolve(null)
       : getPendings({
           cursor,
           scope,
           axes,
-          canViewCustomerIdentity,
+          identityViewer,
           canViewPurchaseDeposit: canManagePurchaseDeposit,
           ownerId,
           now,
         }),
     showingSupply ? Promise.resolve(undefined) : getReadyToInvoiceCount({ ownerId }),
+    countsOwnInvoices
+      ? getReadyToInvoiceCount({ ownerId: session.user.id })
+      : Promise.resolve(undefined),
   ]);
 
   // --------------------------------------------------------------------------
@@ -220,7 +218,7 @@ export default async function RevisionPendientesPage({
           id: focusId,
           scope,
           axes,
-          canViewCustomerIdentity,
+          identityViewer,
           canViewPurchaseDeposit: canManagePurchaseDeposit,
           ownerId,
         })
@@ -262,6 +260,7 @@ export default async function RevisionPendientesPage({
             view="detalle"
             basePath={BASE_PATH}
             readyToInvoiceCount={readyToInvoiceCount}
+            readyToInvoiceOwnCount={readyToInvoiceOwnCount}
           />
 
           {/* Fuera de la página cargada: se muestra aparte y se dice por qué,

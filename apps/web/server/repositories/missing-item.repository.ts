@@ -752,6 +752,15 @@ export async function markMissingItemArrived(
   });
   if (!target || !target.originId) return 0;
 
+  // ORDEN DE CANDADOS: el pendiente ANTES que el faltante, igual que la
+  // recepción y la corrección del pendiente. Antes se escribía el faltante y
+  // después el pendiente, y una corrección que cambia el producto (pendiente →
+  // faltante) formaba un ciclo con esta transacción: 40P01. El compare-and-set
+  // de abajo corre ya con el pendiente bloqueado: si una corrección canceló el
+  // faltante mientras esperábamos, el estado no coincide y no se escribe nada.
+  // `originId` no cambia nunca, así que el pendiente bloqueado es el correcto.
+  await tx.$queryRaw`SELECT id FROM pendings WHERE id = ${target.originId} FOR UPDATE`;
+
   const { count } = await tx.missingItem.updateMany({
     where: { id: data.id, status: { in: [...ARRIVABLE_FROM_PENDING] }, confirmedAt: null },
     data: { status: "EN_BODEGA", arrivedById: data.arrivedById, arrivedAt: data.arrivedAt },

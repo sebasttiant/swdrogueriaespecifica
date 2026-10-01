@@ -9,10 +9,14 @@ import {
   isAdminRole,
   isSuperAdminRole,
   isUserManager,
+  cancelScopeFor,
   contactScopeFor,
+  deliverScopeFor,
+  editScopeFor,
   invoiceScopeFor,
   rolesWithCapability,
   seesAllPendings,
+  seesCustomerIdentityOf,
   USER_ROLES,
 } from "./permissions";
 import { SKU_CAPTURE_LINK_ROLES } from "@/server/domain/catalog/sku-identity";
@@ -493,16 +497,18 @@ describe("BODEGA (matriz de perfil)", () => {
 // cumplimiento siguen gateando SOLO con `canManageAllPendings`.
 // --------------------------------------------------------------------------
 describe("canReadAllPendings (lectura global ≠ mutación)", () => {
-  // Bodega entra a la lista: recibe la mercadería y necesita ver qué espera
-  // cada vendedor para priorizar la descarga. El vendedor sigue afuera.
-  it("la tienen gerencia, supervisión y bodega, nunca el vendedor", () => {
+  // Gerencia (2026-09-30): todo el personal interno lee los pendientes de
+  // todos. El vendedor entra a la lista; operar lo ajeno sigue cerrado.
+  it("la tienen los cinco roles, incluido el vendedor", () => {
     expect(rolesWithCapability("canReadAllPendings")).toEqual([
       "SUPERADMIN",
       "ADMIN",
       "SUPERVISOR",
+      "OPERADOR",
       "BODEGA",
     ]);
-    expect(can("OPERADOR", "canReadAllPendings")).toBe(false);
+    expect(can("OPERADOR", "canReadAllPendings")).toBe(true);
+    expect(can("OPERADOR", "canManageAllPendings")).toBe(false);
   });
 
   it("leer la cola entera NO otorga poder sobre ella", () => {
@@ -525,24 +531,24 @@ describe("canReadAllPendings (lectura global ≠ mutación)", () => {
 // fija por rol: una tabla, no una muestra.
 // --------------------------------------------------------------------------
 describe("seesAllPendings (alcance de la cola, en una sola regla)", () => {
-  it("la cola completa la ven todos menos el vendedor", () => {
+  it("la cola completa la ven los cinco roles", () => {
     const alcance = USER_ROLES.map((role) => [role, seesAllPendings(role)] as const);
 
     expect(alcance).toEqual([
       ["SUPERADMIN", true],
       ["ADMIN", true],
       ["SUPERVISOR", true],
-      ["OPERADOR", false],
+      ["OPERADOR", true],
       ["BODEGA", true],
     ]);
   });
 
-  it("el vendedor entra al módulo de revisión, pero acotado a lo suyo", () => {
-    // Las dos mitades de la regla del negocio: puede revisar, y lo que revisa
-    // son sus propios pendientes. Separarlas es lo que evita las dos fallas
-    // opuestas —dejarlo afuera del módulo, o mostrarle la cola entera—.
+  it("el vendedor revisa la cola entera, pero sigue sin operar lo ajeno", () => {
+    // Leer todo y operar lo ajeno son ejes distintos: el vendedor ve todas las
+    // filas y sus acciones de cliente siguen acotadas a las propias.
     expect(can("OPERADOR", "canReviewPendings")).toBe(true);
-    expect(seesAllPendings("OPERADOR")).toBe(false);
+    expect(seesAllPendings("OPERADOR")).toBe(true);
+    expect(invoiceScopeFor("OPERADOR")).toBe("own");
   });
 
   it("la supervisión revisa la cola entera", () => {
@@ -900,5 +906,76 @@ describe("canManagePurchaseDeposit (depósito de compra)", () => {
     expect(can("SUPERVISOR", "canManagePurchaseDeposit")).toBe(false);
     expect(can("BODEGA", "canManageAllPendings")).toBe(false);
     expect(can("BODEGA", "canManagePurchaseDeposit")).toBe(true);
+  });
+});
+
+// --------------------------------------------------------------------------
+// Corrección compartida (gerencia, 2026-09-30).
+//
+// `canEditAllPendings` es la autoridad para CORREGIR los datos operativos de
+// cualquier pendiente. No abre contacto, facturación, entrega, cancelación ni
+// lista de espera sobre lo ajeno: esos siguen con el alcance de
+// `canManageAllPendings`.
+// --------------------------------------------------------------------------
+describe("canEditAllPendings (corrección compartida)", () => {
+  it("la tienen todos los roles que crean pendientes", () => {
+    expect(rolesWithCapability("canEditAllPendings")).toEqual([
+      "SUPERADMIN",
+      "ADMIN",
+      "SUPERVISOR",
+      "OPERADOR",
+      "BODEGA",
+    ]);
+  });
+
+  it("no regala el alcance global ni la identidad del cliente", () => {
+    for (const role of ["OPERADOR", "BODEGA"] as const) {
+      expect(can(role, "canManageAllPendings")).toBe(false);
+      expect(can(role, "canViewCustomerIdentity")).toBe(false);
+    }
+  });
+
+  // La matriz por rol, entera: corregir es "all" para quien tiene la
+  // autoridad, y el resto de las acciones de cliente siguen como estaban.
+  it.each([
+    ["SUPERADMIN", { edit: "all", deliver: "all", cancel: "all", invoice: "all", contact: "all" }],
+    ["ADMIN", { edit: "all", deliver: "all", cancel: "all", invoice: "all", contact: "all" }],
+    ["SUPERVISOR", { edit: "all", deliver: "all", cancel: "all", invoice: "all", contact: "all" }],
+    ["OPERADOR", { edit: "all", deliver: "own", cancel: "own", invoice: "own", contact: "own" }],
+    ["BODEGA", { edit: "all", deliver: "own", cancel: "own", invoice: "own", contact: "own" }],
+  ] as const)("%s: alcances por acción", (role, expected) => {
+    expect({
+      edit: editScopeFor(role),
+      deliver: deliverScopeFor(role),
+      cancel: cancelScopeFor(role),
+      invoice: invoiceScopeFor(role),
+      contact: contactScopeFor(role),
+    }).toEqual(expected);
+  });
+});
+
+// --------------------------------------------------------------------------
+// Identidad del cliente, fila por fila.
+//
+// Se ve si el rol tiene `canViewCustomerIdentity` o si la fila es propia. Un
+// flag por pantalla no alcanza desde que todos leen la cola entera: dejaba a
+// bodega sin la identidad de SUS clientes, o le mostraba la de todos.
+// --------------------------------------------------------------------------
+describe("seesCustomerIdentityOf (identidad por fila)", () => {
+  it.each([
+    ["SUPERADMIN", true, true],
+    ["ADMIN", true, true],
+    ["SUPERVISOR", true, true],
+    ["OPERADOR", true, false],
+    ["BODEGA", true, false],
+  ] as const)("%s: propia=%s, ajena=%s", (role, own, foreign) => {
+    expect(seesCustomerIdentityOf(role, "u-1", "u-1")).toBe(own);
+    expect(seesCustomerIdentityOf(role, "u-1", "u-2")).toBe(foreign);
+  });
+
+  it("una fila sin dueño resoluble no es propia de nadie", () => {
+    expect(seesCustomerIdentityOf("OPERADOR", "u-1", null)).toBe(false);
+    expect(seesCustomerIdentityOf("OPERADOR", "u-1", undefined)).toBe(false);
+    expect(seesCustomerIdentityOf("SUPERVISOR", "u-1", null)).toBe(true);
   });
 });

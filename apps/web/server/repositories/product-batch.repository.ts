@@ -529,6 +529,22 @@ export async function releasePendingReservations(
   return reservations.reduce((total, reservation) => total + reservation.quantity, 0);
 }
 
+/**
+ * Unidades de lote reservadas y vivas para un pendiente, SIN bloquear ni
+ * borrar. Sale de la tabla, no de `Pending.reservedInventoryQuantity`, que es
+ * un acumulado (ver `lockReservedQuantityForPending`). Sirve para decidir antes
+ * de tocar nada; quien después suelta o consume la reserva la vuelve a leer.
+ */
+export async function liveReservedQuantityForPending(
+  client: Prisma.TransactionClient,
+  pendingId: string,
+): Promise<number> {
+  const reservations = await client.pendingInventoryReservation.findMany({
+    where: { pendingId },
+  });
+  return reservations.reduce((total, reservation) => total + reservation.quantity, 0);
+}
+
 /** Consumes reserved lots FIFO when the customer receives units. */
 /**
  * Unidades reservadas y TODAVÍA SIN CONSUMIR para un pendiente.

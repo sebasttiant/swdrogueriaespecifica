@@ -39,6 +39,10 @@ type PendingReviewFiltersProps = {
   // Solo lo pasa Revisión de pendientes: sin él, la fila "Listos para facturar"
   // no se pinta y `/pendientes` —que comparte este componente— queda igual.
   readyToInvoiceCount?: number;
+  // Cuántos de esos puede facturar ESTE usuario (sus propias filas). Solo se
+  // pasa cuando su alcance de facturación es "own": con la lectura global ve la
+  // cola entera, y un solo número no distinguía la cola de lo que es suyo.
+  readyToInvoiceOwnCount?: number;
 };
 
 export function PendingReviewFilters({
@@ -47,6 +51,7 @@ export function PendingReviewFilters({
   view,
   basePath,
   readyToInvoiceCount,
+  readyToInvoiceOwnCount,
 }: PendingReviewFiltersProps) {
   return (
     <section aria-label="Filtros de revisión" className="space-y-3">
@@ -66,7 +71,12 @@ export function PendingReviewFilters({
           values={INVOICE_AXIS_VALUES}
           labels={INVOICE_AXIS_LABELS}
           active={axes.invoice}
-          counts={{ listos: readyToInvoiceCount }}
+          counts={{
+            listos:
+              readyToInvoiceOwnCount === undefined
+                ? readyToInvoiceCount
+                : `${readyToInvoiceCount} en la cola · ${readyToInvoiceOwnCount} tuyos`,
+          }}
           hrefFor={(value) => reviewHref({ scope, view, basePath, axes: { ...axes, invoice: value } })}
         />
       ) : null}
@@ -114,8 +124,9 @@ type AxisRowProps<T extends string> = {
   active: T | undefined;
   hrefFor: (value: T | undefined) => string;
   // Contador opcional junto a una opción. Hoy solo lo usa "Listos para
-  // facturar": un número de pendientes, no de unidades.
-  counts?: Partial<Record<T, number>>;
+  // facturar": un número de pendientes, no de unidades, o un texto que separa
+  // la cola entera de lo propio.
+  counts?: Partial<Record<T, number | string>>;
 };
 
 function AxisRow<T extends string>({

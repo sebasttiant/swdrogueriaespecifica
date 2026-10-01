@@ -259,10 +259,14 @@ describe("registerInventoryEntry", () => {
   });
 
   it("marks reports received only after their MissingItem is fully received", async () => {
+    // Cada recepción hace DOS lecturas crudas, en este orden: el candado de los
+    // pendientes de origen y, después, el de sus faltantes.
     tx.$queryRaw
+      .mockResolvedValueOnce([{ id: "pending-1" }])
       .mockResolvedValueOnce([
         { id: "missing-partial", quantity: 10, orderedQuantity: null, receivedQuantity: 0, originId: "pending-1" },
       ])
+      .mockResolvedValueOnce([{ id: "pending-2" }])
       .mockResolvedValueOnce([
         { id: "missing-full", quantity: 4, orderedQuantity: null, receivedQuantity: 0, originId: "pending-2" },
       ]);
@@ -332,10 +336,26 @@ describe("registerInventoryEntry", () => {
   it("el reparto FIFO solo toma faltantes ligados a una venta", async () => {
     await registerInventoryEntry({ ...BASE_INPUT, idempotencyKey: "solo-ventas" });
 
-    const sql = tx.$queryRaw.mock.calls
-      .map((call) => (call[0] as readonly string[]).join("?"))
-      .find((text) => text.includes("FROM missing_items"));
-    expect(sql).toMatch(/WHERE[\s\S]*"originId" IS NOT NULL[\s\S]*ORDER BY/);
+    const sqls = tx.$queryRaw.mock.calls.map((call) => (call[0] as readonly string[]).join("?"));
+    // Los candidatos: solo pendientes de faltantes ligados a una venta.
+    const origins = sqls.find((text) => text.startsWith("SELECT p.id FROM pendings"));
+    expect(origins).toMatch(/m\."originId" IS NOT NULL/);
+    // El reparto: solo faltantes de esos pendientes ya bloqueados.
+    const missing = sqls.find((text) => text.startsWith("SELECT id, quantity"));
+    expect(missing).toMatch(/"originId" = ANY\(/);
+  });
+
+  // Orden de candados: productos → lotes → pendientes → faltantes. Los
+  // pendientes de origen se bloquean ANTES que los faltantes; al revés, una
+  // corrección que cambia el producto (pendiente → faltante) formaba un ciclo.
+  it("bloquea los pendientes de origen antes que sus faltantes", async () => {
+    await registerInventoryEntry({ ...BASE_INPUT, idempotencyKey: "orden-candados" });
+
+    const sqls = tx.$queryRaw.mock.calls.map((call) => (call[0] as readonly string[]).join("?"));
+    const pendingsAt = sqls.findIndex((text) => /FROM pendings[\s\S]*FOR UPDATE/.test(text));
+    const missingAt = sqls.findIndex((text) => text.startsWith("SELECT id, quantity") && text.includes("FOR UPDATE"));
+    expect(pendingsAt).toBeGreaterThanOrEqual(0);
+    expect(missingAt).toBeGreaterThan(pendingsAt);
   });
 });
 

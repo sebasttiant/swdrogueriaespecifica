@@ -17,6 +17,8 @@ import {
   type Product,
   type PendingIdentityDeferral,
   type PendingPaymentMethod,
+  type MissingItemStatus,
+  type Prisma,
 } from "@/lib/generated/prisma/client";
 import {
   isManagementObservationChanged,
@@ -45,10 +47,14 @@ import {
   type PendingIdentityQueueRow,
   type PendingListItem,
   type PendingScope,
+  lockOriginatedMissingItemStatuses,
   lockPendingForEdit,
+  lockProductForPendingReference,
+  readPendingProductId,
   findPendingObservation,
   setPendingManagementObservation,
   updatePendingDetails,
+  updatePendingOperationalFields,
   type PendingForEdit,
   isClosedPendingStatus,
   lockPendingPurchaseDeposit,
@@ -60,6 +66,7 @@ import { createMissingItem } from "@/server/repositories/missing-item.repository
 import {
   claimableStockForPending,
   consumePendingReservations,
+  liveReservedQuantityForPending,
   releasePendingReservations,
   lockReservedQuantityForPending,
 } from "@/server/repositories/product-batch.repository";
@@ -74,6 +81,7 @@ import type { Paginated } from "@/lib/pagination";
 import {
   can,
   seesAllPendings,
+  seesCustomerIdentityOf,
   USER_ROLES,
   type PendingActionScope,
 } from "@/lib/auth/permissions";
@@ -184,38 +192,46 @@ export type CreatePendingResult = {
   replayed: boolean;
 };
 
-// Minimización server-side: el nombre del cliente nunca llega al cliente (ni
-// siquiera serializado en el HTML) para roles sin `canViewCustomerIdentity`.
+// Minimización server-side: la identidad del cliente (nombre, teléfono y
+// dirección) nunca llega al navegador —ni siquiera serializada en el HTML— para
+// quien no puede verla. La decisión es POR FILA (`seesCustomerIdentityOf`):
+// quien tiene `canViewCustomerIdentity` la ve siempre, y los demás solo en los
+// pendientes que crearon. Desde que todos leen la cola entera (2026-09-30), un
+// flag por pantalla solo podía elegir entre mostrarle a bodega los clientes de
+// todos o esconderle los suyos.
 //
 // `zone` y los montos NO se minimizan, y es una decisión deliberada: la zona es
 // un barrio (dato grueso de ruteo, no una dirección) y el saldo es lo que el
-// operador tiene que cobrar al entregar. Ocultárselos rompería justo el
-// seguimiento que se pidió, sin proteger a nadie: el operador que carga el
-// pendiente ya los escribió él mismo.
+// operador tiene que cobrar al entregar. Tampoco el texto libre operativo
+// —`note`, `managementObservation`, `cancelReason`—: gerencia aceptó (P1) que
+// lo vea todo el personal interno aunque pueda contener datos personales.
 // Nunca mutamos las filas del repositorio; devolvemos objetos nuevos. Helper
-// compartido por `getPendings` y `getPendingDashboard` para que la regla viva
-// en un solo lugar.
+// compartido por todas las lecturas para que la regla viva en un solo lugar.
+
+/**
+ * Quién mira, para decidir la identidad fila por fila. Obligatorio en cada
+ * lectura: que falte tiene que ser un error de tipos, nunca una fuga.
+ */
+export type CustomerIdentityViewer = { role: SessionRole; userId: string };
+
 function minimizeCustomerIdentity(
   items: PendingListItem[],
-  canViewCustomerIdentity: boolean,
+  viewer: CustomerIdentityViewer,
 ): PendingListItem[] {
-  return canViewCustomerIdentity
-    ? items
-    : items.map((item) => ({
-        ...item,
-        customerName: null,
-        customerPhone: null,
-        customerAddress: null,
-      }));
+  return items.map((item) =>
+    seesCustomerIdentityOf(viewer.role, viewer.userId, item.createdBy?.id)
+      ? item
+      : { ...item, customerName: null, customerPhone: null, customerAddress: null },
+  );
 }
 
 export async function getPendings(params: {
   cursor?: string | null;
   take?: number;
   scope?: PendingScope;
-  // Requerido (sin default): que falte el flag debe ser un error de tipos,
-  // nunca una fuga silenciosa de PII. `false` fuerza la minimización abajo.
-  canViewCustomerIdentity: boolean;
+  // Requerido (sin default): que falte debe ser un error de tipos, nunca una
+  // fuga silenciosa de PII. La minimización se decide fila por fila.
+  identityViewer: CustomerIdentityViewer;
   // Depósito de compra: viaja al repositorio, que lee la columna SOLO con esto
   // en `true`. Opcional a propósito: ausente, el dato no se lee.
   canViewPurchaseDeposit?: boolean;
@@ -230,9 +246,9 @@ export async function getPendings(params: {
   // contador del chip y las filas de la lista hablen del mismo instante.
   now?: Date;
 }): Promise<Paginated<PendingListItem>> {
-  const { canViewCustomerIdentity, ...listParams } = params;
+  const { identityViewer, ...listParams } = params;
   const { items, nextCursor } = await listPendings(listParams);
-  return { items: minimizeCustomerIdentity(items, canViewCustomerIdentity), nextCursor };
+  return { items: minimizeCustomerIdentity(items, identityViewer), nextCursor };
 }
 
 /**
@@ -257,21 +273,21 @@ export async function getReadyToInvoiceCount(params: { ownerId?: string }): Prom
  * veinte, y el navegador no hace nada — el mismo síntoma que ya arreglamos una
  * vez, reapareciendo solo con los pedidos más viejos.
  *
- * `canViewCustomerIdentity` es obligatorio por el mismo motivo que en
- * `getPendings`: que falte tiene que ser un error de tipos, nunca una fuga.
+ * `identityViewer` es obligatorio por el mismo motivo que en `getPendings`:
+ * que falte tiene que ser un error de tipos, nunca una fuga.
  */
 export async function getPendingInView(params: {
   id: string;
-  canViewCustomerIdentity: boolean;
+  identityViewer: CustomerIdentityViewer;
   canViewPurchaseDeposit?: boolean;
   scope?: PendingScope;
   ownerId?: string;
   axes?: PendingAxisFilters;
 }): Promise<PendingListItem | null> {
-  const { canViewCustomerIdentity, ...viewParams } = params;
+  const { identityViewer, ...viewParams } = params;
   const found = await findPendingInView(viewParams);
   if (!found) return null;
-  return minimizeCustomerIdentity([found], canViewCustomerIdentity)[0] ?? null;
+  return minimizeCustomerIdentity([found], identityViewer)[0] ?? null;
 }
 
 /**
@@ -298,12 +314,12 @@ const DASHBOARD_URGENT_PENDING_LIMIT = 5;
 // a un caller que mañana podría renderizarlo es cómo las fugas pasan por
 // costumbre — minimizamos en el boundary, igual que en `getPendings`.
 export async function getPendingDashboard(params: {
-  canViewCustomerIdentity: boolean;
+  identityViewer: CustomerIdentityViewer;
   scope?: "global" | "owner";
   ownerId?: string;
   now?: Date;
 }): Promise<PendingDashboard> {
-  const { canViewCustomerIdentity, scope = "global", ownerId, now = new Date() } = params;
+  const { identityViewer, scope = "global", ownerId, now = new Date() } = params;
   if (scope === "owner" && !ownerId) throw new Error("owner scope requires ownerId");
   const scopedOwnerId = scope === "owner" ? ownerId : undefined;
   const [openCount, overdueCount, upcomingCount, urgent] = await Promise.all([
@@ -316,7 +332,7 @@ export async function getPendingDashboard(params: {
     openCount,
     overdueCount,
     upcomingCount,
-    urgent: minimizeCustomerIdentity(urgent, canViewCustomerIdentity),
+    urgent: minimizeCustomerIdentity(urgent, identityViewer),
   };
 }
 
@@ -1425,92 +1441,317 @@ export async function setPendingPurchaseDeposit(
 // --------------------------------------------------------------------------
 // Corregir los datos de un pendiente.
 //
-// Dos autoridades distintas sobre la misma acción:
+// Tres autoridades sobre la misma acción (gerencia, 2026-09-30):
 //
-//   Gerencia  → cualquier pendiente, las veces que haga falta. Es su potestad:
-//               corrige lo que el vendedor cargó mal y ajusta lo que se
-//               renegoció con el cliente.
-//   Vendedor  → solo el suyo y UNA SOLA VEZ. Equivocarse al cargar pasa;
-//               corregir en bucle es reescribir la historia de un compromiso.
+//   `canManageAllPendings` → cualquier pendiente, todos los campos, sin límite.
+//   `canEditAllPendings`   → cualquier pendiente, sin límite; sobre uno AJENO
+//                            solo los datos operativos (corrección restringida).
+//   ninguna de las dos     → solo el suyo y UNA SOLA VEZ. Hoy ningún rol cae
+//                            acá, pero el camino se conserva.
+//
+// Corrección RESTRINGIDA = fila ajena y sin `canManageAllPendings`. Edita
+// producto, cantidad, fecha, zona y nota. La identidad del cliente y los montos
+// son de quien atendió al cliente o de gerencia —igual que el vendedor
+// escrito—: el formulario ajeno no los manda, y si llegan igual la solicitud es
+// inválida. El producto tampoco se
+// cambia si ya hay algo facturado o entregado.
 //
 // Lo que no se toca por acá: el ciclo de vida. Un pendiente ya entregado o
 // cancelado es historia, y corregir un dato no puede reabrirlo. Y la cantidad
 // nunca puede quedar por debajo de lo ya facturado o entregado: eso no sería
 // una corrección, sería dejar la fila mintiendo sobre lo que ya pasó.
+//
+// Toda corrección, de cualquier rol, trae el `updatedAt` que tenía la fila
+// cuando se abrió el formulario. Si cambió, alguien más guardó en el medio y
+// pisarlo sería perder su cambio sin que nadie lo vea.
 // --------------------------------------------------------------------------
+
+/** Identidad del cliente y montos: los campos que protege la corrección ajena. */
+export type PendingProtectedValues = {
+  customerName: string;
+  customerPhone: string;
+  customerAddress?: string;
+  totalAmount?: number;
+  paidAmount?: number;
+  paymentMethod?: PendingPaymentMethod;
+};
+
+/**
+ * Qué llegó de los campos protegidos. La acción no sabe todavía de quién es la
+ * fila —eso se sabe bajo el lock—, así que no puede decidir si faltan o sobran:
+ * solo dice si vinieron, y si vinieron bien.
+ *
+ *   absent  — ningún campo protegido en la solicitud.
+ *   invalid — vino alguno, pero no pasa la validación.
+ *   valid   — vinieron y son válidos.
+ */
+export type PendingProtectedInput =
+  | { state: "absent" }
+  | { state: "invalid" }
+  | { state: "valid"; values: PendingProtectedValues };
+
 export type UpdatePendingInput = {
   id: string;
   productId: string;
   quantity: number;
   promisedAt: Date;
-  customerName: string;
-  customerPhone: string;
-  customerAddress?: string;
   note?: string;
   manualSellerName?: string;
   zone?: string;
-  totalAmount?: number;
-  paidAmount?: number;
-  paymentMethod?: PendingPaymentMethod;
+  protectedFields: PendingProtectedInput;
+  /**
+   * Si la clave `manualSellerName` vino en la solicitud, aunque vacía. La
+   * corrección ajena no la renderiza: su presencia ahí es inválida.
+   */
+  manualSellerNameSent: boolean;
+  /** `updatedAt` de la fila al abrir el formulario; null si no vino o no se entiende. */
+  expectedUpdatedAt: Date | null;
   actorId: string;
   canManageAll: boolean;
+  canEditAll: boolean;
+  /**
+   * Autoridad de compras (`canOrderMissingItems`), derivada del rol en el
+   * servidor. Hoy solo la usa la contención de la corrección propia con
+   * mercadería apartada (ver `updatePending`).
+   */
+  canOrder: boolean;
 };
 
 export type UpdatePendingRejection =
   | "NOT_OWNER"
   | "ALREADY_EDITED"
   | "ALREADY_CLOSED"
-  | "BELOW_COMMITTED";
+  | "BELOW_COMMITTED"
+  /** Solicitud mal formada: campo protegido en una corrección ajena, identidad
+   *  ausente en una completa, o testigo de concurrencia ausente. */
+  | "INVALID_REQUEST"
+  /** Datos protegidos presentes pero mal escritos en una corrección completa. */
+  | "INVALID_DATA"
+  | "PRODUCT_LOCKED"
+  /** Corrección ajena que cambia el producto con abastecimiento en curso. */
+  | "PRODUCT_LOCKED_SUPPLY"
+  /** Corrección propia que cambia el producto con mercadería apartada, sin autoridad de compras. */
+  | "PRODUCT_LOCKED_STOCK"
+  | "STALE";
 
 export type UpdatePendingResult = {
   rejection: UpdatePendingRejection | null;
   /** Estado previo, para que la auditoría pueda decir qué cambió. */
   before: PendingForEdit | null;
+  /** Solo sin rechazo: si hubo escritura o la corrección no cambiaba nada. */
+  outcome?: "UPDATED" | "UNCHANGED";
+  /** Solo sin rechazo: si fue una corrección restringida (fila ajena). */
+  restricted?: boolean;
+  /** Motivo neutral de un `INVALID_REQUEST`, para la auditoría. */
+  detail?: string;
 };
+
+function rejectUpdate(rejection: UpdatePendingRejection, detail?: string): UpdatePendingResult {
+  return detail ? { rejection, before: null, detail } : { rejection, before: null };
+}
+
+function sameInstant(a: Date, b: Date): boolean {
+  return a.getTime() === b.getTime();
+}
+
+// Comparación con los valores tal como se PERSISTIRÍAN (mismos `?? null` que
+// `updatePendingDetails`), para que "sin cambios" signifique lo mismo que
+// "el UPDATE no movería ninguna columna".
+function operationalFieldsUnchanged(
+  current: PendingForEdit,
+  input: UpdatePendingInput,
+): boolean {
+  return (
+    current.productId === input.productId &&
+    current.quantity === input.quantity &&
+    sameInstant(current.promisedAt, input.promisedAt) &&
+    current.zone === (input.zone ?? null) &&
+    current.note === (input.note ?? null)
+  );
+}
+
+function allFieldsUnchanged(
+  current: PendingForEdit,
+  input: UpdatePendingInput,
+  values: PendingProtectedValues,
+): boolean {
+  return (
+    operationalFieldsUnchanged(current, input) &&
+    current.manualSellerName === (input.manualSellerName ?? null) &&
+    current.customerName === values.customerName &&
+    current.customerPhone === values.customerPhone &&
+    current.customerAddress === (values.customerAddress ?? null) &&
+    current.totalAmount === (values.totalAmount ?? null) &&
+    current.paidAmount === (values.paidAmount ?? 0) &&
+    current.paymentMethod === (values.paymentMethod ?? null)
+  );
+}
+
+// Faltante originado que ya salió a comprar o ya llegó: `MissingItemStatus`
+// (la única columna de estado del faltante), más el FALTANTE con "OK gerencia"
+// (`confirmedAt`), que también es una compra hecha. FALTANTE sin OK todavía no
+// se pidió;
+// RECIBIDO ya se cargó como stock, y ese stock lo cubre `inventoryReadyQuantity`;
+// CANCELADO no compromete nada.
+const SUPPLY_IN_PROGRESS_STATUSES: readonly MissingItemStatus[] = ["PEDIDO", "EN_BODEGA"];
+
+/**
+ * Si el pendiente ya tiene abastecimiento en curso: stock asignado
+ * (`inventoryReadyQuantity`), gestión SOLICITADO, una reserva viva de lotes, o
+ * un faltante originado pedido, en bodega o con OK gerencia. Corre con el pendiente bloqueado y lee los faltantes con
+ * su propio FOR UPDATE, respetando el orden pendings → missing_items.
+ */
+async function hasSupplyInProgress(
+  tx: Prisma.TransactionClient,
+  current: PendingForEdit,
+): Promise<boolean> {
+  if (current.inventoryReadyQuantity > 0) return true;
+  // Gerencia ya se lo pidió al proveedor (`PendingPurchaseStatus.SOLICITADO`):
+  // es una compra hecha para ESTE producto aunque el faltante no lo diga.
+  if (current.purchaseStatus === "SOLICITADO") return true;
+  const missingItems = await lockOriginatedMissingItemStatuses(tx, current.id);
+  const ordered = missingItems.some(
+    (item) =>
+      SUPPLY_IN_PROGRESS_STATUSES.includes(item.status) ||
+      // "OK gerencia": FALTANTE confirmado = gerencia ya lo pidió. La vista
+      // "ordered" de faltantes lo cuenta igual que un PEDIDO.
+      (item.status === "FALTANTE" && item.confirmedAt !== null),
+  );
+  if (ordered) return true;
+  return (await liveReservedQuantityForPending(tx, current.id)) > 0;
+}
 
 export async function updatePending(
   input: UpdatePendingInput,
   now: Date = new Date(),
 ): Promise<UpdatePendingResult> {
   return prisma.$transaction(async (tx) => {
+    // Orden global: products → pendings. Si la corrección va a cambiar el
+    // producto, el KEY SHARE que tomaría la FK sobre el producto nuevo se toma
+    // ANTES del pendiente. La lectura previa no lleva candado; si el pendiente
+    // cambiara entre esta lectura y el lock, su `updatedAt` ya no coincidiría
+    // con el testigo del formulario y el paso 5 rechazaría con STALE antes de
+    // escribir, así que nunca se escribe un producto sin haberlo bloqueado.
+    //
+    // INVARIANTE del que depende: toda escritura de `pendings.productId` pasa
+    // por `update`/`updateMany` de Prisma, que actualizan `@updatedAt`. Una
+    // escritura por SQL crudo de `productId` tendría que actualizar
+    // `"updatedAt"` también, o esta lectura sin candado dejaría de ser segura.
+    const storedProductId = await readPendingProductId(tx, input.id);
+    if (storedProductId !== null && storedProductId !== input.productId) {
+      await lockProductForPendingReference(tx, input.productId);
+    }
+
     const current = await lockPendingForEdit(tx, input.id);
     if (!current) throw new Error("Pending not found");
 
-    if (!input.canManageAll) {
-      if (current.createdById !== input.actorId) return { rejection: "NOT_OWNER", before: null };
-      // El cupo del vendedor: una corrección y ya.
-      if (current.sellerEditedAt !== null) return { rejection: "ALREADY_EDITED", before: null };
-    }
+    const isOwner = current.createdById !== null && current.createdById === input.actorId;
+    const correctsAll = input.canManageAll || input.canEditAll;
 
+    // 1. Alcance.
+    if (!correctsAll && !isOwner) return rejectUpdate("NOT_OWNER");
+
+    // 2. El cupo de una sola corrección, solo para quien no tiene ninguna de
+    //    las dos autoridades.
+    if (!correctsAll && current.sellerEditedAt !== null) return rejectUpdate("ALREADY_EDITED");
+
+    // 3. Reglas de estado.
     if (
       current.status === "ENTREGADO" ||
       current.status === "CANCELADO" ||
       current.status === "CLOSED_PARTIAL"
     ) {
-      return { rejection: "ALREADY_CLOSED", before: null };
+      return rejectUpdate("ALREADY_CLOSED");
     }
-
     // Bajar la cantidad por debajo de lo ya facturado o entregado dejaría la
     // fila afirmando algo que contradice lo que realmente pasó.
     const committed = Math.max(current.deliveredQuantity, current.invoicedQuantity);
-    if (input.quantity < committed) return { rejection: "BELOW_COMMITTED", before: null };
+    if (input.quantity < committed) return rejectUpdate("BELOW_COMMITTED");
 
-    await updatePendingDetails(tx, {
-      id: current.id,
-      productId: input.productId,
-      quantity: input.quantity,
-      promisedAt: input.promisedAt,
-      customerName: input.customerName,
-      customerPhone: input.customerPhone,
-      customerAddress: input.customerAddress,
-      note: input.note,
-      manualSellerName: input.manualSellerName,
-      zone: input.zone,
-      totalAmount: input.totalAmount,
-      paidAmount: input.paidAmount,
-      paymentMethod: input.paymentMethod,
-      ...(input.canManageAll ? {} : { sellerEditedAt: now }),
-    });
+    // 4. Qué campos entran.
+    const restricted = !isOwner && !input.canManageAll;
+    let protectedValues: PendingProtectedValues | null = null;
+    if (restricted) {
+      // El formulario ajeno no renderiza estos campos: que lleguen, aunque sea
+      // vacíos, es una solicitud que ese formulario no produce.
+      if (input.protectedFields.state !== "absent" || input.manualSellerNameSent) {
+        return rejectUpdate("INVALID_REQUEST", "campo no permitido en esta corrección");
+      }
+      const productChanges = input.productId !== current.productId;
+      if (productChanges && (current.invoicedQuantity > 0 || current.deliveredQuantity > 0)) {
+        return rejectUpdate("PRODUCT_LOCKED");
+      }
+      // Abastecimiento en curso: cambiar el producto cancelaría el faltante ya
+      // pedido y soltaría el stock reservado. Se decide ANTES de escribir nada.
+      if (productChanges && (await hasSupplyInProgress(tx, current))) {
+        return rejectUpdate("PRODUCT_LOCKED_SUPPLY");
+      }
+    } else {
+      if (input.protectedFields.state === "absent") {
+        return rejectUpdate("INVALID_REQUEST", "faltan los datos del cliente");
+      }
+      if (input.protectedFields.state === "invalid") return rejectUpdate("INVALID_DATA");
+      protectedValues = input.protectedFields.values;
+      // CONTENCIÓN (defecto conocido, sin corregir): soltar una reserva que
+      // asignó la recepción pierde las unidades, porque la recepción ya las
+      // sacó del lote y `releasePendingReservations` no las devuelve. Hasta
+      // que se corrija, el dueño de un pendiente con mercadería apartada no le
+      // cambia el producto salvo que tenga autoridad de compras. Gerencia sobre
+      // una fila ajena queda como estaba.
+      if (
+        isOwner &&
+        !input.canOrder &&
+        input.productId !== current.productId &&
+        (current.inventoryReadyQuantity > 0 ||
+          (await liveReservedQuantityForPending(tx, current.id)) > 0)
+      ) {
+        return rejectUpdate("PRODUCT_LOCKED_STOCK");
+      }
+    }
+
+    // 5. Concurrencia optimista, para TODOS los roles.
+    if (input.expectedUpdatedAt === null) {
+      return rejectUpdate("INVALID_REQUEST", "falta la versión del formulario");
+    }
+    if (!sameInstant(current.updatedAt, input.expectedUpdatedAt)) return rejectUpdate("STALE");
+
+    // 6. Sin cambios: ni escritura, ni `updatedAt` nuevo, ni cupo consumido.
+    const unchanged = protectedValues
+      ? allFieldsUnchanged(current, input, protectedValues)
+      : operationalFieldsUnchanged(current, input);
+    if (unchanged) return { rejection: null, before: current, outcome: "UNCHANGED", restricted };
+
+    // 7. Escritura. La restringida no puede tocar identidad, montos, vendedor
+    //    escrito ni dueño: su helper no tiene esas columnas.
+    if (protectedValues) {
+      await updatePendingDetails(tx, {
+        id: current.id,
+        productId: input.productId,
+        quantity: input.quantity,
+        promisedAt: input.promisedAt,
+        customerName: protectedValues.customerName,
+        customerPhone: protectedValues.customerPhone,
+        customerAddress: protectedValues.customerAddress,
+        note: input.note,
+        manualSellerName: input.manualSellerName,
+        zone: input.zone,
+        totalAmount: protectedValues.totalAmount,
+        paidAmount: protectedValues.paidAmount,
+        paymentMethod: protectedValues.paymentMethod,
+        // El cupo solo se marca para quien lo tiene: con cualquiera de las dos
+        // autoridades se corrige sin límite, y la marca solo esconde el enlace.
+        ...(correctsAll ? {} : { sellerEditedAt: now }),
+      });
+    } else {
+      await updatePendingOperationalFields(tx, {
+        id: current.id,
+        productId: input.productId,
+        quantity: input.quantity,
+        promisedAt: input.promisedAt,
+        zone: input.zone,
+        note: input.note,
+      });
+    }
 
     // Cambiar de producto invalida el faltante que este pendiente originó: se
     // generó para conseguir OTRA cosa. Se cancela para que nadie compre lo que
@@ -1532,9 +1773,42 @@ export async function updatePending(
       });
     }
 
-    return { rejection: null, before: current };
+    return { rejection: null, before: current, outcome: "UPDATED", restricted };
   });
 }
+
+/** Lo que la corrección restringida no muestra, y por eso tampoco recibe. */
+type RestrictedOmittedField =
+  | "customerName"
+  | "customerPhone"
+  | "customerAddress"
+  | "totalAmount"
+  | "paidAmount"
+  | "paymentMethod"
+  | "manualSellerName";
+
+/** El pendiente para un formulario restringido: sin identidad, montos ni vendedor escrito. */
+export type RestrictedPendingForEdit = Omit<PendingForEdit, RestrictedOmittedField>;
+
+/** El formulario de corrección: el pendiente, y si la corrección es restringida. */
+export type PendingCorrectionView = (
+  | {
+      /** Con la identidad del cliente minimizada por fila, igual que las listas. */
+      pending: PendingForEdit;
+      restricted: false;
+    }
+  | {
+      /** Fila ajena sin `canManageAllPendings`: nada de lo que el formulario oculta viaja. */
+      pending: RestrictedPendingForEdit;
+      restricted: true;
+    }) & {
+  /**
+   * Si el pendiente tiene mercadería apartada (stock asignado o reserva viva).
+   * La pantalla bloquea el producto del dueño sin autoridad de compras
+   * (contención T9); el servidor vuelve a decidir al guardar.
+   */
+  stockSetAside: boolean;
+};
 
 /**
  * Un pendiente para el formulario de corrección.
@@ -1543,12 +1817,15 @@ export async function updatePending(
  * la página no tiene que distinguir "no existe" de "no es tuyo" —ambas cosas
  * terminan en la misma pantalla— y no revelar cuál de las dos es evita
  * confirmarle a alguien que un pendiente ajeno existe.
+ *
+ * El alcance es el mismo del paso 1 de `updatePending`. La identidad del
+ * cliente sale con la regla por fila: el formulario restringido no la muestra,
+ * y tampoco la recibe.
  */
 export async function getPendingForEdit(params: {
   id: string;
-  actorId: string;
-  canManageAll: boolean;
-}): Promise<PendingForEdit | null> {
+  actor: { role: SessionRole; userId: string };
+}): Promise<PendingCorrectionView | null> {
   const pending = await prisma.pending.findUnique({
     where: { id: params.id },
     select: {
@@ -1570,11 +1847,46 @@ export async function getPendingForEdit(params: {
       paidAmount: true,
       paymentMethod: true,
       promisedAt: true,
+      updatedAt: true,
+      inventoryReadyQuantity: true,
+      purchaseStatus: true,
     },
   });
   if (!pending) return null;
-  if (!params.canManageAll && pending.createdById !== params.actorId) return null;
-  return pending;
+
+  const { role, userId } = params.actor;
+  const canManageAll = can(role, "canManageAllPendings");
+  const isOwner = pending.createdById !== null && pending.createdById === userId;
+  if (!canManageAll && !can(role, "canEditAllPendings") && !isOwner) return null;
+
+  const stockSetAside =
+    pending.inventoryReadyQuantity > 0 ||
+    (await liveReservedQuantityForPending(prisma, pending.id)) > 0;
+
+  if (!isOwner && !canManageAll) {
+    // Se quitan las claves, no se vacían: estas props cruzan al navegador, y
+    // lo que el formulario restringido no muestra no tiene por qué viajar.
+    const {
+      customerName: _customerName,
+      customerPhone: _customerPhone,
+      customerAddress: _customerAddress,
+      totalAmount: _totalAmount,
+      paidAmount: _paidAmount,
+      paymentMethod: _paymentMethod,
+      manualSellerName: _manualSellerName,
+      ...operational
+    } = pending;
+    return { pending: operational, restricted: true, stockSetAside };
+  }
+
+  const showsIdentity = seesCustomerIdentityOf(role, userId, pending.createdById);
+  return {
+    pending: showsIdentity
+      ? pending
+      : { ...pending, customerName: null, customerPhone: null, customerAddress: null },
+    restricted: false,
+    stockSetAside,
+  };
 }
 
 // --------------------------------------------------------------------------

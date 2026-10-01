@@ -89,13 +89,16 @@ describe("RevisionPendientesPage · autorización", () => {
 // nueva lo REUSA. Sin esto, un módulo de revisión podría listar los pendientes
 // de todos a un vendedor, que es exactamente la fuga que el recorte evita.
 describe("RevisionPendientesPage · alcance por rol", () => {
-  it("al vendedor le acota los pendientes a los suyos", async () => {
+  // Gerencia (2026-09-30): todo el personal interno lee los pendientes de
+  // todos. El vendedor ya no recibe recorte por dueño; la identidad ajena la
+  // sigue cortando el service fila por fila.
+  it("al vendedor ya no le acota los pendientes: lee la cola entera", async () => {
     mocks.requireCapability.mockResolvedValue(VENDEDOR);
 
     await RevisionPendientesPage({ searchParams: searchParams() });
 
     expect(mocks.getPendings).toHaveBeenCalledWith(
-      expect.objectContaining({ ownerId: "vendedor-1" }),
+      expect.objectContaining({ ownerId: undefined }),
     );
   });
 
@@ -121,17 +124,22 @@ describe("RevisionPendientesPage · alcance por rol", () => {
     );
   });
 
-  // La identidad del cliente se minimiza en el boundary según el rol, nunca en
-  // la pantalla. El flag es obligatorio en `getPendings` justamente para que
-  // olvidarlo sea un error de tipos y no una fuga silenciosa.
-  it("decide la visibilidad de la identidad del cliente en el servidor", async () => {
-    mocks.requireCapability.mockResolvedValue(VENDEDOR);
+  // La identidad del cliente se minimiza en el boundary FILA POR FILA, nunca en
+  // la pantalla. La página le pasa al service quién mira —rol y usuario de la
+  // sesión— y no un booleano de pantalla que no sabe de quién es cada fila.
+  it.each([
+    ["OPERADOR", VENDEDOR],
+    ["SUPERVISOR", SUPERVISION],
+    ["BODEGA", { user: { id: "bodega-1", role: "BODEGA" } }],
+  ] as const)("%s: el service recibe quién mira para decidir por fila", async (role, session) => {
+    mocks.requireCapability.mockResolvedValue(session);
 
     await RevisionPendientesPage({ searchParams: searchParams() });
 
     expect(mocks.getPendings).toHaveBeenCalledWith(
-      expect.objectContaining({ canViewCustomerIdentity: expect.any(Boolean) }),
+      expect.objectContaining({ identityViewer: { role, userId: session.user.id } }),
     );
+    expect(mocks.getPendings.mock.calls[0]![0]).not.toHaveProperty("canViewCustomerIdentity");
   });
 });
 
@@ -175,12 +183,39 @@ describe("RevisionPendientesPage · ejes de revisión", () => {
     expect(html).toContain('href="/revision-pendientes?view=detalle&amp;facturar=listos"');
   });
 
-  it("al vendedor le cuenta solo los suyos", async () => {
-    mocks.requireCapability.mockResolvedValue(VENDEDOR);
+  // El contador comparte el alcance del listado que abre el chip: con la
+  // lectura global (2026-09-30) el vendedor lista la cola entera, así que cuenta
+  // la cola entera. Un número que no cuadra con la lista que abre enseña a
+  // desconfiar del chip.
+  it.each([
+    ["OPERADOR", VENDEDOR],
+    ["BODEGA", { user: { id: "bodega-1", role: "BODEGA" } }],
+  ] as const)(
+    "%s (factura solo lo suyo): cuenta la cola entera Y lo que puede facturar",
+    async (_role, session) => {
+      mocks.requireCapability.mockResolvedValue(session);
+      mocks.getReadyToInvoiceCount.mockImplementation(async ({ ownerId }: { ownerId?: string }) =>
+        ownerId ? 3 : 12,
+      );
+
+      const html = renderToStaticMarkup(
+        await RevisionPendientesPage({ searchParams: searchParams() }),
+      );
+
+      expect(mocks.getReadyToInvoiceCount).toHaveBeenCalledWith({ ownerId: undefined });
+      expect(mocks.getReadyToInvoiceCount).toHaveBeenCalledWith({ ownerId: session.user.id });
+      expect(html).toContain("12 en la cola");
+      expect(html).toContain("3 tuyos");
+    },
+  );
+
+  it("SUPERVISOR (factura todo): un solo contador", async () => {
+    mocks.requireCapability.mockResolvedValue(SUPERVISION);
 
     await RevisionPendientesPage({ searchParams: searchParams() });
 
-    expect(mocks.getReadyToInvoiceCount).toHaveBeenCalledWith({ ownerId: "vendedor-1" });
+    expect(mocks.getReadyToInvoiceCount).toHaveBeenCalledTimes(1);
+    expect(mocks.getReadyToInvoiceCount).toHaveBeenCalledWith({ ownerId: undefined });
   });
 
   it("a gerencia le cuenta la cola entera", async () => {

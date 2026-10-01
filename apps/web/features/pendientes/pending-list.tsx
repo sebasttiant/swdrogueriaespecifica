@@ -21,6 +21,8 @@ import { deliverySummary, remainingQuantity } from "./delivery-rules";
 import { canSetManagementStatus } from "./management-status";
 import {
   arrivalNotice,
+  canCancelRow,
+  canDeliverRow,
   canInvoiceWithoutStock,
   fulfillmentNotice,
   invoiceableQuantity,
@@ -180,7 +182,12 @@ export function PendingList({
         // Selector de gestión: solo compras, y solo mientras el estado lo admita.
         const showManagement =
           canManageStatus && canSetManagementStatus(pending.purchaseStatus ?? pending.status);
-        const showDeliverCancel = isOpen && (canDeliver || canCancel);
+        // Entregar y cancelar son acciones sobre el cliente: capacidad Y alcance
+        // sobre esta fila. Quien lee la cola entera sin operarla no las ve en
+        // las filas ajenas; el service lo rechazaría igual.
+        const canDeliverHere = canDeliver && canDeliverRow(pending, viewer);
+        const canCancelHere = canCancel && canCancelRow(pending, viewer);
+        const showDeliverCancel = isOpen && (canDeliverHere || canCancelHere);
         // T4.3: evidencia de cierre para el historial. `closedAt` es la fecha de
         // cierre (última entrega, o la de cierre cuando no hay entregas); se
         // calcula aparte para que el guard del render afine el tipo.
@@ -188,7 +195,7 @@ export function PendingList({
         const closedAt = lastDelivery?.deliveredAt ?? pending.completedAt ?? null;
         // Filas previas a las columnas nuevas conservan su render histórico; las
         // filas nuevas siempre traen customerStatus y exigen FACTURADO.
-        const canDeliverNow = canDeliver && (pending.customerStatus === "FACTURADO" || pending.customerStatus === undefined);
+        const canDeliverNow = canDeliverHere && (pending.customerStatus === "FACTURADO" || pending.customerStatus === undefined);
         // Estado de pago derivado de los montos, nunca de una columna guardada.
         const paymentState = derivePaymentState(pending);
         const balance = remainingAmount(pending);
@@ -442,7 +449,7 @@ export function PendingList({
                         }
                       />
                     ) : null}
-                    {canCancel ? <PendingCancelForm pendingId={pending.id} /> : null}
+                    {canCancelHere ? <PendingCancelForm pendingId={pending.id} /> : null}
                   </div>
                 ) : null}
               </div>

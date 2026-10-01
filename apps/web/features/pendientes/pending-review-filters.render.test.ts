@@ -12,6 +12,7 @@ function render(
     scope: "active" | "history";
     view: "lista" | "detalle";
     readyToInvoiceCount: number;
+    readyToInvoiceOwnCount: number;
   }> = {},
 ): string {
   return renderToStaticMarkup(
@@ -20,6 +21,7 @@ function render(
       scope: props.scope ?? "active",
       view: props.view ?? "lista",
       readyToInvoiceCount: props.readyToInvoiceCount,
+      readyToInvoiceOwnCount: props.readyToInvoiceOwnCount,
     }),
   );
 }
@@ -121,5 +123,31 @@ describe("PendingReviewFilters", () => {
     const html = render({ axes: { availability: "ESPERANDO" } });
 
     expect(html).not.toContain("cursor=");
+  });
+});
+
+// --------------------------------------------------------------------------
+// Lectura global (2026-09-30): quien factura solo lo suyo ve la cola entera, y
+// un solo número mezclaba "cuántos hay listos" con "cuántos puedo facturar yo".
+// Con alcance propio se muestran los DOS, cada uno con su nombre.
+// --------------------------------------------------------------------------
+describe("PendingReviewFilters · listos para facturar, cola y propios", () => {
+  it("con alcance propio distingue la cola entera de lo que puede facturar", () => {
+    const html = render({ readyToInvoiceCount: 12, readyToInvoiceOwnCount: 3 });
+
+    expect(html).toContain("12 en la cola");
+    expect(html).toContain("3 tuyos");
+    expect(html).not.toContain("(12)");
+  });
+
+  it("muestra el cero propio: no tener nada que facturar también es una respuesta", () => {
+    expect(render({ readyToInvoiceCount: 5, readyToInvoiceOwnCount: 0 })).toContain("0 tuyos");
+  });
+
+  it("con alcance global queda un solo número", () => {
+    const html = render({ readyToInvoiceCount: 12 });
+
+    expect(html).toContain("(12)");
+    expect(html).not.toContain("tuyos");
   });
 });

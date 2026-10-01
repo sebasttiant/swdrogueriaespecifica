@@ -1,6 +1,6 @@
 "use server";
 
-import { can } from "@/lib/auth/permissions";
+import { seesCustomerIdentityOf } from "@/lib/auth/permissions";
 import { checkCapability } from "@/lib/auth/require-role";
 import {
   listArrivalNotices,
@@ -24,9 +24,12 @@ import {
 // parámetro sería una fuga —cualquiera pediría los avisos de cualquiera—, y la
 // forma más barata de que eso no pase es que el parámetro no exista.
 //
-// La identidad del cliente se recorta ACÁ, no en la pantalla: un rol sin
-// `canViewCustomerIdentity` no debe recibir el nombre ni siquiera para
-// descartarlo, porque viajaría por la red y quedaría en el payload.
+// La identidad del cliente se decide ACÁ, no en la pantalla, con la regla por
+// fila de `seesCustomerIdentityOf`: se ve con `canViewCustomerIdentity` o si el
+// pendiente es propio. Estos avisos son SIEMPRE propios —la consulta filtra por
+// `createdById` de la sesión—, y por eso el dueño que se le pasa a la regla es
+// el propio destinatario. Esa garantía vive en `listArrivalNotices`: si algún
+// día la consulta dejara de filtrar por dueño, esta llamada tiene que cambiar.
 // --------------------------------------------------------------------------
 
 /** Lo mínimo que la pantalla necesita. `noticedAt` va como epoch: cruza la
@@ -45,7 +48,12 @@ export async function listArrivalNoticesAction(): Promise<ArrivalNoticesResult> 
 
   try {
     const notices = await listArrivalNotices(auth.session.user.id);
-    const showsCustomer = can(auth.session.user.role, "canViewCustomerIdentity");
+    // Dueño de cada aviso: el destinatario, por construcción de la consulta.
+    const showsCustomer = seesCustomerIdentityOf(
+      auth.session.user.role,
+      auth.session.user.id,
+      auth.session.user.id,
+    );
 
     return {
       ok: true,
