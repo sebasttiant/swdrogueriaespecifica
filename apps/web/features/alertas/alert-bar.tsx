@@ -2,7 +2,6 @@ import Link from "next/link";
 
 import { Alert, type AlertTone } from "@/app/_components/ui/alert";
 import { alertSignature, type AlertCounts } from "@/lib/alertas/signature";
-import { can, seesAllPendings } from "@/lib/auth/permissions";
 import type { SessionRole } from "@/lib/auth/session";
 import {
   pendingDeadlineHref,
@@ -15,11 +14,9 @@ import {
 } from "@/features/vencimientos/expiry-tier";
 import { cn } from "@/lib/utils/cn";
 import { countArrivalNotices } from "@/server/services/arrival-notice.service";
-import {
-  getOperationalAlertsCached,
-  type AlertScope,
-} from "@/server/services/operational-alerts.service";
+import { getOperationalAlertsCached } from "@/server/services/operational-alerts.service";
 
+import { alertScopeFor } from "./alert-scope";
 import {
   AlertSnoozeWrapper,
   type AlertSnoozeChip,
@@ -235,26 +232,6 @@ function OperationalAlertContent({
       </div>
     </Alert>
   );
-}
-
-// El aviso le habla al responsable, no a quien pase por ahí.
-//
-// Gerencia y supervisión ven el estado de toda la droguería. El vendedor ve
-// SOLO las entregas que él prometió: un lote por vencer no lo resuelve él. La
-// bodega recibe UN solo aviso, el suyo: un producto que la droguería lleva se
-// quedó sin con qué cubrir lo prometido, y antes de comprarlo hay que mirar el
-// depósito.
-function alertScopeFor(role: SessionRole, userId: string): AlertScope {
-  if (seesAllPendings(role)) return { kind: "global" };
-  // Bodega ANTES que el recorte por dueño: ve la cola completa de pendientes
-  // (`canReadAllPendings`) pero no opera los ajenos, así que el recorte por
-  // dueño la dejaba con las entregas que ella misma cargó —casi ninguna— y sin
-  // el único aviso que sí puede resolver.
-  if (can(role, "canReceiveMissingItems") && !can(role, "canOrderMissingItems")) {
-    return { kind: "warehouse" };
-  }
-  if (can(role, "canViewPendientes")) return { kind: "owner", ownerId: userId };
-  return { kind: "none" };
 }
 
 // --------------------------------------------------------------------------
