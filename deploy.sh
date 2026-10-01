@@ -19,6 +19,11 @@ set -Eeuo pipefail
 APP_DIR="${APP_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 BACKUP_DIR="$APP_DIR/backups"
 BRANCH="${BRANCH:-main}"
+# Opcional: SHA completo (40 hex) que se espera desplegar. Con él, el deploy es
+# estricto: se detiene si quedan cambios locales que alterarían lo construido o
+# si después del pull HEAD no es exactamente ese commit. Sin él, el
+# comportamiento habitual no cambia (los cambios locales solo se avisan).
+EXPECTED_SHA="${EXPECTED_SHA:-}"
 WEB_SERVICE="${WEB_SERVICE:-web}"
 DB_SERVICE="${DB_SERVICE:-postgres}"
 MIGRATE_SERVICE="${MIGRATE_SERVICE:-migrate}"
@@ -26,6 +31,44 @@ SEED_SERVICE="${SEED_SERVICE:-seed}"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-180}"   # segundos a esperar a que `web` quede healthy
 
 cd "$APP_DIR"
+
+# --------------------------------------------------------------------------
+# Qué se va a construir: rama, cambios locales y commit esperado.
+#
+# `git pull` integra SIEMPRE en la rama actual. Si no es "$BRANCH", se
+# adelantaría otra rama local: con BRANCH de pruebas estando en `main`, `main`
+# quedaría apuntando a la rama de pruebas y el próximo deploy normal abortaría
+# por divergencia. Por eso se exige estar parado en "$BRANCH".
+#
+# La imagen se construye con `COPY . .`: un archivo modificado o sin rastrear
+# (no ignorado) entra en lo construido aunque no esté en el commit. Estas
+# guardas solo LEEN el estado; nunca borran ni sobrescriben nada.
+# --------------------------------------------------------------------------
+echo "==> Verificando rama y cambios locales..."
+if [ -n "$EXPECTED_SHA" ] && ! [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "ERROR: EXPECTED_SHA debe ser el SHA completo de 40 caracteres hexadecimales."
+  exit 1
+fi
+
+CURRENT_BRANCH="$(git branch --show-current)"
+if [ "$CURRENT_BRANCH" != "$BRANCH" ]; then
+  echo "ERROR: la rama actual es '${CURRENT_BRANCH:-HEAD desacoplado}' y BRANCH='$BRANCH'."
+  echo "       Cambiá primero de rama:  git fetch origin && git switch --track origin/$BRANCH"
+  echo "       (o, si ya existe localmente:  git switch $BRANCH)"
+  exit 1
+fi
+
+LOCAL_CHANGES="$(git status --porcelain --untracked-files=normal)"
+if [ -n "$LOCAL_CHANGES" ]; then
+  if [ -n "$EXPECTED_SHA" ]; then
+    echo "ERROR: hay cambios locales que alterarían lo construido respecto de $EXPECTED_SHA:"
+    echo "$LOCAL_CHANGES" | sed 's/^/       /'
+    echo "       No se tocó nada. Revisalos (commit, stash o moverlos fuera del repo) y volvé a correr."
+    exit 1
+  fi
+  echo "    ⚠ Hay cambios locales (entran en la imagen con COPY . .):"
+  echo "$LOCAL_CHANGES" | sed 's/^/      /'
+fi
 
 echo "==> Creating backup..."
 mkdir -p "$BACKUP_DIR"
@@ -42,6 +85,16 @@ echo "Backup created: $BACKUP_FILE"
 echo "==> Updating code..."
 git fetch origin "$BRANCH"
 git pull --ff-only origin "$BRANCH"
+
+if [ -n "$EXPECTED_SHA" ]; then
+  DEPLOY_SHA="$(git rev-parse HEAD)"
+  if [ "$DEPLOY_SHA" != "$EXPECTED_SHA" ]; then
+    echo "ERROR: se esperaba desplegar $EXPECTED_SHA y HEAD quedó en $DEPLOY_SHA."
+    echo "       El deploy se detiene ANTES de construir y de tocar la base."
+    exit 1
+  fi
+  echo "    ✓ Commit verificado: $DEPLOY_SHA"
+fi
 
 echo "==> Verificando que exista .env..."
 if [ ! -f "$APP_DIR/.env" ]; then
