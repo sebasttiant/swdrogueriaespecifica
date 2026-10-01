@@ -19,6 +19,17 @@ set -Eeuo pipefail
 APP_DIR="${APP_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 BACKUP_DIR="$APP_DIR/backups"
 BRANCH="${BRANCH:-main}"
+# Opcional: SHA completo (40 hex) que se espera desplegar. Con él, el deploy es
+# estricto: se detiene si quedan cambios locales que alterarían lo construido,
+# si lo traído del remoto no es ese commit (antes de mover el checkout) o si
+# después del pull HEAD no es exactamente ese commit. Sin él, los cambios
+# locales solo se avisan.
+#
+# En los dos casos el deploy exige estar parado en "$BRANCH" (ver la guarda de
+# rama más abajo): un deploy desde otra rama o con HEAD desacoplado, que antes
+# seguía, ahora se detiene con un mensaje.
+EXPECTED_SHA="${EXPECTED_SHA:-}"
+EXPECTED_SHA="${EXPECTED_SHA,,}"   # se acepta en mayúsculas, como lo muestran algunas UIs
 WEB_SERVICE="${WEB_SERVICE:-web}"
 DB_SERVICE="${DB_SERVICE:-postgres}"
 MIGRATE_SERVICE="${MIGRATE_SERVICE:-migrate}"
@@ -26,6 +37,44 @@ SEED_SERVICE="${SEED_SERVICE:-seed}"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-180}"   # segundos a esperar a que `web` quede healthy
 
 cd "$APP_DIR"
+
+# --------------------------------------------------------------------------
+# Qué se va a construir: rama, cambios locales y commit esperado.
+#
+# `git pull` integra SIEMPRE en la rama actual. Si no es "$BRANCH", se
+# adelantaría otra rama local: con BRANCH de pruebas estando en `main`, `main`
+# quedaría apuntando a la rama de pruebas y el próximo deploy normal abortaría
+# por divergencia. Por eso se exige estar parado en "$BRANCH".
+#
+# La imagen se construye con `COPY . .`: un archivo modificado o sin rastrear
+# (no ignorado) entra en lo construido aunque no esté en el commit. Estas
+# guardas solo LEEN el estado; nunca borran ni sobrescriben nada.
+# --------------------------------------------------------------------------
+echo "==> Verificando rama y cambios locales..."
+if [ -n "$EXPECTED_SHA" ] && ! [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "ERROR: EXPECTED_SHA debe ser el SHA completo de 40 caracteres hexadecimales (git rev-parse HEAD)."
+  exit 1
+fi
+
+CURRENT_BRANCH="$(git branch --show-current)"
+if [ "$CURRENT_BRANCH" != "$BRANCH" ]; then
+  echo "ERROR: la rama actual es '${CURRENT_BRANCH:-HEAD desacoplado}' y BRANCH='$BRANCH'."
+  echo "       Cambiá primero de rama:  git fetch origin && git switch --track origin/$BRANCH"
+  echo "       (o, si ya existe localmente:  git switch $BRANCH)"
+  exit 1
+fi
+
+LOCAL_CHANGES="$(git status --porcelain --untracked-files=normal)"
+if [ -n "$LOCAL_CHANGES" ]; then
+  if [ -n "$EXPECTED_SHA" ]; then
+    echo "ERROR: hay cambios locales que alterarían lo construido respecto de $EXPECTED_SHA:"
+    echo "$LOCAL_CHANGES" | sed 's/^/       /'
+    echo "       No se tocó nada. Revisalos (commit, stash o moverlos fuera del repo) y volvé a correr."
+    exit 1
+  fi
+  echo "    ⚠ Hay cambios locales (entran en la imagen con COPY . .):"
+  echo "$LOCAL_CHANGES" | sed 's/^/      /'
+fi
 
 echo "==> Creating backup..."
 mkdir -p "$BACKUP_DIR"
@@ -41,7 +90,31 @@ echo "Backup created: $BACKUP_FILE"
 
 echo "==> Updating code..."
 git fetch origin "$BRANCH"
+
+# Lo que trajo el fetch se compara ANTES del pull: si no es el commit esperado,
+# el deploy se detiene sin mover la rama ni el árbol de trabajo.
+if [ -n "$EXPECTED_SHA" ]; then
+  FETCHED_SHA="$(git rev-parse FETCH_HEAD)"
+  if [ "$FETCHED_SHA" != "$EXPECTED_SHA" ]; then
+    echo "ERROR: origin/$BRANCH está en $FETCHED_SHA y se esperaba $EXPECTED_SHA."
+    echo "       El deploy se detiene sin mover el checkout, sin construir y sin tocar la base."
+    exit 1
+  fi
+fi
+
 git pull --ff-only origin "$BRANCH"
+
+# Segunda comprobación, ya sobre el árbol que se va a construir: cubre el caso
+# en que el pull no avanzó (p. ej. la rama local estaba por delante).
+if [ -n "$EXPECTED_SHA" ]; then
+  DEPLOY_SHA="$(git rev-parse HEAD)"
+  if [ "$DEPLOY_SHA" != "$EXPECTED_SHA" ]; then
+    echo "ERROR: se esperaba desplegar $EXPECTED_SHA y HEAD quedó en $DEPLOY_SHA."
+    echo "       El deploy se detiene ANTES de construir y de tocar la base."
+    exit 1
+  fi
+  echo "    ✓ Commit verificado: $DEPLOY_SHA"
+fi
 
 echo "==> Verificando que exista .env..."
 if [ ! -f "$APP_DIR/.env" ]; then
