@@ -151,6 +151,45 @@ describe("EditarPendientePage", () => {
     );
   });
 
+  // Contención T9: el dueño sin autoridad de compras ve el producto bloqueado
+  // si el pendiente ya tiene mercadería apartada. ADMIN (compras) no.
+  it.each([
+    ["OPERADOR", "op-1", true],
+    ["BODEGA", "op-1", true],
+    ["SUPERVISOR", "op-1", true],
+    ["ADMIN", "op-1", false],
+  ] as const)("%s dueño (usuario %s) con mercadería apartada: producto bloqueado=%s", async (role, id, locked) => {
+    mocks.requireCapability.mockResolvedValue({ user: { id, role } });
+    mocks.getPendingForEdit.mockResolvedValue({
+      pending: { ...PENDING, createdById: "op-1" },
+      restricted: false,
+      stockSetAside: true,
+    });
+
+    await render();
+
+    expect(mocks.formProps).toHaveBeenCalledWith(
+      expect.objectContaining({
+        restricted: false,
+        productLocked: locked,
+        ...(locked ? { productLockReason: "stockSetAside" } : {}),
+      }),
+    );
+  });
+
+  it("OPERADOR dueño sin mercadería apartada: producto libre", async () => {
+    mocks.requireCapability.mockResolvedValue({ user: { id: "op-1", role: "OPERADOR" } });
+    mocks.getPendingForEdit.mockResolvedValue({
+      pending: { ...PENDING, createdById: "op-1" },
+      restricted: false,
+      stockSetAside: false,
+    });
+
+    await render();
+
+    expect(mocks.formProps).toHaveBeenCalledWith(expect.objectContaining({ productLocked: false }));
+  });
+
   it("sin alcance, el mismo 404 que si no existiera", async () => {
     mocks.requireCapability.mockResolvedValue({ user: { id: "op-1", role: "OPERADOR" } });
     mocks.getPendingForEdit.mockResolvedValue(null);

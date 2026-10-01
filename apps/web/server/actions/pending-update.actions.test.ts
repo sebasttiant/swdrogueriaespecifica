@@ -118,12 +118,12 @@ beforeEach(() => {
 
 describe("updatePendingAction · autoridad y lo que llega al service", () => {
   it.each([
-    ["OPERADOR", false, true],
-    ["BODEGA", false, true],
-    ["SUPERVISOR", true, true],
-    ["ADMIN", true, true],
-    ["SUPERADMIN", true, true],
-  ] as const)("%s: canManageAll=%s, canEditAll=%s", async (role, canManageAll, canEditAll) => {
+    ["OPERADOR", false, true, false],
+    ["BODEGA", false, true, false],
+    ["SUPERVISOR", true, true, false],
+    ["ADMIN", true, true, true],
+    ["SUPERADMIN", true, true, true],
+  ] as const)("%s: canManageAll=%s, canEditAll=%s, canOrder=%s", async (role, canManageAll, canEditAll, canOrder) => {
     mocks.requireCapability.mockResolvedValue(sesion(role, "actor-1"));
     mocks.updatePending.mockResolvedValue({ rejection: "STALE", before: null });
 
@@ -131,7 +131,7 @@ describe("updatePendingAction · autoridad y lo que llega al service", () => {
 
     expect(mocks.requireCapability).toHaveBeenCalledWith("canCreatePendientes");
     expect(mocks.updatePending).toHaveBeenCalledWith(
-      expect.objectContaining({ actorId: "actor-1", canManageAll, canEditAll }),
+      expect.objectContaining({ actorId: "actor-1", canManageAll, canEditAll, canOrder }),
     );
   });
 
@@ -225,6 +225,16 @@ describe("updatePendingAction · rechazos auditados", () => {
       "PRODUCT_LOCKED",
       undefined,
       "No se puede cambiar el producto: este pendiente ya tiene unidades facturadas o entregadas.",
+    ],
+    [
+      "PRODUCT_LOCKED_SUPPLY",
+      undefined,
+      "No podés cambiar el producto: ya hay stock reservado o una compra en curso para este pendiente. Pedile el cambio a supervisión.",
+    ],
+    [
+      "PRODUCT_LOCKED_STOCK",
+      undefined,
+      "No podés cambiar el producto: este pendiente ya tiene mercadería apartada. Pedile el cambio a gerencia.",
     ],
     ["NOT_OWNER", undefined, "Solo podés corregir un pendiente que hayas creado vos."],
     ["ALREADY_CLOSED", undefined, "Este pendiente ya está cerrado y no se puede corregir."],

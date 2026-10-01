@@ -44,7 +44,18 @@ export default async function EditarPendientePage({
     actor: { role, userId: session.user.id },
   });
   if (!view) notFound();
-  const { pending, restricted } = view;
+  const { pending, restricted, stockSetAside } = view;
+  // Producto bloqueado en el formulario (el servidor vuelve a decidir):
+  //  - corrección ajena restringida con unidades facturadas o entregadas;
+  //  - corrección PROPIA con mercadería apartada, para quien no tiene autoridad
+  //    de compras (contención T9 del defecto de pérdida de unidades).
+  const lockedByCommitment =
+    restricted && (pending.invoicedQuantity > 0 || pending.deliveredQuantity > 0);
+  const lockedByStock =
+    !restricted &&
+    pending.createdById === session.user.id &&
+    !can(role, "canOrderMissingItems") &&
+    stockSetAside;
   // T2.2b: el cierre parcial es terminal — corregir un pedido que el cliente ya
   // cerró en el mostrador no tiene sentido (el server lo rechaza igual).
   if (
@@ -89,9 +100,8 @@ export default async function EditarPendientePage({
           minQuantity={Math.max(pending.deliveredQuantity, pending.invoicedQuantity)}
           isLastChance={!correctsAll}
           restricted={restricted}
-          productLocked={
-            restricted && (pending.invoicedQuantity > 0 || pending.deliveredQuantity > 0)
-          }
+          productLocked={lockedByCommitment || lockedByStock}
+          productLockReason={lockedByStock ? "stockSetAside" : "committed"}
         />
       </Card>
     </div>

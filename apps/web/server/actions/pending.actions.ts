@@ -1585,6 +1585,10 @@ const UPDATE_REJECTION_MESSAGES = {
   INVALID_REQUEST: "La solicitud no es válida. Recargá la página e intentá de nuevo.",
   PRODUCT_LOCKED:
     "No se puede cambiar el producto: este pendiente ya tiene unidades facturadas o entregadas.",
+  PRODUCT_LOCKED_STOCK:
+    "No podés cambiar el producto: este pendiente ya tiene mercadería apartada. Pedile el cambio a gerencia.",
+  PRODUCT_LOCKED_SUPPLY:
+    "No podés cambiar el producto: ya hay stock reservado o una compra en curso para este pendiente. Pedile el cambio a supervisión.",
   STALE:
     "Otra persona modificó este pendiente desde que abriste el formulario. Recargá para ver los cambios.",
 } as const;
@@ -1695,6 +1699,7 @@ export async function updatePendingAction(
       actorId: session.user.id,
       canManageAll: can(session.user.role, "canManageAllPendings"),
       canEditAll: can(session.user.role, "canEditAllPendings"),
+      canOrder: can(session.user.role, "canOrderMissingItems"),
     });
   } catch (error) {
     logPendingError(null, error);

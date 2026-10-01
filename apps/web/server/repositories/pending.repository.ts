@@ -12,6 +12,7 @@ import {
   type Paginated,
 } from "@/lib/pagination";
 import type {
+  MissingItemStatus,
   PendingAvailabilityStatus,
   PendingCustomerStatus,
   PendingIdentityDeferral,
@@ -1083,6 +1084,10 @@ export type PendingForEdit = {
   promisedAt: Date;
   /** Testigo de concurrencia: el formulario lo trae y se compara bajo el lock. */
   updatedAt: Date;
+  /** Stock ya asignado a este pendiente (lo que la reserva o la recepción le dieron). */
+  inventoryReadyQuantity: number;
+  /** Estado de gestión de compras: SOLICITADO = ya se le pidió al proveedor. */
+  purchaseStatus: PendingPurchaseStatus;
 };
 
 export async function lockPendingForEdit(
@@ -1093,10 +1098,34 @@ export async function lockPendingForEdit(
     SELECT id, "productId", quantity, status, "createdById", "deliveredQuantity",
            "invoicedQuantity", "sellerEditedAt", "customerName", "customerPhone",
            "customerAddress", note, "manualSellerName", zone, "totalAmount", "paidAmount",
-           "paymentMethod", "promisedAt", "updatedAt"
+           "paymentMethod", "promisedAt", "updatedAt", "inventoryReadyQuantity",
+           "purchaseStatus"
     FROM pendings WHERE id = ${id} FOR UPDATE
   `;
   return rows[0] ?? null;
+}
+
+/**
+ * Estados de los faltantes que ESTE pendiente originó, bloqueados.
+ *
+ * Se llama con el pendiente ya bloqueado: el orden global de locks es
+ * product_batches → pendings → missing_items, y este es el último eslabón. Sin
+ * el FOR UPDATE, un "Ya lo pedí" concurrente podría pasar el faltante a PEDIDO
+ * entre esta lectura y la cancelación que dispara el cambio de producto.
+ */
+export type OriginatedMissingItemState = {
+  status: MissingItemStatus;
+  /** "OK gerencia": un FALTANTE con esta marca ya se pidió (ver `confirmMissingItem`). */
+  confirmedAt: Date | null;
+};
+
+export async function lockOriginatedMissingItemStatuses(
+  client: Prisma.TransactionClient,
+  pendingId: string,
+): Promise<OriginatedMissingItemState[]> {
+  return client.$queryRaw<OriginatedMissingItemState[]>`
+    SELECT status, "confirmedAt" FROM missing_items WHERE "originId" = ${pendingId} FOR UPDATE
+  `;
 }
 
 // --------------------------------------------------------------------------

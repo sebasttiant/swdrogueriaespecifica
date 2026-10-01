@@ -376,7 +376,7 @@ async function main() {
   const testigo = async () =>
     (await prisma.pending.findUniqueOrThrow({ where: { id: paraEditar.pending.id } })).updatedAt;
   // Sin ninguna de las dos autoridades de corrección: el camino del cupo único.
-  const vendedorSinAutoridad = { canManageAll: false, canEditAll: false };
+  const vendedorSinAutoridad = { canManageAll: false, canEditAll: false, canOrder: false };
 
   assert(
     (
@@ -428,6 +428,7 @@ async function main() {
         actorId: intruder.id,
         canManageAll: true,
         canEditAll: true,
+        canOrder: true,
       })
     ).rejection === null,
     "gerencia corrige cualquier pendiente, sin límite",
@@ -450,6 +451,7 @@ async function main() {
         actorId: intruder.id,
         canManageAll: true,
         canEditAll: true,
+        canOrder: true,
       })
     ).rejection === null,
     "gerencia puede corregir de nuevo",
@@ -464,6 +466,7 @@ async function main() {
         actorId: intruder.id,
         canManageAll: true,
         canEditAll: true,
+        canOrder: true,
       })
     ).rejection === "STALE",
     "un formulario viejo se rechaza, también para gerencia",

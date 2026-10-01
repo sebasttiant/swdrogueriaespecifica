@@ -53,7 +53,11 @@ function stored(overrides: Partial<PendingEditValues> = {}): PendingEditValues {
 
 function renderEdit(
   pending: PendingEditValues,
-  options: { restricted?: boolean; productLocked?: boolean } = {},
+  options: {
+    restricted?: boolean;
+    productLocked?: boolean;
+    productLockReason?: "committed" | "stockSetAside";
+  } = {},
 ): string {
   return renderToStaticMarkup(
     createElement(PendingEditForm, {
@@ -151,6 +155,19 @@ describe("PendingEditForm · corrección restringida (fila ajena)", () => {
     for (const field of PROTECTED_INPUTS.filter((f) => f !== "paymentMethod")) {
       expect(html).toContain(`name="${field}"`);
     }
+  });
+});
+
+describe("PendingEditForm · mercadería apartada en una corrección propia", () => {
+  it("bloquea el producto, lo conserva y explica que hay mercadería apartada", () => {
+    const html = renderEdit(stored(), { productLocked: true, productLockReason: "stockSetAside" });
+
+    const select = inputTag(html, "productId");
+    expect(select).toContain("disabled");
+    expect(html).toContain('type="hidden" name="productId" value="p1"');
+    expect(html).toContain("ya tiene mercadería apartada. Pedile el cambio a gerencia.");
+    // La corrección propia conserva el resto de sus campos.
+    expect(html).toContain('name="customerName"');
   });
 });
 

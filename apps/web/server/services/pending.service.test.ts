@@ -31,6 +31,7 @@ const { prismaMock, tx } = vi.hoisted(() => {
     // con el `tx`. Los tests verifican que estas llamadas queden en cero.
     pending: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     missingItem: { findFirst: vi.fn() },
+    pendingInventoryReservation: { findMany: vi.fn() },
     $queryRaw: vi.fn(),
   };
   return { prismaMock, tx };
@@ -1834,17 +1835,22 @@ describe("updatePending", () => {
   };
 
   // Los actores por su autoridad, no por su nombre de rol.
-  const OWNER = { actorId: "op-1", canManageAll: false, canEditAll: true };
-  const FOREIGN_EDITOR = { actorId: "bod-1", canManageAll: false, canEditAll: true };
-  const MANAGER = { actorId: "adm-1", canManageAll: true, canEditAll: true };
+  // `canOrder` = `canOrderMissingItems` (autoridad de compras: ADMIN/SUPERADMIN).
+  const OWNER = { actorId: "op-1", canManageAll: false, canEditAll: true, canOrder: false };
+  const FOREIGN_EDITOR = { actorId: "bod-1", canManageAll: false, canEditAll: true, canOrder: false };
+  const MANAGER = { actorId: "adm-1", canManageAll: true, canEditAll: true, canOrder: true };
   // Un rol sin ninguna de las dos autoridades: conserva el cupo de una sola
   // corrección sobre lo suyo. Ningún rol de la matriz actual cae acá, pero el
   // camino sigue existiendo.
-  const QUOTA_OWNER = { actorId: "op-1", canManageAll: false, canEditAll: false };
+  const QUOTA_OWNER = { actorId: "op-1", canManageAll: false, canEditAll: false, canOrder: false };
 
-  function lockedForEdit(overrides: Record<string, unknown> = {}) {
-    tx.$queryRaw.mockResolvedValue([
-      {
+  // Dos consultas crudas comparten `$queryRaw`: el lock del pendiente y el de
+  // sus faltantes originados. Se responden por SQL, no por orden de llamada.
+  function lockedForEdit(
+    overrides: Record<string, unknown> = {},
+    originatedMissingItems: Array<{ status: string; confirmedAt?: Date | null }> = [],
+  ) {
+    const row = {
         id: "pend-1",
         productId: "prod-1",
         quantity: 10,
@@ -1864,9 +1870,15 @@ describe("updatePending", () => {
         paymentMethod: null,
         promisedAt: new Date("2026-07-10T10:00:00.000Z"),
         updatedAt: LOADED_AT,
+        inventoryReadyQuantity: 0,
+        purchaseStatus: "POR_PEDIR",
         ...overrides,
-      },
-    ]);
+    };
+    tx.$queryRaw.mockImplementation((...args: unknown[]) =>
+      Promise.resolve(
+        lockSqlFrom(args).includes("missing_items") ? originatedMissingItems : [row],
+      ),
+    );
   }
 
   function writtenData(): Record<string, unknown> {
@@ -2090,6 +2102,197 @@ describe("updatePending", () => {
       const result = await updatePending({ ...restricted, ...FOREIGN_EDITOR }, now);
 
       expect(result.rejection).toBeNull();
+    });
+  });
+
+  // ------------------------------------------------------------------------
+  // Abastecimiento en curso (T5): sobre una fila AJENA, el producto tampoco se
+  // cambia si ya hay stock asignado o reservado para el pendiente, o si su
+  // faltante ya se pidió o llegó a bodega. Cambiarlo cancelaría ese faltante y
+  // soltaría la reserva: deshacer una compra desde una corrección.
+  // ------------------------------------------------------------------------
+  describe("producto bloqueado por abastecimiento en curso (restringida)", () => {
+    const SUPPLY_BLOCKS = [
+      ["stock asignado (inventoryReadyQuantity)", { inventoryReadyQuantity: 3 }, [], []],
+      ["reserva viva de lotes", {}, [{ id: "res-1", pendingId: "pend-1", batchId: "b-1", quantity: 2 }], []],
+      ["faltante PEDIDO", {}, [], [{ status: "PEDIDO" }]],
+      ["faltante EN_BODEGA", {}, [], [{ status: "EN_BODEGA" }]],
+      ["gestión SOLICITADO (ya se pidió al proveedor)", { purchaseStatus: "SOLICITADO" }, [], []],
+      // "OK gerencia": FALTANTE con `confirmedAt` es un faltante YA pedido (la
+      // vista "ordered" de faltantes lo cuenta así).
+      [
+        "faltante FALTANTE con OK gerencia (confirmedAt)",
+        {},
+        [],
+        [{ status: "FALTANTE", confirmedAt: new Date("2026-07-08T10:00:00.000Z") }],
+      ],
+    ] as const;
+
+    function arrange(
+      overrides: Record<string, unknown>,
+      reservations: readonly unknown[],
+      missing: ReadonlyArray<{ status: string; confirmedAt?: Date | null }>,
+    ) {
+      lockedForEdit({ createdById: "otro", ...overrides }, [...missing]);
+      tx.pendingInventoryReservation.findMany.mockResolvedValue([...reservations]);
+    }
+
+    it.each(SUPPLY_BLOCKS)(
+      "%s: rechaza cambiar el producto sin escribir ni tocar faltantes o reservas",
+      async (_label, overrides, reservations, missing) => {
+        arrange(overrides, reservations, missing);
+
+        const result = await updatePending(
+          { ...restricted, productId: "prod-2", ...FOREIGN_EDITOR },
+          now,
+        );
+
+        expect(result.rejection).toBe("PRODUCT_LOCKED_SUPPLY");
+        expect(tx.pending.update).not.toHaveBeenCalled();
+        expect(tx.missingItem.updateMany).not.toHaveBeenCalled();
+        expect(tx.pendingInventoryReservation.deleteMany).not.toHaveBeenCalled();
+      },
+    );
+
+    it("los faltantes originados se leen bajo lock, después del pendiente", async () => {
+      arrange({}, [], [{ status: "PEDIDO" }]);
+
+      await updatePending({ ...restricted, productId: "prod-2", ...FOREIGN_EDITOR }, now);
+
+      const sqls = tx.$queryRaw.mock.calls.map((call) => lockSqlFrom(call));
+      expect(sqls[0]).toContain("FROM pendings");
+      expect(sqls[1]).toContain("missing_items");
+      expect(sqls[1]).toContain("FOR UPDATE");
+    });
+
+    it.each(SUPPLY_BLOCKS)(
+      "%s: con el MISMO producto, el resto de la corrección se guarda",
+      async (_label, overrides, reservations, missing) => {
+        arrange(overrides, reservations, missing);
+
+        const result = await updatePending({ ...restricted, ...FOREIGN_EDITOR }, now);
+
+        expect(result.rejection).toBeNull();
+        expect(writtenData()).toEqual(expect.objectContaining({ quantity: 12, zone: "Belén" }));
+        expect(tx.missingItem.updateMany).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(["POR_PEDIR", "BUSQUEDA", "COTIZANDO", "AGOTADO"])(
+      "gestión %s no bloquea: todavía no hay compra hecha",
+      async (purchaseStatus) => {
+        arrange({ purchaseStatus }, [], []);
+
+        const result = await updatePending(
+          { ...restricted, productId: "prod-2", ...FOREIGN_EDITOR },
+          now,
+        );
+
+        expect(result.rejection).toBeNull();
+      },
+    );
+
+    it("un faltante FALTANTE, RECIBIDO o CANCELADO no bloquea: el cambio corre con sus efectos", async () => {
+      arrange({}, [], [
+        { status: "FALTANTE", confirmedAt: null },
+        { status: "RECIBIDO", confirmedAt: null },
+        { status: "CANCELADO", confirmedAt: null },
+      ]);
+
+      const result = await updatePending(
+        { ...restricted, productId: "prod-2", ...FOREIGN_EDITOR },
+        now,
+      );
+
+      expect(result.rejection).toBeNull();
+      expect(tx.missingItem.updateMany).toHaveBeenCalledWith({
+        where: { originId: "pend-1", status: { in: ["FALTANTE", "PEDIDO", "EN_BODEGA"] } },
+        data: { status: "CANCELADO" },
+      });
+    });
+
+    // Gerencia sobre una fila ajena y ADMIN sobre la suya siguen pudiendo
+    // cambiar el producto en estos estados. (El dueño sin autoridad de compras
+    // queda contenido aparte, ver "mercadería apartada en una corrección propia".)
+    it.each([
+      ["gerencia sobre ajena", MANAGER, "otro"],
+      ["ADMIN sobre la suya", MANAGER, "adm-1"],
+    ] as const)("%s: sigue pudiendo cambiar el producto con abastecimiento en curso", async (_l, actor, createdById) => {
+      lockedForEdit(
+        { createdById, inventoryReadyQuantity: 3 },
+        [{ status: "PEDIDO" }],
+      );
+      tx.pendingInventoryReservation.findMany.mockResolvedValue([
+        { id: "res-1", pendingId: "pend-1", batchId: "b-1", quantity: 2 },
+      ]);
+
+      const result = await updatePending({ ...correction, productId: "prod-2", ...actor }, now);
+
+      expect(result.rejection).toBeNull();
+      expect(tx.missingItem.updateMany).toHaveBeenCalled();
+      expect(tx.pendingInventoryReservation.deleteMany).toHaveBeenCalled();
+    });
+  });
+
+  // ------------------------------------------------------------------------
+  // Contención T9: soltar una reserva de recepción hoy pierde unidades
+  // (defecto conocido, sin corregir). Hasta que se corrija, el dueño de un
+  // pendiente con mercadería apartada no le cambia el producto salvo que tenga
+  // autoridad de compras (`canOrderMissingItems`).
+  // ------------------------------------------------------------------------
+  describe("mercadería apartada en una corrección propia", () => {
+    const STOCK_SET_ASIDE = [
+      ["stock asignado", { inventoryReadyQuantity: 3 }, []],
+      ["reserva viva de lotes", {}, [{ id: "res-1", pendingId: "pend-1", batchId: "b-1", quantity: 2 }]],
+    ] as const;
+
+    // OPERADOR y BODEGA (`canEditAllPendings`) y SUPERVISOR (`canManageAllPendings`):
+    // ninguno tiene autoridad de compras.
+    const OWNERS_WITHOUT_PURCHASING = [
+      ["OPERADOR", { actorId: "op-1", canManageAll: false, canEditAll: true, canOrder: false }],
+      ["BODEGA", { actorId: "op-1", canManageAll: false, canEditAll: true, canOrder: false }],
+      ["SUPERVISOR", { actorId: "op-1", canManageAll: true, canEditAll: true, canOrder: false }],
+    ] as const;
+
+    for (const [role, actor] of OWNERS_WITHOUT_PURCHASING) {
+      it.each(STOCK_SET_ASIDE)(`${role} dueño, %s: rechaza cambiar el producto sin escribir nada`, async (_l, overrides, reservations) => {
+        lockedForEdit({ createdById: "op-1", ...overrides });
+        tx.pendingInventoryReservation.findMany.mockResolvedValue([...reservations]);
+
+        const result = await updatePending({ ...correction, productId: "prod-2", ...actor }, now);
+
+        expect(result.rejection).toBe("PRODUCT_LOCKED_STOCK");
+        expect(tx.pending.update).not.toHaveBeenCalled();
+        expect(tx.missingItem.updateMany).not.toHaveBeenCalled();
+        expect(tx.pendingInventoryReservation.deleteMany).not.toHaveBeenCalled();
+      });
+
+      it(`${role} dueño: con el mismo producto corrige el resto`, async () => {
+        lockedForEdit({ createdById: "op-1", inventoryReadyQuantity: 3 });
+
+        const result = await updatePending({ ...correction, ...actor }, now);
+
+        expect(result.rejection).toBeNull();
+        expect(writtenData()).toEqual(expect.objectContaining({ quantity: 12 }));
+      });
+    }
+
+    it("ADMIN dueño (autoridad de compras) sigue cambiando el producto", async () => {
+      lockedForEdit({ createdById: "adm-1", inventoryReadyQuantity: 3 });
+
+      const result = await updatePending({ ...correction, productId: "prod-2", ...MANAGER }, now);
+
+      expect(result.rejection).toBeNull();
+      expect(writtenData()).toEqual(expect.objectContaining({ productId: "prod-2" }));
+    });
+
+    it("OPERADOR dueño sin mercadería apartada cambia el producto como siempre", async () => {
+      lockedForEdit({ createdById: "op-1" });
+
+      const result = await updatePending({ ...correction, productId: "prod-2", ...OWNER }, now);
+
+      expect(result.rejection).toBeNull();
+      expect(tx.missingItem.updateMany).toHaveBeenCalled();
     });
   });
 
@@ -2344,6 +2547,22 @@ describe("getPendingForEdit", () => {
 
   beforeEach(() => {
     prismaMock.pending.findUnique.mockResolvedValue(row);
+    prismaMock.pendingInventoryReservation.findMany.mockResolvedValue([]);
+  });
+
+  // La pantalla necesita saber si hay mercadería apartada para mostrar el
+  // producto bloqueado al dueño sin autoridad de compras (contención T9).
+  it.each([
+    ["sin stock ni reservas", {}, [], false],
+    ["con stock asignado", { inventoryReadyQuantity: 2 }, [], true],
+    ["con reserva viva", {}, [{ id: "r", pendingId: "pend-1", batchId: "b", quantity: 1 }], true],
+  ] as const)("informa si hay mercadería apartada: %s", async (_l, overrides, reservations, expected) => {
+    prismaMock.pending.findUnique.mockResolvedValue({ ...row, inventoryReadyQuantity: 0, ...overrides });
+    prismaMock.pendingInventoryReservation.findMany.mockResolvedValue([...reservations]);
+
+    const view = await getPendingForEdit({ id: "pend-1", actor: { role: "OPERADOR", userId: "op-1" } });
+
+    expect(view!.stockSetAside).toBe(expected);
   });
 
   it.each(["OPERADOR", "BODEGA"] as const)(

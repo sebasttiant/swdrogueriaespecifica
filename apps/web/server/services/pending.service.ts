@@ -17,6 +17,8 @@ import {
   type Product,
   type PendingIdentityDeferral,
   type PendingPaymentMethod,
+  type MissingItemStatus,
+  type Prisma,
 } from "@/lib/generated/prisma/client";
 import {
   isManagementObservationChanged,
@@ -45,6 +47,7 @@ import {
   type PendingIdentityQueueRow,
   type PendingListItem,
   type PendingScope,
+  lockOriginatedMissingItemStatuses,
   lockPendingForEdit,
   findPendingObservation,
   setPendingManagementObservation,
@@ -61,6 +64,7 @@ import { createMissingItem } from "@/server/repositories/missing-item.repository
 import {
   claimableStockForPending,
   consumePendingReservations,
+  liveReservedQuantityForPending,
   releasePendingReservations,
   lockReservedQuantityForPending,
 } from "@/server/repositories/product-batch.repository";
@@ -1503,6 +1507,12 @@ export type UpdatePendingInput = {
   actorId: string;
   canManageAll: boolean;
   canEditAll: boolean;
+  /**
+   * Autoridad de compras (`canOrderMissingItems`), derivada del rol en el
+   * servidor. Hoy solo la usa la contención de la corrección propia con
+   * mercadería apartada (ver `updatePending`).
+   */
+  canOrder: boolean;
 };
 
 export type UpdatePendingRejection =
@@ -1516,6 +1526,10 @@ export type UpdatePendingRejection =
   /** Datos protegidos presentes pero mal escritos en una corrección completa. */
   | "INVALID_DATA"
   | "PRODUCT_LOCKED"
+  /** Corrección ajena que cambia el producto con abastecimiento en curso. */
+  | "PRODUCT_LOCKED_SUPPLY"
+  /** Corrección propia que cambia el producto con mercadería apartada, sin autoridad de compras. */
+  | "PRODUCT_LOCKED_STOCK"
   | "STALE";
 
 export type UpdatePendingResult = {
@@ -1571,6 +1585,40 @@ function allFieldsUnchanged(
   );
 }
 
+// Faltante originado que ya salió a comprar o ya llegó: `MissingItemStatus`
+// (la única columna de estado del faltante), más el FALTANTE con "OK gerencia"
+// (`confirmedAt`), que también es una compra hecha. FALTANTE sin OK todavía no
+// se pidió;
+// RECIBIDO ya se cargó como stock, y ese stock lo cubre `inventoryReadyQuantity`;
+// CANCELADO no compromete nada.
+const SUPPLY_IN_PROGRESS_STATUSES: readonly MissingItemStatus[] = ["PEDIDO", "EN_BODEGA"];
+
+/**
+ * Si el pendiente ya tiene abastecimiento en curso: stock asignado
+ * (`inventoryReadyQuantity`), gestión SOLICITADO, una reserva viva de lotes, o
+ * un faltante originado pedido, en bodega o con OK gerencia. Corre con el pendiente bloqueado y lee los faltantes con
+ * su propio FOR UPDATE, respetando el orden pendings → missing_items.
+ */
+async function hasSupplyInProgress(
+  tx: Prisma.TransactionClient,
+  current: PendingForEdit,
+): Promise<boolean> {
+  if (current.inventoryReadyQuantity > 0) return true;
+  // Gerencia ya se lo pidió al proveedor (`PendingPurchaseStatus.SOLICITADO`):
+  // es una compra hecha para ESTE producto aunque el faltante no lo diga.
+  if (current.purchaseStatus === "SOLICITADO") return true;
+  const missingItems = await lockOriginatedMissingItemStatuses(tx, current.id);
+  const ordered = missingItems.some(
+    (item) =>
+      SUPPLY_IN_PROGRESS_STATUSES.includes(item.status) ||
+      // "OK gerencia": FALTANTE confirmado = gerencia ya lo pidió. La vista
+      // "ordered" de faltantes lo cuenta igual que un PEDIDO.
+      (item.status === "FALTANTE" && item.confirmedAt !== null),
+  );
+  if (ordered) return true;
+  return (await liveReservedQuantityForPending(tx, current.id)) > 0;
+}
+
 export async function updatePending(
   input: UpdatePendingInput,
   now: Date = new Date(),
@@ -1615,12 +1663,32 @@ export async function updatePending(
       if (productChanges && (current.invoicedQuantity > 0 || current.deliveredQuantity > 0)) {
         return rejectUpdate("PRODUCT_LOCKED");
       }
+      // Abastecimiento en curso: cambiar el producto cancelaría el faltante ya
+      // pedido y soltaría el stock reservado. Se decide ANTES de escribir nada.
+      if (productChanges && (await hasSupplyInProgress(tx, current))) {
+        return rejectUpdate("PRODUCT_LOCKED_SUPPLY");
+      }
     } else {
       if (input.protectedFields.state === "absent") {
         return rejectUpdate("INVALID_REQUEST", "faltan los datos del cliente");
       }
       if (input.protectedFields.state === "invalid") return rejectUpdate("INVALID_DATA");
       protectedValues = input.protectedFields.values;
+      // CONTENCIÓN (defecto conocido, sin corregir): soltar una reserva que
+      // asignó la recepción pierde las unidades, porque la recepción ya las
+      // sacó del lote y `releasePendingReservations` no las devuelve. Hasta
+      // que se corrija, el dueño de un pendiente con mercadería apartada no le
+      // cambia el producto salvo que tenga autoridad de compras. Gerencia sobre
+      // una fila ajena queda como estaba.
+      if (
+        isOwner &&
+        !input.canOrder &&
+        input.productId !== current.productId &&
+        (current.inventoryReadyQuantity > 0 ||
+          (await liveReservedQuantityForPending(tx, current.id)) > 0)
+      ) {
+        return rejectUpdate("PRODUCT_LOCKED_STOCK");
+      }
     }
 
     // 5. Concurrencia optimista, para TODOS los roles.
@@ -1705,7 +1773,7 @@ type RestrictedOmittedField =
 export type RestrictedPendingForEdit = Omit<PendingForEdit, RestrictedOmittedField>;
 
 /** El formulario de corrección: el pendiente, y si la corrección es restringida. */
-export type PendingCorrectionView =
+export type PendingCorrectionView = (
   | {
       /** Con la identidad del cliente minimizada por fila, igual que las listas. */
       pending: PendingForEdit;
@@ -1715,7 +1783,14 @@ export type PendingCorrectionView =
       /** Fila ajena sin `canManageAllPendings`: nada de lo que el formulario oculta viaja. */
       pending: RestrictedPendingForEdit;
       restricted: true;
-    };
+    }) & {
+  /**
+   * Si el pendiente tiene mercadería apartada (stock asignado o reserva viva).
+   * La pantalla bloquea el producto del dueño sin autoridad de compras
+   * (contención T9); el servidor vuelve a decidir al guardar.
+   */
+  stockSetAside: boolean;
+};
 
 /**
  * Un pendiente para el formulario de corrección.
@@ -1755,6 +1830,8 @@ export async function getPendingForEdit(params: {
       paymentMethod: true,
       promisedAt: true,
       updatedAt: true,
+      inventoryReadyQuantity: true,
+      purchaseStatus: true,
     },
   });
   if (!pending) return null;
@@ -1763,6 +1840,10 @@ export async function getPendingForEdit(params: {
   const canManageAll = can(role, "canManageAllPendings");
   const isOwner = pending.createdById !== null && pending.createdById === userId;
   if (!canManageAll && !can(role, "canEditAllPendings") && !isOwner) return null;
+
+  const stockSetAside =
+    pending.inventoryReadyQuantity > 0 ||
+    (await liveReservedQuantityForPending(prisma, pending.id)) > 0;
 
   if (!isOwner && !canManageAll) {
     // Se quitan las claves, no se vacían: estas props cruzan al navegador, y
@@ -1777,7 +1858,7 @@ export async function getPendingForEdit(params: {
       manualSellerName: _manualSellerName,
       ...operational
     } = pending;
-    return { pending: operational, restricted: true };
+    return { pending: operational, restricted: true, stockSetAside };
   }
 
   const showsIdentity = seesCustomerIdentityOf(role, userId, pending.createdById);
@@ -1786,6 +1867,7 @@ export async function getPendingForEdit(params: {
       ? pending
       : { ...pending, customerName: null, customerPhone: null, customerAddress: null },
     restricted: false,
+    stockSetAside,
   };
 }
 

@@ -59,8 +59,14 @@ type PendingEditFormProps = {
    * servidor rechazaría la solicitud.
    */
   restricted?: boolean;
-  /** Producto fijo: la fila ajena ya tiene unidades facturadas o entregadas. */
+  /** Producto fijo (ver `productLockReason`). */
   productLocked?: boolean;
+  /**
+   * Por qué está fijo: `committed` = fila ajena con unidades facturadas o
+   * entregadas; `stockSetAside` = pendiente propio con mercadería apartada, sin
+   * autoridad de compras.
+   */
+  productLockReason?: "committed" | "stockSetAside";
 };
 
 // Valor para <input type="datetime-local">: hora de pared de Bogotá, sin zona.
@@ -93,6 +99,7 @@ export function PendingEditForm({
   isLastChance,
   restricted = false,
   productLocked = false,
+  productLockReason = "committed",
 }: PendingEditFormProps) {
   const [state, action, saving] = useActionState(updatePendingAction, INITIAL_STATE);
   // Abono y medio CONTROLADOS: el medio se muestra solo cuando hay plata, así
@@ -155,8 +162,9 @@ export function PendingEditForm({
             <>
               <input type="hidden" name="productId" value={pending.productId} />
               <p className="mt-1 text-xs text-muted-foreground">
-                El producto no se puede cambiar: este pendiente ya tiene unidades
-                facturadas o entregadas.
+                {productLockReason === "stockSetAside"
+                  ? "No podés cambiar el producto: este pendiente ya tiene mercadería apartada. Pedile el cambio a gerencia."
+                  : "El producto no se puede cambiar: este pendiente ya tiene unidades facturadas o entregadas."}
               </p>
             </>
           ) : null}
