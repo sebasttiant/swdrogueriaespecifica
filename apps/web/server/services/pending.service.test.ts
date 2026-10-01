@@ -1891,9 +1891,46 @@ describe("updatePending", () => {
 
     await updatePending({ ...correction, ...OWNER }, now);
 
-    const sql = lockSqlFrom(tx.$queryRaw.mock.calls[0]!);
+    const sql = tx.$queryRaw.mock.calls
+      .map((call) => lockSqlFrom(call))
+      .find((text) => /FROM pendings[\s\S]*FOR UPDATE/.test(text))!;
     expect(sql).toContain('"updatedAt"');
     expect(sql).toContain("FOR UPDATE");
+  });
+
+  // Orden de candados products → pendings (T10). Cambiar el producto escribe la
+  // FK `productId` y eso toma KEY SHARE sobre el producto NUEVO. Tomado después
+  // del pendiente, dos correcciones cruzadas (X↔Y) y dos recepciones formaban un
+  // ciclo de cuatro. Se toma ANTES del FOR UPDATE del pendiente.
+  describe("orden de candados al cambiar el producto", () => {
+    function sqls(): string[] {
+      return tx.$queryRaw.mock.calls.map((call) => lockSqlFrom(call));
+    }
+
+    it("lee el producto sin candado, toma KEY SHARE sobre el nuevo y RECIÉN después bloquea el pendiente", async () => {
+      lockedForEdit();
+
+      await updatePending({ ...correction, productId: "prod-2", ...MANAGER }, now);
+
+      const all = sqls();
+      const preReadAt = all.findIndex(
+        (sql) => sql.includes('SELECT "productId" FROM pendings') && !sql.includes("FOR UPDATE"),
+      );
+      const productAt = all.findIndex((sql) => /FROM products[\s\S]*FOR KEY SHARE/.test(sql));
+      const pendingAt = all.findIndex((sql) => /FROM pendings[\s\S]*FOR UPDATE/.test(sql));
+      expect(preReadAt).toBe(0);
+      expect(productAt).toBeGreaterThan(preReadAt);
+      expect(pendingAt).toBeGreaterThan(productAt);
+      expect(tx.$queryRaw.mock.calls[productAt]!.slice(1)).toContain("prod-2");
+    });
+
+    it("con el mismo producto no toma candado sobre productos", async () => {
+      lockedForEdit();
+
+      await updatePending({ ...correction, ...MANAGER }, now);
+
+      expect(sqls().some((sql) => sql.includes("FROM products"))).toBe(false);
+    });
   });
 
   describe("alcance", () => {
@@ -2160,9 +2197,11 @@ describe("updatePending", () => {
       await updatePending({ ...restricted, productId: "prod-2", ...FOREIGN_EDITOR }, now);
 
       const sqls = tx.$queryRaw.mock.calls.map((call) => lockSqlFrom(call));
-      expect(sqls[0]).toContain("FROM pendings");
-      expect(sqls[1]).toContain("missing_items");
-      expect(sqls[1]).toContain("FOR UPDATE");
+      const pendingAt = sqls.findIndex((sql) => /FROM pendings[\s\S]*FOR UPDATE/.test(sql));
+      const missingAt = sqls.findIndex((sql) => sql.includes("missing_items"));
+      expect(pendingAt).toBeGreaterThanOrEqual(0);
+      expect(missingAt).toBeGreaterThan(pendingAt);
+      expect(sqls[missingAt]).toContain("FOR UPDATE");
     });
 
     it.each(SUPPLY_BLOCKS)(

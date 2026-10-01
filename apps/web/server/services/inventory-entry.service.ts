@@ -502,14 +502,35 @@ export async function registerInventoryEntry(
       await markReportsReceivedByMissingItemIds(tx, closedIds);
       return { entry, allocatedMissingCount: closedIds.length, closedMissingCount: closedIds.length, idempotent: false, product };
     }
+    // ORDEN DE CANDADOS: productos → lotes → PENDIENTES → faltantes → reservas.
+    //
+    // Los pendientes de origen se bloquean ANTES que sus faltantes. Antes era al
+    // revés (faltante con FOR UPDATE y después el UPDATE del pendiente), y una
+    // corrección que cambia el producto —que toma el pendiente y después el
+    // faltante— formaba un ciclo con esta transacción: 40P01 en cada cruce.
+    //
+    // La lectura de los candidatos va sin candado; el FOR UPDATE es sobre los
+    // pendientes, en orden de id para que dos recepciones no se crucen entre sí.
+    const lockedOrigins = (
+      await tx.$queryRaw<Array<{ id: string }>>`SELECT p.id FROM pendings p WHERE p.id IN (SELECT m."originId" FROM missing_items m WHERE m."productId" = ${data.productId} AND m.status IN ('FALTANTE', 'PEDIDO', 'EN_BODEGA') AND m."originId" IS NOT NULL AND m."receivedQuantity" < m.quantity) ORDER BY p.id FOR UPDATE`
+    ).map((row) => row.id);
     // FIFO cuantitativo: se bloquean los faltantes del producto y cada unidad de
     // esta entrada queda ligada a exactamente un faltante. Los parciales quedan
     // registrados, nunca se salta una necesidad sin consumir cantidad.
     // SOLO faltantes ligados a una venta: uno informativo (`originId` nulo) no
     // tiene a nadie esperando y no puede quedarse con stock de un pendiente.
+    //
+    // Se releen DESPUÉS de tener los pendientes, y el FOR UPDATE reevalúa el
+    // filtro sobre la versión confirmada: un faltante que una corrección canceló
+    // mientras esperábamos ya no entra. Solo entran los de pendientes que YA
+    // están bloqueados (`lockedOrigins`), así que nunca se bloquea un pendiente
+    // después de un faltante. No se pierde ninguno: el producto está bloqueado
+    // con FOR UPDATE desde arriba, y cualquier fila nueva que lo referencie —un
+    // pendiente o un faltante— necesita un KEY SHARE sobre él, así que no puede
+    // nacer en la ventana; y ningún faltante vuelve a un estado abierto.
     const rows = await tx.$queryRaw<Array<{
       id: string; quantity: number; orderedQuantity: number | null; receivedQuantity: number; originId: string | null;
-    }>>`SELECT id, quantity, "orderedQuantity", "receivedQuantity", "originId" FROM missing_items WHERE "productId" = ${data.productId} AND status IN ('FALTANTE', 'PEDIDO', 'EN_BODEGA') AND "originId" IS NOT NULL AND "receivedQuantity" < CASE WHEN "originId" IS NULL THEN COALESCE("orderedQuantity", quantity) ELSE quantity END ORDER BY "createdAt" ASC, id ASC FOR UPDATE`;
+    }>>`SELECT id, quantity, "orderedQuantity", "receivedQuantity", "originId" FROM missing_items WHERE "productId" = ${data.productId} AND status IN ('FALTANTE', 'PEDIDO', 'EN_BODEGA') AND "originId" = ANY(${lockedOrigins}::text[]) AND "receivedQuantity" < CASE WHEN "originId" IS NULL THEN COALESCE("orderedQuantity", quantity) ELSE quantity END ORDER BY "createdAt" ASC, id ASC FOR UPDATE`;
     let remaining = data.quantity;
     let reservedQuantity = 0;
     let allocatedMissingCount = 0;

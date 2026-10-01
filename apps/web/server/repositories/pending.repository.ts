@@ -1090,6 +1090,38 @@ export type PendingForEdit = {
   purchaseStatus: PendingPurchaseStatus;
 };
 
+/**
+ * El producto vigente de un pendiente, SIN candado. Solo sirve para decidir si
+ * una corrección va a cambiar el producto y tiene que tomar antes el candado
+ * del producto nuevo (ver `lockProductForPendingReference`). La decisión real
+ * se vuelve a tomar con el pendiente bloqueado.
+ */
+export async function readPendingProductId(
+  client: Prisma.TransactionClient,
+  id: string,
+): Promise<string | null> {
+  const rows = await client.$queryRaw<{ productId: string }[]>`
+    SELECT "productId" FROM pendings WHERE id = ${id}
+  `;
+  return rows[0]?.productId ?? null;
+}
+
+/**
+ * El candado que la FK `pendings.productId` toma al escribir un producto
+ * nuevo: KEY SHARE sobre la fila del producto. Se toma ANTES de bloquear el
+ * pendiente para respetar el orden global products → pendings; tomado después,
+ * dos correcciones que se intercambian productos con dos recepciones en curso
+ * (que tienen su producto FOR UPDATE y luego bloquean pendientes) cerraban un
+ * ciclo de cuatro. Si el producto no existe no bloquea nada, y la escritura
+ * falla por la FK como siempre.
+ */
+export async function lockProductForPendingReference(
+  client: Prisma.TransactionClient,
+  productId: string,
+): Promise<void> {
+  await client.$queryRaw`SELECT id FROM products WHERE id = ${productId} FOR KEY SHARE`;
+}
+
 export async function lockPendingForEdit(
   client: Prisma.TransactionClient,
   id: string,

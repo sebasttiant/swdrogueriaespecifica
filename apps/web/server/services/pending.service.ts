@@ -49,6 +49,8 @@ import {
   type PendingScope,
   lockOriginatedMissingItemStatuses,
   lockPendingForEdit,
+  lockProductForPendingReference,
+  readPendingProductId,
   findPendingObservation,
   setPendingManagementObservation,
   updatePendingDetails,
@@ -1624,6 +1626,22 @@ export async function updatePending(
   now: Date = new Date(),
 ): Promise<UpdatePendingResult> {
   return prisma.$transaction(async (tx) => {
+    // Orden global: products → pendings. Si la corrección va a cambiar el
+    // producto, el KEY SHARE que tomaría la FK sobre el producto nuevo se toma
+    // ANTES del pendiente. La lectura previa no lleva candado; si el pendiente
+    // cambiara entre esta lectura y el lock, su `updatedAt` ya no coincidiría
+    // con el testigo del formulario y el paso 5 rechazaría con STALE antes de
+    // escribir, así que nunca se escribe un producto sin haberlo bloqueado.
+    //
+    // INVARIANTE del que depende: toda escritura de `pendings.productId` pasa
+    // por `update`/`updateMany` de Prisma, que actualizan `@updatedAt`. Una
+    // escritura por SQL crudo de `productId` tendría que actualizar
+    // `"updatedAt"` también, o esta lectura sin candado dejaría de ser segura.
+    const storedProductId = await readPendingProductId(tx, input.id);
+    if (storedProductId !== null && storedProductId !== input.productId) {
+      await lockProductForPendingReference(tx, input.productId);
+    }
+
     const current = await lockPendingForEdit(tx, input.id);
     if (!current) throw new Error("Pending not found");
 
