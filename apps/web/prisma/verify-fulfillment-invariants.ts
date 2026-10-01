@@ -314,6 +314,22 @@ async function main() {
     `queda disponible parcial, no completo (obtenido: ${conLlegada.availabilityStatus})`,
   );
 
+  // Entregar exige factura previa (`validateDelivery` → NOT_INVOICED). El
+  // guion entregaba sin facturar y fallaba acá; el flujo real es facturar lo
+  // que llegó y recién después entregarlo.
+  assert(
+    JSON.stringify(
+      await invoicePending({
+        id: sinStock.pending.id,
+        actorId: seller.id,
+        scope: "own",
+        quantity: 3,
+        expectedInvoicedQuantity: 0,
+      }),
+    ) === JSON.stringify({ mode: "NORMAL" }),
+    "se facturan las 3 unidades que llegaron",
+  );
+
   assert(
     (await deliverPending({
       id: sinStock.pending.id,
@@ -326,21 +342,10 @@ async function main() {
   const parcial = await prisma.pending.findUniqueOrThrow({ where: { id: sinStock.pending.id } });
   assert(parcial.status === "PARCIAL", "el pendiente queda en entrega parcial");
 
-  assert(
-    (await resolveWaitlistDecision({
-      id: sinStock.pending.id,
-      decision: "espera",
-      actorId: seller.id,
-    })) === null,
-    "si el cliente espera, el pendiente sigue abierto",
-  );
-  const esperando = await prisma.pending.findUniqueOrThrow({ where: { id: sinStock.pending.id } });
-  assert(esperando.status === "PARCIAL", "sigue abierto tras registrar que espera");
-  assert(
-    (esperando.note ?? "").includes("Cliente espera los 2"),
-    `queda la nota del vendedor (obtenido: ${esperando.note ?? "sin nota"})`,
-  );
-
+  // La respuesta del cliente se registra UNA sola vez (`ALREADY_DECIDED`): el
+  // guion respondía "espera" y después "cerrar" sobre el mismo pendiente, y el
+  // service ya no lo admite. Cada respuesta va sobre su propio pendiente:
+  // primero "cerrar" sobre este, después "espera" sobre uno nuevo.
   assert(
     (await resolveWaitlistDecision({
       id: sinStock.pending.id,
@@ -355,6 +360,60 @@ async function main() {
   assert(cerrado.status === "CLOSED_PARTIAL", "cierra parcial, no cancelado: hubo entrega");
   assert(cerrado.deliveredQuantity === 3, "se cierra con las 3 que realmente recibió");
   assert(cerrado.cancelledQuantity === 2, "registra los 2 que el cliente no espera");
+
+  // Se registra DESPUÉS del cierre: así la entrada siguiente le llega a este y
+  // no al anterior (el reparto es FIFO y el faltante del cerrado ya se canceló).
+  const esperaParcial = await registerPending({ ...base, quantity: 5, customerName: "Cliente G", idempotencyKey: crypto.randomUUID() });
+  await registerInventoryEntry({
+    productId: product.id,
+    quantity: 3,
+    batchCode: `LOTE-PARCIAL-G-${Date.now()}`,
+    expiresAt: new Date(Date.now() + 31_536_000_000),
+    createdById: seller.id,
+    idempotencyKey: crypto.randomUUID(),
+  });
+  const conLlegadaG = await prisma.pending.findUniqueOrThrow({
+    where: { id: esperaParcial.pending.id },
+  });
+  assert(
+    conLlegadaG.inventoryReadyQuantity === 3,
+    `la entrada reserva las 3 unidades al pendiente que espera (obtenido: ${conLlegadaG.inventoryReadyQuantity})`,
+  );
+  assert(
+    JSON.stringify(
+      await invoicePending({
+        id: esperaParcial.pending.id,
+        actorId: seller.id,
+        scope: "own",
+        quantity: 3,
+        expectedInvoicedQuantity: 0,
+      }),
+    ) === JSON.stringify({ mode: "NORMAL" }),
+    "se facturan las 3 unidades que llegaron (cliente que espera)",
+  );
+  assert(
+    (await deliverPending({
+      id: esperaParcial.pending.id,
+      quantity: 3,
+      deliveredById: seller.id,
+      canManageAll: false,
+    })).rejection === null,
+    "se entregan las 3 unidades que llegaron (cliente que espera)",
+  );
+  assert(
+    (await resolveWaitlistDecision({
+      id: esperaParcial.pending.id,
+      decision: "espera",
+      actorId: seller.id,
+    })) === null,
+    "si el cliente espera, el pendiente sigue abierto",
+  );
+  const esperando = await prisma.pending.findUniqueOrThrow({ where: { id: esperaParcial.pending.id } });
+  assert(esperando.status === "PARCIAL", "sigue abierto tras registrar que espera");
+  assert(
+    (esperando.note ?? "").includes("Cliente espera los 2"),
+    `queda la nota del vendedor (obtenido: ${esperando.note ?? "sin nota"})`,
+  );
 
   console.log("\nEscenario: corregir un pendiente");
   const { updatePending } = await import("@/server/services/pending.service");
