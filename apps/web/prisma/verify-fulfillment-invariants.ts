@@ -365,19 +365,40 @@ async function main() {
     productId: product.id,
     quantity: 6,
     promisedAt: new Date(Date.now() + 172_800_000),
-    customerName: "Cliente E corregido",
-    customerPhone: "3009999999",
+    protectedFields: {
+      state: "valid" as const,
+      values: { customerName: "Cliente E corregido", customerPhone: "3009999999" },
+    },
+    manualSellerNameSent: false,
   };
+  // El testigo de concurrencia: el `updatedAt` vigente, como lo traería un
+  // formulario recién abierto.
+  const testigo = async () =>
+    (await prisma.pending.findUniqueOrThrow({ where: { id: paraEditar.pending.id } })).updatedAt;
+  // Sin ninguna de las dos autoridades de corrección: el camino del cupo único.
+  const vendedorSinAutoridad = { canManageAll: false, canEditAll: false };
 
   assert(
-    (await updatePending({ ...correccion, actorId: intruder.id, canManageAll: false })).rejection ===
-      "NOT_OWNER",
-    "un vendedor ajeno no corrige un pendiente que no es suyo",
+    (
+      await updatePending({
+        ...correccion,
+        expectedUpdatedAt: await testigo(),
+        actorId: intruder.id,
+        ...vendedorSinAutoridad,
+      })
+    ).rejection === "NOT_OWNER",
+    "un vendedor ajeno sin autoridad no corrige un pendiente que no es suyo",
   );
 
   assert(
-    (await updatePending({ ...correccion, actorId: seller.id, canManageAll: false })).rejection ===
-      null,
+    (
+      await updatePending({
+        ...correccion,
+        expectedUpdatedAt: await testigo(),
+        actorId: seller.id,
+        ...vendedorSinAutoridad,
+      })
+    ).rejection === null,
     "el vendedor dueño corrige su pendiente",
   );
   const corregido = await prisma.pending.findUniqueOrThrow({ where: { id: paraEditar.pending.id } });
@@ -386,14 +407,29 @@ async function main() {
   assert(corregido.sellerEditedAt !== null, "queda registrado cuándo corrigió");
 
   assert(
-    (await updatePending({ ...correccion, quantity: 7, actorId: seller.id, canManageAll: false }))
-      .rejection === "ALREADY_EDITED",
-    "el vendedor NO puede corregir una segunda vez",
+    (
+      await updatePending({
+        ...correccion,
+        quantity: 7,
+        expectedUpdatedAt: await testigo(),
+        actorId: seller.id,
+        ...vendedorSinAutoridad,
+      })
+    ).rejection === "ALREADY_EDITED",
+    "el vendedor sin autoridad NO puede corregir una segunda vez",
   );
 
   assert(
-    (await updatePending({ ...correccion, quantity: 8, actorId: intruder.id, canManageAll: true }))
-      .rejection === null,
+    (
+      await updatePending({
+        ...correccion,
+        quantity: 8,
+        expectedUpdatedAt: await testigo(),
+        actorId: intruder.id,
+        canManageAll: true,
+        canEditAll: true,
+      })
+    ).rejection === null,
     "gerencia corrige cualquier pendiente, sin límite",
   );
   const porGerencia = await prisma.pending.findUniqueOrThrow({
@@ -406,9 +442,31 @@ async function main() {
   );
 
   assert(
-    (await updatePending({ ...correccion, quantity: 8, actorId: intruder.id, canManageAll: true }))
-      .rejection === null,
+    (
+      await updatePending({
+        ...correccion,
+        quantity: 9,
+        expectedUpdatedAt: await testigo(),
+        actorId: intruder.id,
+        canManageAll: true,
+        canEditAll: true,
+      })
+    ).rejection === null,
     "gerencia puede corregir de nuevo",
+  );
+
+  assert(
+    (
+      await updatePending({
+        ...correccion,
+        quantity: 10,
+        expectedUpdatedAt: corregido.updatedAt,
+        actorId: intruder.id,
+        canManageAll: true,
+        canEditAll: true,
+      })
+    ).rejection === "STALE",
+    "un formulario viejo se rechaza, también para gerencia",
   );
 
   console.log("\nTODO VERIFICADO CONTRA POSTGRESQL REAL\n");

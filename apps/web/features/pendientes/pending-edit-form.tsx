@@ -29,15 +29,19 @@ export type PendingEditValues = {
   productId: string;
   quantity: number;
   promisedAt: Date;
-  customerName: string | null;
-  customerPhone: string | null;
-  customerAddress: string | null;
   note: string | null;
-  manualSellerName: string | null;
   zone: string | null;
-  totalAmount: number | null;
-  paidAmount: number;
-  paymentMethod: PaymentMethod | null;
+  // Identidad, montos y vendedor escrito: AUSENTES en una corrección
+  // restringida (fila ajena). El servidor no los manda para ese formulario.
+  customerName?: string | null;
+  customerPhone?: string | null;
+  customerAddress?: string | null;
+  manualSellerName?: string | null;
+  totalAmount?: number | null;
+  paidAmount?: number;
+  paymentMethod?: PaymentMethod | null;
+  /** Testigo de concurrencia: viaja oculto y el servidor lo compara bajo el lock. */
+  updatedAt: Date;
 };
 
 type PendingEditFormProps = {
@@ -48,6 +52,15 @@ type PendingEditFormProps = {
   minQuantity: number;
   /** Aviso para el vendedor: esta es su única corrección. */
   isLastChance: boolean;
+  /**
+   * Corrección de una fila AJENA por quien no opera la cola entera: no se
+   * renderizan identidad del cliente, montos ni vendedor escrito. No es un
+   * ocultamiento visual: sin el input el campo no viaja, y si viajara el
+   * servidor rechazaría la solicitud.
+   */
+  restricted?: boolean;
+  /** Producto fijo: la fila ajena ya tiene unidades facturadas o entregadas. */
+  productLocked?: boolean;
 };
 
 // Valor para <input type="datetime-local">: hora de pared de Bogotá, sin zona.
@@ -63,12 +76,14 @@ function toLocalInputValue(date: Date): string {
 // --------------------------------------------------------------------------
 // Corregir un pendiente.
 //
-// Gerencia lo hace sobre cualquiera y las veces que haga falta. El vendedor
-// solo sobre el suyo y UNA vez, y por eso se le avisa antes de guardar: no es
-// lo mismo corregir un dígito del teléfono sabiendo que es tu único intento.
+// Gerencia lo hace sobre cualquiera, con todos los campos. Quien tiene
+// `canEditAllPendings` también corrige cualquiera, pero sobre una fila AJENA
+// solo los datos operativos (`restricted`). Quien no tiene ninguna de las dos
+// autoridades corrige el suyo UNA vez, y por eso se le avisa antes de guardar.
 //
 // El formulario llega con todo cargado. Corregir es cambiar un dato, no volver
-// a escribir el pedido entero.
+// a escribir el pedido entero. Lleva el `updatedAt` de la carga: si alguien
+// guardó en el medio, el servidor rechaza en vez de pisar su cambio.
 // --------------------------------------------------------------------------
 export function PendingEditForm({
   pending,
@@ -76,6 +91,8 @@ export function PendingEditForm({
   zones = [],
   minQuantity,
   isLastChance,
+  restricted = false,
+  productLocked = false,
 }: PendingEditFormProps) {
   const [state, action, saving] = useActionState(updatePendingAction, INITIAL_STATE);
   // Abono y medio CONTROLADOS: el medio se muestra solo cuando hay plata, así
@@ -92,6 +109,12 @@ export function PendingEditForm({
   return (
     <form action={action} className="space-y-4">
       <input type="hidden" name="id" value={pending.id} />
+      <input
+        type="hidden"
+        id="expectedUpdatedAt"
+        name="expectedUpdatedAt"
+        value={pending.updatedAt.toISOString()}
+      />
 
       {isLastChance ? (
         <p
@@ -103,15 +126,40 @@ export function PendingEditForm({
         </p>
       ) : null}
 
+      {restricted ? (
+        <p className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+          Este pendiente lo registró otra persona. Podés corregir producto,
+          cantidad, fecha, zona y nota; los datos del cliente y los montos no se
+          cambian desde acá.
+        </p>
+      ) : null}
+
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Producto" htmlFor="productId" className="sm:col-span-2">
-          <Select id="productId" name="productId" required defaultValue={pending.productId}>
+          {/* Un <select> deshabilitado no se envía: el producto fijo viaja en
+              un campo oculto para que la corrección conserve el que ya tiene. */}
+          <Select
+            id="productId"
+            name={productLocked ? undefined : "productId"}
+            required
+            disabled={productLocked}
+            defaultValue={pending.productId}
+          >
             {products.map((product) => (
               <option key={product.id} value={product.id}>
                 {optionLabel(product)}
               </option>
             ))}
           </Select>
+          {productLocked ? (
+            <>
+              <input type="hidden" name="productId" value={pending.productId} />
+              <p className="mt-1 text-xs text-muted-foreground">
+                El producto no se puede cambiar: este pendiente ya tiene unidades
+                facturadas o entregadas.
+              </p>
+            </>
+          ) : null}
         </Field>
 
         <Field label="Cantidad" htmlFor="quantity">
@@ -141,35 +189,39 @@ export function PendingEditForm({
           />
         </Field>
 
-        <Field label="Cliente" htmlFor="customerName">
-          <Input
-            id="customerName"
-            name="customerName"
-            required
-            maxLength={120}
-            defaultValue={pending.customerName ?? ""}
-          />
-        </Field>
+        {restricted ? null : (
+          <>
+            <Field label="Cliente" htmlFor="customerName">
+              <Input
+                id="customerName"
+                name="customerName"
+                required
+                maxLength={120}
+                defaultValue={pending.customerName ?? ""}
+              />
+            </Field>
 
-        <Field label="Teléfono" htmlFor="customerPhone">
-          <Input
-            id="customerPhone"
-            name="customerPhone"
-            required
-            inputMode="tel"
-            maxLength={MAX_PHONE_INPUT_LENGTH}
-            defaultValue={pending.customerPhone ?? ""}
-          />
-        </Field>
+            <Field label="Teléfono" htmlFor="customerPhone">
+              <Input
+                id="customerPhone"
+                name="customerPhone"
+                required
+                inputMode="tel"
+                maxLength={MAX_PHONE_INPUT_LENGTH}
+                defaultValue={pending.customerPhone ?? ""}
+              />
+            </Field>
 
-        <Field label="Dirección (opcional)" htmlFor="customerAddress">
-          <Input
-            id="customerAddress"
-            name="customerAddress"
-            maxLength={200}
-            defaultValue={pending.customerAddress ?? ""}
-          />
-        </Field>
+            <Field label="Dirección (opcional)" htmlFor="customerAddress">
+              <Input
+                id="customerAddress"
+                name="customerAddress"
+                maxLength={200}
+                defaultValue={pending.customerAddress ?? ""}
+              />
+            </Field>
+          </>
+        )}
 
         <Field label="Zona (opcional)" htmlFor="zone">
           <Input
@@ -186,63 +238,68 @@ export function PendingEditForm({
           </datalist>
         </Field>
 
-        <Field label="Valor total (opcional)" htmlFor="totalAmount">
-          <Input
-            id="totalAmount"
-            name="totalAmount"
-            inputMode="numeric"
-            defaultValue={pending.totalAmount ?? ""}
-          />
-        </Field>
+        {restricted ? null : (
+          <>
+            <Field label="Valor total (opcional)" htmlFor="totalAmount">
+              <Input
+                id="totalAmount"
+                name="totalAmount"
+                inputMode="numeric"
+                defaultValue={pending.totalAmount ?? ""}
+              />
+            </Field>
 
-        <Field label="Abonó (opcional)" htmlFor="paidAmount">
-          <Input
-            id="paidAmount"
-            name="paidAmount"
-            inputMode="numeric"
-            value={paidAmount}
-            onChange={(event) => setPaidAmount(event.target.value)}
-          />
-        </Field>
+            <Field label="Abonó (opcional)" htmlFor="paidAmount">
+              <Input
+                id="paidAmount"
+                name="paidAmount"
+                inputMode="numeric"
+                value={paidAmount}
+                onChange={(event) => setPaidAmount(event.target.value)}
+              />
+            </Field>
 
-        {/* Misma regla que en el alta, y escrita igual a propósito: el medio
-            solo existe si hay abono. Acá pesa más todavía, porque corregir el
-            abono a cero tiene que PODER limpiar el medio: desmontarlo deja de
-            mandarlo, el validador lo exige ausente y el UPDATE lo escribe en
-            null. Un pendiente viejo con abono y sin medio pide elegirlo recién
-            cuando alguien lo edita, que es cuando hay una persona mirando. */}
-        {parsedPaid !== null && parsedPaid > 0 ? (
-          <Field label="¿Cómo pagó?" htmlFor="paymentMethod">
-            <Select
-              id="paymentMethod"
-              name="paymentMethod"
-              value={paymentMethod}
-              onChange={(event) => setPaymentMethod(event.target.value)}
-              required
-            >
-              <option value="" disabled>
-                Elegí el medio…
-              </option>
-              {PAYMENT_METHODS.map((method) => (
-                <option key={method} value={method}>
-                  {paymentMethodLabel(method)}
-                </option>
-              ))}
-            </Select>
-          </Field>
-        ) : null}
+            {/* Misma regla que en el alta, y escrita igual a propósito: el medio
+                solo existe si hay abono. Acá pesa más todavía, porque corregir el
+                abono a cero tiene que PODER limpiar el medio: desmontarlo deja de
+                mandarlo, el validador lo exige ausente y el UPDATE lo escribe en
+                null. Un pendiente viejo con abono y sin medio pide elegirlo recién
+                cuando alguien lo edita, que es cuando hay una persona mirando. */}
+            {parsedPaid !== null && parsedPaid > 0 ? (
+              <Field label="¿Cómo pagó?" htmlFor="paymentMethod">
+                <Select
+                  id="paymentMethod"
+                  name="paymentMethod"
+                  value={paymentMethod}
+                  onChange={(event) => setPaymentMethod(event.target.value)}
+                  required
+                >
+                  <option value="" disabled>
+                    Elegí el medio…
+                  </option>
+                  {PAYMENT_METHODS.map((method) => (
+                    <option key={method} value={method}>
+                      {paymentMethodLabel(method)}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            ) : null}
 
-        {/* Precargado: guardar sin tocarlo conserva el vendedor escrito, y
-            vaciarlo lo borra. Mismo permiso que el resto de la corrección. */}
-        <Field label="Vendedor (opcional)" htmlFor="manualSellerName" className="sm:col-span-2">
-          <Input
-            id="manualSellerName"
-            name="manualSellerName"
-            maxLength={120}
-            autoComplete="off"
-            defaultValue={pending.manualSellerName ?? ""}
-          />
-        </Field>
+            {/* Precargado: guardar sin tocarlo conserva el vendedor escrito, y
+                vaciarlo lo borra. Mismo permiso que el resto de la corrección: por
+                eso tampoco entra en la corrección de una fila ajena. */}
+            <Field label="Vendedor (opcional)" htmlFor="manualSellerName" className="sm:col-span-2">
+              <Input
+                id="manualSellerName"
+                name="manualSellerName"
+                maxLength={120}
+                autoComplete="off"
+                defaultValue={pending.manualSellerName ?? ""}
+              />
+            </Field>
+          </>
+        )}
 
         <Field label="Nota (opcional)" htmlFor="note" className="sm:col-span-2">
           <Input
@@ -261,7 +318,7 @@ export function PendingEditForm({
       ) : null}
       {state.ok ? (
         <p role="status" className="text-sm text-success">
-          Pendiente corregido.
+          {state.unchanged ? "No había cambios para guardar." : "Pendiente corregido."}
         </p>
       ) : null}
 

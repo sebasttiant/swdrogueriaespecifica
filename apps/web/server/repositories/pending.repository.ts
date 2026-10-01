@@ -1006,6 +1006,36 @@ export type UpdatePendingDetailsData = {
   sellerEditedAt?: Date;
 };
 
+/**
+ * Los campos que una corrección RESTRINGIDA puede escribir: la de una fila
+ * ajena por quien no opera la cola entera. Identidad del cliente, montos,
+ * vendedor escrito y dueño no están en el tipo, así que no pueden viajar.
+ */
+export type UpdatePendingOperationalData = {
+  id: string;
+  productId: string;
+  quantity: number;
+  promisedAt: Date;
+  zone?: string;
+  note?: string;
+};
+
+export async function updatePendingOperationalFields(
+  tx: Prisma.TransactionClient,
+  data: UpdatePendingOperationalData,
+): Promise<void> {
+  await tx.pending.update({
+    where: { id: data.id },
+    data: {
+      productId: data.productId,
+      quantity: data.quantity,
+      promisedAt: data.promisedAt,
+      zone: data.zone ?? null,
+      note: data.note ?? null,
+    },
+  });
+}
+
 export async function updatePendingDetails(
   tx: Prisma.TransactionClient,
   data: UpdatePendingDetailsData,
@@ -1051,6 +1081,8 @@ export type PendingForEdit = {
   paidAmount: number;
   paymentMethod: PendingPaymentMethod | null;
   promisedAt: Date;
+  /** Testigo de concurrencia: el formulario lo trae y se compara bajo el lock. */
+  updatedAt: Date;
 };
 
 export async function lockPendingForEdit(
@@ -1061,7 +1093,7 @@ export async function lockPendingForEdit(
     SELECT id, "productId", quantity, status, "createdById", "deliveredQuantity",
            "invoicedQuantity", "sellerEditedAt", "customerName", "customerPhone",
            "customerAddress", note, "manualSellerName", zone, "totalAmount", "paidAmount",
-           "paymentMethod", "promisedAt"
+           "paymentMethod", "promisedAt", "updatedAt"
     FROM pendings WHERE id = ${id} FOR UPDATE
   `;
   return rows[0] ?? null;

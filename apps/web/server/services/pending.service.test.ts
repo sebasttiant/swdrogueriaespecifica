@@ -72,6 +72,7 @@ import {
   contactPending,
   deliverPending,
   getPendingDashboard,
+  getPendingForEdit,
   getPendingInView,
   getPendings,
   getPendingIdentityQueue,
@@ -87,7 +88,7 @@ import type {
   PendingListItem,
 } from "@/server/repositories/pending.repository";
 import type { SessionRole } from "@/lib/auth/session";
-import { USER_ROLES } from "@/lib/auth/permissions";
+import { can, invoiceScopeFor, USER_ROLES } from "@/lib/auth/permissions";
 import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
 
 // `promisedAt` va como instante UTC EXPLÍCITO (con la Z). Sin ella, JavaScript
@@ -1796,22 +1797,50 @@ describe("resolveWaitlistDecision · ecuación terminal (T2.2b)", () => {
 });
 
 // --------------------------------------------------------------------------
-// Corregir un pendiente. Dos autoridades sobre la misma acción: gerencia sin
-// límite sobre cualquiera, el vendedor una sola vez sobre el suyo.
+// Corregir un pendiente (gerencia, 2026-09-30).
 //
-// Equivocarse al cargar pasa; corregir en bucle es reescribir la historia de un
-// compromiso con un cliente sin que nadie pueda ver cuál fue la promesa.
+// Quien tiene `canManageAllPendings` o `canEditAllPendings` corrige cualquier
+// pendiente, las veces que haga falta. Sobre una fila AJENA, quien no opera la
+// cola entera corrige solo los datos operativos: identidad del cliente y montos
+// quedan protegidos. Toda corrección exige el testigo de concurrencia, y
+// guardar sin cambios no escribe nada.
 // --------------------------------------------------------------------------
 describe("updatePending", () => {
   const now = new Date("2026-07-09T12:00:00.000Z");
+  const LOADED_AT = new Date("2026-07-09T11:00:00.123Z");
 
+  const fullFields = {
+    state: "valid" as const,
+    values: { customerName: "Ana corregida", customerPhone: "3001112233" },
+  };
+
+  // Una corrección COMPLETA (dueño o gerencia): todos los campos del formulario.
   const correction = {
+    id: "pend-1",
     productId: "prod-1",
     quantity: 12,
     promisedAt: new Date("2026-08-01T15:00:00.000Z"),
-    customerName: "Ana corregida",
-    customerPhone: "3001112233",
+    protectedFields: fullFields,
+    manualSellerNameSent: false,
+    expectedUpdatedAt: LOADED_AT,
   };
+
+  // Una corrección RESTRINGIDA: el formulario ajeno no manda identidad ni montos.
+  const restricted = {
+    ...correction,
+    protectedFields: { state: "absent" as const },
+    zone: "Belén",
+    note: "cambió la fecha",
+  };
+
+  // Los actores por su autoridad, no por su nombre de rol.
+  const OWNER = { actorId: "op-1", canManageAll: false, canEditAll: true };
+  const FOREIGN_EDITOR = { actorId: "bod-1", canManageAll: false, canEditAll: true };
+  const MANAGER = { actorId: "adm-1", canManageAll: true, canEditAll: true };
+  // Un rol sin ninguna de las dos autoridades: conserva el cupo de una sola
+  // corrección sobre lo suyo. Ningún rol de la matriz actual cae acá, pero el
+  // camino sigue existiendo.
+  const QUOTA_OWNER = { actorId: "op-1", canManageAll: false, canEditAll: false };
 
   function lockedForEdit(overrides: Record<string, unknown> = {}) {
     tx.$queryRaw.mockResolvedValue([
@@ -1828,161 +1857,546 @@ describe("updatePending", () => {
         customerPhone: "3009998877",
         customerAddress: null,
         note: null,
+        manualSellerName: null,
         zone: null,
         totalAmount: null,
         paidAmount: 0,
         paymentMethod: null,
         promisedAt: new Date("2026-07-10T10:00:00.000Z"),
+        updatedAt: LOADED_AT,
         ...overrides,
       },
     ]);
   }
 
-  it("el vendedor corrige el suyo y consume su única oportunidad", async () => {
-    lockedForEdit();
-
-    const result = await updatePending(
-      { ...correction, id: "pend-1", actorId: "op-1", canManageAll: false },
-      now,
-    );
-
-    expect(result.rejection).toBeNull();
-    expect(tx.pending.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ quantity: 12, sellerEditedAt: now }),
-      }),
-    );
-  });
-
-  it("rechaza la segunda corrección del vendedor", async () => {
-    lockedForEdit({ sellerEditedAt: new Date("2026-07-08T10:00:00.000Z") });
-
-    const result = await updatePending(
-      { ...correction, id: "pend-1", actorId: "op-1", canManageAll: false },
-      now,
-    );
-
-    expect(result.rejection).toBe("ALREADY_EDITED");
-    expect(tx.pending.update).not.toHaveBeenCalled();
-  });
-
-  it("gerencia corrige sin límite y NO consume el cupo del vendedor", async () => {
-    lockedForEdit({ sellerEditedAt: new Date("2026-07-08T10:00:00.000Z") });
-
-    const result = await updatePending(
-      { ...correction, id: "pend-1", actorId: "adm-1", canManageAll: true },
-      now,
-    );
-
-    expect(result.rejection).toBeNull();
-    expect(tx.pending.update).toHaveBeenCalledTimes(1);
-    // El cupo del vendedor es SUYO: una corrección de gerencia no puede
-    // gastárselo, así que ni siquiera escribe la columna.
-    expect(tx.pending.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.not.objectContaining({ sellerEditedAt: expect.anything() }),
-      }),
-    );
-  });
-
-  it("rechaza corregir un pendiente ajeno", async () => {
-    lockedForEdit({ createdById: "otro" });
-
-    const result = await updatePending(
-      { ...correction, id: "pend-1", actorId: "op-1", canManageAll: false },
-      now,
-    );
-
-    expect(result.rejection).toBe("NOT_OWNER");
-  });
-
-  it("no corrige un pendiente ya cerrado", async () => {
-    lockedForEdit({ status: "ENTREGADO" });
-
-    const result = await updatePending(
-      { ...correction, id: "pend-1", actorId: "adm-1", canManageAll: true },
-      now,
-    );
-
-    expect(result.rejection).toBe("ALREADY_CLOSED");
-  });
-
-  it("no deja bajar la cantidad por debajo de lo ya facturado o entregado", async () => {
-    lockedForEdit({ invoicedQuantity: 8, deliveredQuantity: 5 });
-
-    const result = await updatePending(
-      { ...correction, quantity: 4, id: "pend-1", actorId: "adm-1", canManageAll: true },
-      now,
-    );
-
-    expect(result.rejection).toBe("BELOW_COMMITTED");
-    expect(tx.pending.update).not.toHaveBeenCalled();
-  });
-
-  // La corrección no es la captura: nunca escribe el PRODUCTO, que es donde
-  // vive la presentación guardada. Un pendiente viejo con presentación se
-  // corrige sin que esa presentación se pierda.
-  it("corregir no toca la presentación guardada en el producto", async () => {
-    lockedForEdit();
-
-    const result = await updatePending(
-      { ...correction, id: "pend-1", actorId: "adm-1", canManageAll: true },
-      now,
-    );
-
-    expect(result.rejection).toBeNull();
-    expect(tx.product.create).not.toHaveBeenCalled();
+  function writtenData(): Record<string, unknown> {
     const [update] = tx.pending.update.mock.calls[0]!;
-    expect(update.data).not.toHaveProperty("unit");
-    expect(update.data).not.toHaveProperty("product");
-  });
+    return update.data as Record<string, unknown>;
+  }
 
-  // El vendedor escrito se corrige por acá, con el MISMO permiso que el resto
-  // de la corrección: el dueño una vez, gerencia siempre. Vaciarlo lo borra.
-  it("corrige el vendedor escrito con el mismo cupo, y vacío lo guarda en null", async () => {
-    lockedForEdit();
-    await updatePending(
-      { ...correction, manualSellerName: "Carlos Gómez", id: "pend-1", actorId: "op-1", canManageAll: false },
-      now,
-    );
-    expect(tx.pending.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ manualSellerName: "Carlos Gómez", sellerEditedAt: now }),
-      }),
-    );
-
-    tx.pending.update.mockClear();
-    lockedForEdit();
-    await updatePending({ ...correction, id: "pend-1", actorId: "adm-1", canManageAll: true }, now);
-    expect(tx.pending.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ manualSellerName: null }) }),
-    );
-  });
-
-  it("corregir el vendedor escrito de un pendiente ajeno se rechaza igual que cualquier dato", async () => {
-    lockedForEdit({ createdById: "otro" });
-
-    const result = await updatePending(
-      { ...correction, manualSellerName: "Carlos Gómez", id: "pend-1", actorId: "op-1", canManageAll: false },
-      now,
-    );
-
-    expect(result.rejection).toBe("NOT_OWNER");
-    expect(tx.pending.update).not.toHaveBeenCalled();
-  });
-
-  it("al cambiar de producto cancela el faltante que ya no sirve", async () => {
+  it("el lock lee updatedAt para comparar el testigo bajo el FOR UPDATE", async () => {
     lockedForEdit();
 
-    await updatePending(
-      { ...correction, productId: "prod-2", id: "pend-1", actorId: "adm-1", canManageAll: true },
-      now,
-    );
+    await updatePending({ ...correction, ...OWNER }, now);
 
-    expect(tx.missingItem.updateMany).toHaveBeenCalledWith({
-      where: { originId: "pend-1", status: { in: ["FALTANTE", "PEDIDO", "EN_BODEGA"] } },
-      data: { status: "CANCELADO" },
+    const sql = lockSqlFrom(tx.$queryRaw.mock.calls[0]!);
+    expect(sql).toContain('"updatedAt"');
+    expect(sql).toContain("FOR UPDATE");
+  });
+
+  describe("alcance", () => {
+    it("el dueño corrige el suyo", async () => {
+      lockedForEdit();
+
+      const result = await updatePending({ ...correction, ...OWNER }, now);
+
+      expect(result.rejection).toBeNull();
+      expect(writtenData()).toEqual(expect.objectContaining({ quantity: 12 }));
     });
+
+    it("quien tiene canEditAllPendings corrige una fila ajena", async () => {
+      lockedForEdit();
+
+      const result = await updatePending({ ...restricted, ...FOREIGN_EDITOR }, now);
+
+      expect(result.rejection).toBeNull();
+      expect(tx.pending.update).toHaveBeenCalledTimes(1);
+    });
+
+    it("gerencia corrige una fila ajena con todos los campos", async () => {
+      lockedForEdit();
+
+      const result = await updatePending({ ...correction, ...MANAGER }, now);
+
+      expect(result.rejection).toBeNull();
+      expect(writtenData()).toEqual(
+        expect.objectContaining({ customerName: "Ana corregida", quantity: 12 }),
+      );
+    });
+
+    it("sin ninguna de las dos autoridades, la fila ajena se rechaza NOT_OWNER", async () => {
+      lockedForEdit({ createdById: "otro" });
+
+      const result = await updatePending({ ...correction, ...QUOTA_OWNER }, now);
+
+      expect(result.rejection).toBe("NOT_OWNER");
+      expect(tx.pending.update).not.toHaveBeenCalled();
+    });
+
+    it("una fila sin dueño es ajena para todos", async () => {
+      lockedForEdit({ createdById: null });
+
+      const result = await updatePending({ ...correction, ...QUOTA_OWNER }, now);
+
+      expect(result.rejection).toBe("NOT_OWNER");
+    });
+  });
+
+  describe("cupo de corrección", () => {
+    it("quien tiene canEditAllPendings corrige varias veces y no consume cupo", async () => {
+      lockedForEdit({ sellerEditedAt: new Date("2026-07-08T10:00:00.000Z") });
+
+      const result = await updatePending({ ...correction, ...OWNER }, now);
+
+      expect(result.rejection).toBeNull();
+      expect(writtenData()).not.toHaveProperty("sellerEditedAt");
+    });
+
+    it("sin ninguna de las dos autoridades rige la corrección única", async () => {
+      lockedForEdit();
+      const first = await updatePending({ ...correction, ...QUOTA_OWNER }, now);
+      expect(first.rejection).toBeNull();
+      expect(writtenData()).toEqual(expect.objectContaining({ sellerEditedAt: now }));
+
+      tx.pending.update.mockClear();
+      lockedForEdit({ sellerEditedAt: now });
+      const second = await updatePending({ ...correction, ...QUOTA_OWNER }, now);
+      expect(second.rejection).toBe("ALREADY_EDITED");
+      expect(tx.pending.update).not.toHaveBeenCalled();
+    });
+
+    it("gerencia no consume el cupo del vendedor", async () => {
+      lockedForEdit({ sellerEditedAt: new Date("2026-07-08T10:00:00.000Z") });
+
+      await updatePending({ ...correction, ...MANAGER }, now);
+
+      expect(writtenData()).not.toHaveProperty("sellerEditedAt");
+    });
+  });
+
+  describe("reglas de estado (sin cambios)", () => {
+    it.each([
+      ["dueño", OWNER],
+      ["ajeno", FOREIGN_EDITOR],
+      ["gerencia", MANAGER],
+    ] as const)("no corrige un pendiente ya cerrado (%s)", async (_label, actor) => {
+      lockedForEdit({ status: "ENTREGADO" });
+
+      const result = await updatePending({ ...restricted, ...actor }, now);
+
+      expect(result.rejection).toBe("ALREADY_CLOSED");
+      expect(tx.pending.update).not.toHaveBeenCalled();
+    });
+
+    it("no deja bajar la cantidad por debajo de lo ya facturado o entregado", async () => {
+      lockedForEdit({ invoicedQuantity: 8, deliveredQuantity: 5, createdById: "otro" });
+
+      const result = await updatePending({ ...restricted, quantity: 4, ...FOREIGN_EDITOR }, now);
+
+      expect(result.rejection).toBe("BELOW_COMMITTED");
+      expect(tx.pending.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("corrección restringida (fila ajena sin canManageAllPendings)", () => {
+    it("escribe SOLO los campos operativos y deja intactos identidad y montos", async () => {
+      lockedForEdit({ createdById: "otro", totalAmount: 50_000, paidAmount: 20_000 });
+
+      const result = await updatePending({ ...restricted, ...FOREIGN_EDITOR }, now);
+
+      expect(result.rejection).toBeNull();
+      expect(result.restricted).toBe(true);
+      const data = writtenData();
+      expect(data).toEqual({
+        productId: "prod-1",
+        quantity: 12,
+        promisedAt: new Date("2026-08-01T15:00:00.000Z"),
+        zone: "Belén",
+        note: "cambió la fecha",
+      });
+      for (const field of [
+        "customerName",
+        "customerPhone",
+        "customerAddress",
+        "totalAmount",
+        "paidAmount",
+        "paymentMethod",
+        "manualSellerName",
+        "createdById",
+        "sellerEditedAt",
+      ]) {
+        expect(data).not.toHaveProperty(field);
+      }
+    });
+
+    it.each(["valid", "invalid"] as const)(
+      "un campo protegido PRESENTE (%s) es una solicitud inválida y no escribe",
+      async (state) => {
+        lockedForEdit({ createdById: "otro" });
+        const protectedFields =
+          state === "valid" ? fullFields : ({ state: "invalid" } as const);
+
+        const result = await updatePending(
+          { ...restricted, protectedFields, ...FOREIGN_EDITOR },
+          now,
+        );
+
+        expect(result.rejection).toBe("INVALID_REQUEST");
+        // Motivo neutral para la auditoría: no afirma intención, describe el hecho.
+        expect(result.detail).toBe("campo no permitido en esta corrección");
+        expect(tx.pending.update).not.toHaveBeenCalled();
+      },
+    );
+
+    // El vendedor escrito tampoco entra en la corrección ajena: su formulario no
+    // lo renderiza, así que su sola presencia —aunque vacía— es inválida.
+    it("el vendedor escrito PRESENTE es una solicitud inválida y no escribe", async () => {
+      lockedForEdit({ createdById: "otro" });
+
+      const result = await updatePending(
+        { ...restricted, manualSellerNameSent: true, ...FOREIGN_EDITOR },
+        now,
+      );
+
+      expect(result.rejection).toBe("INVALID_REQUEST");
+      expect(result.detail).toBe("campo no permitido en esta corrección");
+      expect(tx.pending.update).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["facturado", { invoicedQuantity: 2 }],
+      ["entregado", { deliveredQuantity: 1, invoicedQuantity: 1 }],
+    ] as const)("no cambia el producto de un pendiente ya %s", async (_label, qty) => {
+      lockedForEdit({ createdById: "otro", ...qty });
+
+      const result = await updatePending(
+        { ...restricted, productId: "prod-2", ...FOREIGN_EDITOR },
+        now,
+      );
+
+      expect(result.rejection).toBe("PRODUCT_LOCKED");
+      expect(tx.pending.update).not.toHaveBeenCalled();
+      expect(tx.missingItem.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("sin facturar ni entregar, el producto se cambia con sus efectos de siempre", async () => {
+      lockedForEdit({ createdById: "otro" });
+
+      const result = await updatePending(
+        { ...restricted, productId: "prod-2", ...FOREIGN_EDITOR },
+        now,
+      );
+
+      expect(result.rejection).toBeNull();
+      expect(tx.missingItem.updateMany).toHaveBeenCalledWith({
+        where: { originId: "pend-1", status: { in: ["FALTANTE", "PEDIDO", "EN_BODEGA"] } },
+        data: { status: "CANCELADO" },
+      });
+    });
+
+    it("con el producto sin cambiar, lo facturado no bloquea el resto de la corrección", async () => {
+      lockedForEdit({ createdById: "otro", invoicedQuantity: 2 });
+
+      const result = await updatePending({ ...restricted, ...FOREIGN_EDITOR }, now);
+
+      expect(result.rejection).toBeNull();
+    });
+  });
+
+  describe("corrección completa (propia o de gerencia)", () => {
+    it("exige la identidad: sin campos protegidos es una solicitud inválida", async () => {
+      lockedForEdit();
+
+      const result = await updatePending(
+        { ...correction, protectedFields: { state: "absent" }, ...OWNER },
+        now,
+      );
+
+      expect(result.rejection).toBe("INVALID_REQUEST");
+      expect(tx.pending.update).not.toHaveBeenCalled();
+    });
+
+    it("datos protegidos mal escritos son un error de validación, no una solicitud inválida", async () => {
+      lockedForEdit();
+
+      const result = await updatePending(
+        { ...correction, protectedFields: { state: "invalid" }, ...MANAGER },
+        now,
+      );
+
+      expect(result.rejection).toBe("INVALID_DATA");
+      expect(tx.pending.update).not.toHaveBeenCalled();
+    });
+
+    // La corrección no es la captura: nunca escribe el PRODUCTO, que es donde
+    // vive la presentación guardada.
+    it("corregir no toca la presentación guardada en el producto", async () => {
+      lockedForEdit();
+
+      await updatePending({ ...correction, ...MANAGER }, now);
+
+      expect(tx.product.create).not.toHaveBeenCalled();
+      expect(writtenData()).not.toHaveProperty("unit");
+      expect(writtenData()).not.toHaveProperty("product");
+    });
+
+    it("corrige el vendedor escrito, y vacío lo guarda en null", async () => {
+      lockedForEdit();
+      await updatePending(
+        { ...correction, manualSellerName: "Carlos Gómez", manualSellerNameSent: true, ...OWNER },
+        now,
+      );
+      expect(writtenData()).toEqual(expect.objectContaining({ manualSellerName: "Carlos Gómez" }));
+
+      tx.pending.update.mockClear();
+      lockedForEdit({ manualSellerName: "Carlos Gómez", createdById: "otro" });
+      await updatePending({ ...correction, manualSellerNameSent: true, ...MANAGER }, now);
+      expect(writtenData()).toEqual(expect.objectContaining({ manualSellerName: null }));
+    });
+
+    it("al cambiar de producto cancela el faltante que ya no sirve", async () => {
+      lockedForEdit();
+
+      await updatePending({ ...correction, productId: "prod-2", ...MANAGER }, now);
+
+      expect(tx.missingItem.updateMany).toHaveBeenCalledWith({
+        where: { originId: "pend-1", status: { in: ["FALTANTE", "PEDIDO", "EN_BODEGA"] } },
+        data: { status: "CANCELADO" },
+      });
+    });
+  });
+
+  describe("concurrencia optimista", () => {
+    it.each([
+      ["dueño", OWNER, correction],
+      ["ajeno", FOREIGN_EDITOR, restricted],
+      ["gerencia", MANAGER, correction],
+    ] as const)("rechaza un formulario viejo (%s)", async (_label, actor, input) => {
+      lockedForEdit({ updatedAt: new Date("2026-07-09T11:30:00.000Z") });
+
+      const result = await updatePending({ ...input, ...actor }, now);
+
+      expect(result.rejection).toBe("STALE");
+      expect(tx.pending.update).not.toHaveBeenCalled();
+    });
+
+    it("compara al milisegundo", async () => {
+      lockedForEdit({ updatedAt: new Date(LOADED_AT.getTime() + 1) });
+
+      const result = await updatePending({ ...correction, ...MANAGER }, now);
+
+      expect(result.rejection).toBe("STALE");
+    });
+
+    it("sin testigo es una solicitud inválida", async () => {
+      lockedForEdit();
+
+      const result = await updatePending(
+        { ...correction, expectedUpdatedAt: null, ...MANAGER },
+        now,
+      );
+
+      expect(result.rejection).toBe("INVALID_REQUEST");
+      expect(tx.pending.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("guardar sin cambios", () => {
+    it("una corrección completa idéntica no escribe nada", async () => {
+      lockedForEdit({
+        productId: "prod-1",
+        quantity: 12,
+        promisedAt: new Date("2026-08-01T15:00:00.000Z"),
+        customerName: "Ana corregida",
+        customerPhone: "3001112233",
+      });
+
+      const result = await updatePending({ ...correction, ...OWNER }, now);
+
+      expect(result).toEqual(
+        expect.objectContaining({ rejection: null, outcome: "UNCHANGED" }),
+      );
+      expect(tx.pending.update).not.toHaveBeenCalled();
+      expect(tx.missingItem.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("una corrección restringida idéntica en sus campos editables no escribe nada", async () => {
+      lockedForEdit({
+        createdById: "otro",
+        quantity: 12,
+        promisedAt: new Date("2026-08-01T15:00:00.000Z"),
+        zone: "Belén",
+        note: "cambió la fecha",
+      });
+
+      const result = await updatePending({ ...restricted, ...FOREIGN_EDITOR }, now);
+
+      expect(result.outcome).toBe("UNCHANGED");
+      expect(tx.pending.update).not.toHaveBeenCalled();
+    });
+
+    it("sin cambios no consume el cupo de la corrección única", async () => {
+      lockedForEdit({
+        quantity: 12,
+        promisedAt: new Date("2026-08-01T15:00:00.000Z"),
+        customerName: "Ana corregida",
+        customerPhone: "3001112233",
+      });
+
+      const result = await updatePending({ ...correction, ...QUOTA_OWNER }, now);
+
+      expect(result.outcome).toBe("UNCHANGED");
+      expect(tx.pending.update).not.toHaveBeenCalled();
+    });
+
+    it("un rechazo nunca se confunde con 'sin cambios'", async () => {
+      lockedForEdit({
+        createdById: "otro",
+        quantity: 12,
+        promisedAt: new Date("2026-08-01T15:00:00.000Z"),
+        updatedAt: new Date("2026-07-09T11:30:00.000Z"),
+      });
+
+      const result = await updatePending({ ...restricted, ...FOREIGN_EDITOR }, now);
+
+      expect(result.rejection).toBe("STALE");
+      expect(result.outcome).toBeUndefined();
+    });
+
+    it("una corrección con cambios devuelve UPDATED", async () => {
+      lockedForEdit();
+
+      const result = await updatePending({ ...correction, ...OWNER }, now);
+
+      expect(result.outcome).toBe("UPDATED");
+    });
+  });
+});
+
+// --------------------------------------------------------------------------
+// Leer y corregir todo NO abre operar lo ajeno (gerencia, 2026-09-30).
+//
+// Con el alcance que las Server Actions derivan de la matriz real, vendedor y
+// bodega siguen sin poder entregar, cancelar, contactar, facturar ni responder
+// la lista de espera sobre un pendiente ajeno.
+// --------------------------------------------------------------------------
+describe("acciones de cliente sobre filas ajenas · OPERADOR y BODEGA", () => {
+  const now = new Date("2026-07-09T12:00:00.000Z");
+  const foreign = () =>
+    mockLockedPending(pendingForDelivery({ createdById: "otro-vendedor", status: "PARCIAL", deliveredQuantity: 2 }));
+
+  it.each(["OPERADOR", "BODEGA"] as const)("%s: todas rechazan NOT_OWNER", async (role) => {
+    const canManageAll = can(role, "canManageAllPendings");
+    expect(canManageAll).toBe(false);
+
+    foreign();
+    const delivered = await deliverPending(
+      { id: "pend-1", quantity: 1, deliveredById: "me", canManageAll },
+      now,
+    );
+    expect(delivered.rejection).toBe("NOT_OWNER");
+
+    foreign();
+    const cancelled = await cancelPendingCommitment(
+      { id: "pend-1", cancelledById: "me", canManageAll },
+      now,
+    );
+    expect(cancelled.rejection).toBe("NOT_OWNER");
+
+    foreign();
+    await expect(contactPending({ id: "pend-1", actorId: "me", canManageAll }, now)).resolves.toBe(
+      "NOT_OWNER",
+    );
+
+    foreign();
+    await expect(
+      invoicePending(
+        { id: "pend-1", actorId: "me", scope: invoiceScopeFor(role), quantity: 1, expectedInvoicedQuantity: 10 },
+        now,
+      ),
+    ).resolves.toBe("NOT_OWNER");
+
+    foreign();
+    await expect(
+      resolveWaitlistDecision({ id: "pend-1", decision: "espera", actorId: "me", canManageAll }, now),
+    ).resolves.toBe("NOT_OWNER");
+
+    expect(tx.pending.update).not.toHaveBeenCalled();
+    expect(tx.pending.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+// --------------------------------------------------------------------------
+// El formulario de corrección: mismo alcance que la acción, identidad por fila.
+// --------------------------------------------------------------------------
+describe("getPendingForEdit", () => {
+  const row = {
+    id: "pend-1",
+    productId: "prod-1",
+    quantity: 10,
+    status: "PENDIENTE",
+    createdById: "op-1",
+    deliveredQuantity: 0,
+    invoicedQuantity: 0,
+    sellerEditedAt: null,
+    customerName: "Ana",
+    customerPhone: "3009998877",
+    customerAddress: "Calle 1",
+    note: "nota",
+    manualSellerName: null,
+    zone: null,
+    totalAmount: 50_000,
+    paidAmount: 0,
+    paymentMethod: null,
+    promisedAt: new Date("2026-07-10T10:00:00.000Z"),
+    updatedAt: new Date("2026-07-09T11:00:00.123Z"),
+  };
+
+  beforeEach(() => {
+    prismaMock.pending.findUnique.mockResolvedValue(row);
+  });
+
+  it.each(["OPERADOR", "BODEGA"] as const)(
+    "%s abre una fila ajena restringida y sin la identidad del cliente",
+    async (role) => {
+      const view = await getPendingForEdit({ id: "pend-1", actor: { role, userId: "otro" } });
+
+      expect(view).not.toBeNull();
+      expect(view!.restricted).toBe(true);
+      // Lo que el formulario restringido no muestra tampoco viaja en sus props.
+      for (const field of [
+        "customerName",
+        "customerPhone",
+        "customerAddress",
+        "totalAmount",
+        "paidAmount",
+        "paymentMethod",
+        "manualSellerName",
+      ]) {
+        expect(view!.pending).not.toHaveProperty(field);
+      }
+      expect(view!.pending.note).toBe("nota");
+      expect(view!.pending.updatedAt).toEqual(row.updatedAt);
+    },
+  );
+
+  it.each(["OPERADOR", "BODEGA"] as const)(
+    "%s abre su propia fila completa y con la identidad",
+    async (role) => {
+      const view = await getPendingForEdit({ id: "pend-1", actor: { role, userId: "op-1" } });
+
+      expect(view!.restricted).toBe(false);
+      expect(view!.pending).toHaveProperty("customerName", "Ana");
+      expect(view!.pending).toEqual(expect.objectContaining({ totalAmount: 50_000, paidAmount: 0 }));
+    },
+  );
+
+  it.each(["SUPERVISOR", "ADMIN", "SUPERADMIN"] as const)(
+    "%s abre cualquier fila completa",
+    async (role) => {
+      const view = await getPendingForEdit({ id: "pend-1", actor: { role, userId: "otro" } });
+
+      expect(view!.restricted).toBe(false);
+      expect(view!.pending).toHaveProperty("customerName", "Ana");
+    },
+  );
+
+  it("un pendiente que no existe devuelve null", async () => {
+    prismaMock.pending.findUnique.mockResolvedValue(null);
+
+    await expect(
+      getPendingForEdit({ id: "x", actor: { role: "ADMIN", userId: "a" } }),
+    ).resolves.toBeNull();
   });
 });
 

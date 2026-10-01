@@ -23,6 +23,7 @@ import {
   cancelPendingCommitment,
   resolveWaitlistDecision,
   updatePending,
+  type PendingProtectedInput,
   deliverPending,
   contactPending,
   invoicePending,
@@ -36,6 +37,7 @@ import {
 } from "@/server/services/pending.service";
 import { linkOrionCodeAtCapture, linkOrionCode } from "@/server/services/sku-onboarding.service";
 import { findProductById } from "@/server/repositories/product.repository";
+import type { PendingForEdit } from "@/server/repositories/pending.repository";
 import { laboratoryCreateCommandKey } from "@/server/domain/laboratory/identity";
 import { findOrCreateLaboratory } from "@/server/repositories/laboratory.repository";
 import { SkuConcurrencyError } from "@/server/repositories/sku-review.repository";
@@ -50,8 +52,10 @@ import {
   pendingDeliverSchema,
   pendingManagementStatusSchema,
   pendingObservationSchema,
+  pendingCorrectionSchema,
+  pendingProtectedSchema,
   pendingPurchaseDepositSchema,
-  pendingUpdateSchema,
+  PENDING_PROTECTED_FIELDS,
 } from "@/features/pendientes/schema";
 
 // --------------------------------------------------------------------------
@@ -119,6 +123,11 @@ export type PendingFormState = {
   savedWithoutTotalAmount?: boolean;
   /** Recuperación accionable cuando el código ya pertenece a otro producto. */
   orionConflict?: PendingOrionConflict | null;
+  /**
+   * Corrección que no cambiaba nada: no se escribió ni se auditó. Va aparte de
+   * `ok` para que la pantalla diga "no había cambios" y no "corregido".
+   */
+  unchanged?: boolean;
 };
 
 /**
@@ -1573,18 +1582,85 @@ const UPDATE_REJECTION_MESSAGES = {
   ALREADY_EDITED: "Ya corregiste este pendiente. Pedile el cambio a gerencia.",
   ALREADY_CLOSED: "Este pendiente ya está cerrado y no se puede corregir.",
   BELOW_COMMITTED: "La cantidad no puede ser menor a lo ya facturado o entregado.",
+  INVALID_REQUEST: "La solicitud no es válida. Recargá la página e intentá de nuevo.",
+  PRODUCT_LOCKED:
+    "No se puede cambiar el producto: este pendiente ya tiene unidades facturadas o entregadas.",
+  STALE:
+    "Otra persona modificó este pendiente desde que abriste el formulario. Recargá para ver los cambios.",
 } as const;
+
+const INVALID_CORRECTION_MESSAGE = "Revisá los datos del pendiente.";
+
+/** El testigo de concurrencia del formulario, o null si no vino o no se entiende. */
+function parseExpectedUpdatedAt(value: FormDataEntryValue | null): Date | null {
+  if (typeof value !== "string" || value.trim().length === 0) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+/**
+ * Qué llegó de la identidad del cliente y los montos. Se mira la PRESENCIA de
+ * cada clave antes de validar: el formulario de una fila ajena no las
+ * renderiza, así que una clave presente —aunque vacía— es un dato para el
+ * service, que decide bajo el lock si la fila es ajena.
+ */
+function readProtectedFields(formData: FormData): PendingProtectedInput {
+  if (!PENDING_PROTECTED_FIELDS.some((field) => formData.has(field))) return { state: "absent" };
+  const parsed = pendingProtectedSchema.safeParse({
+    customerName: formData.get("customerName") ?? undefined,
+    customerPhone: formData.get("customerPhone") ?? undefined,
+    customerAddress: formData.get("customerAddress") ?? undefined,
+    totalAmount: formData.get("totalAmount") ?? undefined,
+    paidAmount: formData.get("paidAmount") ?? undefined,
+    paymentMethod: formData.get("paymentMethod") ?? undefined,
+  });
+  return parsed.success ? { state: "valid", values: parsed.data } : { state: "invalid" };
+}
+
+/** Lo que registra la auditoría de una corrección restringida: solo lo editable. */
+function operationalSnapshot(values: {
+  productId: string;
+  quantity: number;
+  promisedAt: Date;
+  zone?: string | null;
+  note?: string | null;
+}) {
+  return {
+    productId: values.productId,
+    quantity: values.quantity,
+    promisedAt: values.promisedAt.toISOString(),
+    zone: values.zone ?? null,
+    note: values.note ?? null,
+  };
+}
+
+function fullBeforeSnapshot(before: PendingForEdit) {
+  return {
+    ...operationalSnapshot(before),
+    customerName: before.customerName,
+    customerPhone: before.customerPhone,
+    customerAddress: before.customerAddress,
+    totalAmount: before.totalAmount,
+    paidAmount: before.paidAmount,
+    paymentMethod: before.paymentMethod,
+  };
+}
 
 /**
  * Corrige los datos de un pendiente.
  *
- * Gerencia puede sobre cualquiera y sin límite; el vendedor solo sobre el suyo
- * y una sola vez. La autoridad real la decide el service: acá solo se le pasa
- * si quien pide tiene alcance global.
+ * La autoridad real la decide el service bajo el lock: acá solo se le pasa qué
+ * autoridad tiene el rol (`canManageAllPendings`, `canEditAllPendings`) y qué
+ * llegó en la solicitud. De quién es la fila —y por eso qué campos entran— no
+ * se sabe hasta el lock.
  *
- * La auditoría guarda el ANTES y el DESPUÉS. Es una corrección de la promesa
- * hecha a un cliente: sin el estado previo no hay forma de reconstruir qué se
- * le había prometido originalmente.
+ * La auditoría guarda el ANTES y el DESPUÉS con el actor real de la sesión. Es
+ * una corrección de la promesa hecha a un cliente: sin el estado previo no hay
+ * forma de reconstruir qué se le había prometido originalmente. Los rechazos
+ * de alcance, estado, solicitud inválida, producto bloqueado y concurrencia se
+ * auditan como FAILURE. Los errores comunes de validación del formulario
+ * (schema o `INVALID_DATA`) NO se auditan, igual que antes; y guardar sin
+ * cambios no deja registro porque no pasó nada.
  */
 export async function updatePendingAction(
   _prev: PendingFormState,
@@ -1592,36 +1668,44 @@ export async function updatePendingAction(
 ): Promise<PendingFormState> {
   const session = await requireCapability("canCreatePendientes");
 
-  const parsed = pendingUpdateSchema.safeParse({
+  const parsed = pendingCorrectionSchema.safeParse({
     id: formData.get("id"),
     productId: formData.get("productId"),
     quantity: formData.get("quantity"),
     promisedAt: formData.get("promisedAt") ?? undefined,
-    customerName: formData.get("customerName") ?? undefined,
-    customerPhone: formData.get("customerPhone") ?? undefined,
-    customerAddress: formData.get("customerAddress") ?? undefined,
     note: formData.get("note") ?? undefined,
     manualSellerName: formData.get("manualSellerName") ?? undefined,
     zone: formData.get("zone") ?? undefined,
-    totalAmount: formData.get("totalAmount") ?? undefined,
-    paidAmount: formData.get("paidAmount") ?? undefined,
-    paymentMethod: formData.get("paymentMethod") ?? undefined,
   });
 
   if (!parsed.success) {
-    return { error: "Revisá los datos del pendiente.", ok: false };
+    return { error: INVALID_CORRECTION_MESSAGE, ok: false };
   }
+
+  const protectedFields = readProtectedFields(formData);
 
   let result: Awaited<ReturnType<typeof updatePending>>;
   try {
     result = await updatePending({
       ...parsed.data,
+      protectedFields,
+      // Presencia, no valor: el formulario ajeno no renderiza este campo.
+      manualSellerNameSent: formData.has("manualSellerName"),
+      expectedUpdatedAt: parseExpectedUpdatedAt(formData.get("expectedUpdatedAt")),
       actorId: session.user.id,
       canManageAll: can(session.user.role, "canManageAllPendings"),
+      canEditAll: can(session.user.role, "canEditAllPendings"),
     });
   } catch (error) {
     logPendingError(null, error);
     return { error: "No se pudo guardar la corrección. Intentá de nuevo.", ok: false };
+  }
+
+  // Un dato mal escrito en una corrección completa es un error de formulario,
+  // igual que cuando falla la validación de arriba: no es un rechazo de
+  // autoridad ni de estado.
+  if (result.rejection === "INVALID_DATA") {
+    return { error: INVALID_CORRECTION_MESSAGE, ok: false };
   }
 
   if (result.rejection) {
@@ -1629,47 +1713,41 @@ export async function updatePendingAction(
       AUDIT_ACTIONS.PENDING_UPDATE,
       parsed.data.id,
       session.user.id,
-      { reason: result.rejection },
+      result.detail
+        ? { reason: result.rejection, detail: result.detail }
+        : { reason: result.rejection },
       "FAILURE",
     );
     return { error: UPDATE_REJECTION_MESSAGES[result.rejection], ok: false };
   }
 
+  if (result.outcome === "UNCHANGED") {
+    return { error: null, ok: true, unchanged: true };
+  }
+
   const before = result.before;
+  const values = protectedFields.state === "valid" ? protectedFields.values : null;
   await recordPendingLifecycleAudit(
     AUDIT_ACTIONS.PENDING_UPDATE,
     parsed.data.id,
     session.user.id,
-    {
-      before: before
-        ? {
-            productId: before.productId,
-            quantity: before.quantity,
-            promisedAt: before.promisedAt.toISOString(),
-            customerName: before.customerName,
-            customerPhone: before.customerPhone,
-            customerAddress: before.customerAddress,
-            zone: before.zone,
-            totalAmount: before.totalAmount,
-            paidAmount: before.paidAmount,
-            paymentMethod: before.paymentMethod,
-            note: before.note,
-          }
-        : null,
-      after: {
-        productId: parsed.data.productId,
-        quantity: parsed.data.quantity,
-        promisedAt: parsed.data.promisedAt.toISOString(),
-        customerName: parsed.data.customerName,
-        customerPhone: parsed.data.customerPhone,
-        customerAddress: parsed.data.customerAddress ?? null,
-        zone: parsed.data.zone ?? null,
-        totalAmount: parsed.data.totalAmount ?? null,
-        paidAmount: parsed.data.paidAmount ?? 0,
-        paymentMethod: parsed.data.paymentMethod ?? null,
-        note: parsed.data.note ?? null,
-      },
-    },
+    result.restricted || !values
+      ? {
+          before: before ? operationalSnapshot(before) : null,
+          after: operationalSnapshot(parsed.data),
+        }
+      : {
+          before: before ? fullBeforeSnapshot(before) : null,
+          after: {
+            ...operationalSnapshot(parsed.data),
+            customerName: values.customerName,
+            customerPhone: values.customerPhone,
+            customerAddress: values.customerAddress ?? null,
+            totalAmount: values.totalAmount ?? null,
+            paidAmount: values.paidAmount ?? 0,
+            paymentMethod: values.paymentMethod ?? null,
+          },
+        },
   );
   revalidatePendingViews("Corrección del pendiente");
   // La corrección se hace en su propia pantalla, así que terminar significa
