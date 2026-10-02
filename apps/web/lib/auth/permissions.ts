@@ -244,6 +244,16 @@ export const CAPABILITIES = [
   // que en el futuro un rol pueda supervisar la cola sin mutar pendientes
   // ajenos: un cambio de una línea en `ROLE_CAPABILITIES`, jamás de código.
   "canReadAllPendings",
+  // CORREGIR los datos operativos de cualquier pendiente, propio o ajeno, las
+  // veces que haga falta y siempre auditado (gerencia, 2026-09-30). Es un eje
+  // DISTINTO de `canManageAllPendings`: corregir un dato no es operar al
+  // cliente, así que NO abre contacto, facturación, entrega, cancelación ni
+  // lista de espera sobre lo ajeno —esas siguen con el alcance de
+  // `canManageAllPendings`—. Tampoco abre la identidad del cliente
+  // (`canViewCustomerIdentity`): sobre una fila ajena, quien no la tiene corrige
+  // sin ver ni tocar nombre, teléfono, dirección ni montos. El service decide
+  // qué campos entran en cada caso.
+  "canEditAllPendings",
   // Contactar al cliente de un pendiente, y facturárselo. Son AUTORIDAD, no
   // alcance: dicen si el rol puede hacer el gesto, nunca sobre cuáles filas.
   //
@@ -289,7 +299,8 @@ export type Capability = (typeof CAPABILITIES)[number];
 // may do. SUPERADMIN and ADMIN currently share the full set; SUPERVISOR is the
 // operational middle tier with missing-item confirmation and full-queue scope;
 // OPERADOR is the basic operational subset; BODEGA operates at seller level
-// over its own pendings (no customer PII, no foreign queue, no global read).
+// over its own pendings. Both OPERADOR and BODEGA read and correct every
+// pending, but get no customer PII and no foreign fulfilment scope.
 // Neither operational role gets reports/audit/user-management, snooze, or
 // catalog management.
 const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
@@ -325,6 +336,9 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     // redundante con canManageAllPendings en las superficies de lectura, pero
     // declara la intención y deja el eje listo si mañana se le quita la mutación.
     "canReadAllPendings",
+    // Corrige cualquier pendiente. Redundante hoy con `canManageAllPendings` en
+    // la corrección, pero declara la autoridad por su propio eje.
+    "canEditAllPendings",
     // Contacta y factura, y por tener `canManageAllPendings` lo hace sobre
     // CUALQUIER pendiente, no solo los que registró él (reunión 2026-10-04:
     // "los supervisores todos deben ver los pendientes de todos").
@@ -356,6 +370,11 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     "canLinkProductIdentity",
     "canCreatePendientes",
     "canSubmitMissingReports",
+    // Lee la cola completa y corrige cualquier pendiente (gerencia,
+    // 2026-09-30). Sin `canManageAllPendings` ni `canViewCustomerIdentity`:
+    // ve y corrige las filas ajenas sin ver al cliente ni operarlo.
+    "canReadAllPendings",
+    "canEditAllPendings",
     // Contacta y factura, pero SIN `canManageAllPendings`: el alcance se
     // deriva en `invoiceScopeFor` y el service rechaza el pendiente ajeno.
     "canContactPendings",
@@ -404,6 +423,9 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     "canLinkProductIdentity",
     "canCreatePendientes",
     "canSubmitMissingReports",
+    // Corrige cualquier pendiente sin operarlo ni ver al cliente ajeno. Ver
+    // `canEditAllPendings`.
+    "canEditAllPendings",
     // Contacta y factura, pero SIN `canManageAllPendings`: el alcance se
     // deriva en `invoiceScopeFor` y el service rechaza el pendiente ajeno.
     "canContactPendings",
@@ -444,6 +466,10 @@ export function rolesWithCapability(
  * cannot be copied four times: the day one copy drifts, exactly one screen
  * leaks, and it leaks quietly. Callers that need the owner filter derive it from
  * this: `ownerId: seesAllPendings(role) ? undefined : userId`.
+ *
+ * Since 2026-09-30 every role reads the whole queue, so this no longer tells
+ * roles apart: the alert bar derives its scope in `alertScopeFor`, and customer
+ * identity is decided per row by `seesCustomerIdentityOf`, never from this.
  */
 export function seesAllPendings(role: SessionRole): boolean {
   return can(role, "canManageAllPendings") || can(role, "canReadAllPendings");
@@ -480,6 +506,53 @@ function scopeFor(role: SessionRole, authority: Capability): PendingActionScope 
 /** Alcance de facturación. Ver `PendingActionScope`. */
 export function invoiceScopeFor(role: SessionRole): PendingActionScope {
   return scopeFor(role, "canInvoicePendings");
+}
+
+/** Alcance de entrega. También gatea la respuesta de lista de espera, que
+ *  exige la misma capacidad en la Server Action. */
+export function deliverScopeFor(role: SessionRole): PendingActionScope {
+  return scopeFor(role, "canDeliverPendings");
+}
+
+/** Alcance de cancelación. */
+export function cancelScopeFor(role: SessionRole): PendingActionScope {
+  return scopeFor(role, "canCancelPendings");
+}
+
+/**
+ * Alcance de CORRECCIÓN de un pendiente.
+ *
+ * La autoridad de entrada es `canCreatePendientes`, la misma que exigen la
+ * pantalla de edición y la Server Action. El alcance sale de dos ejes, no de
+ * uno: `canManageAllPendings` (gerencia opera todo) o `canEditAllPendings`
+ * (corrige todo sin operarlo). Qué campos entran sobre una fila ajena lo decide
+ * el service, no este alcance.
+ */
+export function editScopeFor(role: SessionRole): PendingActionScope {
+  if (!can(role, "canCreatePendientes")) return "none";
+  return can(role, "canManageAllPendings") || can(role, "canEditAllPendings")
+    ? "all"
+    : "own";
+}
+
+/**
+ * Si quien mira puede ver la identidad del cliente (nombre, teléfono,
+ * dirección) de UNA fila concreta.
+ *
+ * La regla es por fila y no por pantalla: el rol con `canViewCustomerIdentity`
+ * la ve siempre; los demás, solo en los pendientes que crearon ellos. Desde que
+ * todos leen la cola entera, un flag de pantalla solo podía elegir entre dos
+ * fallas —mostrarle a bodega los clientes de todos, o esconderle los suyos—.
+ *
+ * Una fila sin dueño resoluble (`null`/`undefined`) no es propia de nadie.
+ */
+export function seesCustomerIdentityOf(
+  role: SessionRole,
+  viewerId: string,
+  ownerId: string | null | undefined,
+): boolean {
+  if (can(role, "canViewCustomerIdentity")) return true;
+  return ownerId != null && ownerId === viewerId;
 }
 
 /**

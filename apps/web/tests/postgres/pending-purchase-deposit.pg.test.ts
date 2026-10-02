@@ -149,17 +149,17 @@ describe("lectura · minimización del depósito", () => {
     expect(deniedRow).toBeDefined();
     expect(deniedRow).not.toHaveProperty("purchaseDeposit");
 
-    const deniedService = await getPendings({ canViewCustomerIdentity: false, ownerId });
+    const deniedService = await getPendings({ identityViewer: { role: "OPERADOR", userId: "otro-vendedor" }, ownerId });
     const deniedServiceRow = deniedService.items.find((item) => item.id === id);
     expect(deniedServiceRow).toBeDefined();
     expect(deniedServiceRow).not.toHaveProperty("purchaseDeposit");
 
-    const deniedFocus = await getPendingInView({ id, canViewCustomerIdentity: false, ownerId });
+    const deniedFocus = await getPendingInView({ id, identityViewer: { role: "OPERADOR", userId: "otro-vendedor" }, ownerId });
     expect(deniedFocus).not.toBeNull();
     expect(deniedFocus).not.toHaveProperty("purchaseDeposit");
 
     const allowed = await getPendings({
-      canViewCustomerIdentity: false,
+      identityViewer: { role: "OPERADOR", userId: "otro-vendedor" },
       canViewPurchaseDeposit: true,
       ownerId,
     });

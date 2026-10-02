@@ -314,6 +314,22 @@ async function main() {
     `queda disponible parcial, no completo (obtenido: ${conLlegada.availabilityStatus})`,
   );
 
+  // Entregar exige factura previa (`validateDelivery` → NOT_INVOICED). El
+  // guion entregaba sin facturar y fallaba acá; el flujo real es facturar lo
+  // que llegó y recién después entregarlo.
+  assert(
+    JSON.stringify(
+      await invoicePending({
+        id: sinStock.pending.id,
+        actorId: seller.id,
+        scope: "own",
+        quantity: 3,
+        expectedInvoicedQuantity: 0,
+      }),
+    ) === JSON.stringify({ mode: "NORMAL" }),
+    "se facturan las 3 unidades que llegaron",
+  );
+
   assert(
     (await deliverPending({
       id: sinStock.pending.id,
@@ -326,21 +342,10 @@ async function main() {
   const parcial = await prisma.pending.findUniqueOrThrow({ where: { id: sinStock.pending.id } });
   assert(parcial.status === "PARCIAL", "el pendiente queda en entrega parcial");
 
-  assert(
-    (await resolveWaitlistDecision({
-      id: sinStock.pending.id,
-      decision: "espera",
-      actorId: seller.id,
-    })) === null,
-    "si el cliente espera, el pendiente sigue abierto",
-  );
-  const esperando = await prisma.pending.findUniqueOrThrow({ where: { id: sinStock.pending.id } });
-  assert(esperando.status === "PARCIAL", "sigue abierto tras registrar que espera");
-  assert(
-    (esperando.note ?? "").includes("Cliente espera los 2"),
-    `queda la nota del vendedor (obtenido: ${esperando.note ?? "sin nota"})`,
-  );
-
+  // La respuesta del cliente se registra UNA sola vez (`ALREADY_DECIDED`): el
+  // guion respondía "espera" y después "cerrar" sobre el mismo pendiente, y el
+  // service ya no lo admite. Cada respuesta va sobre su propio pendiente:
+  // primero "cerrar" sobre este, después "espera" sobre uno nuevo.
   assert(
     (await resolveWaitlistDecision({
       id: sinStock.pending.id,
@@ -356,6 +361,60 @@ async function main() {
   assert(cerrado.deliveredQuantity === 3, "se cierra con las 3 que realmente recibió");
   assert(cerrado.cancelledQuantity === 2, "registra los 2 que el cliente no espera");
 
+  // Se registra DESPUÉS del cierre: así la entrada siguiente le llega a este y
+  // no al anterior (el reparto es FIFO y el faltante del cerrado ya se canceló).
+  const esperaParcial = await registerPending({ ...base, quantity: 5, customerName: "Cliente G", idempotencyKey: crypto.randomUUID() });
+  await registerInventoryEntry({
+    productId: product.id,
+    quantity: 3,
+    batchCode: `LOTE-PARCIAL-G-${Date.now()}`,
+    expiresAt: new Date(Date.now() + 31_536_000_000),
+    createdById: seller.id,
+    idempotencyKey: crypto.randomUUID(),
+  });
+  const conLlegadaG = await prisma.pending.findUniqueOrThrow({
+    where: { id: esperaParcial.pending.id },
+  });
+  assert(
+    conLlegadaG.inventoryReadyQuantity === 3,
+    `la entrada reserva las 3 unidades al pendiente que espera (obtenido: ${conLlegadaG.inventoryReadyQuantity})`,
+  );
+  assert(
+    JSON.stringify(
+      await invoicePending({
+        id: esperaParcial.pending.id,
+        actorId: seller.id,
+        scope: "own",
+        quantity: 3,
+        expectedInvoicedQuantity: 0,
+      }),
+    ) === JSON.stringify({ mode: "NORMAL" }),
+    "se facturan las 3 unidades que llegaron (cliente que espera)",
+  );
+  assert(
+    (await deliverPending({
+      id: esperaParcial.pending.id,
+      quantity: 3,
+      deliveredById: seller.id,
+      canManageAll: false,
+    })).rejection === null,
+    "se entregan las 3 unidades que llegaron (cliente que espera)",
+  );
+  assert(
+    (await resolveWaitlistDecision({
+      id: esperaParcial.pending.id,
+      decision: "espera",
+      actorId: seller.id,
+    })) === null,
+    "si el cliente espera, el pendiente sigue abierto",
+  );
+  const esperando = await prisma.pending.findUniqueOrThrow({ where: { id: esperaParcial.pending.id } });
+  assert(esperando.status === "PARCIAL", "sigue abierto tras registrar que espera");
+  assert(
+    (esperando.note ?? "").includes("Cliente espera los 2"),
+    `queda la nota del vendedor (obtenido: ${esperando.note ?? "sin nota"})`,
+  );
+
   console.log("\nEscenario: corregir un pendiente");
   const { updatePending } = await import("@/server/services/pending.service");
   const paraEditar = await registerPending({ ...base, quantity: 4, customerName: "Cliente E", idempotencyKey: crypto.randomUUID() });
@@ -365,19 +424,40 @@ async function main() {
     productId: product.id,
     quantity: 6,
     promisedAt: new Date(Date.now() + 172_800_000),
-    customerName: "Cliente E corregido",
-    customerPhone: "3009999999",
+    protectedFields: {
+      state: "valid" as const,
+      values: { customerName: "Cliente E corregido", customerPhone: "3009999999" },
+    },
+    manualSellerNameSent: false,
   };
+  // El testigo de concurrencia: el `updatedAt` vigente, como lo traería un
+  // formulario recién abierto.
+  const testigo = async () =>
+    (await prisma.pending.findUniqueOrThrow({ where: { id: paraEditar.pending.id } })).updatedAt;
+  // Sin ninguna de las dos autoridades de corrección: el camino del cupo único.
+  const vendedorSinAutoridad = { canManageAll: false, canEditAll: false, canOrder: false };
 
   assert(
-    (await updatePending({ ...correccion, actorId: intruder.id, canManageAll: false })).rejection ===
-      "NOT_OWNER",
-    "un vendedor ajeno no corrige un pendiente que no es suyo",
+    (
+      await updatePending({
+        ...correccion,
+        expectedUpdatedAt: await testigo(),
+        actorId: intruder.id,
+        ...vendedorSinAutoridad,
+      })
+    ).rejection === "NOT_OWNER",
+    "un vendedor ajeno sin autoridad no corrige un pendiente que no es suyo",
   );
 
   assert(
-    (await updatePending({ ...correccion, actorId: seller.id, canManageAll: false })).rejection ===
-      null,
+    (
+      await updatePending({
+        ...correccion,
+        expectedUpdatedAt: await testigo(),
+        actorId: seller.id,
+        ...vendedorSinAutoridad,
+      })
+    ).rejection === null,
     "el vendedor dueño corrige su pendiente",
   );
   const corregido = await prisma.pending.findUniqueOrThrow({ where: { id: paraEditar.pending.id } });
@@ -386,14 +466,30 @@ async function main() {
   assert(corregido.sellerEditedAt !== null, "queda registrado cuándo corrigió");
 
   assert(
-    (await updatePending({ ...correccion, quantity: 7, actorId: seller.id, canManageAll: false }))
-      .rejection === "ALREADY_EDITED",
-    "el vendedor NO puede corregir una segunda vez",
+    (
+      await updatePending({
+        ...correccion,
+        quantity: 7,
+        expectedUpdatedAt: await testigo(),
+        actorId: seller.id,
+        ...vendedorSinAutoridad,
+      })
+    ).rejection === "ALREADY_EDITED",
+    "el vendedor sin autoridad NO puede corregir una segunda vez",
   );
 
   assert(
-    (await updatePending({ ...correccion, quantity: 8, actorId: intruder.id, canManageAll: true }))
-      .rejection === null,
+    (
+      await updatePending({
+        ...correccion,
+        quantity: 8,
+        expectedUpdatedAt: await testigo(),
+        actorId: intruder.id,
+        canManageAll: true,
+        canEditAll: true,
+        canOrder: true,
+      })
+    ).rejection === null,
     "gerencia corrige cualquier pendiente, sin límite",
   );
   const porGerencia = await prisma.pending.findUniqueOrThrow({
@@ -406,9 +502,33 @@ async function main() {
   );
 
   assert(
-    (await updatePending({ ...correccion, quantity: 8, actorId: intruder.id, canManageAll: true }))
-      .rejection === null,
+    (
+      await updatePending({
+        ...correccion,
+        quantity: 9,
+        expectedUpdatedAt: await testigo(),
+        actorId: intruder.id,
+        canManageAll: true,
+        canEditAll: true,
+        canOrder: true,
+      })
+    ).rejection === null,
     "gerencia puede corregir de nuevo",
+  );
+
+  assert(
+    (
+      await updatePending({
+        ...correccion,
+        quantity: 10,
+        expectedUpdatedAt: corregido.updatedAt,
+        actorId: intruder.id,
+        canManageAll: true,
+        canEditAll: true,
+        canOrder: true,
+      })
+    ).rejection === "STALE",
+    "un formulario viejo se rechaza, también para gerencia",
   );
 
   console.log("\nTODO VERIFICADO CONTRA POSTGRESQL REAL\n");

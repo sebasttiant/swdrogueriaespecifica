@@ -557,68 +557,101 @@ export const pendingPurchaseDepositSchema = z.object({
 // vuelo es parte de registrar, no de corregir. Si hace falta uno nuevo, se carga
 // al catálogo y se elige.
 // --------------------------------------------------------------------------
-export const pendingUpdateSchema = z
-  .object({
-    id: z.string().trim().min(1, "Falta el id del pendiente"),
-    productId: z.string().trim().min(1, { error: "Elegí un producto." }),
-    quantity: z.coerce
-      .number()
-      .int("La cantidad debe ser un número entero")
-      .min(1, "La cantidad debe ser al menos 1"),
-    promisedAt: z
-      .string({ error: "Indicá la fecha y hora prometida" })
-      .transform((value, ctx) => {
-        const parsed = parseBogotaWallTime(value);
-        if (parsed === null) {
-          ctx.addIssue({ code: "custom", message: "Indicá una fecha y hora válida" });
-          return z.NEVER;
-        }
-        return parsed;
-      }),
-    customerName: z
-      .string({ error: "Escribí el nombre del cliente." })
-      .trim()
-      .min(1, { error: "Escribí el nombre del cliente." })
-      .max(120, { error: "El nombre del cliente es demasiado largo." }),
-    customerPhone: z
-      .string({ error: "Escribí el teléfono del cliente." })
-      .trim()
-      .min(1, { error: "Escribí el teléfono del cliente." })
-      .max(MAX_PHONE_INPUT_LENGTH, { error: "El teléfono no es válido." })
-      .transform((value, ctx) => {
-        const normalized = normalizePhone(value);
-        if (normalized === null) {
-          ctx.addIssue({
-            code: "custom",
-            message: "El teléfono no es válido. Ej: 300 123 4567",
-          });
-          return z.NEVER;
-        }
-        return normalized;
-      }),
-    customerAddress: optionalText(200),
-    note: optionalText(280),
-    // Se corrige acá, con el mismo permiso que el resto de la corrección.
-    manualSellerName: optionalSellerName,
-    zone: optionalText(MAX_ZONE_LENGTH),
-    totalAmount: optionalTotalAmount,
-    paidAmount: optionalPaidAmount,
-    paymentMethod: optionalPaymentMethod,
-  })
-  .superRefine((data, ctx) => {
-    if (
-      data.totalAmount !== undefined &&
-      data.paidAmount !== undefined &&
-      data.paidAmount > data.totalAmount
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["paidAmount"],
-        message: "El abono no puede superar el valor total.",
-      });
-    }
+// Los campos operativos: los que entran en CUALQUIER corrección, también en la
+// de una fila ajena (ver `updatePending`).
+const pendingCorrectionShape = {
+  id: z.string().trim().min(1, "Falta el id del pendiente"),
+  productId: z.string().trim().min(1, { error: "Elegí un producto." }),
+  quantity: z.coerce
+    .number()
+    .int("La cantidad debe ser un número entero")
+    .min(1, "La cantidad debe ser al menos 1"),
+  promisedAt: z
+    .string({ error: "Indicá la fecha y hora prometida" })
+    .transform((value, ctx) => {
+      const parsed = parseBogotaWallTime(value);
+      if (parsed === null) {
+        ctx.addIssue({ code: "custom", message: "Indicá una fecha y hora válida" });
+        return z.NEVER;
+      }
+      return parsed;
+    }),
+  note: optionalText(280),
+  // Se corrige acá, con el mismo permiso que el resto de la corrección.
+  manualSellerName: optionalSellerName,
+  zone: optionalText(MAX_ZONE_LENGTH),
+};
 
-    checkPaymentMethodAgainstPaid(data, ctx);
-  });
+// Identidad del cliente y montos: los campos que la corrección de una fila
+// AJENA no puede tocar. Solo el dueño y gerencia los mandan.
+const pendingProtectedShape = {
+  customerName: z
+    .string({ error: "Escribí el nombre del cliente." })
+    .trim()
+    .min(1, { error: "Escribí el nombre del cliente." })
+    .max(120, { error: "El nombre del cliente es demasiado largo." }),
+  customerPhone: z
+    .string({ error: "Escribí el teléfono del cliente." })
+    .trim()
+    .min(1, { error: "Escribí el teléfono del cliente." })
+    .max(MAX_PHONE_INPUT_LENGTH, { error: "El teléfono no es válido." })
+    .transform((value, ctx) => {
+      const normalized = normalizePhone(value);
+      if (normalized === null) {
+        ctx.addIssue({
+          code: "custom",
+          message: "El teléfono no es válido. Ej: 300 123 4567",
+        });
+        return z.NEVER;
+      }
+      return normalized;
+    }),
+  customerAddress: optionalText(200),
+  totalAmount: optionalTotalAmount,
+  paidAmount: optionalPaidAmount,
+  paymentMethod: optionalPaymentMethod,
+};
+
+/**
+ * Los nombres de los campos protegidos, tal como viajan en el FormData. La
+ * acción mira si ALGUNO está presente —aunque venga vacío— antes de validar:
+ * el formulario de una fila ajena no los renderiza, así que su sola presencia
+ * ya dice algo.
+ */
+export const PENDING_PROTECTED_FIELDS = Object.keys(pendingProtectedShape) as Array<
+  keyof typeof pendingProtectedShape
+>;
+
+function refineProtectedAmounts(
+  data: { totalAmount?: number; paidAmount?: number; paymentMethod?: PaymentMethod },
+  ctx: z.RefinementCtx,
+): void {
+  if (
+    data.totalAmount !== undefined &&
+    data.paidAmount !== undefined &&
+    data.paidAmount > data.totalAmount
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["paidAmount"],
+      message: "El abono no puede superar el valor total.",
+    });
+  }
+
+  checkPaymentMethodAgainstPaid(data, ctx);
+}
+
+/** Los campos operativos de una corrección, sin identidad ni montos. */
+export const pendingCorrectionSchema = z.object(pendingCorrectionShape);
+
+/** Identidad y montos de una corrección completa (propia o de gerencia). */
+export const pendingProtectedSchema = z
+  .object(pendingProtectedShape)
+  .superRefine(refineProtectedAmounts);
+
+/** El formulario completo: operativos + protegidos, con las mismas reglas. */
+export const pendingUpdateSchema = z
+  .object({ ...pendingCorrectionShape, ...pendingProtectedShape })
+  .superRefine(refineProtectedAmounts);
 
 export type PendingUpdateInput = z.infer<typeof pendingUpdateSchema>;

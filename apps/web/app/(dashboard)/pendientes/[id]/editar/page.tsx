@@ -22,6 +22,10 @@ export const metadata: Metadata = { title: "Corregir pendiente" };
 //
 // Quien no puede corregirlo recibe un 404, igual que si no existiera: decirle
 // "no es tuyo" le confirmaría que el pendiente existe.
+//
+// Sobre una fila AJENA, quien no opera la cola entera recibe el formulario
+// restringido: sin identidad del cliente —el service ya la minimizó— y sin
+// montos. El producto queda fijo si ya hay algo facturado o entregado.
 // --------------------------------------------------------------------------
 export default async function EditarPendientePage({
   params,
@@ -29,15 +33,29 @@ export default async function EditarPendientePage({
   params: Promise<{ id: string }>;
 }) {
   const session = await requireCapability("canCreatePendientes");
-  const canManageAll = can(session.user.role, "canManageAllPendings");
+  const role = session.user.role;
+  // Con cualquiera de las dos autoridades se corrige sin límite; sin ninguna,
+  // rige la corrección única sobre lo propio.
+  const correctsAll = can(role, "canManageAllPendings") || can(role, "canEditAllPendings");
   const { id } = await params;
 
-  const pending = await getPendingForEdit({
+  const view = await getPendingForEdit({
     id,
-    actorId: session.user.id,
-    canManageAll,
+    actor: { role, userId: session.user.id },
   });
-  if (!pending) notFound();
+  if (!view) notFound();
+  const { pending, restricted, stockSetAside } = view;
+  // Producto bloqueado en el formulario (el servidor vuelve a decidir):
+  //  - corrección ajena restringida con unidades facturadas o entregadas;
+  //  - corrección PROPIA con mercadería apartada, para quien no tiene autoridad
+  //    de compras (contención T9 del defecto de pérdida de unidades).
+  const lockedByCommitment =
+    restricted && (pending.invoicedQuantity > 0 || pending.deliveredQuantity > 0);
+  const lockedByStock =
+    !restricted &&
+    pending.createdById === session.user.id &&
+    !can(role, "canOrderMissingItems") &&
+    stockSetAside;
   // T2.2b: el cierre parcial es terminal — corregir un pedido que el cliente ya
   // cerró en el mostrador no tiene sentido (el server lo rechaza igual).
   if (
@@ -46,10 +64,10 @@ export default async function EditarPendientePage({
     pending.status === "CLOSED_PARTIAL"
   )
     notFound();
-  // El vendedor ya usó su única corrección: el formulario no se le vuelve a
-  // ofrecer. La Server Action lo rechaza igual; esto solo evita mostrarle algo
-  // que no va a poder guardar.
-  if (!canManageAll && pending.sellerEditedAt !== null) notFound();
+  // Quien tiene el cupo de una sola corrección y ya lo usó: el formulario no se
+  // le vuelve a ofrecer. La Server Action lo rechaza igual; esto solo evita
+  // mostrarle algo que no va a poder guardar.
+  if (!correctsAll && pending.sellerEditedAt !== null) notFound();
 
   const [products, zones] = await Promise.all([
     getProducts({ take: MAX_PAGE_SIZE }),
@@ -80,7 +98,10 @@ export default async function EditarPendientePage({
           products={productOptions}
           zones={zones}
           minQuantity={Math.max(pending.deliveredQuantity, pending.invoicedQuantity)}
-          isLastChance={!canManageAll}
+          isLastChance={!correctsAll}
+          restricted={restricted}
+          productLocked={lockedByCommitment || lockedByStock}
+          productLockReason={lockedByStock ? "stockSetAside" : "committed"}
         />
       </Card>
     </div>

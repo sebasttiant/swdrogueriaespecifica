@@ -67,7 +67,9 @@ function capitalize(value: string): string {
 
 export default async function DashboardPage() {
   const session = await requireCapability("canViewDashboard");
-  const canViewCustomerIdentity = can(session.user.role, "canViewCustomerIdentity");
+  // Identidad del cliente fila por fila, con la misma regla que las listas:
+  // la propia siempre, la ajena solo con `canViewCustomerIdentity`.
+  const identityViewer = { role: session.user.role, userId: session.user.id };
   const canManageAll = can(session.user.role, "canManageAllPendings");
   // Las métricas son lectura, así que usan la misma regla de alcance que las
   // listas; las acciones siguen gateando SOLO con `canManageAll`.
@@ -88,7 +90,7 @@ export default async function DashboardPage() {
   // --------------------------------------------------------------------------
   const [dashboard, shelfMissingCount, pendingSupplyCount, expiringCounts] =
     await Promise.all([
-      getPendingDashboard({ canViewCustomerIdentity, now, scope: canSeeAll ? "global" : "owner", ownerId: canSeeAll ? undefined : session.user.id }),
+      getPendingDashboard({ identityViewer, now, scope: canSeeAll ? "global" : "owner", ownerId: canSeeAll ? undefined : session.user.id }),
       getOpenMissingCount("shelf"),
       getOpenMissingCount("pending"),
       getExpiringBatchCounts(now),

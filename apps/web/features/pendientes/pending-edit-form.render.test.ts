@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
+const { actionState } = vi.hoisted(() => ({
+  actionState: { current: { error: null, ok: false } as Record<string, unknown> },
+}));
+
 vi.mock("@/lib/hooks/use-action-state", () => ({
-  useActionState: () => [{ error: null, ok: false }, vi.fn(), false],
+  useActionState: () => [actionState.current, vi.fn(), false],
 }));
 
 vi.mock("@/server/actions/pending.actions", () => ({
@@ -42,17 +46,26 @@ function stored(overrides: Partial<PendingEditValues> = {}): PendingEditValues {
     paidAmount: 0,
     paymentMethod: null,
     manualSellerName: null,
+    updatedAt: new Date("2026-08-30T12:00:00.123Z"),
     ...overrides,
   };
 }
 
-function renderEdit(pending: PendingEditValues): string {
+function renderEdit(
+  pending: PendingEditValues,
+  options: {
+    restricted?: boolean;
+    productLocked?: boolean;
+    productLockReason?: "committed" | "stockSetAside";
+  } = {},
+): string {
   return renderToStaticMarkup(
     createElement(PendingEditForm, {
       pending,
       products: PRODUCTS,
       minQuantity: 0,
       isLastChance: false,
+      ...options,
     }),
   );
 }
@@ -85,5 +98,89 @@ describe("PendingEditForm · vendedor escrito a mano", () => {
     const tag = inputTag(renderEdit(stored()), "manualSellerName");
 
     expect(tag).toContain('value=""');
+  });
+});
+
+// --------------------------------------------------------------------------
+// Corrección compartida (gerencia, 2026-09-30).
+// --------------------------------------------------------------------------
+const PROTECTED_INPUTS = [
+  "customerName",
+  "customerPhone",
+  "customerAddress",
+  "totalAmount",
+  "paidAmount",
+  "paymentMethod",
+];
+
+describe("PendingEditForm · testigo de concurrencia", () => {
+  it.each([false, true])("viaja oculto con el updatedAt de la carga (restringida=%s)", (restricted) => {
+    const html = renderEdit(stored(), { restricted });
+    const tag = html.match(/<input[^>]*name="expectedUpdatedAt"[^>]*>/)?.[0] ?? "";
+
+    expect(tag).toContain('type="hidden"');
+    expect(tag).toContain('value="2026-08-30T12:00:00.123Z"');
+  });
+});
+
+describe("PendingEditForm · corrección restringida (fila ajena)", () => {
+  it("no renderiza identidad, montos ni vendedor escrito: no se envían", () => {
+    const html = renderEdit(
+      stored({ customerName: null, customerPhone: null, paidAmount: 5000 }),
+      { restricted: true },
+    );
+
+    for (const field of [...PROTECTED_INPUTS, "manualSellerName"]) {
+      expect(html).not.toContain(`name="${field}"`);
+    }
+    // Lo editable sigue ahí.
+    for (const field of ["productId", "quantity", "promisedAt", "zone", "note"]) {
+      expect(html).toContain(`name="${field}"`);
+    }
+  });
+
+  it("con el producto bloqueado, lo muestra deshabilitado, lo conserva y explica por qué", () => {
+    const html = renderEdit(stored(), { restricted: true, productLocked: true });
+
+    const select = inputTag(html, "productId");
+    expect(select).toContain("disabled");
+    expect(select).not.toContain('name="productId"');
+    expect(html).toContain('type="hidden" name="productId" value="p1"');
+    expect(html).toContain("ya tiene unidades facturadas o entregadas");
+  });
+
+  it("la corrección completa conserva todos sus campos", () => {
+    const html = renderEdit(stored());
+
+    for (const field of PROTECTED_INPUTS.filter((f) => f !== "paymentMethod")) {
+      expect(html).toContain(`name="${field}"`);
+    }
+  });
+});
+
+describe("PendingEditForm · mercadería apartada en una corrección propia", () => {
+  it("bloquea el producto, lo conserva y explica que hay mercadería apartada", () => {
+    const html = renderEdit(stored(), { productLocked: true, productLockReason: "stockSetAside" });
+
+    const select = inputTag(html, "productId");
+    expect(select).toContain("disabled");
+    expect(html).toContain('type="hidden" name="productId" value="p1"');
+    expect(html).toContain("ya tiene mercadería apartada. Pedile el cambio a gerencia.");
+    // La corrección propia conserva el resto de sus campos.
+    expect(html).toContain('name="customerName"');
+  });
+});
+
+describe("PendingEditForm · guardar sin cambios", () => {
+  it("dice que no había cambios, no que se corrigió", () => {
+    actionState.current = { error: null, ok: true, unchanged: true };
+    try {
+      const html = renderEdit(stored());
+
+      expect(html).toContain("No había cambios para guardar.");
+      expect(html).not.toContain("Pendiente corregido.");
+    } finally {
+      actionState.current = { error: null, ok: false };
+    }
   });
 });

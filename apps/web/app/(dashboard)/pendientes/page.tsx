@@ -2,13 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { PageHeader } from "@/app/_components/app-shell/page-header";
-import {
-  can,
-  contactScopeFor,
-  invoiceScopeFor,
-  seesAllPendings,
-} from "@/lib/auth/permissions";
-import type { PendingViewer } from "@/features/pendientes/fulfillment-notice";
+import { can, seesAllPendings } from "@/lib/auth/permissions";
+import { pendingViewerFor } from "@/features/pendientes/fulfillment-notice";
 import { requireCapability } from "@/lib/auth/require-role";
 import { Card, CardTitle } from "@/app/_components/ui/card";
 import { MAX_PAGE_SIZE } from "@/lib/pagination";
@@ -52,22 +47,16 @@ export default async function PendientesPage({
   // Ver la cola entera ≠ mutarla: la regla vive en `seesAllPendings`, una sola
   // vez. Las acciones de cumplimiento siguen gateando SOLO con `canManageAll`.
   const canSeeAll = seesAllPendings(session.user.role);
-  // Quien no ve toda la cola recibe la lista acotada a sus propias filas (abajo,
-  // vía `ownerId`), así que ve los datos de SUS clientes: son los que tiene que
-  // llamar. Ver los de todos es lo que exige la capacidad.
-  const canViewCustomerIdentity = canSeeAll
-    ? can(session.user.role, "canViewCustomerIdentity")
-    : true;
+  // La identidad del cliente se decide FILA POR FILA en el service: cada uno ve
+  // la de sus propios pendientes, y la de los ajenos solo con
+  // `canViewCustomerIdentity`. La pantalla solo le dice quién mira.
+  const identityViewer = { role: session.user.role, userId: session.user.id };
   const canDeliver = can(session.user.role, "canDeliverPendings");
   const canCancel = can(session.user.role, "canCancelPendings");
   // Quién mira la cola. Autoridad y ALCANCE viajan juntos y explícitos: la fila
-  // decide con `invoiceAffordance`, no la pantalla con un booleano de rol. El
-  // `canContactOrInvoice` que había acá unía dos permisos distintos en uno solo.
-  const viewer: PendingViewer = {
-    invoiceScope: invoiceScopeFor(session.user.role),
-    contactScope: contactScopeFor(session.user.role),
-    userId: session.user.id,
-  };
+  // decide con `invoiceAffordance`, `canDeliverRow`, `canEditRow`…, no la
+  // pantalla con un booleano de rol.
+  const viewer = pendingViewerFor(session.user.role, session.user.id);
   // Estado de gestión: autoridad de compras (gerencia). Reusa la misma
   // capability que pedir un faltante, no la de cancelar.
   const canManageStatus = can(session.user.role, "canOrderMissingItems");
@@ -105,7 +94,7 @@ export default async function PendientesPage({
       cursor,
       scope,
       axes,
-      canViewCustomerIdentity,
+      identityViewer,
       canViewPurchaseDeposit: canManagePurchaseDeposit,
       ownerId: canSeeAll ? undefined : session.user.id,
       now: new Date(),
@@ -135,10 +124,10 @@ export default async function PendientesPage({
       {/* Arriba del formulario a propósito: lo que ya llegó es acción
           pendiente sobre un cliente que está esperando, y eso pesa más que
           cargar un pedido nuevo. */}
-      <ArrivalNoticesLive
-        initialNotices={arrivalNotices}
-        canViewCustomerIdentity={canViewCustomerIdentity}
-      />
+      {/* Los avisos son SIEMPRE propios (ver arriba), y la identidad de una
+          fila propia se ve: misma regla por fila que aplica el sondeo en
+          `listArrivalNoticesAction`. */}
+      <ArrivalNoticesLive initialNotices={arrivalNotices} canViewCustomerIdentity />
 
       <Card className="space-y-4">
         <CardTitle>Nuevo pendiente</CardTitle>
@@ -219,16 +208,15 @@ export default async function PendientesPage({
           canDeliver={canDeliver}
           viewer={viewer}
           canCancel={canCancel}
-          // Corregir: gerencia sobre cualquiera, el vendedor sobre el suyo y una
-          // sola vez. El cupo del vendedor lo hace cumplir el servidor; acá solo
-          // se ofrece el enlace a quien puede llegar a usarlo.
-          canEdit={canManageAll || can(session.user.role, "canCreatePendientes")}
-          canManageAll={canManageAll}
+          // Corregir: sobre qué filas lo decide `viewer.editScope`
+          // (`canManageAllPendings` o `canEditAllPendings` corrigen cualquiera).
+          // El servidor vuelve a decidir; acá solo se ofrece el enlace.
+          canEdit={can(session.user.role, "canCreatePendientes")}
           // Seguimiento y trazabilidad: quien gestiona TODOS los pendientes
           // supervisa la jornada, y para eso tiene que VERLA completa —cliente,
           // zona, saldo y la nota del vendedor— sobre la misma fila. El
           // vendedor no lo necesita: sus filas son suyas y ya las conoce.
-          canFollowUp={canManageAll && canViewCustomerIdentity}
+          canFollowUp={canManageAll && can(session.user.role, "canViewCustomerIdentity")}
           nextCursor={pendings.nextCursor}
           pageHref={(nextCursor) =>
             reviewPageHref({ scope, view: "lista", axes, cursor: nextCursor })

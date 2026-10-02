@@ -1,13 +1,8 @@
 import type { Metadata } from "next";
 
 import { PageHeader } from "@/app/_components/app-shell/page-header";
-import {
-  can,
-  contactScopeFor,
-  invoiceScopeFor,
-  seesAllPendings,
-} from "@/lib/auth/permissions";
-import type { PendingViewer } from "@/features/pendientes/fulfillment-notice";
+import { can, seesAllPendings } from "@/lib/auth/permissions";
+import { pendingViewerFor } from "@/features/pendientes/fulfillment-notice";
 import { requireCapability } from "@/lib/auth/require-role";
 import { PendingCompactList } from "@/features/pendientes/pending-compact-list";
 import { getPendings } from "@/server/services/pending.service";
@@ -36,21 +31,16 @@ export default async function ListaDeEsperaPage({
   const role = session.user.role;
 
   // Mismo reparto que en `/pendientes`, y por la misma razón: ver la cola
-  // entera no es mutarla. El vendedor ve a SUS clientes esperando —que son a
-  // los que tiene que llamar—; supervisión y gerencia los ven todos.
+  // entera no es mutarla. La identidad del cliente se decide FILA POR FILA en
+  // el service: cada uno ve la de SUS clientes esperando —a los que tiene que
+  // llamar—, y la de los ajenos solo con `canViewCustomerIdentity`.
   const canSeeAll = seesAllPendings(role);
-  const canViewCustomerIdentity = canSeeAll
-    ? can(role, "canViewCustomerIdentity")
-    : true;
+  const identityViewer = { role, userId: session.user.id };
 
   const canManageAll = can(role, "canManageAllPendings");
   // Depósito de compra: gerencia y bodega. Decide si la consulta lee la columna.
   const canViewPurchaseDeposit = can(role, "canManagePurchaseDeposit");
-  const viewer: PendingViewer = {
-    invoiceScope: invoiceScopeFor(role),
-    contactScope: contactScopeFor(role),
-    userId: session.user.id,
-  };
+  const viewer = pendingViewerFor(role, session.user.id);
 
   const { cursor } = await searchParams;
 
@@ -60,7 +50,7 @@ export default async function ListaDeEsperaPage({
     // nadie esperando, por más que en su momento alguien haya aceptado esperar.
     scope: "active",
     waitlisted: true,
-    canViewCustomerIdentity,
+    identityViewer,
     canViewPurchaseDeposit,
     ownerId: canSeeAll ? undefined : session.user.id,
   });
@@ -80,12 +70,11 @@ export default async function ListaDeEsperaPage({
         canDeliver={can(role, "canDeliverPendings")}
         viewer={viewer}
         canCancel={can(role, "canCancelPendings")}
-        canEdit={canManageAll || can(role, "canCreatePendientes")}
-        canManageAll={canManageAll}
+        canEdit={can(role, "canCreatePendientes")}
         // Acá el seguimiento es el trabajo: la pantalla existe para avisarle a
         // una persona concreta, así que quien ve la cola completa necesita
         // cliente, teléfono y zona sobre la misma fila.
-        canFollowUp={canManageAll && canViewCustomerIdentity}
+        canFollowUp={canManageAll && can(role, "canViewCustomerIdentity")}
         nextCursor={pendings.nextCursor}
         pageHref={(nextCursor) =>
           `/lista-de-espera?cursor=${encodeURIComponent(nextCursor)}`
