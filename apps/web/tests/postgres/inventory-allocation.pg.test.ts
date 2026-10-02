@@ -22,6 +22,15 @@ import {
 // de aplicarse a medias, y que un reintento no descuente dos veces.
 
 const ACTOR = "actor-reparto";
+
+// Vencimientos RELATIVOS a hoy. Con fechas fijas el test caducaba solo: un lote
+// "que vence antes" pasaba a estar vencido el día que el reloj lo alcanzaba, y
+// el reparto lo excluía con razón. Lo que el test necesita es el ORDEN entre
+// vencimientos futuros, no una fecha concreta.
+const DAY_MS = 24 * 60 * 60 * 1000;
+function daysFromNow(days: number): Date {
+  return new Date(Date.now() + days * DAY_MS);
+}
 let productId = "";
 
 beforeAll(async () => {
@@ -69,7 +78,7 @@ function keys(howMany: number): string[] {
 
 describe("reserveAllocation", () => {
   it("compromete lo disponible y deja el estante intacto", async () => {
-    const lotId = await stockedLot(50, new Date("2027-01-01T00:00:00Z"));
+    const lotId = await stockedLot(50, daysFromNow(120));
     const plan = await planProductReservation({ productId, quantity: 20 });
 
     await prisma.$transaction((tx) =>
@@ -89,8 +98,8 @@ describe("reserveAllocation", () => {
   // FEFO de verdad: el que vence antes se agota primero. Lo contrario es tirar
   // mercadería a la basura teniendo con qué haberla vendido.
   it("agota el lote que vence antes y sigue por el siguiente", async () => {
-    const venceAntes = await stockedLot(10, new Date("2026-10-01T00:00:00Z"));
-    const venceDespues = await stockedLot(40, new Date("2027-05-01T00:00:00Z"));
+    const venceAntes = await stockedLot(10, daysFromNow(30));
+    const venceDespues = await stockedLot(40, daysFromNow(240));
 
     const plan = await planProductReservation({ productId, quantity: 25 });
     expect(plan.lines).toEqual([
