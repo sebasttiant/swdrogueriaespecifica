@@ -22,7 +22,7 @@ dockerizado desde el inicio y **auditable**.
 | ----------- | --------------------- | -------------- |
 | Runtime     | Node.js               | 24.21.0        |
 | Package mgr | pnpm (vía Corepack)   | 12.4.1         |
-| Framework   | Next.js (App Router)  | 16.3.5         |
+| Framework   | Next.js (App Router)  | 16.3.6         |
 | UI          | React / react-dom     | 19.3.0         |
 | Estilos     | Tailwind CSS          | 4.3.3          |
 | Lenguaje    | TypeScript (strict)   | 6.0.3          |
