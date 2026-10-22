@@ -1,0 +1,142 @@
+# ==========================================================================
+# Barrido de seguridad por calendario.
+#
+# Existe por lo que pasó el 22/10/2026: cuatro advisories publicados entre el
+# 27/09 y el 06/10 aparecieron recién al empujar un cambio que no tenía nada
+# que ver. Durante tres semanas el código desplegado fue vulnerable y el CI
+# estuvo en verde, porque nadie había empujado nada.
+#
+# Los escáneres de `ci-main` y `ci-pr` solo corren cuando alguien toca el
+# repositorio. Una vulnerabilidad no espera a que alguien toque el repositorio.
+#
+# Corre los MISMOS escáneres que el CI, sobre `main`, todos los días. No
+# construye para desplegar ni despliega: solo pregunta si lo que ya está
+# corriendo sigue siendo seguro hoy.
+# ==========================================================================
+name: Seguridad (programada)
+
+on:
+  schedule:
+    # 06:30 UTC = 01:30 en Bogotá. El hallazgo queda sobre la mesa antes de que
+    # abra la droguería, no a media jornada.
+    - cron: "30 6 * * *"
+  # Disparable a mano: tras un incidente no se espera al próximo cron.
+  workflow_dispatch:
+
+concurrency:
+  group: security-scheduled
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: Audit de dependencias (programado)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup
+
+      - name: pnpm audit (HIGH y CRITICAL)
+        run: pnpm audit --audit-level=high
+
+  trivy-fs:
+    name: Trivy · dependencias y secretos (programado)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+
+      # Fijado por SHA y no por tag: en marzo de 2026 se secuestraron tags de
+      # las actions de Trivy en un incidente de cadena de suministro. Un tag se
+      # puede mover; un SHA no.
+      - name: Instalar Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.74.0
+
+      - name: Trivy · filesystem
+        run: |
+          trivy fs . \
+            --scanners vuln,secret \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --ignorefile .trivyignore \
+            --exit-code 1 \
+            --format sarif \
+            --output trivy-fs.sarif
+
+      - name: Subir SARIF de Trivy (filesystem)
+        if: always() && hashFiles('trivy-fs.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs
+
+  # QUÉ PREGUNTA ESTE JOB, exactamente: «¿un redespliegue de HOY quedaría
+  # limpio?». NO pregunta si la imagen que corre en el VPS es segura, y la
+  # diferencia no es un matiz.
+  #
+  # El Dockerfile hace `apt-get upgrade -y` en CADA build, así que esta
+  # reconstrucción trae los paquetes de Debian al día antes de que Trivy mire.
+  # Una CVE de sistema operativo viva en la imagen del VPS queda remediada acá
+  # en silencio y este job daría verde igual. Sumado a que `deploy.sh` compila
+  # la imagen de producción por su cuenta en cada VPS, lo que se escanea acá no
+  # es —ni puede ser— el artefacto desplegado.
+  #
+  # Entonces, ¿para qué sirve? Para lo que SÍ es fiel: las dependencias npm del
+  # standalone vienen clavadas por `pnpm-lock.yaml`, así que una CVE ahí
+  # aparece igual que en producción. Fue el caso de `sharp`, que viajaba dentro
+  # de la imagen y el lockfile por sí solo no mostraba. Y cuando encuentra algo
+  # de sistema operativo, la respuesta es la misma: redesplegar.
+  #
+  # PENDIENTE para cerrar el hueco de verdad: publicar la imagen a un registro
+  # con su digest y escanear ESE digest, o conservar su SBOM. Mientras los dos
+  # VPS compilen local, no hay artefacto común que inspeccionar.
+  trivy-image:
+    name: Trivy · imagen reconstruida (no es la desplegada)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build imagen web
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          push: false
+          load: true
+          tags: drogueria-especifica-web:scheduled
+          build-args: |
+            APP_VERSION=${{ github.sha }}
+
+      - name: Instalar Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.74.0
+
+      - name: Trivy · imagen
+        run: |
+          trivy image drogueria-especifica-web:scheduled \
+            --scanners vuln \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --ignorefile .trivyignore \
+            --exit-code 1 \
+            --format sarif \
+            --output trivy-image.sarif
+
+      - name: Subir SARIF de Trivy (imagen)
+        if: always() && hashFiles('trivy-image.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image
