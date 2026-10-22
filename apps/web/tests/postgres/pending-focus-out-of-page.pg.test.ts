@@ -191,29 +191,33 @@ describe("los filtros de la vista también mandan", () => {
 // --------------------------------------------------------------------------
 // El servicio, que es lo que usa la página: agrega la minimización de PII.
 // --------------------------------------------------------------------------
-describe("servicio · minimiza la identidad del cliente igual que el listado", () => {
-  // Identidad por fila: el pendiente es de `ownerId`, así que quien lo mira sin
-  // `canViewCustomerIdentity` y sin ser su dueño no ve al cliente.
-  it("oculta el nombre a quien no puede verlo", async () => {
+describe("servicio · resuelve la identidad del cliente igual que el listado", () => {
+  // Gerencia, 2026-10-22: el cliente se ve en toda la cola, no solo en lo
+  // propio. Un vendedor que mira el pendiente de un compañero recibe nombre Y
+  // teléfono —con eso llama cuando llega la mercadería—, exactamente igual que
+  // la supervisión. Contra PostgreSQL real, no contra un mock del repositorio:
+  // es el camino que toma el enlace de un aviso de llegada.
+  it("entrega el cliente a cualquier rol, sea suya la fila o no", async () => {
     const id = await newPending(new Date("2026-08-01T00:00:00Z"));
     await prisma.pending.update({
       where: { id },
       data: { customerName: "Doña Marta", customerPhone: "3001112233" },
     });
 
-    const sinPermiso = await getPendingInView({
+    const mostrador = await getPendingInView({
       id,
       ownerId,
       identityViewer: { role: "OPERADOR", userId: "otro-vendedor" },
     });
-    const conPermiso = await getPendingInView({
+    const supervision = await getPendingInView({
       id,
       ownerId,
       identityViewer: { role: "SUPERVISOR", userId: "supervision" },
     });
 
-    expect(conPermiso?.customerName).toBe("Doña Marta");
-    expect(sinPermiso?.customerName).not.toBe("Doña Marta");
+    expect(supervision?.customerName).toBe("Doña Marta");
+    expect(mostrador?.customerName).toBe("Doña Marta");
+    expect(mostrador?.customerPhone).toBe("3001112233");
   });
 
   it("respeta el recorte por dueño", async () => {
