@@ -178,11 +178,17 @@ jobs:
           sarif_file: trivy-fs.sarif
           category: trivy-fs
 
-  # Despliegue: preparado, sin deploy real todavía (Fase posterior).
-  deploy:
-    name: Deploy (placeholder)
-    needs: [quality, operational-pendings-postgres, docker]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Pendiente
-        run: echo "Deploy real se configura en una fase posterior."
+# NO HAY JOB DE DESPLIEGUE, y es deliberado.
+#
+# Acá vivía un `deploy` que solo hacía `echo`. Un check verde llamado "Deploy"
+# que no despliega nada es PEOR que no tenerlo: en la lista de checks se lee
+# igual que uno real, y el día que alguien mire si el despliegue salió bien va
+# a ver una tilde verde que no significa nada.
+#
+# El despliegue de los dos VPS se hace con `./deploy.sh`, que exige la rama y
+# verifica el commit esperado antes y después del pull. Producción es una
+# decisión humana y se queda así.
+#
+# Cuando se automatice el VPS de pruebas, el job va en su PROPIO workflow, con
+# `needs` sobre los gates y un environment de GitHub que guarde las
+# credenciales — nunca como un paso suelto colgado del CI.
