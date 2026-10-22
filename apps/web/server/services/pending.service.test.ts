@@ -899,18 +899,20 @@ describe("getPendings · scope", () => {
 });
 
 describe("getPendings", () => {
-  it("nulls the identity of a foreign row for a viewer without canViewCustomerIdentity, keeping every other field intact", async () => {
+  // Gerencia, 2026-10-22: «el permiso es para todos». Un vendedor mirando la
+  // fila de un compañero recibe el cliente completo —nombre, teléfono y
+  // dirección—, que es con lo que se llama cuando llega la mercadería.
+  it("entrega la identidad de una fila ajena tal cual la trajo el repositorio", async () => {
     const row = pendingRow();
     repo.listPendings.mockResolvedValue({ items: [row], nextCursor: null });
 
     const result = await getPendings({ identityViewer: FOREIGN_VIEWER });
 
     expect(result.items).toHaveLength(1);
-    expect(result.items[0]!.customerName).toBeNull();
-    // Teléfono y dirección identifican al cliente tanto como el nombre: se cortan igual.
-    expect(result.items[0]!.customerPhone).toBeNull();
-    expect(result.items[0]!.customerAddress).toBeNull();
-    expect(result.items[0]).toEqual({ ...row, customerName: null, customerPhone: null, customerAddress: null });
+    expect(result.items[0]!.customerName).toBe("Juan Pérez");
+    expect(result.items[0]!.customerPhone).toBe("3001234567");
+    expect(result.items[0]!.customerAddress).toBe("Calle 10 #43-20");
+    expect(result.items[0]).toEqual(row);
   });
 
   it("returns customerName verbatim for a viewer with canViewCustomerIdentity", async () => {
@@ -982,8 +984,11 @@ describe("identidad del cliente por fila", () => {
   });
   const ownerless = pendingRow({ id: "ownerless", createdBy: null });
 
-  it.each(["OPERADOR", "BODEGA"] as const)(
-    "%s ve la identidad de sus filas y no la de las ajenas; nota y observación quedan (P1)",
+  // Los CINCO roles, incluidos mostrador y bodega. La fila propia, la ajena y
+  // la huérfana —un pendiente cuyo creador ya no resuelve— llegan iguales: con
+  // la capability puesta, de quién sea la fila deja de cambiar lo que se ve.
+  it.each(["SUPERADMIN", "ADMIN", "SUPERVISOR", "OPERADOR", "BODEGA"] as const)(
+    "%s ve la identidad de cualquier fila; nota y observación quedan (P1)",
     async (role) => {
       repo.listPendings.mockResolvedValue({
         items: [own("me"), foreign, ownerless],
@@ -996,29 +1001,18 @@ describe("identidad del cliente por fila", () => {
       expect(mine!.customerName).toBe("Juan Pérez");
       expect(mine!.customerPhone).toBe("3001234567");
       expect(mine!.customerAddress).toBe("Calle 10 #43-20");
-      expect(theirs).toEqual({
-        ...foreign,
-        customerName: null,
-        customerPhone: null,
-        customerAddress: null,
-      });
+      // La fila ajena llega SIN recortar, que es el reporte del 2026-10-22.
+      expect(theirs).toEqual(foreign);
+      expect(theirs!.customerName).toBe("Juan Pérez");
+      expect(theirs!.customerPhone).toBe("3001234567");
       // P1: el texto libre operativo lo ve todo el personal interno.
       expect(theirs!.note).toBe("llamar después de las 5");
       expect(theirs!.managementObservation).toBe("cliente frecuente");
-      expect(orphan!.customerName).toBeNull();
-      // Paginar no cambia por la minimización.
+      // Una fila sin dueño resoluble tampoco se recorta: la capability manda,
+      // no la propiedad. Antes era el caso que se perdía para todos.
+      expect(orphan!.customerName).toBe("Juan Pérez");
+      // Paginar nunca dependió de esto y sigue sin depender.
       expect(result.nextCursor).toBe("next");
-    },
-  );
-
-  it.each(["SUPERVISOR", "ADMIN", "SUPERADMIN"] as const)(
-    "%s ve la identidad de todas las filas",
-    async (role) => {
-      repo.listPendings.mockResolvedValue({ items: [foreign, ownerless], nextCursor: null });
-
-      const result = await getPendings({ identityViewer: { role, userId: "me" } });
-
-      expect(result.items).toEqual([foreign, ownerless]);
     },
   );
 
@@ -1037,16 +1031,20 @@ describe("identidad del cliente por fila", () => {
     });
   });
 
-  it("la fila buscada por id se minimiza con la misma regla", async () => {
+  // La búsqueda por id pasa por el MISMO helper que el listado. Que lo pruebe
+  // aparte no es duplicar: es el camino que toma el enlace de un aviso de
+  // llegada hacia un pendiente que quedó fuera de la página cargada, y ahí el
+  // dato del cliente es justamente el que se vino a buscar.
+  it("la fila buscada por id sigue la misma regla que el listado", async () => {
     repo.findPendingInView.mockResolvedValue(foreign);
 
-    const denied = await getPendingInView({
+    const theirs = await getPendingInView({
       id: "foreign",
       identityViewer: { role: "BODEGA", userId: "me" },
     });
-    expect(denied!.customerName).toBeNull();
-    expect(denied!.customerPhone).toBeNull();
-    expect(denied!.note).toBe("llamar después de las 5");
+    expect(theirs!.customerName).toBe("Juan Pérez");
+    expect(theirs!.customerPhone).toBe("3001234567");
+    expect(theirs!.note).toBe("llamar después de las 5");
 
     repo.findPendingInView.mockResolvedValue(own("me"));
     const mine = await getPendingInView({
@@ -1056,7 +1054,7 @@ describe("identidad del cliente por fila", () => {
     expect(mine!.customerName).toBe("Juan Pérez");
   });
 
-  it("el dashboard minimiza sus urgentes fila por fila", async () => {
+  it("los urgentes del dashboard siguen la misma regla", async () => {
     repo.countOpenPendings.mockResolvedValue(2);
     repo.countOverduePendings.mockResolvedValue(0);
     repo.countUpcomingPendings.mockResolvedValue(0);
@@ -1068,8 +1066,8 @@ describe("identidad del cliente por fila", () => {
     });
 
     expect(result.urgent[0]!.customerName).toBe("Juan Pérez");
-    expect(result.urgent[1]!.customerName).toBeNull();
-    expect(result.urgent[1]!.customerPhone).toBeNull();
+    expect(result.urgent[1]!.customerName).toBe("Juan Pérez");
+    expect(result.urgent[1]!.customerPhone).toBe("3001234567");
   });
 });
 
@@ -1082,14 +1080,17 @@ describe("getPendingDashboard", () => {
     repo.countUpcomingPendings.mockResolvedValue(2);
   });
 
-  it("nulls the identity of foreign `urgent` items for a viewer without canViewCustomerIdentity, counts unchanged", async () => {
+  // Los contadores nunca dependieron de la identidad y siguen sin depender:
+  // cuentan filas, no clientes. Se afirman junto al cambio para que una
+  // minimización mal puesta no pueda alterarlos sin que un test lo diga.
+  it("entrega la identidad en `urgent` sin tocar los contadores", async () => {
     const row = pendingRow();
     repo.listUrgentPendings.mockResolvedValue([row]);
 
     const result = await getPendingDashboard({ identityViewer: FOREIGN_VIEWER, now });
 
-    expect(result.urgent[0]!.customerName).toBeNull();
-    expect(result.urgent[0]).toEqual({ ...row, customerName: null, customerPhone: null, customerAddress: null });
+    expect(result.urgent[0]!.customerName).toBe("Juan Pérez");
+    expect(result.urgent[0]).toEqual(row);
     expect(result.openCount).toBe(4);
     expect(result.overdueCount).toBe(1);
     expect(result.upcomingCount).toBe(2);

@@ -268,8 +268,15 @@ describe("capabilities · can()", () => {
     expect(can("OPERADOR", "canViewFaltantes")).toBe(true);
   });
 
-  it("canViewCustomerIdentity: OPERADOR no la tiene; SUPERVISOR/ADMIN/SUPERADMIN sí", () => {
-    expect(can("OPERADOR", "canViewCustomerIdentity")).toBe(false);
+  // Gerencia, 2026-10-22: «la información del cliente y la información del
+  // pendiente deben ser visibles para todas las personas, no solamente por la
+  // persona que pone el pendiente. El permiso es para todos». Antes la tenían
+  // solo SUPERVISOR y la gerencia, y en el mostrador —cuentas compartidas de
+  // caja y mostrador, todas OPERADOR— el pendiente ajeno aparecía sin nombre ni
+  // teléfono, que es justo el dato con el que se llama al cliente.
+  it("canViewCustomerIdentity: la tienen TODOS los roles", () => {
+    expect(can("OPERADOR", "canViewCustomerIdentity")).toBe(true);
+    expect(can("BODEGA", "canViewCustomerIdentity")).toBe(true);
     expect(can("SUPERVISOR", "canViewCustomerIdentity")).toBe(true);
     expect(can("ADMIN", "canViewCustomerIdentity")).toBe(true);
     expect(can("SUPERADMIN", "canViewCustomerIdentity")).toBe(true);
@@ -382,11 +389,13 @@ describe("rolesWithCapability", () => {
     ]);
   });
 
-  it("canViewCustomerIdentity incluye SUPERVISOR sin incluir OPERADOR", () => {
+  it("canViewCustomerIdentity alcanza a todos los roles", () => {
     expect(rolesWithCapability("canViewCustomerIdentity")).toEqual([
       "SUPERADMIN",
       "ADMIN",
       "SUPERVISOR",
+      "OPERADOR",
+      "BODEGA",
     ]);
   });
 
@@ -477,16 +486,12 @@ describe("BODEGA (matriz de perfil)", () => {
     expect(can("BODEGA", "canReadAllPendings")).toBe(true);
   });
 
-  // Leer no es operar, y ver la cola no es ver al cliente. Los dos ejes siguen
-  // cerrados: bodega ve todos los pendientes y muta solo los suyos, sin acceso
-  // a nombre ni teléfono de nadie.
-  it("queda SIN exposición de PII ni poder sobre la cola ajena", () => {
-    for (const capability of [
-      "canViewCustomerIdentity",
-      "canManageAllPendings",
-    ] as const) {
-      expect(can("BODEGA", capability)).toBe(false);
-    }
+  // Leer NO es operar, y es el único eje que importa acá. Desde 2026-10-22
+  // bodega también lee al cliente por decisión de gerencia, pero el poder sobre
+  // la cola ajena sigue cerrado: ve todos los pendientes y muta solo los suyos.
+  it("queda SIN poder sobre la cola ajena, aunque lea al cliente", () => {
+    expect(can("BODEGA", "canManageAllPendings")).toBe(false);
+    expect(can("BODEGA", "canViewCustomerIdentity")).toBe(true);
   });
 });
 
@@ -657,10 +662,13 @@ describe("canReceiveMissingItems · recepción física", () => {
     }
   });
 
-  // La identidad del cliente no entra al depósito: para recibir una caja no
-  // hace falta saber a quién se le vende.
-  it("bodega sigue sin ver al cliente", () => {
-    expect(can("BODEGA", "canViewCustomerIdentity")).toBe(false);
+  // Bodega SÍ ve al cliente desde 2026-10-22: gerencia pidió que el dato sea
+  // visible para todo el personal interno. Ver al cliente no le da ninguna
+  // autoridad nueva sobre la cola ajena —eso sigue siendo `canManageAllPendings`,
+  // que bodega no tiene—: son dos ejes distintos y se verifican por separado.
+  it("bodega ve al cliente sin ganar autoridad sobre la cola ajena", () => {
+    expect(can("BODEGA", "canViewCustomerIdentity")).toBe(true);
+    expect(can("BODEGA", "canManageAllPendings")).toBe(false);
   });
 });
 
@@ -786,7 +794,9 @@ describe("recepción · quién marca la llegada y carga la entrada", () => {
   // son dos autoridades distintas.
   it("BODEGA recibe pero no decide sobre el cliente", () => {
     expect(can("BODEGA", "canReceiveMissingItems")).toBe(true);
-    expect(can("BODEGA", "canViewCustomerIdentity")).toBe(false);
+    // VER al cliente no es DECIDIR sobre él: desde 2026-10-22 bodega lee el
+    // dato, y las tres autoridades comerciales siguen afuera.
+    expect(can("BODEGA", "canViewCustomerIdentity")).toBe(true);
     expect(can("BODEGA", "canManageAllPendings")).toBe(false);
     expect(can("BODEGA", "canOrderMissingItems")).toBe(false);
   });
@@ -928,10 +938,13 @@ describe("canEditAllPendings (corrección compartida)", () => {
     ]);
   });
 
-  it("no regala el alcance global ni la identidad del cliente", () => {
+  // Corregir una fila ajena no arrastra el alcance global: `canEditAllPendings`
+  // y `canManageAllPendings` siguen siendo ejes separados. La identidad del
+  // cliente ya no se verifica acá —desde 2026-10-22 la tienen todos los roles,
+  // y su matriz vive en su propio bloque—.
+  it("no regala el alcance global", () => {
     for (const role of ["OPERADOR", "BODEGA"] as const) {
       expect(can(role, "canManageAllPendings")).toBe(false);
-      expect(can(role, "canViewCustomerIdentity")).toBe(false);
     }
   });
 
@@ -962,20 +975,25 @@ describe("canEditAllPendings (corrección compartida)", () => {
 // bodega sin la identidad de SUS clientes, o le mostraba la de todos.
 // --------------------------------------------------------------------------
 describe("seesCustomerIdentityOf (identidad por fila)", () => {
+  // Desde 2026-10-22 TODOS los roles tienen la capability, así que la rama
+  // "solo la propia" ya no la toma nadie. La tabla se conserva igual —y el
+  // `seesCustomerIdentityOf` también— porque la regla por fila es lo que hace
+  // que esto se decida en el servidor: el día que un rol nuevo entre sin la
+  // capability, vuelve a caer en la rama de dueño sin que nadie toque código.
   it.each([
     ["SUPERADMIN", true, true],
     ["ADMIN", true, true],
     ["SUPERVISOR", true, true],
-    ["OPERADOR", true, false],
-    ["BODEGA", true, false],
+    ["OPERADOR", true, true],
+    ["BODEGA", true, true],
   ] as const)("%s: propia=%s, ajena=%s", (role, own, foreign) => {
     expect(seesCustomerIdentityOf(role, "u-1", "u-1")).toBe(own);
     expect(seesCustomerIdentityOf(role, "u-1", "u-2")).toBe(foreign);
   });
 
-  it("una fila sin dueño resoluble no es propia de nadie", () => {
-    expect(seesCustomerIdentityOf("OPERADOR", "u-1", null)).toBe(false);
-    expect(seesCustomerIdentityOf("OPERADOR", "u-1", undefined)).toBe(false);
+  it("una fila sin dueño resoluble se ve igual: la capability manda", () => {
+    expect(seesCustomerIdentityOf("OPERADOR", "u-1", null)).toBe(true);
+    expect(seesCustomerIdentityOf("OPERADOR", "u-1", undefined)).toBe(true);
     expect(seesCustomerIdentityOf("SUPERVISOR", "u-1", null)).toBe(true);
   });
 });

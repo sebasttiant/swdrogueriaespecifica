@@ -270,6 +270,21 @@ export function PendingList({
                     Dirección: {pending.customerAddress}
                   </p>
                 ) : null}
+                {/* La nota del vendedor: lo que el cliente dijo y no entra en
+                    ningún campo —«va con pedido de probioessense», «pasa el
+                    jueves»—. Esta vista NO la mostraba, ni siquiera a gerencia:
+                    vivía solo en la vista listado, así que abrir el detalle
+                    perdía el único dato que explica el pendiente. Es el «ni la
+                    información del pendiente» del reporte del 2026-10-22.
+
+                    No se minimiza por rol, igual que en la vista listado: el
+                    service deja pasar el texto libre operativo a todo el
+                    personal interno (decisión P1 de gerencia). */}
+                {pending.note ? (
+                  <p className="[overflow-wrap:anywhere] text-sm italic text-muted-foreground">
+                    “{pending.note}”
+                  </p>
+                ) : null}
                 {/* T4.2b·B: la línea explica la ecuación del cierre parcial
                     (entregado + cancelado = pedido). Antes "Entregado: 3 / 5"
                     dejaba muda la cantidad que el cliente ya no espera. */}

@@ -371,10 +371,18 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     "canCreatePendientes",
     "canSubmitMissingReports",
     // Lee la cola completa y corrige cualquier pendiente (gerencia,
-    // 2026-09-30). Sin `canManageAllPendings` ni `canViewCustomerIdentity`:
-    // ve y corrige las filas ajenas sin ver al cliente ni operarlo.
+    // 2026-09-30). Sin `canManageAllPendings`: ve y corrige las filas ajenas
+    // sin OPERARLAS —facturar o entregar un pendiente ajeno sigue afuera—.
     "canReadAllPendings",
     "canEditAllPendings",
+    // Ve al cliente de CUALQUIER pendiente (gerencia, 2026-10-22: «el permiso
+    // es para todos»). Los computadores del mostrador usan cuentas compartidas
+    // —caja, mostrador, despachos— y todas son OPERADOR: sin esto, el vendedor
+    // que atiende ve el pendiente de un compañero sin nombre ni teléfono, que
+    // es exactamente el dato con el que hay que llamar al cliente cuando llega
+    // la mercadería. Es un eje de LECTURA y nada más: no toca `invoiceScopeFor`
+    // ni `editScopeFor`, así que no habilita ninguna acción nueva.
+    "canViewCustomerIdentity",
     // Contacta y factura, pero SIN `canManageAllPendings`: el alcance se
     // deriva en `invoiceScopeFor` y el service rechaza el pendiente ajeno.
     "canContactPendings",
@@ -407,10 +415,16 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     // que necesita ver qué está esperando cada vendedor para priorizar qué
     // descargar primero. Es el eje de LECTURA y solo ese:
     // `canManageAllPendings` sigue afuera, así que ve todos los pendientes y
-    // sigue pudiendo mutar únicamente los suyos. La identidad del cliente
-    // también sigue afuera (`canViewCustomerIdentity`): para priorizar una
-    // descarga no hace falta saber a quién se le vende.
+    // sigue pudiendo mutar únicamente los suyos.
     "canReadAllPendings",
+    // La identidad del cliente entró al depósito el 2026-10-22 por decisión de
+    // gerencia («el permiso es para todos»). Antes estaba afuera con el
+    // argumento de que para priorizar una descarga no hace falta saber a quién
+    // se le vende; gerencia prefiere que todo el personal interno lea el dato
+    // antes que sostener una excepción que nadie ve hasta que falta. Sigue
+    // siendo solo LECTURA: las autoridades comerciales (`canManageAllPendings`,
+    // `canOrderMissingItems`) siguen afuera.
+    "canViewCustomerIdentity",
     "canViewFaltantes",
     // Recepción: la cola de lo pedido y lo llegado. NO incluye pedir ni
     // descartar — esas siguen siendo decisiones de compras.

@@ -114,6 +114,26 @@ beforeEach(() => {
   mockActionState(IDLE);
 });
 
+// Gerencia, 2026-10-22: «ni el cliente, ni el número del cliente, ni la
+// información [...] que va con un pedido de Probioessense». Esa última parte es
+// `note`, y esta vista no la mostraba a NADIE —ni a un ADMIN—: vivía solo en la
+// vista listado, así que abrir el detalle perdía el dato que explica el pedido.
+describe("PendingList · la nota del vendedor", () => {
+  it("muestra la nota del pendiente", () => {
+    const html = renderList({
+      items: [pending({ note: "va con pedido de probioessense" })],
+    });
+
+    expect(html).toContain("va con pedido de probioessense");
+  });
+
+  it("un pendiente sin nota no paga un renglón vacío", () => {
+    const html = renderList({ items: [pending({ note: null })] });
+
+    expect(html).not.toContain("italic");
+  });
+});
+
 describe("PendingList · Orion SKU", () => {
   it.each([false, true])("shows the original Orion code with management=%s", (canManageStatus) => {
     const item = pending({

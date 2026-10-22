@@ -43,9 +43,10 @@ export default async function PendientesPage({
   }>;
 }) {
   const session = await requireCapability("canViewPendientes");
-  const canManageAll = can(session.user.role, "canManageAllPendings");
   // Ver la cola entera ≠ mutarla: la regla vive en `seesAllPendings`, una sola
-  // vez. Las acciones de cumplimiento siguen gateando SOLO con `canManageAll`.
+  // vez. Las acciones de cumplimiento siguen gateando con `canManageAllPendings`,
+  // que se deriva donde se usa (`pendingViewerFor`, `editScopeFor`) y por eso
+  // esta pantalla ya no necesita el booleano suelto.
   const canSeeAll = seesAllPendings(session.user.role);
   // La identidad del cliente se decide FILA POR FILA en el service: cada uno ve
   // la de sus propios pendientes, y la de los ajenos solo con
@@ -212,11 +213,16 @@ export default async function PendientesPage({
           // (`canManageAllPendings` o `canEditAllPendings` corrigen cualquiera).
           // El servidor vuelve a decidir; acá solo se ofrece el enlace.
           canEdit={can(session.user.role, "canCreatePendientes")}
-          // Seguimiento y trazabilidad: quien gestiona TODOS los pendientes
-          // supervisa la jornada, y para eso tiene que VERLA completa —cliente,
-          // zona, saldo y la nota del vendedor— sobre la misma fila. El
-          // vendedor no lo necesita: sus filas son suyas y ya las conoce.
-          canFollowUp={canManageAll && can(session.user.role, "canViewCustomerIdentity")}
+          // Seguimiento sobre la MISMA fila: cliente, teléfono, zona, saldo y
+          // la nota del vendedor.
+          //
+          // Depende SOLO de `canViewCustomerIdentity`. Llevaba además un
+          // `canManageAll &&`, y ese AND era el defecto que reportó gerencia el
+          // 2026-10-22: esta es la vista POR DEFECTO, y quien no gestiona la
+          // cola ajena —mostrador, caja, bodega— la veía sin el dato con el que
+          // se llama al cliente. Gestionar y VER son ejes distintos; exigir los
+          // dos para leer confundía autoridad con lectura.
+          canFollowUp={can(session.user.role, "canViewCustomerIdentity")}
           nextCursor={pendings.nextCursor}
           pageHref={(nextCursor) =>
             reviewPageHref({ scope, view: "lista", axes, cursor: nextCursor })

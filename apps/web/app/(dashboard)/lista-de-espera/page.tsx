@@ -37,7 +37,6 @@ export default async function ListaDeEsperaPage({
   const canSeeAll = seesAllPendings(role);
   const identityViewer = { role, userId: session.user.id };
 
-  const canManageAll = can(role, "canManageAllPendings");
   // Depósito de compra: gerencia y bodega. Decide si la consulta lee la columna.
   const canViewPurchaseDeposit = can(role, "canManagePurchaseDeposit");
   const viewer = pendingViewerFor(role, session.user.id);
@@ -71,10 +70,11 @@ export default async function ListaDeEsperaPage({
         viewer={viewer}
         canCancel={can(role, "canCancelPendings")}
         canEdit={can(role, "canCreatePendientes")}
-        // Acá el seguimiento es el trabajo: la pantalla existe para avisarle a
-        // una persona concreta, así que quien ve la cola completa necesita
-        // cliente, teléfono y zona sobre la misma fila.
-        canFollowUp={canManageAll && can(role, "canViewCustomerIdentity")}
+        // Acá el seguimiento ES el trabajo: la pantalla existe para avisarle a
+        // una persona concreta, así que quien ve la cola necesita cliente,
+        // teléfono y zona sobre la misma fila. Mismo criterio que /pendientes:
+        // depende de poder VER al cliente, no de gestionar la cola ajena.
+        canFollowUp={can(role, "canViewCustomerIdentity")}
         nextCursor={pendings.nextCursor}
         pageHref={(nextCursor) =>
           `/lista-de-espera?cursor=${encodeURIComponent(nextCursor)}`
