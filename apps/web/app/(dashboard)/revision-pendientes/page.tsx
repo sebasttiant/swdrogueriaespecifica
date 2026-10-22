@@ -249,8 +249,19 @@ export default async function RevisionPendientesPage({
 
       {showingSupply ? (
         <>
-          <StockoutList items={stockouts} />
+          {/* La cola de llegadas VA PRIMERO (bodega, 14/10/2026). El orden
+              sigue cómo entran a trabajar: llegan con las cajas en la mano y
+              el primer gesto es marcar lo que acaba de llegar. Buscar en el
+              depósito un quiebre de stock es la tarea de después.
+
+              Antes los quiebres iban arriba y había que bajar la pantalla para
+              llegar a lo urgente, con la caja en la mano. Son dos secciones
+              independientes —dos consultas, dos propósitos— así que esto es
+              orden de lectura y nada más: ninguna de las dos cambia de datos,
+              de permisos ni de gestos. Justamente por eso el orden se fija en
+              un test, o se pierde en el próximo reacomodo. */}
           <PendingReceptionQueue items={reception!} canReceive={canReceive} />
+          <StockoutList items={stockouts} />
         </>
       ) : (
         <>
