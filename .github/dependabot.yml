@@ -25,12 +25,30 @@ updates:
       time: "07:00"
       timezone: America/Bogota
 
-    # Espera antes de proponer una versión recién publicada. Es el MISMO
-    # criterio que `minimumReleaseAge: 10080` de pnpm-workspace.yaml: un
-    # paquete comprometido suele detectarse y retirarse en horas o días.
+    # Espera antes de proponer una versión recién publicada. Mismo criterio que
+    # `minimumReleaseAge: 10080` de pnpm-workspace.yaml: un paquete comprometido
+    # suele detectarse y retirarse en horas o días.
     #
-    # Sin esto, Dependabot propondría versiones que `pnpm install` después
-    # rechaza por demasiado nuevas, y el PR nacería roto.
+    # NO CUBRE LAS ACTUALIZACIONES DE SEGURIDAD, y conviene saberlo antes de
+    # que pase: GitHub aplica `cooldown` solo a las de VERSIÓN. Ante una CVE,
+    # Dependabot abre el PR con el parche aunque tenga horas de publicado, y
+    # entonces `pnpm install --frozen-lockfile` lo rechaza por
+    # `minimumReleaseAge` y el PR nace con el CI en rojo.
+    #
+    # Eso NO es una falla del PR: son dos políticas tirando para lados
+    # distintos, las dos a propósito. Una quiere el parche ya; la otra quiere
+    # que el paquete madure una semana. Es una decisión humana, caso por caso:
+    #
+    #   - Si existe un parche maduro que también cierra el advisory (por
+    #     ejemplo 16.4.1 en vez de 16.4.2), se usa ese y no hace falta tocar
+    #     nada. Es el camino por defecto.
+    #   - Si el único parche es la versión fresca y la CVE lo amerita, se agrega
+    #     esa versión EXACTA a `minimumReleaseAgeExclude` en
+    #     pnpm-workspace.yaml, con la fecha y el motivo, y se retira cuando
+    #     cumpla los 7 días.
+    #
+    # Pasó el 22/10/2026 con next@16.4.2: tenía 6 días y 23 horas. Se desplegó
+    # 16.4.1, que cerraba los mismos advisories y ya estaba madura.
     cooldown:
       default-days: 7
 

@@ -76,13 +76,28 @@ jobs:
           sarif_file: trivy-fs.sarif
           category: trivy-fs
 
-  # La imagen se reconstruye desde el `main` de hoy a propósito. Lo que importa
-  # no es la imagen que se construyó el día del merge, sino si los paquetes de
-  # Debian y el standalone que están CORRIENDO tienen una CVE publicada
-  # después. Fue exactamente el caso de `sharp`: viajaba dentro de la imagen y
-  # el lockfile solo no lo mostraba.
+  # QUÉ PREGUNTA ESTE JOB, exactamente: «¿un redespliegue de HOY quedaría
+  # limpio?». NO pregunta si la imagen que corre en el VPS es segura, y la
+  # diferencia no es un matiz.
+  #
+  # El Dockerfile hace `apt-get upgrade -y` en CADA build, así que esta
+  # reconstrucción trae los paquetes de Debian al día antes de que Trivy mire.
+  # Una CVE de sistema operativo viva en la imagen del VPS queda remediada acá
+  # en silencio y este job daría verde igual. Sumado a que `deploy.sh` compila
+  # la imagen de producción por su cuenta en cada VPS, lo que se escanea acá no
+  # es —ni puede ser— el artefacto desplegado.
+  #
+  # Entonces, ¿para qué sirve? Para lo que SÍ es fiel: las dependencias npm del
+  # standalone vienen clavadas por `pnpm-lock.yaml`, así que una CVE ahí
+  # aparece igual que en producción. Fue el caso de `sharp`, que viajaba dentro
+  # de la imagen y el lockfile por sí solo no mostraba. Y cuando encuentra algo
+  # de sistema operativo, la respuesta es la misma: redesplegar.
+  #
+  # PENDIENTE para cerrar el hueco de verdad: publicar la imagen a un registro
+  # con su digest y escanear ESE digest, o conservar su SBOM. Mientras los dos
+  # VPS compilen local, no hay artefacto común que inspeccionar.
   trivy-image:
-    name: Trivy · imagen (programado)
+    name: Trivy · imagen reconstruida (no es la desplegada)
     runs-on: ubuntu-latest
     permissions:
       contents: read
