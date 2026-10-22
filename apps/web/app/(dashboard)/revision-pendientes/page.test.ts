@@ -320,6 +320,47 @@ describe("RevisionPendientesPage · la mitad física", () => {
     expect(html).not.toContain("Descartar Glucerna");
   });
 
+  // BODEGA, reunión del 14/10/2026: «ellos quieren que ese listado que dice "ya
+  // llegó" quede de primeras, en vez de registrar entrada [...] ellos no
+  // quieren escrolear».
+  //
+  // El orden responde a cómo entran a trabajar: llegan con las cajas en la
+  // mano y el primer gesto es marcar lo que acaba de llegar. Buscar en el
+  // depósito un quiebre de stock es la tarea de después, no la de la puerta.
+  //
+  // Este test fija un orden que antes no fijaba NADIE. Las dos secciones son
+  // independientes —dos consultas, dos permisos, dos gestos— y por eso
+  // intercambiarlas no toca ninguna lógica; justamente por eso también es tan
+  // fácil volver a invertirlas sin enterarse de esta reunión.
+  it("pone la cola de llegadas ANTES de los quiebres de stock", async () => {
+    mocks.listPendingReception.mockResolvedValue([fila()]);
+    mocks.listStockoutProducts.mockResolvedValue([
+      {
+        productId: "prod-9",
+        productName: "Funide Dermatic",
+        orionCode: "a-15286",
+        unit: "unidad",
+        missingQuantity: 1,
+        waitingCount: 1,
+        oldestSince: new Date("2026-10-16T14:00:00Z"),
+      },
+    ]);
+
+    const html = renderToStaticMarkup(
+      await RevisionPendientesPage({ searchParams: searchParams({ tab: "abastecimiento" }) }),
+    );
+
+    const llegadas = html.indexOf("Ya llegó");
+    const quiebres = html.indexOf("Sin stock, con clientes esperando");
+
+    // Las dos TIENEN que estar pintadas. Sin esto, una sección ausente da -1 y
+    // la comparación pasaría por ausencia en vez de por orden — un test que
+    // aprueba cuando la pantalla está rota.
+    expect(llegadas).toBeGreaterThan(-1);
+    expect(quiebres).toBeGreaterThan(-1);
+    expect(llegadas).toBeLessThan(quiebres);
+  });
+
   // BODEGA es la responsable habitual; ADMIN y SUPERADMIN el respaldo. Los tres
   // tienen `canReceiveMissingItems`.
   it.each(["BODEGA", "ADMIN", "SUPERADMIN"] as const)(
