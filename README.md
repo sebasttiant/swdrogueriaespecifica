@@ -20,7 +20,7 @@ dockerizado desde el inicio y **auditable**.
 
 | Capa        | Tecnología            | Versión        |
 | ----------- | --------------------- | -------------- |
-| Runtime     | Node.js               | 24.21.0        |
+| Runtime     | Node.js               | 24.22.1        |
 | Package mgr | pnpm (vía Corepack)   | 12.4.1         |
 | Framework   | Next.js (App Router)  | 16.3.6         |
 | UI          | React / react-dom     | 19.3.0         |
@@ -33,7 +33,7 @@ dockerizado desde el inicio y **auditable**.
 | Gráficas    | Recharts              | 3.10.1         |
 | Auth (JWT)  | jose                  | 6.2.12         |
 | Hash passwd | @node-rs/argon2       | 2.2.1          |
-| App runtime | Debian 13 "trixie"    | node:24.21.0-trixie-slim |
+| App runtime | Debian 13 "trixie"    | node:24.22.1-trixie-slim |
 
 > **Auth (Fase 2):** sesión **JWT stateless** en cookie httpOnly — `jose` (firma
 > Edge-safe, verificable en el middleware sin tocar la DB) + `@node-rs/argon2`
@@ -43,7 +43,7 @@ dockerizado desde el inicio y **auditable**.
 
 ## Requisitos
 
-- Node.js 24.21.0 (ver `.nvmrc`).
+- Node.js 24.22.1 (ver `.nvmrc`).
 - Corepack (incluido en Node) para activar pnpm 12.4.1.
 - Docker + Docker Compose (para levantar la base y la app).
 

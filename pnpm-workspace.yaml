@@ -28,6 +28,10 @@ packages:
 #   vite <8.2.4             -> GHSA-587h-7wmj-h5pm (HIGH), vía vitest. Es
 #     toolchain de pruebas y no entra en la imagen, pero corre en CI sobre el
 #     código del repositorio. Publicada 2026-10-06.
+#   undici <8.12.2          -> DoS por content-encodings excesivos (HIGH), vía
+#     vitest > jsdom. Toolchain de pruebas, no entra en la imagen. Se fija
+#     8.12.2 (publicada 2026-10-15) y no 8.12.3: esa tiene 6 días y queda por
+#     debajo de `minimumReleaseAge`. 8.12.2 cierra el aviso y ya maduró.
 overrides:
   "uuid@<11.1.1": "^11.1.1"
   "brace-expansion@<1.1.21": "1.1.21"
@@ -42,6 +46,7 @@ overrides:
   "source-map-js@<1.2.2": "1.2.2"
   "sharp@<0.35.5": "0.35.5"
   "vite@>=8.2.0 <8.2.4": "8.2.4"
+  "undici@>=8.0.0 <8.12.2": "8.12.2"
 
 # Advisories SIN parche disponible. Se excluyen de `pnpm audit` de a uno, nunca
 # bajando `--audit-level`: bajar el umbral apaga el escáner entero y oculta los
@@ -131,4 +136,3 @@ minimumReleaseAgeExclude:
   - "@types/node@24.13.4"
   - "@types/react@19.3.0"
   - "@types/react-dom@19.3.0"
-  - zod@4.6.5
