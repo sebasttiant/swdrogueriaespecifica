@@ -17,7 +17,7 @@ set -euo pipefail
 PNPM_VERSION="12.4.1"
 
 if ! command -v corepack >/dev/null 2>&1; then
-  echo "ERROR: corepack no está disponible. Viene con Node >= 16.9; instalá Node 24.21.0 (ver .nvmrc)." >&2
+  echo "ERROR: corepack no está disponible. Viene con Node >= 16.9; instalá la versión que declara .nvmrc." >&2
   exit 1
 fi
 

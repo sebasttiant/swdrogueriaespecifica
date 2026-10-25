@@ -6,9 +6,46 @@
 //   node scripts/check-toolchain.mjs   (o  pnpm check:toolchain)
 // ==========================================================================
 import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const REQUIRED_NODE = "24.21.0";
-const REQUIRED_PNPM = "12.4.1";
+// LAS VERSIONES SE LEEN DE SU FUENTE DE VERDAD, no se copian acá.
+//
+// Antes estaban escritas a mano en este archivo, y el 25/10/2026 eso costó un
+// CI rojo: se actualizó Node en `.nvmrc`, en `engines` y en el Dockerfile, pero
+// esta constante quedó en la versión vieja. El guión que existe para detectar
+// un toolchain incoherente era, él mismo, parte de la incoherencia — y encima
+// su mensaje de error decía "ver .nvmrc" mientras comparaba contra otra cosa.
+//
+// Derivarlas elimina la clase entera de error: un bump toca `.nvmrc` y
+// `packageManager`, y este chequeo lo sigue solo.
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+function leer(archivo, descripcion, transformar) {
+  let crudo;
+  try {
+    crudo = readFileSync(join(ROOT, archivo), "utf8");
+  } catch {
+    console.error(`\x1b[31m✗\x1b[0m No se pudo leer ${archivo}, que define ${descripcion}.`);
+    process.exit(1);
+  }
+  const valor = transformar(crudo);
+  if (!valor) {
+    console.error(`\x1b[31m✗\x1b[0m ${archivo} no declara ${descripcion} en el formato esperado.`);
+    process.exit(1);
+  }
+  return valor;
+}
+
+const REQUIRED_NODE = leer(".nvmrc", "la versión de Node", (s) => s.trim() || null);
+const REQUIRED_PNPM = leer(
+  "package.json",
+  "la versión de pnpm (campo `packageManager`)",
+  // `packageManager` puede traer el hash de integridad: `pnpm@12.4.1+sha512...`.
+  // Solo interesa la versión, que es lo que imprime `pnpm -v`.
+  (s) => JSON.parse(s).packageManager?.match(/^pnpm@([^+\s]+)/)?.[1] ?? null,
+);
 
 const green = (s) => `\x1b[32m${s}\x1b[0m`;
 const red = (s) => `\x1b[31m${s}\x1b[0m`;
