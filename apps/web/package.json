@@ -40,7 +40,7 @@
     "react-dom": "19.3.0",
     "recharts": "3.10.1",
     "tailwind-merge": "3.7.0",
-    "zod": "4.6.5"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "4.3.3",
