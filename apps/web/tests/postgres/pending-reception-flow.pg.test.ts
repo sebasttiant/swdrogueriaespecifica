@@ -199,6 +199,33 @@ describe("creación sin stock", () => {
     expect(fila.arrivedAt).not.toBeNull();
   });
 
+  // EL DEFECTO QUE ESTO CORRIGE (detectado el 23/10/2026, confirmado contra la
+  // base de producción). Al marcar «Ya llegó» la fila DESAPARECÍA de
+  // Abastecimiento: `clientOrderMissingWhere` filtraba por `OPEN_STATUSES`
+  // —FALTANTE y PEDIDO— y EN_BODEGA no está ahí.
+  //
+  // Bodega hacía el gesto y el producto se le evaporaba de la pantalla, sin
+  // forma de registrar la entrada desde donde estaba trabajando. No había
+  // pérdida de datos —la entrada de inventario lo reconcilia igual, porque la
+  // consulta FIFO sí incluye EN_BODEGA— pero sí de vista, y es justamente el
+  // trabajo que a bodega todavía le queda por hacer.
+  it("el pendiente SIGUE en la cola después de marcar la llegada", async () => {
+    const { pending, missingItem } = await nuevoPendiente(10);
+
+    await marcarLlegada(missingItem!.id);
+
+    const cola = await listPendingReception();
+    const fila = cola.find((c) => c.pendingId === pending.id);
+
+    expect(fila, "la fila marcada como llegada desapareció de Abastecimiento").toBeDefined();
+    // Se distingue de la que todavía no llegó: este flag decide qué gesto
+    // ofrece la pantalla —«Ya llegó» o «Registrar entrada»—.
+    expect(fila!.hasArrived).toBe(true);
+    // El contador de la pestaña tiene que decir lo mismo que la lista, o la
+    // pantalla miente sobre cuánto trabajo hay.
+    expect(await countPendingReception()).toBe(1);
+  });
+
   it("marcar la llegada NO habilita facturar", async () => {
     const { pending, missingItem } = await nuevoPendiente(10);
 

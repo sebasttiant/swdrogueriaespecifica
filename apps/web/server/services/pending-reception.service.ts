@@ -66,10 +66,16 @@ export async function listPendingReception(params?: {
   now?: Date;
 }): Promise<PendingReceptionItem[]> {
   const rows = await prisma.missingItem.findMany({
-    // Mismo `where` que el contador del chip. Ver `clientOrderMissingWhere`:
+    // `includeArrived` suma EN_BODEGA: lo que bodega ya marcó como llegado
+    // sigue siendo TRABAJO SUYO hasta que cargue la entrada. Sin esto la fila
+    // desaparecía de la pantalla justo al tocar «Ya llegó».
+    //
+    // Por eso ya NO es el mismo `where` que el chip «Pedidos sin conseguir», y
+    // está bien que no lo sea: el chip pregunta qué falta conseguir, y una caja
+    // que llegó dejó de faltar. Ver `clientOrderMissingWhere`:
     // escribirlo acá otra vez es cómo el chip termina diciendo un número que
     // esta lista no muestra.
-    where: clientOrderMissingWhere(params),
+    where: clientOrderMissingWhere({ ...params, includeArrived: true }),
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     take: PAGE_SIZE,
     // El `select` es la minimización: lo que no se nombra acá no sale de la
@@ -139,5 +145,9 @@ export async function listPendingReception(params?: {
 
 /** Cuántos pedidos de clientes esperan una acción física de bodega. */
 export function countPendingReception(): Promise<number> {
-  return prisma.missingItem.count({ where: clientOrderMissingWhere() });
+  // El MISMO `where` que la lista, `includeArrived` incluido: un contador que
+  // cuenta distinto de lo que la lista muestra es un número que miente.
+  return prisma.missingItem.count({
+    where: clientOrderMissingWhere({ includeArrived: true }),
+  });
 }

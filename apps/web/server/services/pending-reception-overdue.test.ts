@@ -110,11 +110,11 @@ describe("clientOrderMissingWhere", () => {
 });
 
 describe("listPendingReception", () => {
-  it("recorta a los vencidos con la condición del chip", async () => {
+  it("recorta a los vencidos, incluyendo lo ya llegado", async () => {
     await listPendingReception({ overdueOnly: true, now: NOW });
 
     expect(prismaMock.missingItem.findMany.mock.calls[0]![0].where).toEqual(
-      clientOrderMissingWhere({ overdueOnly: true, now: NOW }),
+      clientOrderMissingWhere({ overdueOnly: true, now: NOW, includeArrived: true }),
     );
   });
 
@@ -126,11 +126,39 @@ describe("listPendingReception", () => {
     expect(where.originId).toEqual({ not: null });
   });
 
-  it("el contador de la pestaña usa la misma base, sin ventana", async () => {
+  it("el contador de la pestaña usa la misma base que la lista, sin ventana", async () => {
     await countPendingReception();
 
     expect(prismaMock.missingItem.count.mock.calls[0]![0].where).toEqual(
-      clientOrderMissingWhere(),
+      clientOrderMissingWhere({ includeArrived: true }),
     );
+  });
+
+  // EL TEST DE LA DECISIÓN (23/10/2026). La cola de bodega y el chip de
+  // alertas responden PREGUNTAS DISTINTAS, y por eso ya no comparten
+  // condición:
+  //
+  //   chip  «¿qué falta CONSEGUIR?»        sin EN_BODEGA: ya llegó.
+  //   cola  «¿qué trabajo le queda a BODEGA?»  con EN_BODEGA: falta cargarlo.
+  //
+  // Compartir un solo `where` hacía que la fila desapareciera de Abastecimiento
+  // justo al tocar «Ya llegó». Si alguien vuelve a unificarlos, este test lo
+  // frena y explica por qué.
+  it("la cola incluye EN_BODEGA y el chip NO", async () => {
+    await listPendingReception();
+    const cola = prismaMock.missingItem.findMany.mock.calls[0]![0].where;
+
+    await countOverdueMissingItems(NOW);
+    const chip = prismaMock.missingItem.count.mock.calls[0]![0].where;
+
+    expect(cola.status.in).toContain("EN_BODEGA");
+    expect(chip.status.in).not.toContain("EN_BODEGA");
+
+    // Y los dos siguen cubriendo lo que aún no llegó: la diferencia es
+    // EXACTAMENTE ese estado, no un recorte accidental de otra cosa.
+    for (const pendiente of ["FALTANTE", "PEDIDO"]) {
+      expect(cola.status.in).toContain(pendiente);
+      expect(chip.status.in).toContain(pendiente);
+    }
   });
 });

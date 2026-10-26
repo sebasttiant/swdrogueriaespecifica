@@ -653,14 +653,36 @@ export function countOverdueMissingItems(now: Date = new Date()): Promise<number
  *                 entrena a la gente a ignorar el rojo. Es la misma condición
  *                 que decide el chip "Atrasadas", y eso es a propósito: dos
  *                 chips rojos no pueden discrepar sobre qué pedido sigue vivo.
+ *
+ * `includeArrived` — DOS PREGUNTAS DISTINTAS, no un matiz.
+ *
+ *   sin él  «¿qué falta CONSEGUIR?»        FALTANTE, PEDIDO.
+ *           Lo que cuenta el chip «Pedidos sin conseguir». Una caja que ya
+ *           llegó a la droguería dejó de ser un problema de compras, así que
+ *           EN_BODEGA queda afuera con razón.
+ *
+ *   con él  «¿qué trabajo le queda a BODEGA?»  + EN_BODEGA.
+ *           Lo que muestra Abastecimiento. Una caja marcada como llegada
+ *           TODAVÍA no tiene su entrada cargada: es trabajo pendiente, no
+ *           trabajo hecho.
+ *
+ * Compartir un solo `where` entre las dos hizo que una mintiera. El 23/10/2026
+ * se confirmó contra producción: bodega marcaba «Ya llegó» y la fila
+ * desaparecía de su pantalla, sin forma de registrar la entrada desde ahí. El
+ * dato nunca se perdió —la reconciliación FIFO de `inventory-entry.service`
+ * sí mira EN_BODEGA—, pero la vista sí.
+ *
+ * El conjunto ampliado es `RECONCILABLE_STATUSES`, que ya existía y significa
+ * exactamente esto: los estados sobre los que una entrada todavía actúa.
  */
 export function clientOrderMissingWhere(params?: {
   overdueOnly?: boolean;
   now?: Date;
+  includeArrived?: boolean;
 }): Prisma.MissingItemWhereInput {
   const now = params?.now ?? new Date();
   return {
-    status: { in: OPEN_STATUSES },
+    status: { in: params?.includeArrived ? RECONCILABLE_STATUSES : OPEN_STATUSES },
     confirmedAt: null,
     originId: { not: null },
     origin: params?.overdueOnly
