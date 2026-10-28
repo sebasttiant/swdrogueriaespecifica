@@ -17,7 +17,8 @@ Corrección controlada del incidente de captura de productos ya existentes, con 
 ## Tasks
 
 - [x] **T1 · S1-S3 · inline · commit 1:** RED/GREEN para recuperación del dueño fuera de la lista y rechazo server-side del aplazamiento manual conflictivo. Evidencia: 3 RED esperados; 151/151 GREEN; LSP limpio. Commit `37ef31ab`.
-- [x] **T2 · S4 · inline · commit 2:** búsqueda completa y accesible del catálogo en captura de Pendientes, con pruebas de respuestas obsoletas y selección explícita. Evidencia: RED de UI/acción/repositorio; 185/185 GREEN; LSP limpio. Commit pendiente de registrar.
+- [x] **T2 · S4 · inline · commit 2:** búsqueda completa y accesible del catálogo en captura de Pendientes, con pruebas de respuestas obsoletas y selección explícita. Evidencia: RED de UI/acción/repositorio; 185/185 GREEN; LSP limpio. Commit `15dbeca7`.
+- **Delivery strategy — stacked PRs to `main`:** PR1 `fix/pendientes-identidad-owner` contiene T1 (`37ef31ab`, 154 líneas); PR2 `fix/pendientes-identidad-duplicados` contiene T2 sobre PR1 (`15dbeca7`, 321 líneas); T3, T4 y T7 continúan en ramas apiladas independientes, cada una contra su padre inmediato hasta que el anterior se fusione.
 - **T3 · S5-S6 · inline · commit 3:** prevención conservadora de duplicados manuales y advertencia no destructiva de variantes de código, con concurrencia PostgreSQL.
 - **T4 · S6-S7 · isolated writer · commit 4:** herramienta de reparación dry-run/apply con manifiesto, hash, versiones esperadas, auditoría y bloqueo de relaciones peligrosas. **Risk: item 1.**
 - **T5 · S1-S8 · inline · commit 5:** verificación integral: unitarios, PostgreSQL real, typecheck, lint, build y lectura estructural de los cambios.
@@ -33,3 +34,4 @@ Corrección controlada del incidente de captura de productos ya existentes, con 
 - **L5 · T1 RED/GREEN:** los tests nuevos fallaron porque el dueño ausente no se materializaba, el conflicto manual ofrecía aplazar y la acción aceptaba `CODE_ALREADY_ASSIGNED`; después del fix pasaron 151/151 y los cuatro archivos quedaron sin diagnósticos LSP.
 - **L6 · Alerta preventiva para casos futuros:** «y tener presente que peude pasar con proximox productos que se solucione o muestre una alesta oa algo por que si no los usuarios sel o van brincar».
 - **L7 · T2 RED/GREEN:** la prueba de interfaz no encontró búsqueda global, la acción no existía y el repositorio no consultaba el código exacto de Orión; después del fix pasaron 185/185 pruebas focalizadas, incluida la respuesta obsoleta, y los siete archivos quedaron sin diagnósticos LSP.
+- **L8 · Entrega:** el usuario eligió «PRs apilados a main (recomendado)» para separar hotfix, búsqueda, deduplicación, reparación y runbook.
