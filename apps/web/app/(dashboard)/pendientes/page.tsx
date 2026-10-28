@@ -87,10 +87,11 @@ export default async function PendientesPage({
   // cae en la vista operativa. Un `?scope=cualquier-cosa` no abre los cerrados.
   const scope: PendingScope = rawScope === "history" ? "history" : "active";
 
-  // Opciones para el selector del formulario. Slice MVP: primera página de
-  // productos activos (ver README — selector sin búsqueda todavía).
+  // Opciones rápidas para abrir el formulario. La búsqueda server-side del
+  // propio formulario cubre el catálogo completo; esta página inicial ya no
+  // decide qué productos existen ni limita cuáles puede elegir el operador.
   const [products, pendings, zones] = await Promise.all([
-    getProducts({ take: MAX_PAGE_SIZE }),
+    getProducts({ take: MAX_PAGE_SIZE, active: true }),
     getPendings({
       cursor,
       scope,

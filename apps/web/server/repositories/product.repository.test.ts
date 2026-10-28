@@ -49,20 +49,22 @@ describe("listProducts · q filter", () => {
       OR: [
         { name: { contains: "aceta", mode: "insensitive" } },
         { code: { contains: "aceta", mode: "insensitive" } },
+        { orionCode: { equals: "aceta", mode: "insensitive" } },
       ],
     });
   });
 
-  it("passes OR where clause when q matches by code (case-insensitive)", async () => {
+  it("passes OR where clause when q matches by internal or exact Orion code", async () => {
     prismaMock.product.findMany.mockResolvedValueOnce([makeRow()]);
 
-    await listProducts({ q: "COD001" });
+    await listProducts({ q: "A15637" });
 
     const args = prismaMock.product.findMany.mock.calls[0]![0];
     expect(args.where).toEqual({
       OR: [
-        { name: { contains: "COD001", mode: "insensitive" } },
-        { code: { contains: "COD001", mode: "insensitive" } },
+        { name: { contains: "A15637", mode: "insensitive" } },
+        { code: { contains: "A15637", mode: "insensitive" } },
+        { orionCode: { equals: "A15637", mode: "insensitive" } },
       ],
     });
   });
@@ -107,6 +109,7 @@ describe("listProducts · q filter", () => {
       OR: [
         { name: { contains: "aceta", mode: "insensitive" } },
         { code: { contains: "aceta", mode: "insensitive" } },
+        { orionCode: { equals: "aceta", mode: "insensitive" } },
       ],
     });
   });
@@ -159,6 +162,7 @@ describe("listProducts · active filter", () => {
       OR: [
         { name: { contains: "aceta", mode: "insensitive" } },
         { code: { contains: "aceta", mode: "insensitive" } },
+        { orionCode: { equals: "aceta", mode: "insensitive" } },
       ],
     });
   });

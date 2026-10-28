@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   linkOrionCode: vi.fn(),
   findProductById: vi.fn(),
   findOrCreateLaboratory: vi.fn(),
+  getProducts: vi.fn(),
   logPendingEvent: vi.fn(),
   SkuConcurrencyError: class SkuConcurrencyError extends Error {
     constructor() {
@@ -65,6 +66,9 @@ vi.mock("@/server/repositories/product.repository", () => ({
 vi.mock("@/server/repositories/laboratory.repository", () => ({
   findOrCreateLaboratory: mocks.findOrCreateLaboratory,
 }));
+vi.mock("@/server/services/product.service", () => ({
+  getProducts: mocks.getProducts,
+}));
 vi.mock("@/server/repositories/sku-review.repository", () => ({
   SkuConcurrencyError: mocks.SkuConcurrencyError,
 }));
@@ -87,6 +91,7 @@ import {
   deliverPendingAction,
   invoicePendingAction,
   resolvePendingIdentityAction,
+  searchActiveProductsForPendingAction,
   updatePendingManagementStatusAction,
 } from "./pending.actions";
 
@@ -131,6 +136,7 @@ beforeEach(() => {
     status: "exists",
     laboratory: { id: "lab-1", name: "Lab Test", searchKey: "lab test" },
   });
+  mocks.getProducts.mockResolvedValue({ items: [], nextCursor: null });
 });
 
 // El formulario tiene dos modos EXCLUYENTES y cada uno postea campos distintos:
@@ -176,6 +182,46 @@ function expectSuccess(result: { error: string | null; ok: boolean; submissionId
   // En éxito NO viaja el eco: su ausencia es lo que vacía el formulario.
   expect(result.values ?? null).toBeNull();
 }
+
+describe("searchActiveProductsForPendingAction", () => {
+  it("busca productos activos globalmente y devuelve la identidad necesaria para elegirlos", async () => {
+    mocks.requireCapability.mockResolvedValue({ user: { id: "user-1" } });
+    mocks.getProducts.mockResolvedValue({
+      items: [
+        {
+          id: "prod-150",
+          name: "SEDATIF PC X 40 TABLETAS",
+          code: "MAN-8B1DC5F9",
+          orionCode: "A15637",
+          unit: "Caja",
+          active: true,
+        },
+      ],
+      nextCursor: "next-page",
+    });
+
+    const result = await searchActiveProductsForPendingAction("  A15637  ", null);
+
+    expect(mocks.requireCapability).toHaveBeenCalledWith("canCreatePendientes");
+    expect(mocks.getProducts).toHaveBeenCalledWith({
+      active: true,
+      q: "A15637",
+      take: 20,
+    });
+    expect(result).toEqual({
+      items: [
+        {
+          id: "prod-150",
+          name: "SEDATIF PC X 40 TABLETAS",
+          code: "MAN-8B1DC5F9",
+          orionCode: "A15637",
+          unit: "Caja",
+        },
+      ],
+      nextCursor: "next-page",
+    });
+  });
+});
 
 describe("createPendingAction", () => {
   beforeEach(() => {

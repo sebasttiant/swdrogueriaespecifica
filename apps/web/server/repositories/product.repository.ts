@@ -122,6 +122,10 @@ export async function listProducts(params: {
                 OR: [
                   { name: { contains: search, mode: "insensitive" as const } },
                   { code: { contains: search, mode: "insensitive" as const } },
+                  // El SKU de Orión es una identidad, no texto libre: solo una
+                  // coincidencia exacta puede recuperar al dueño sin sugerir
+                  // variantes parecidas como si fueran el mismo código.
+                  { orionCode: { equals: search, mode: "insensitive" as const } },
                 ],
               }
             : {}),

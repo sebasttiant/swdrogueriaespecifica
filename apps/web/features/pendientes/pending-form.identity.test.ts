@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { createElement } from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -10,11 +10,13 @@ import type { PendingFormState } from "@/server/actions/pending.actions";
 
 const mocks = vi.hoisted(() => ({
   createPendingAction: vi.fn(),
+  searchActiveProductsForPendingAction: vi.fn(),
   useActionState: vi.fn(),
 }));
 
 vi.mock("@/server/actions/pending.actions", () => ({
   createPendingAction: mocks.createPendingAction,
+  searchActiveProductsForPendingAction: mocks.searchActiveProductsForPendingAction,
 }));
 // El eco de los valores llega por `useActionState`, no por lo que resuelva la
 // acción: interceptarlo acá es la única forma de montar la pantalla YA en el
@@ -148,11 +150,93 @@ function conflictState(holder: { productId: string; productName: string }): Pend
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.searchActiveProductsForPendingAction.mockResolvedValue({
+    items: [],
+    nextCursor: null,
+  });
 });
 
 afterEach(cleanup);
 
 describe("PendingForm · identidad Orion", () => {
+  it("busca fuera de la carga inicial y permite elegir el resultado sin perder el pedido", async () => {
+    const user = userEvent.setup();
+    mocks.searchActiveProductsForPendingAction.mockResolvedValue({
+      items: [
+        {
+          id: "p150",
+          name: "SEDATIF PC X 40 TABLETAS",
+          code: "MAN-8B1DC5F9",
+          orionCode: "A15637",
+          unit: "Caja",
+        },
+      ],
+      nextCursor: null,
+    });
+    renderForm(conflictState({ productId: "p9", productName: "Otro producto" }));
+
+    await user.type(screen.getByRole("searchbox", { name: /buscar producto en catálogo/i }), "A15637");
+    await user.click(screen.getByRole("button", { name: /buscar en todo el catálogo/i }));
+    const results = screen.getByRole("listbox", { name: /resultados de productos/i });
+    await user.click(within(results).getByRole("option", { name: /sedatif pc x 40 tabletas/i }));
+
+    expect(mocks.searchActiveProductsForPendingAction).toHaveBeenCalledWith("A15637", null);
+    expect(productSelect().value).toBe("p150");
+    expect((screen.getByRole("spinbutton", { name: "Cantidad" }) as HTMLInputElement).value).toBe(
+      "7",
+    );
+    expect((screen.getByRole("textbox", { name: "Cliente" }) as HTMLInputElement).value).toBe(
+      "Ana Pérez",
+    );
+  });
+
+  it("ignora una respuesta vieja que llega después de una búsqueda más nueva", async () => {
+    const user = userEvent.setup();
+    let resolveOld!: (value: {
+      items: ProductOption[];
+      nextCursor: string | null;
+    }) => void;
+    let resolveCurrent!: (value: {
+      items: ProductOption[];
+      nextCursor: string | null;
+    }) => void;
+    mocks.searchActiveProductsForPendingAction
+      .mockReturnValueOnce(new Promise((resolve) => (resolveOld = resolve)))
+      .mockReturnValueOnce(new Promise((resolve) => (resolveCurrent = resolve)));
+    renderForm();
+
+    const search = screen.getByRole("searchbox", { name: /buscar producto en catálogo/i });
+    await user.type(search, "sedatif");
+    await user.click(screen.getByRole("button", { name: /buscar en todo el catálogo/i }));
+    await user.clear(search);
+    await user.type(search, "ibuprofeno");
+    await user.click(screen.getByRole("button", { name: /buscar en todo el catálogo/i }));
+
+    await act(async () => {
+      resolveCurrent({ items: [CODELESS], nextCursor: null });
+      await Promise.resolve();
+    });
+    await act(async () => {
+      resolveOld({
+        items: [
+          {
+            id: "stale",
+            name: "SEDATIF viejo",
+            code: "STALE-1",
+            orionCode: "A15637",
+            unit: "Caja",
+          },
+        ],
+        nextCursor: null,
+      });
+      await Promise.resolve();
+    });
+
+    const results = screen.getByRole("listbox", { name: /resultados de productos/i });
+    expect(within(results).getByRole("option", { name: /ibuprofeno jarabe/i })).not.toBeNull();
+    expect(within(results).queryByRole("option", { name: /sedatif viejo/i })).toBeNull();
+  });
+
   it("al producto que YA tiene código le muestra el suyo y no pide nada", async () => {
     const user = userEvent.setup();
     renderForm();

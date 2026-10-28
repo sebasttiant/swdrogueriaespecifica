@@ -40,6 +40,7 @@ import { findProductById } from "@/server/repositories/product.repository";
 import type { PendingForEdit } from "@/server/repositories/pending.repository";
 import { laboratoryCreateCommandKey } from "@/server/domain/laboratory/identity";
 import { findOrCreateLaboratory } from "@/server/repositories/laboratory.repository";
+import { getProducts } from "@/server/services/product.service";
 import { SkuConcurrencyError } from "@/server/repositories/sku-review.repository";
 import { SkuIdentityError } from "@/server/domain/catalog/sku-identity";
 import { SKU_IDENTITY_CONCURRENCY_MESSAGE, messageForIdentityError } from "@/features/productos/sku-identity-messages";
@@ -85,6 +86,47 @@ export interface PendingOrionConflictHolder {
 
 export interface PendingOrionConflict {
   holder: PendingOrionConflictHolder;
+}
+
+export type PendingProductSearchItem = {
+  id: string;
+  name: string;
+  code: string;
+  orionCode: string | null;
+  unit: string;
+};
+
+export type PendingProductSearchResult = {
+  items: PendingProductSearchItem[];
+  nextCursor: string | null;
+};
+
+export async function searchActiveProductsForPendingAction(
+  rawQuery: string,
+  cursor?: string | null,
+): Promise<PendingProductSearchResult> {
+  await requireCapability("canCreatePendientes");
+
+  const q = rawQuery.trim();
+  if (!q) return { items: [], nextCursor: null };
+
+  const page = await getProducts({
+    active: true,
+    q,
+    take: 20,
+    ...(cursor ? { cursor } : {}),
+  });
+
+  return {
+    items: page.items.map(({ id, name, code, orionCode, unit }) => ({
+      id,
+      name,
+      code,
+      orionCode,
+      unit,
+    })),
+    nextCursor: page.nextCursor,
+  };
 }
 
 export type PendingFormState = {
