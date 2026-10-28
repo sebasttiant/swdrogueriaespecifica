@@ -4,7 +4,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
 import { prisma } from "@/lib/db/prisma";
-import { repairProductIdentity } from "@/server/services/product-identity-repair.service";
+import {
+  formatRepairReport,
+  repairProductIdentity,
+} from "@/server/services/product-identity-repair.service";
 
 // --------------------------------------------------------------------------
 // Audited repair of the October 2026 duplicate-identity incident.
@@ -32,16 +35,25 @@ let duplicateId = "";
 let pendingId = "";
 let missingItemId = "";
 let staleCode = "";
+// Every row this file creates, so cleanup never depends on which assertion
+// happened to fail first.
+let extraProductIds: string[] = [];
 
 async function cleanup() {
-  const ids = [targetId, duplicateId].filter(Boolean);
+  const ids = [targetId, duplicateId, ...extraProductIds].filter(Boolean);
   if (ids.length === 0) return;
-  await prisma.auditLog.deleteMany({ where: { entityId: { in: [...ids, pendingId, missingItemId].filter(Boolean) } } });
+  await prisma.auditLog.deleteMany({
+    where: { entityId: { in: [...ids, pendingId, missingItemId].filter(Boolean) } },
+  });
+  await prisma.auditLog.deleteMany({ where: { userId: actorId } });
   await prisma.missingItem.deleteMany({ where: { productId: { in: ids } } });
   await prisma.pending.deleteMany({ where: { productId: { in: ids } } });
   await prisma.productBatch.deleteMany({ where: { productId: { in: ids } } });
+  await prisma.lot.deleteMany({ where: { productId: { in: ids } } });
   await prisma.inventoryEntry.deleteMany({ where: { productId: { in: ids } } });
   await prisma.product.deleteMany({ where: { id: { in: ids } } });
+  await prisma.user.deleteMany({ where: { id: actorId } });
+  extraProductIds = [];
 }
 
 beforeEach(async () => {
@@ -158,7 +170,10 @@ describe("repairProductIdentity", () => {
     });
     expect(audits.length).toBeGreaterThanOrEqual(4);
     expect(audits.every((entry) => entry.module === AUDIT_MODULES.PRODUCTOS)).toBe(true);
-    expect(audits.some((entry) => entry.action === AUDIT_ACTIONS.SKU_ORION_LINK)).toBe(true);
+    // RELINK and not LINK: the product already carried a code, so this is a
+    // correction of identity, not a first assignment.
+    expect(audits.some((entry) => entry.action === AUDIT_ACTIONS.SKU_ORION_RELINK)).toBe(true);
+    expect(audits.some((entry) => entry.action === AUDIT_ACTIONS.SKU_ORION_LINK)).toBe(false);
     expect(audits.every((entry) => entry.userId === actorId)).toBe(true);
   });
 
@@ -225,16 +240,215 @@ describe("repairProductIdentity", () => {
     });
   });
 
-  it("is idempotent: a second apply finds nothing left to repair", async () => {
+  it("is idempotent: replaying the SAME manifest finds nothing left to repair", async () => {
+    await repairProductIdentity({ ...manifest(), apply: true });
+    const auditsAfterFirst = await prisma.auditLog.count({ where: { userId: actorId } });
+
+    // The exact manifest, unchanged: this is what the runbook replays.
+    const second = await repairProductIdentity({ ...manifest(), apply: true });
+
+    expect(second.status).toBe("noop");
+    expect(second.applied).toBe(false);
+    expect(second.plan.reassignedPendings).toEqual([]);
+    expect(second.plan.reassignedMissingItems).toEqual([]);
+    expect(second.plan.deactivatedProducts).toEqual([]);
+    // A no-op writes no audit entries: a replay is not an event.
+    expect(await prisma.auditLog.count({ where: { userId: actorId } })).toBe(auditsAfterFirst);
+  });
+
+  it("preserves the target's lot and its 2 units", async () => {
     await repairProductIdentity({ ...manifest(), apply: true });
 
-    const second = await repairProductIdentity({
-      ...manifest({ expectedTargetOrionCode: CANONICAL_CODE }),
+    const batches = await prisma.productBatch.findMany({ where: { productId: targetId } });
+    expect(batches).toHaveLength(1);
+    expect(batches[0]?.quantity).toBe(2);
+  });
+
+  it("refuses to deactivate a duplicate holding CANONICAL lot stock", async () => {
+    await prisma.lot.create({
+      data: {
+        productId: duplicateId,
+        lotNumber: `LOT-CANON-${Date.now()}`,
+        onHand: 3,
+      },
+    });
+
+    const report = await repairProductIdentity({ ...manifest(), apply: true });
+
+    expect(report.status).toBe("blocked");
+    expect(report.blockers.join(" ")).toMatch(/stock can[oó]nico/i);
+    expect(await prisma.product.findUniqueOrThrow({ where: { id: duplicateId } })).toMatchObject({
+      active: true,
+    });
+  });
+
+  it("refuses when the duplicate has an inventory entry", async () => {
+    await prisma.inventoryEntry.create({
+      data: {
+        productId: duplicateId,
+        quantity: 1,
+        createdById: actorId,
+        requestFingerprint: randomUUID(),
+      },
+    });
+
+    const report = await repairProductIdentity({ ...manifest(), apply: true });
+
+    expect(report.status).toBe("blocked");
+    expect(report.blockers.join(" ")).toMatch(/entradas de inventario/i);
+  });
+
+  it("refuses when the canonical code already belongs to another product", async () => {
+    const holder = await prisma.product.create({
+      data: {
+        code: `MAN-HOLDER-${Date.now()}`,
+        name: "Dueño del código",
+        unit: "Caja",
+        orionCode: CANONICAL_CODE,
+      },
+    });
+    extraProductIds.push(holder.id);
+
+    const report = await repairProductIdentity({ ...manifest(), apply: true });
+
+    expect(report.status).toBe("blocked");
+    expect(report.blockers.join(" ")).toContain(holder.id);
+    expect(await prisma.product.findUniqueOrThrow({ where: { id: targetId } })).toMatchObject({
+      orionCode: staleCode,
+    });
+  });
+
+  it("refuses when the duplicate carries its OWN different code", async () => {
+    await prisma.product.update({
+      where: { id: duplicateId },
+      data: { orionCode: `OTRO-${Date.now()}` },
+    });
+
+    const report = await repairProductIdentity({ ...manifest(), apply: true });
+
+    expect(report.status).toBe("blocked");
+    expect(report.blockers.join(" ")).toMatch(/identidad distinta/i);
+  });
+
+  it("refuses when the duplicate has an OPEN pending the manifest does not list", async () => {
+    const unlisted = await prisma.pending.create({
+      data: {
+        productId: duplicateId,
+        quantity: 1,
+        promisedAt: new Date("2030-01-01T00:00:00.000Z"),
+        idempotencyKey: randomUUID(),
+        createdById: actorId,
+      },
+    });
+
+    const report = await repairProductIdentity({ ...manifest(), apply: true });
+
+    expect(report.status).toBe("blocked");
+    expect(report.blockers.join(" ")).toContain(unlisted.id);
+    // The listed pending stays where it was: nothing was written.
+    expect(await prisma.pending.findUniqueOrThrow({ where: { id: pendingId } })).toMatchObject({
+      productId: duplicateId,
+    });
+  });
+
+  it("refuses to reassign a CLOSED pending: that would rewrite history", async () => {
+    await prisma.pending.update({
+      where: { id: pendingId },
+      data: { status: "ENTREGADO" },
+    });
+
+    const report = await repairProductIdentity({ ...manifest(), apply: true });
+
+    expect(report.status).toBe("blocked");
+    expect(report.blockers.join(" ")).toMatch(/historia cerrada/i);
+    expect(await prisma.pending.findUniqueOrThrow({ where: { id: pendingId } })).toMatchObject({
+      productId: duplicateId,
+    });
+  });
+
+  it("refuses when the target does not exist", async () => {
+    const report = await repairProductIdentity({
+      ...manifest({ targetProductId: "producto-que-no-existe" }),
       apply: true,
     });
 
-    expect(second.status).toBe("noop");
-    expect(second.plan.reassignedPendings).toEqual([]);
-    expect(second.plan.deactivatedProducts).toEqual([]);
+    expect(report.status).toBe("blocked");
+    expect(report.blockers.join(" ")).toMatch(/no existe/i);
+  });
+
+  it("refuses when the target is also listed as a duplicate", async () => {
+    const report = await repairProductIdentity({
+      ...manifest({ duplicateProductIds: [duplicateId, targetId] }),
+      apply: true,
+    });
+
+    expect(report.status).toBe("blocked");
+    expect(report.blockers.join(" ")).toMatch(/no puede figurar/i);
+  });
+
+  it("rolls everything back when the audit write fails", async () => {
+    await expect(
+      repairProductIdentity(
+        { ...manifest(), apply: true },
+        {
+          writeAudit: async () => {
+            throw new Error("audit unavailable");
+          },
+        },
+      ),
+    ).rejects.toThrow("audit unavailable");
+
+    // No write survives an unauditable repair.
+    expect(await prisma.product.findUniqueOrThrow({ where: { id: targetId } })).toMatchObject({
+      orionCode: staleCode,
+    });
+    expect(await prisma.pending.findUniqueOrThrow({ where: { id: pendingId } })).toMatchObject({
+      productId: duplicateId,
+    });
+    expect(await prisma.product.findUniqueOrThrow({ where: { id: duplicateId } })).toMatchObject({
+      active: true,
+    });
+  });
+
+  it("treats a non-boolean apply as a dry run", async () => {
+    const report = await repairProductIdentity({
+      ...manifest(),
+      // A hand-written manifest can carry a string. Truthiness must not write.
+      apply: "false" as unknown as boolean,
+    });
+
+    expect(report.applied).toBe(false);
+    expect(await prisma.product.findUniqueOrThrow({ where: { id: targetId } })).toMatchObject({
+      orionCode: staleCode,
+    });
+  });
+
+  it("prints every id so the plan can be compared, never just counts", async () => {
+    const report = await repairProductIdentity(manifest());
+    const text = formatRepairReport(report);
+
+    expect(text).toContain(pendingId);
+    expect(text).toContain(missingItemId);
+    expect(text).toContain(duplicateId);
+    expect(text).toContain(CANONICAL_CODE);
+    expect(text).toMatch(/dry-run/i);
+  });
+
+  it("audits one entry per effect, with the real prior state", async () => {
+    await repairProductIdentity({ ...manifest(), apply: true });
+
+    const audits = await prisma.auditLog.findMany({ where: { userId: actorId } });
+    const byEntity = (entity: string, entityId: string) =>
+      audits.filter((entry) => entry.entity === entity && entry.entityId === entityId);
+
+    expect(byEntity("Product", targetId)).toHaveLength(1);
+    expect(byEntity("Pending", pendingId)).toHaveLength(1);
+    expect(byEntity("MissingItem", missingItemId)).toHaveLength(1);
+    expect(byEntity("Product", duplicateId)).toHaveLength(1);
+
+    expect(byEntity("Product", targetId)[0]?.before).toMatchObject({ orionCode: staleCode });
+    expect(byEntity("Pending", pendingId)[0]?.before).toMatchObject({
+      productId: duplicateId,
+    });
   });
 });
