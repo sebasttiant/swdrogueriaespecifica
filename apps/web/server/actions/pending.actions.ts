@@ -293,6 +293,8 @@ const IDENTITY_REQUIRED_MESSAGE =
 // para que la pantalla muestre la identidad que el producto tiene ahora.
 const DEFERRAL_NOT_APPLICABLE_MESSAGE =
   "Ese producto ya tiene su código de Orión cargado, así que no hace falta aplazar nada. Recargá la pantalla y volvé a enviar el pendiente.";
+const MANUAL_ASSIGNED_CODE_DEFERRAL_MESSAGE =
+  "Ese código pertenece a un producto que ya existe. Usá el producto que ya tiene ese código; no se puede crear otro producto aplazando su identidad.";
 
 /**
  * El código ya es de otro producto.
@@ -483,6 +485,25 @@ export async function createPendingAction(
   // quien justamente no pudo conseguir el código.
   // ------------------------------------------------------------------------
   const { identity, ...capture } = parsed.data;
+
+  // Un conflicto de código YA identificó al producto dueño. En modo manual,
+  // aplazar ese mismo conflicto no posterga una identidad desconocida: crea un
+  // segundo producto sin SKU para algo que el sistema sabe que ya existe. La
+  // pantalla no ofrece esta salida, pero la frontera del servidor la rechaza
+  // también para cubrir formularios viejos o manipulados.
+  if (
+    capture.manual &&
+    identity?.kind === "DEFERRED" &&
+    identity.reason === "CODE_ALREADY_ASSIGNED"
+  ) {
+    return failure(MANUAL_ASSIGNED_CODE_DEFERRAL_MESSAGE, {
+      ...actor,
+      authState: "valid",
+      outcome: "rejected",
+      errorCode: "MANUAL_ASSIGNED_CODE_DEFERRAL",
+      transaction: "not_started",
+    });
+  }
 
   // La autoridad se relee de la base, así que su motivo puede diferir del de
   // la primera lectura: entre las dos, a alguien pueden haberlo desactivado.

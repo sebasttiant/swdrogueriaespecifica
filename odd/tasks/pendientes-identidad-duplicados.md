@@ -1,0 +1,33 @@
+# Pendientes · identidad y duplicados
+
+Corrección controlada del incidente de captura de productos ya existentes, con prevención permanente y reparación auditable. Base: `origin/main` en `b0122596`.
+
+## Specs
+
+1. **S1 — Resolver el error crítico reportado.** «necesito solucionar un error grande que creo que falla es por que no deja crear un pendiente de algo que ya se creo».
+2. **S2 — Evitar la repetición.** «y tambien como solucionamos y arreglamos el tema y evitar que vuelva a pasar por que van a decir que es error de el programa».
+3. **S3 — Recuperación accionable del conflicto.** Ante «Ese código de Orión ya es de "SEDATIF PC X 40 TABLETAS". Elegí ese producto, o seguí sin el código indicando el motivo», el dueño real debe poder seleccionarse aunque no estuviera en los primeros 100 productos; el flujo manual no puede crear otro producto mediante «Mantener este producto y aplazar» cuando el motivo sea `CODE_ALREADY_ASSIGNED`.
+4. **S4 — Búsqueda completa.** El formulario de Pendientes debe encontrar productos existentes por nombre, código interno o código exacto de Orión sin depender de la primera página del catálogo.
+5. **S5 — Prevenir productos manuales duplicados.** Intentos iguales o concurrentes de alta manual no deben crear varios productos operativamente indistinguibles; las coincidencias ambiguas deben exigir una selección explícita y no fusionarse automáticamente.
+6. **S6 — Identidad canónica del incidente.** La evidencia de Orión muestra `A15637` para `SEDATIF PC X 40 TABLETAS`; no se debe convertir silenciosamente `A15637`, `A-15637` y `15637` en una sola identidad. Las variantes solo pueden generar advertencias de revisión.
+7. **S7 — Reparación controlada.** La reparación debe ser dry-run por defecto, auditable, transaccional, protegida contra drift y sin `UPDATE` manual improvisado. Debe preservar el lote y las 2 unidades del producto objetivo `cmvflawai0chb01k6lmit2deu`, corregir su `orionCode` a `A15637` mediante el flujo auditado y reasignar el pendiente abierto y su faltante solo después de validar todas sus relaciones.
+8. **S8 — Secuencia de entrega.** «listo hazlo autorizo para luego llevar el backup al vps de pruebas y luego deployar el fix». Primero se verificará con pruebas determinísticas y PostgreSQL real; luego se preparará el procedimiento para restaurar un backup en el VPS de pruebas, validar allí y recién después desplegar el fix. Ninguna mutación de producción queda autorizada por esta especificación.
+9. **S9 — Segundo reporte fuera de este corte.** El aviso «1 de 3 disponibles» se conserva separado hasta cerrar el error crítico de identidad y duplicados.
+
+## Tasks
+
+- [x] **T1 · S1-S3 · inline · commit 1:** RED/GREEN para recuperación del dueño fuera de la lista y rechazo server-side del aplazamiento manual conflictivo. Evidencia: 3 RED esperados; 151/151 GREEN; LSP limpio. Commit pendiente de registrar.
+- **T2 · S4 · writer/inline según superficie · commit 2:** búsqueda completa y accesible del catálogo en captura de Pendientes, con pruebas de respuestas obsoletas y selección explícita.
+- **T3 · S5-S6 · inline · commit 3:** prevención conservadora de duplicados manuales y advertencia no destructiva de variantes de código, con concurrencia PostgreSQL.
+- **T4 · S6-S7 · isolated writer · commit 4:** herramienta de reparación dry-run/apply con manifiesto, hash, versiones esperadas, auditoría y bloqueo de relaciones peligrosas. **Risk: item 1.**
+- **T5 · S1-S8 · inline · commit 5:** verificación integral: unitarios, PostgreSQL real, typecheck, lint, build y lectura estructural de los cambios.
+- **T6 · S7-S8 · independent verifier · no commit:** verificación independiente de riesgo alto y evaluación nativa aplicable.
+- **T7 · S8 · inline · commit 6:** runbook de backup → VPS de pruebas → validación → despliegue, sin ejecutar producción.
+
+## Log
+
+- **L1 · Solicitud original:** «sabes que antes de continuar con la mejora necesito solucionar un error grande que creo que falla es por que no deja crear un pendiente de algo que ya se creo revisa la transcripcion de el video y analiza las imagnees y dime como abordamos el error y que comando corro en el vps principal para ver en donde falla y tener los insumos sufiecientes para la solucion alli reportan 2 errores el critivco que parece que n ose montar unos pendientes y el otro que solo muestra la llegada de uno que puede ser manejo pero primero miremos el critico /home/sebastian/Documentos/DEV/DROGUERIA ESPECIFICA/DOCUMENTOS/MEJORAS(OCTUBRE)/Error De software y Transcripcion de Video .md /home/sebastian/Documentos/DEV/DROGUERIA ESPECIFICA/DOCUMENTOS/MEJORAS(OCTUBRE)/video.mp4 /home/sebastian/Documentos/DEV/DROGUERIA ESPECIFICA/DOCUMENTOS/MEJORAS(OCTUBRE)/4.jpeg /home/sebastian/Documentos/DEV/DROGUERIA ESPECIFICA/DOCUMENTOS/MEJORAS(OCTUBRE)/3.jpeg si tienes dudas me dices haz el analisis al detalle y con calma».
+- **L2 · Prevención exigida:** «y tambien como solucionamos y arreglamos el tema y evitar que vuelva a pasar por que van a decir que es error de el programa».
+- **L3 · Evidencia adicional:** «revisa la imagen 5»; la imagen muestra `A15637 - SEDATIF PC X 40 TABLETAS`.
+- **L4 · Autorización:** «listo hazlo autorizo para luego llevar el backup al vps de pruebas y luego deployar el fix».
+- **L5 · T1 RED/GREEN:** los tests nuevos fallaron porque el dueño ausente no se materializaba, el conflicto manual ofrecía aplazar y la acción aceptaba `CODE_ALREADY_ASSIGNED`; después del fix pasaron 151/151 y los cuatro archivos quedaron sin diagnósticos LSP.

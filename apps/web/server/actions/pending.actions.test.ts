@@ -691,6 +691,23 @@ describe("createPendingAction", () => {
       expect(mocks.linkOrionCodeAtCapture).not.toHaveBeenCalled();
     });
 
+    it("rechaza el manual que intenta aplazar un código ya asignado sin escribir nada", async () => {
+      const result = await createPendingAction(
+        PREV,
+        createManualFormData({
+          identitySkippedReason: "CODE_ALREADY_ASSIGNED",
+        }),
+      );
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/producto que ya tiene ese código/i);
+      expect(result.values?.manualName).toBe("Ibuprofeno jarabe");
+      expect(result.values?.identitySkippedReason).toBe("CODE_ALREADY_ASSIGNED");
+      expect(mocks.registerPending).not.toHaveBeenCalled();
+      expect(mocks.linkOrionCodeAtCapture).not.toHaveBeenCalled();
+      expect(mocks.recordAudit).not.toHaveBeenCalled();
+    });
+
     it("el código Y el aplazamiento juntos se rechazan sin escribir nada", async () => {
       const result = await createPendingAction(
         PREV,

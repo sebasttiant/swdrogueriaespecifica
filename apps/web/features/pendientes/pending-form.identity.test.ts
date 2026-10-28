@@ -442,25 +442,50 @@ describe("PendingForm · identidad Orion", () => {
     ).toBe("Entregar en portería");
   });
 
-  it("no materializa ni envía al dueño ausente y ofrece aplazar o recargar", async () => {
+  it("materializa al dueño ausente, permite usarlo y conserva el pedido", async () => {
     const user = userEvent.setup();
     renderForm(
       conflictState({ productId: "p9", productName: "Eucerin tono medio" }),
       [CODELESS, CODELESS_B],
     );
 
-    expect(document.querySelector('option[value="p9"]')).toBeNull();
-    expect(screen.queryByRole("button", { name: /usar eucerin tono medio/i })).toBeNull();
-    expect(screen.getByText(/no está disponible en esta lista/i)).not.toBeNull();
-    expect(screen.getByRole("button", { name: /recargar productos/i })).not.toBeNull();
+    expect(document.querySelector('option[value="p9"]')).not.toBeNull();
+    await user.click(screen.getByRole("button", { name: /usar eucerin tono medio/i }));
 
-    await user.click(screen.getByRole("button", { name: /mantener este producto y aplazar/i }));
+    expect(productSelect().value).toBe("p9");
+    expect((screen.getByRole("spinbutton", { name: "Cantidad" }) as HTMLInputElement).value).toBe(
+      "7",
+    );
+    expect((screen.getByRole("textbox", { name: "Cliente" }) as HTMLInputElement).value).toBe(
+      "Ana Pérez",
+    );
+    expect(
+      (screen.getByRole("textbox", { name: "Nota (opcional)" }) as HTMLInputElement).value,
+    ).toBe("Entregar en portería");
+  });
 
-    const form = document.querySelector("form");
-    if (!form) throw new Error("no hay formulario");
-    const submitted = new FormData(form);
-    expect(submitted.get("productId")).toBe("p2");
-    expect(Array.from(submitted.values())).not.toContain("p9");
+  it("el conflicto manual obliga a usar al dueño y no ofrece crear otro producto aplazado", async () => {
+    const user = userEvent.setup();
+    const state = conflictState({ productId: "p9", productName: "Eucerin tono medio" });
+    state.values = {
+      ...state.values!,
+      productId: "",
+      manualMode: "on",
+      manualName: "Eucerin tono medio",
+    };
+    renderForm(state, [CODELESS, CODELESS_B]);
+
+    expect(screen.queryByRole("button", { name: /mantener este producto y aplazar/i })).toBeNull();
+    await user.click(screen.getByRole("button", { name: /usar eucerin tono medio/i }));
+
+    expect(productSelect().value).toBe("p9");
+    expect(
+      (screen.getByRole("checkbox", { name: /no está en el catálogo/i }) as HTMLInputElement)
+        .checked,
+    ).toBe(false);
+    expect((screen.getByRole("textbox", { name: "Teléfono" }) as HTMLInputElement).value).toBe(
+      "3001234567",
+    );
   });
 
   it.each(["producto", "modo manual", "draft de identidad"] as const)(

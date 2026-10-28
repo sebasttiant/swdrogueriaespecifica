@@ -194,7 +194,27 @@ function PendingFormFields({
   // campo de encima, y un código inventado es peor que ninguno.
   // --------------------------------------------------------------------------
   const [productId, setProductId] = useState(previous.productId ?? "");
-  const selectedProduct = products.find((product) => product.id === productId);
+
+  // El dueño del código viene validado por el servidor. Puede no estar entre
+  // los primeros productos que recibió la página —ese fue el incidente real:
+  // el dueño estaba mucho más allá del límite del selector—, pero eso no puede
+  // volverlo imposible de elegir. Lo materializamos solo para recuperar este
+  // intento; el próximo envío vuelve a releer el producto por ID en el servidor.
+  const recoveredConflictHolder: ProductOption | undefined = conflict
+    ? products.find((product) => product.id === conflict.holder.productId) ?? {
+        id: conflict.holder.productId,
+        name: conflict.holder.productName,
+        code: "",
+        orionCode: previous.orionCode || null,
+        unit: "Por confirmar",
+      }
+    : undefined;
+  const selectableProducts =
+    recoveredConflictHolder &&
+    !products.some((product) => product.id === recoveredConflictHolder.id)
+      ? [...products, recoveredConflictHolder]
+      : products;
+  const selectedProduct = selectableProducts.find((product) => product.id === productId);
 
   // Este draft es controlado porque su identidad de producto puede cambiar sin
   // que el bloque se desmonte. Un `defaultValue` conservaría datos del producto
@@ -207,9 +227,7 @@ function PendingFormFields({
     previous.identitySkippedNote ?? "",
   );
   const [showConflictRecovery, setShowConflictRecovery] = useState(conflict != null);
-  const conflictHolder = conflict
-    ? products.find((product) => product.id === conflict.holder.productId)
-    : undefined;
+  const conflictHolder = recoveredConflictHolder;
 
   // El manual SIEMPRE pide identidad: todavía no existe, así que no puede
   // traer un código de antes.
@@ -390,7 +408,7 @@ function PendingFormFields({
               onChange={(event) => changeProduct(event.target.value)}
             >
               <option value="">Elegí un producto…</option>
-              {products.map((product) => (
+              {selectableProducts.map((product) => (
                 <option key={product.id} value={product.id}>
                   {optionLabel(product)}
                 </option>
@@ -821,9 +839,11 @@ function PendingFormFields({
                   seleccionarlo.
                 </p>
               )}
-              <Button type="button" variant="secondary" onClick={deferConflict}>
-                Mantener este producto y aplazar
-              </Button>
+              {!manual ? (
+                <Button type="button" variant="secondary" onClick={deferConflict}>
+                  Mantener este producto y aplazar
+                </Button>
+              ) : null}
               {!conflictHolder ? (
                 <Button type="button" variant="ghost" onClick={() => window.location.reload()}>
                   Recargar productos
