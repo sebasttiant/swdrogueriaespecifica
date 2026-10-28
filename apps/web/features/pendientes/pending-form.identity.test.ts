@@ -127,6 +127,7 @@ function conflictState(holder: { productId: string; productName: string }): Pend
       productId: "p2",
       manualName: "",
       manualMode: "off",
+      manualDuplicateConfirmed: "",
       manualSellerName: "",
       quantity: "7",
       promisedAt: "2026-08-25T12:00",
@@ -452,6 +453,7 @@ describe("PendingForm · identidad Orion", () => {
         productId: "p2",
         manualName: "",
         manualMode: "off",
+        manualDuplicateConfirmed: "",
         manualSellerName: "",
         quantity: "2",
         promisedAt: "",
@@ -483,6 +485,7 @@ describe("PendingForm · identidad Orion", () => {
         productId: "p2",
         manualName: "",
         manualMode: "off",
+        manualDuplicateConfirmed: "",
         manualSellerName: "",
         quantity: "2",
         promisedAt: "",
@@ -546,6 +549,45 @@ describe("PendingForm · identidad Orion", () => {
     expect(
       (screen.getByRole("textbox", { name: "Nota (opcional)" }) as HTMLInputElement).value,
     ).toBe("Entregar en portería");
+  });
+
+  it("la alerta de nombre manual obliga a elegir una coincidencia o confirmar explícitamente", async () => {
+    const user = userEvent.setup();
+    const state = conflictState({ productId: "unused", productName: "unused" });
+    state.orionConflict = null;
+    state.error = "Encontramos productos parecidos. Elegí uno o confirmá que ninguno corresponde.";
+    state.values = {
+      ...state.values!,
+      productId: "",
+      manualMode: "on",
+      manualName: "Sedatif pc x 40 tabletas",
+      identitySkippedReason: "ORION_UNAVAILABLE",
+      orionCode: "",
+    };
+    (state as PendingFormState & { manualDuplicateCandidates: ProductOption[] })
+      .manualDuplicateCandidates = [
+      {
+        id: "existing-sedatif",
+        name: "SEDATIF PC X 40 TABLETAS",
+        code: "MAN-8B1DC5F9",
+        orionCode: "A15637",
+        unit: "Caja",
+      },
+    ];
+    renderForm(state);
+
+    expect(screen.getAllByText(/encontramos productos parecidos/i)).toHaveLength(2);
+    expect(screen.getByRole("button", { name: /ninguno corresponde/i })).not.toBeNull();
+    await user.click(screen.getByRole("button", { name: /usar sedatif pc x 40 tabletas/i }));
+
+    expect(productSelect().value).toBe("existing-sedatif");
+    expect(
+      (screen.getByRole("checkbox", { name: /no está en el catálogo/i }) as HTMLInputElement)
+        .checked,
+    ).toBe(false);
+    expect((screen.getByRole("spinbutton", { name: "Cantidad" }) as HTMLInputElement).value).toBe(
+      "7",
+    );
   });
 
   it("el conflicto manual obliga a usar al dueño y no ofrece crear otro producto aplazado", async () => {

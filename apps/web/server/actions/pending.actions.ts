@@ -28,6 +28,7 @@ import {
   contactPending,
   invoicePending,
   ManualProductIdentityConflictError,
+  ManualProductNameConflictError,
   PendingIdempotencyPayloadConflictError,
   registerPending,
   setPendingManagementStatus,
@@ -165,6 +166,8 @@ export type PendingFormState = {
   savedWithoutTotalAmount?: boolean;
   /** Recuperación accionable cuando el código ya pertenece a otro producto. */
   orionConflict?: PendingOrionConflict | null;
+  /** Coincidencias que deben resolverse antes de crear un producto manual. */
+  manualDuplicateCandidates?: PendingProductSearchItem[] | null;
   /**
    * Corrección que no cambiaba nada: no se escribió ni se auditó. Va aparte de
    * `ok` para que la pantalla diga "no había cambios" y no "corregido".
@@ -184,6 +187,7 @@ export type PendingSubmittedValues = {
   productId: string;
   manualName: string;
   manualMode: string;
+  manualDuplicateConfirmed: string;
   manualSellerName: string;
   quantity: string;
   promisedAt: string;
@@ -210,6 +214,7 @@ const SUBMITTED_FIELDS = [
   "productId",
   "manualName",
   "manualMode",
+  "manualDuplicateConfirmed",
   "manualSellerName",
   "quantity",
   "promisedAt",
@@ -369,6 +374,7 @@ export async function createPendingAction(
     message: string,
     log: Omit<PendingLogEvent, "correlationId" | "stage">,
     orionConflict?: PendingOrionConflict,
+    manualDuplicateCandidates?: PendingProductSearchItem[],
   ): PendingFormState => {
     logPendingEvent({
       correlationId,
@@ -385,6 +391,7 @@ export async function createPendingAction(
       values: submitted,
       submissionId: correlationId,
       orionConflict,
+      manualDuplicateCandidates,
     };
   };
 
@@ -545,6 +552,49 @@ export async function createPendingAction(
       errorCode: "MANUAL_ASSIGNED_CODE_DEFERRAL",
       transaction: "not_started",
     });
+  }
+
+  if (
+    capture.manual &&
+    submitted.manualDuplicateConfirmed.trim() !== capture.manual.name
+  ) {
+    try {
+      const page = await getProducts({
+        active: true,
+        q: capture.manual.name,
+        take: 8,
+      });
+      const candidates = page.items.map(({ id, name, code, orionCode, unit }) => ({
+        id,
+        name,
+        code,
+        orionCode,
+        unit,
+      }));
+      if (candidates.length > 0) {
+        return failure(
+          "Encontramos productos parecidos. Elegí el correcto o confirmá que ninguno corresponde antes de crear uno nuevo.",
+          {
+            ...actor,
+            authState: "valid",
+            outcome: "rejected",
+            errorCode: "MANUAL_DUPLICATE_CANDIDATES",
+            transaction: "not_started",
+          },
+          undefined,
+          candidates,
+        );
+      }
+    } catch (error) {
+      logPendingError(correlationId, error);
+      return failure("No se pudo verificar si el producto ya existe. Reintentá.", {
+        ...actor,
+        authState: "valid",
+        outcome: "exception",
+        errorCode: "MANUAL_DUPLICATE_CHECK_FAILED",
+        transaction: "not_started",
+      });
+    }
   }
 
   // La autoridad se relee de la base, así que su motivo puede diferir del de
@@ -767,6 +817,29 @@ export async function createPendingAction(
       idempotencyKey,
     });
   } catch (error) {
+    if (error instanceof ManualProductNameConflictError) {
+      logPendingError(correlationId, error);
+      return failure(
+        "Otro intento creó un producto con el mismo nombre. Usá ese producto existente.",
+        {
+          ...actor,
+          authState: "valid",
+          outcome: "rejected",
+          errorCode: "MANUAL_NAME_CONFLICT",
+          transaction: "rolled_back",
+        },
+        undefined,
+        [
+          {
+            id: error.holder.id,
+            name: error.holder.name,
+            code: "Producto provisional",
+            orionCode: null,
+            unit: "Por confirmar",
+          },
+        ],
+      );
+    }
     if (error instanceof ManualProductIdentityConflictError) {
       logPendingError(correlationId, error);
       return failure(
@@ -1449,7 +1522,7 @@ async function recordPendingLifecycleAudit(
   }
 }
 
-function revalidatePendingViews(context: string): void {
+function revalidatePendingViews(_context: string): void {
   for (const path of ["/pendientes", "/dashboard"]) {
     try {
       revalidatePath(path);

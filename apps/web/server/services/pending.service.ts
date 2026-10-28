@@ -96,6 +96,7 @@ import {
   type ManagementStatus,
 } from "@/features/pendientes/management-status";
 import { acceptsWaitlistDecision } from "@/features/pendientes/waitlist";
+import { normalizeMissingReportName } from "@/features/faltantes/missing-report-name";
 
 // Producto manual: no está en el catálogo, se crea al vuelo desde el pendiente.
 //
@@ -148,6 +149,13 @@ export class ManualProductIdentityConflictError extends Error {
   constructor(readonly holder: { id: string; name: string }) {
     super(`orion code already belongs to product ${holder.id}`);
     this.name = "ManualProductIdentityConflictError";
+  }
+}
+
+export class ManualProductNameConflictError extends Error {
+  constructor(readonly holder: { id: string; name: string }) {
+    super(`manual product name already belongs to provisional product ${holder.id}`);
+    this.name = "ManualProductNameConflictError";
   }
 }
 
@@ -391,6 +399,9 @@ export async function registerPending(
       // conflicto fue de otro índice y el error sigue de largo sin disfrazarse.
       const holder = await holderOfManualOrionCode(data);
       if (holder) throw new ManualProductIdentityConflictError(holder);
+
+      const nameHolder = await holderOfManualNormalizedName(data);
+      if (nameHolder) throw new ManualProductNameConflictError(nameHolder);
     }
     throw error;
   }
@@ -447,6 +458,18 @@ async function holderOfManualOrionCode(
   // PostgreSQL responde 25P02 y taparía el conflicto real.
   return prisma.product.findUnique({
     where: { orionCode },
+    select: { id: true, name: true },
+  });
+}
+
+async function holderOfManualNormalizedName(
+  data: RegisterPendingInput,
+): Promise<{ id: string; name: string } | null> {
+  if (data.productId || !data.manual) return null;
+  return prisma.product.findUnique({
+    where: {
+      provisionalNormalizedName: normalizeMissingReportName(data.manual.name),
+    },
     select: { id: true, name: true },
   });
 }
@@ -563,6 +586,7 @@ function createPendingRegistration(
           minStock: 0,
           reorderQty: 0,
           needsReview: true,
+          provisionalNormalizedName: normalizeMissingReportName(data.manual.name),
           // Tener código de Orion NO lo vuelve un producto curado: sigue
           // marcado para revisión como cualquier alta manual.
           orionCode: data.manual.orionCode ?? null,

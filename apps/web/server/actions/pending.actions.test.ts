@@ -30,6 +30,12 @@ const mocks = vi.hoisted(() => ({
       this.name = "ManualProductIdentityConflictError";
     }
   },
+  ManualProductNameConflictError: class ManualProductNameConflictError extends Error {
+    constructor(readonly holder: { id: string; name: string }) {
+      super("manual product name already exists");
+      this.name = "ManualProductNameConflictError";
+    }
+  },
   PendingIdempotencyPayloadConflictError: class PendingIdempotencyPayloadConflictError extends Error {
     constructor() {
       super("idempotency key was already used for a different pending payload");
@@ -53,6 +59,7 @@ vi.mock("@/server/services/pending.service", () => ({
   invoicePending: mocks.invoicePending,
   PendingIdempotencyPayloadConflictError: mocks.PendingIdempotencyPayloadConflictError,
   ManualProductIdentityConflictError: mocks.ManualProductIdentityConflictError,
+  ManualProductNameConflictError: mocks.ManualProductNameConflictError,
   registerPending: mocks.registerPending,
   setPendingManagementStatus: mocks.setPendingManagementStatus,
 }));
@@ -396,6 +403,7 @@ describe("createPendingAction", () => {
         productId: "prod-1",
         manualName: "",
         manualMode: "",
+        manualDuplicateConfirmed: "",
         manualSellerName: "",
         quantity: "2",
         promisedAt: "2099-01-02T12:00",
@@ -507,6 +515,7 @@ describe("createPendingAction", () => {
         productId: "",
         manualName: "Ibuprofeno jarabe",
         manualMode: "on",
+        manualDuplicateConfirmed: "",
         manualSellerName: "",
         quantity: "2",
         promisedAt: "2099-01-02T12:00",
@@ -735,6 +744,70 @@ describe("createPendingAction", () => {
         }),
       );
       expect(mocks.linkOrionCodeAtCapture).not.toHaveBeenCalled();
+    });
+
+    it("alerta coincidencias antes de crear un manual y no escribe nada", async () => {
+      mocks.getProducts.mockResolvedValue({
+        items: [
+          {
+            id: "existing-1",
+            name: "Ibuprofeno jarabe",
+            code: "MAN-EXISTING",
+            orionCode: null,
+            unit: "Frasco",
+            active: true,
+          },
+        ],
+        nextCursor: null,
+      });
+
+      const result = await createPendingAction(
+        PREV,
+        createManualFormData({ identitySkippedReason: "ORION_UNAVAILABLE" }),
+      );
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/encontramos productos parecidos/i);
+      expect(result.manualDuplicateCandidates).toEqual([
+        expect.objectContaining({ id: "existing-1", name: "Ibuprofeno jarabe" }),
+      ]);
+      expect(mocks.registerPending).not.toHaveBeenCalled();
+      expect(mocks.recordAudit).not.toHaveBeenCalled();
+    });
+
+    it("permite crear el manual solo después de confirmar que ninguna coincidencia corresponde", async () => {
+      mocks.getProducts.mockResolvedValue({
+        items: [
+          {
+            id: "existing-1",
+            name: "Ibuprofeno jarabe pediátrico",
+            code: "IBU-PED",
+            orionCode: null,
+            unit: "Frasco",
+            active: true,
+          },
+        ],
+        nextCursor: null,
+      });
+      mocks.registerPending.mockResolvedValue({
+        pending: { id: "pend-manual" },
+        missingItem: null,
+        createdProduct: { id: "new-manual" },
+        sellableStock: 0,
+        missingQuantity: 2,
+        replayed: false,
+      });
+
+      const result = await createPendingAction(
+        PREV,
+        createManualFormData({
+          identitySkippedReason: "ORION_UNAVAILABLE",
+          manualDuplicateConfirmed: "Ibuprofeno jarabe",
+        }),
+      );
+
+      expectSuccess(result);
+      expect(mocks.registerPending).toHaveBeenCalledTimes(1);
     });
 
     it("rechaza el manual que intenta aplazar un código ya asignado sin escribir nada", async () => {
