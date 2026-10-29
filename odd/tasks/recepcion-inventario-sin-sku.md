@@ -14,8 +14,8 @@ La recepción excepcional debe ser explícita, auditable, idempotente y visible 
 - [x] **T1 · S1-S3 · parent · `6e1a604c`:** modelar una excepción de identidad cerrada sobre la entrada, reutilizando los motivos existentes y una migración aditiva.
 - [x] **T2 · S1-S3 · parent · `6e1a604c`:** cambiar el servicio y la acción con RED/GREEN para permitir la excepción solamente con confirmación y motivo, dentro de una transacción auditada e idempotente.
 - [x] **T3 · S1-S3 · parent · `a42a3ffb`:** implementar el flujo de interfaz: advertencia, confirmación explícita, motivo obligatorio y nota opcional, sin mostrar la excepción cuando el producto ya tiene SKU.
-- [x] **T4 · S2-S3 · parent · commit final:** incorporar las recepciones sin SKU a la cola de identidad y priorizarlas sin borrar historia al resolver el código.
-- [x] **T5 · S1-S3 · parent · commit final:** verificar PostgreSQL real, regresiones del flujo con SKU, auditoría, idempotencia, conflictos de código, typecheck, lint y build; actualizar ayuda o documentación operativa aplicable.
+- [x] **T4 · S2-S3 · parent · `a495217d`:** incorporar las recepciones sin SKU a la cola de identidad y priorizarlas sin borrar historia al resolver el código.
+- [x] **T5 · S1-S3 · parent · `a495217d`:** verificar PostgreSQL real, regresiones del flujo con SKU, auditoría, idempotencia, conflictos de código, typecheck, lint y build; actualizar ayuda o documentación operativa aplicable.
 - [x] **T6 · S2-S3 · independent verifier · no commit:** ejecutar verificación independiente por riesgo de datos y concurrencia antes de declarar la mejora liberable.
 
 ## Log
