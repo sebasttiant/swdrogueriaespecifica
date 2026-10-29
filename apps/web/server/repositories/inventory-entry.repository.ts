@@ -11,7 +11,10 @@ import {
   encodeCursor,
   type Paginated,
 } from "@/lib/pagination";
-import type { Prisma } from "@/lib/generated/prisma/client";
+import type {
+  PendingIdentityDeferral,
+  Prisma,
+} from "@/lib/generated/prisma/client";
 
 export type InventoryEntryListItem = {
   id: string;
@@ -29,6 +32,8 @@ export type CreateInventoryEntryData = {
   createdById?: string | null;
   idempotencyKey?: string;
   requestFingerprint?: string;
+  identityExceptionReason?: PendingIdentityDeferral;
+  identityExceptionNote?: string;
 };
 
 const LIST_SELECT = {
@@ -53,6 +58,8 @@ export async function createInventoryEntry(
       createdById: data.createdById ?? null,
       idempotencyKey: data.idempotencyKey ?? crypto.randomUUID(),
       requestFingerprint: data.requestFingerprint ?? "legacy",
+      identityExceptionReason: data.identityExceptionReason ?? null,
+      identityExceptionNote: data.identityExceptionNote ?? null,
     },
   });
 }

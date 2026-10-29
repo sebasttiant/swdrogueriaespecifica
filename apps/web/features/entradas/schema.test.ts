@@ -17,6 +17,52 @@ const BASE = {
   expectedCatalogVersion: "0",
 };
 
+describe("inventoryEntryCreateSchema · excepción de identidad", () => {
+  it("acepta la confirmación explícita con un motivo cerrado", () => {
+    const parsed = inventoryEntryCreateSchema.safeParse({
+      ...BASE,
+      identityExceptionAcknowledged: "on",
+      identityExceptionReason: "NEW_PRODUCT",
+      identityExceptionNote: "Orión todavía no lo tiene creado",
+    });
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.data).toMatchObject({
+      identityExceptionAcknowledged: true,
+      identityExceptionReason: "NEW_PRODUCT",
+      identityExceptionNote: "Orión todavía no lo tiene creado",
+    });
+  });
+
+  it("rechaza confirmar sin elegir el motivo", () => {
+    const parsed = inventoryEntryCreateSchema.safeParse({
+      ...BASE,
+      identityExceptionAcknowledged: "on",
+    });
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error?.issues.some((issue) => /motivo/i.test(issue.message))).toBe(true);
+  });
+
+  it("rechaza un motivo enviado sin la confirmación explícita", () => {
+    const parsed = inventoryEntryCreateSchema.safeParse({
+      ...BASE,
+      identityExceptionReason: "ORION_UNAVAILABLE",
+    });
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error?.issues.some((issue) => /confirm/i.test(issue.message))).toBe(true);
+  });
+
+  it("mantiene la entrada normal sin excepción exactamente como antes", () => {
+    const parsed = inventoryEntryCreateSchema.safeParse(BASE);
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.identityExceptionAcknowledged).toBe(false);
+    expect(parsed.data?.identityExceptionReason).toBeUndefined();
+  });
+});
+
 describe("inventoryEntryCreateSchema · laboratorio recibido", () => {
   it("acepta una entrada SIN laboratorio", () => {
     const parsed = inventoryEntryCreateSchema.safeParse(BASE);

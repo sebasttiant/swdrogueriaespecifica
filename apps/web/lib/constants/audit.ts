@@ -93,6 +93,10 @@ export const AUDIT_ACTIONS = {
   MISSING_REPORT_RECEIVED: "missing.report.received",
   // Entradas
   ENTRY_CREATE: "entry.create",
+  // Recepción física aceptada explícitamente aunque el producto todavía no
+  // tenga código de Orión. Es distinta de ENTRY_CREATE porque debe vivir en la
+  // misma transacción que el inventario: si falta este testigo, no entra stock.
+  ENTRY_IDENTITY_DEFERRED: "entry.identity.deferred",
   MISSING_CLOSED_BY_ENTRY: "missing.closed.by.entry",
   // Reportes / archivos
   REPORT_EXPORT: "report.export",

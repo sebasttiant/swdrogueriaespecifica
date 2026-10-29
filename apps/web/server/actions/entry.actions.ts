@@ -12,6 +12,7 @@ import {
   BatchExpiryConflictError,
   LaboratoryEvidenceConflictError,
   LaboratoryNameResolutionError,
+  ProductIdentityExceptionNotApplicableError,
   ProductIdentityRequiredError,
   ProductNotFoundError,
   ProductVersionConflictError,
@@ -98,6 +99,10 @@ export async function createInventoryEntryAction(
     note: formData.get("note") ?? undefined,
     receivedLaboratoryId: formData.get("receivedLaboratoryId") ?? undefined,
     receivedLaboratoryName: formData.get("receivedLaboratoryName") ?? undefined,
+    identityExceptionAcknowledged:
+      formData.get("identityExceptionAcknowledged") ?? undefined,
+    identityExceptionReason: formData.get("identityExceptionReason") ?? undefined,
+    identityExceptionNote: formData.get("identityExceptionNote") ?? undefined,
     idempotencyKey: formData.get("idempotencyKey"),
     expectedIdentityVersion: formData.get("expectedIdentityVersion"),
     expectedCatalogVersion: formData.get("expectedCatalogVersion"),
@@ -117,7 +122,22 @@ export async function createInventoryEntryAction(
   // —payload de idempotencia distinto, evidencia en conflicto— dejaba en el
   // catálogo un laboratorio que nadie pidió. Resolver adentro es lo que hace
   // que el rollback también se lo lleve.
-  const { displayedSku, displayedPresentation, ...entryData } = parsed.data;
+  const {
+    displayedSku,
+    displayedPresentation,
+    identityExceptionAcknowledged,
+    identityExceptionReason,
+    identityExceptionNote,
+    ...entryData
+  } = parsed.data;
+  const identityException =
+    identityExceptionAcknowledged && identityExceptionReason
+      ? {
+          acknowledged: true as const,
+          reason: identityExceptionReason,
+          note: identityExceptionNote,
+        }
+      : undefined;
 
   let allocatedMissingCount = 0;
 
@@ -125,6 +145,7 @@ export async function createInventoryEntryAction(
     const result = await registerInventoryEntry({
       ...entryData,
       createdById: session.user.id,
+      identityException,
     });
 
     allocatedMissingCount = result.allocatedMissingCount;
@@ -168,6 +189,7 @@ export async function createInventoryEntryAction(
         // resuelto lo decide el servicio y ya queda en el lote.
         receivedLaboratoryId: entryData.receivedLaboratoryId ?? null,
         receivedLaboratoryName: entryData.receivedLaboratoryName ?? null,
+        identityExceptionReason: identityException?.reason ?? null,
       },
       context,
     });
@@ -218,9 +240,15 @@ export async function createInventoryEntryAction(
     }
     if (error instanceof ProductIdentityRequiredError) {
       return {
-        error: `"${error.productName}" todavía no tiene SKU (código de Orión). Completalo y volvé a registrar la entrada.`,
+        error: `"${error.productName}" todavía no tiene SKU (código de Orión). Completalo o confirmá la recepción excepcional indicando el motivo.`,
         ok: false,
         resolveSkuForProductId: error.productId,
+      };
+    }
+    if (error instanceof ProductIdentityExceptionNotApplicableError) {
+      return {
+        error: `"${error.productName}" ya tiene código de Orión. La excepción quedó desactualizada; verificá el código y volvé a confirmar la entrada.`,
+        ok: false,
       };
     }
     // El nombre resolvió a un laboratorio que no es el que se pidió. No se
