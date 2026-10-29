@@ -536,6 +536,30 @@ describe("createPendingAction", () => {
       });
     });
 
+    it("preserva el snapshot visual del dueño recuperado cuando el reintento falla", async () => {
+      mocks.registerPending.mockRejectedValue(new Error("database unavailable"));
+
+      const result = await createPendingAction(
+        PREV,
+        createCatalogFormData({
+          recoveredProductId: "prod-9",
+          recoveredProductName: "Eucerin tono medio",
+          recoveredProductOrionCode: "ORN-2002",
+          recoveredProductUnit: "Caja",
+        }),
+      );
+
+      expect(result.ok).toBe(false);
+      expect(result.values).toEqual(
+        expect.objectContaining({
+          recoveredProductId: "prod-9",
+          recoveredProductName: "Eucerin tono medio",
+          recoveredProductOrionCode: "ORN-2002",
+          recoveredProductUnit: "Caja",
+        }),
+      );
+    });
+
     it("la unión de identidad NO viaja al service: el contrato son los campos planos", async () => {
       await createPendingAction(PREV, createCatalogFormData({ orionCode: "ORN-1001" }));
 
