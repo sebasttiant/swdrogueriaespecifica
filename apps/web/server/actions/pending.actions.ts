@@ -159,6 +159,12 @@ export type PendingSubmittedValues = {
   orionCode: string;
   identitySkippedReason: string;
   identitySkippedNote: string;
+  // Snapshot de presentación del dueño recuperado. Solo permite reconstruir la
+  // opción visual tras un fallo; la operación vuelve a validar productId en DB.
+  recoveredProductId?: string;
+  recoveredProductName?: string;
+  recoveredProductOrionCode?: string;
+  recoveredProductUnit?: string;
   // T3: laboratorio solicitado por el cliente.
   requestedLaboratoryId: string;
   requestedLaboratoryName: string;
@@ -183,6 +189,10 @@ const SUBMITTED_FIELDS = [
   "orionCode",
   "identitySkippedReason",
   "identitySkippedNote",
+  "recoveredProductId",
+  "recoveredProductName",
+  "recoveredProductOrionCode",
+  "recoveredProductUnit",
   "requestedLaboratoryId",
   "requestedLaboratoryName",
 ] as const satisfies readonly (keyof PendingSubmittedValues)[];
@@ -196,6 +206,14 @@ function text(formData: FormData, name: string): string {
 function collectSubmittedValues(formData: FormData): PendingSubmittedValues {
   const values = {} as PendingSubmittedValues;
   for (const field of SUBMITTED_FIELDS) values[field] = text(formData, field);
+  // Mantiene byte-a-byte el eco histórico para envíos normales. El snapshot es
+  // evidencia transitoria de UI y solo existe cuando hay un dueño recuperado.
+  if (!values.recoveredProductId) {
+    delete values.recoveredProductId;
+    delete values.recoveredProductName;
+    delete values.recoveredProductOrionCode;
+    delete values.recoveredProductUnit;
+  }
   return values;
 }
 

@@ -200,6 +200,18 @@ function PendingFormFields({
   // el dueño estaba mucho más allá del límite del selector—, pero eso no puede
   // volverlo imposible de elegir. Lo materializamos solo para recuperar este
   // intento; el próximo envío vuelve a releer el producto por ID en el servidor.
+  const echoedRecoveredHolder: ProductOption | undefined =
+    previous.recoveredProductId &&
+    previous.recoveredProductId === previous.productId &&
+    previous.recoveredProductName
+      ? {
+          id: previous.recoveredProductId,
+          name: previous.recoveredProductName,
+          code: "",
+          orionCode: previous.recoveredProductOrionCode || null,
+          unit: previous.recoveredProductUnit || "Por confirmar",
+        }
+      : undefined;
   const recoveredConflictHolder: ProductOption | undefined = conflict
     ? products.find((product) => product.id === conflict.holder.productId) ?? {
         id: conflict.holder.productId,
@@ -208,7 +220,7 @@ function PendingFormFields({
         orionCode: previous.orionCode || null,
         unit: "Por confirmar",
       }
-    : undefined;
+    : echoedRecoveredHolder;
   const selectableProducts =
     recoveredConflictHolder &&
     !products.some((product) => product.id === recoveredConflictHolder.id)
@@ -356,6 +368,26 @@ function PendingFormFields({
         defaultValue="unknown"
       />
       <input type="hidden" name="manualMode" value={manual ? "on" : "off"} />
+      {recoveredConflictHolder && productId === recoveredConflictHolder.id ? (
+        <>
+          <input type="hidden" name="recoveredProductId" value={recoveredConflictHolder.id} />
+          <input
+            type="hidden"
+            name="recoveredProductName"
+            value={recoveredConflictHolder.name}
+          />
+          <input
+            type="hidden"
+            name="recoveredProductOrionCode"
+            value={recoveredConflictHolder.orionCode ?? ""}
+          />
+          <input
+            type="hidden"
+            name="recoveredProductUnit"
+            value={recoveredConflictHolder.unit}
+          />
+        </>
+      ) : null}
 
       {canSelectExisting ? (
         <label
