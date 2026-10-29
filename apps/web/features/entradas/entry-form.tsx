@@ -9,6 +9,11 @@ import {
   PRESENTATION_LABEL,
   presentationLabel,
 } from "@/features/pendientes/presentation";
+import {
+  MAX_IDENTITY_DEFERRAL_NOTE_LENGTH,
+  PENDING_IDENTITY_DEFERRAL_LABELS,
+  PENDING_IDENTITY_DEFERRAL_REASONS,
+} from "@/features/pendientes/identity-deferral";
 
 import { Button } from "@/app/_components/ui/button";
 import { Field } from "@/app/_components/ui/field";
@@ -124,6 +129,8 @@ export function EntryForm({
   const searchRequest = useRef(0);
   const [locked] = useState(() => lockedProduct);
   const [selectedId, setSelectedId] = useState(() => selectedProductId ?? "");
+  const [identityExceptionAcknowledged, setIdentityExceptionAcknowledged] =
+    useState(false);
   // Lo que la persona decidió adoptar DESPUÉS de ver que el producto cambió.
   // Nunca se llena solo: adoptarlo en silencio dejaría pasar el reintento sin
   // que nadie haya vuelto a mirar la caja.
@@ -322,8 +329,10 @@ export function EntryForm({
               disabled={searching}
               onChange={(event) => {
                 setSelectedId(event.target.value);
-                // Cambiar de producto tira la adopción: pertenecía al anterior.
+                // Las dos decisiones pertenecían al producto anterior. No se
+                // heredan a otra fila, aunque también esté sin SKU.
                 setAdopted(null);
+                setIdentityExceptionAcknowledged(false);
               }}
             >
               <option value="">Elegí un producto…</option>
@@ -343,6 +352,74 @@ export function EntryForm({
             ) : null}
           </Field>
         )}
+        {shown && !shownSku ? (
+          <div className="sm:col-span-2 space-y-3 rounded-lg border border-warning/50 bg-warning/10 p-4">
+            <div className="space-y-1 text-sm">
+              <p className="font-semibold text-text">
+                Este producto todavía no tiene código de Orión.
+              </p>
+              <p className="text-muted-foreground">
+                Podés recibir la mercadería para no frenar la operación. La
+                entrada quedará auditada y pendiente de identificación hasta
+                que se vincule el código correcto.
+              </p>
+              <Link
+                prefetch={false}
+                href={`/productos/${shown.id}`}
+                className="inline-block font-semibold text-primary underline underline-offset-2"
+              >
+                Completar el código de Orión en lugar de usar la excepción
+              </Link>
+            </div>
+
+            <label className="flex items-start gap-2 text-sm font-medium text-text">
+              <input
+                type="checkbox"
+                name="identityExceptionAcknowledged"
+                className="mt-0.5 h-4 w-4 rounded border-border accent-primary"
+                checked={identityExceptionAcknowledged}
+                onChange={(event) =>
+                  setIdentityExceptionAcknowledged(event.target.checked)
+                }
+              />
+              Recibir inventario sin código de Orión y dejarlo pendiente de revisión
+            </label>
+
+            {identityExceptionAcknowledged ? (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field
+                  label="Motivo de recepción sin código"
+                  htmlFor="identityExceptionReason"
+                >
+                  <Select
+                    id="identityExceptionReason"
+                    name="identityExceptionReason"
+                    required
+                    defaultValue=""
+                  >
+                    <option value="">Elegí un motivo…</option>
+                    {PENDING_IDENTITY_DEFERRAL_REASONS.map((reason) => (
+                      <option key={reason} value={reason}>
+                        {PENDING_IDENTITY_DEFERRAL_LABELS[reason]}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <Field
+                  label="Detalle adicional (opcional)"
+                  htmlFor="identityExceptionNote"
+                >
+                  <Input
+                    id="identityExceptionNote"
+                    name="identityExceptionNote"
+                    maxLength={MAX_IDENTITY_DEFERRAL_NOTE_LENGTH}
+                    placeholder="Información útil para resolverlo después"
+                  />
+                </Field>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         <Field label="Cantidad" htmlFor="quantity">
           <Input
             id="quantity"
@@ -440,7 +517,10 @@ export function EntryForm({
         <Button
           type="button"
           variant="secondary"
-          onClick={() => setAdopted(state.conflict ?? null)}
+          onClick={() => {
+            setAdopted(state.conflict ?? null);
+            setIdentityExceptionAcknowledged(false);
+          }}
         >
           Usar los datos actualizados
         </Button>

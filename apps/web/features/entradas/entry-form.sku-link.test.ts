@@ -2,6 +2,7 @@
 
 import { createElement } from "react";
 import { cleanup, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { EntryFormState } from "@/server/actions/entry.actions";
@@ -24,7 +25,7 @@ vi.mock("@/server/actions/entry.actions", () => ({
   createInventoryEntryAction: vi.fn(),
 }));
 
-import { EntryForm } from "./entry-form";
+import { EntryForm, type ProductOption } from "./entry-form";
 
 // --------------------------------------------------------------------------
 // El rechazo por falta de SKU tiene que llevar a algún lado.
@@ -41,23 +42,26 @@ import { EntryForm } from "./entry-form";
 const RECHAZO =
   '"Gel Caliente Muscular" todavía no tiene SKU (código de Orión). Completalo y volvé a registrar la entrada.';
 
-const montar = () =>
-  render(
-    createElement(EntryForm, {
-      products: [
-        {
-          id: "prod-gel-1",
-          name: "Gel Caliente Muscular",
-          code: "PROV-euc2",
-          orionCode: null,
-          laboratoryName: null,
-          unit: "caja",
-          identityVersion: 0,
-          catalogVersion: 0,
-        },
-      ],
-    }),
-  );
+const SIN_SKU: ProductOption = {
+  id: "prod-gel-1",
+  name: "Gel Caliente Muscular",
+  code: "PROV-euc2",
+  orionCode: null,
+  laboratoryName: null,
+  unit: "caja",
+  identityVersion: 0,
+  catalogVersion: 0,
+};
+
+const CON_SKU: ProductOption = {
+  ...SIN_SKU,
+  id: "prod-gel-2",
+  name: "Gel Identificado",
+  orionCode: "ORI-7788",
+};
+
+const montar = (products = [SIN_SKU]) =>
+  render(createElement(EntryForm, { products }));
 
 const enlaceSku = () => screen.queryByRole("link", { name: /completar el sku/i });
 
@@ -66,6 +70,42 @@ beforeEach(() => {
 });
 
 afterEach(cleanup);
+
+describe("registro de entrada · excepción explícita sin SKU", () => {
+  it("muestra advertencia y confirmación solo para el producto sin SKU", async () => {
+    const user = userEvent.setup();
+    montar([SIN_SKU, CON_SKU]);
+
+    await user.selectOptions(screen.getByLabelText("Producto"), SIN_SKU.id);
+    expect(screen.getByText(/todavía no tiene código de Orión/i)).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: /recibir inventario sin código/i })).toBeTruthy();
+
+    await user.selectOptions(screen.getByLabelText("Producto"), CON_SKU.id);
+    expect(screen.queryByRole("checkbox", { name: /recibir inventario sin código/i })).toBeNull();
+  });
+
+  it("solo muestra el motivo después de una confirmación consciente", async () => {
+    const user = userEvent.setup();
+    montar();
+    await user.selectOptions(screen.getByLabelText("Producto"), SIN_SKU.id);
+
+    expect(screen.queryByLabelText("Motivo de recepción sin código")).toBeNull();
+    await user.click(screen.getByRole("checkbox", { name: /recibir inventario sin código/i }));
+
+    const reason = screen.getByLabelText("Motivo de recepción sin código");
+    expect(reason.getAttribute("required")).not.toBeNull();
+    expect(screen.getByLabelText("Detalle adicional (opcional)")).toBeTruthy();
+  });
+
+  it("ofrece resolver el producto exacto en vez de crear otra identidad", async () => {
+    const user = userEvent.setup();
+    montar();
+    await user.selectOptions(screen.getByLabelText("Producto"), SIN_SKU.id);
+
+    expect(screen.getByRole("link", { name: /completar el código de Orión/i }).getAttribute("href"))
+      .toBe(`/productos/${SIN_SKU.id}`);
+  });
+});
 
 describe("registro de entrada · rechazo por falta de SKU", () => {
   it("ofrece el enlace al producto que el servidor rechazó", () => {
