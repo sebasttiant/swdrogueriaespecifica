@@ -481,6 +481,30 @@ describe("createPendingAction", () => {
       });
     });
 
+    it("preserva el snapshot visual del dueño recuperado cuando el reintento falla", async () => {
+      mocks.registerPending.mockRejectedValue(new Error("database unavailable"));
+
+      const result = await createPendingAction(
+        PREV,
+        createCatalogFormData({
+          recoveredProductId: "prod-9",
+          recoveredProductName: "Eucerin tono medio",
+          recoveredProductOrionCode: "ORN-2002",
+          recoveredProductUnit: "Caja",
+        }),
+      );
+
+      expect(result.ok).toBe(false);
+      expect(result.values).toEqual(
+        expect.objectContaining({
+          recoveredProductId: "prod-9",
+          recoveredProductName: "Eucerin tono medio",
+          recoveredProductOrionCode: "ORN-2002",
+          recoveredProductUnit: "Caja",
+        }),
+      );
+    });
+
     it("la unión de identidad NO viaja al service: el contrato son los campos planos", async () => {
       await createPendingAction(PREV, createCatalogFormData({ orionCode: "ORN-1001" }));
 
@@ -689,6 +713,23 @@ describe("createPendingAction", () => {
         }),
       );
       expect(mocks.linkOrionCodeAtCapture).not.toHaveBeenCalled();
+    });
+
+    it("rechaza el manual que intenta aplazar un código ya asignado sin escribir nada", async () => {
+      const result = await createPendingAction(
+        PREV,
+        createManualFormData({
+          identitySkippedReason: "CODE_ALREADY_ASSIGNED",
+        }),
+      );
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/producto que ya tiene ese código/i);
+      expect(result.values?.manualName).toBe("Ibuprofeno jarabe");
+      expect(result.values?.identitySkippedReason).toBe("CODE_ALREADY_ASSIGNED");
+      expect(mocks.registerPending).not.toHaveBeenCalled();
+      expect(mocks.linkOrionCodeAtCapture).not.toHaveBeenCalled();
+      expect(mocks.recordAudit).not.toHaveBeenCalled();
     });
 
     it("el código Y el aplazamiento juntos se rechazan sin escribir nada", async () => {
