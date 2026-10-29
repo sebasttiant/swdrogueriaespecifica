@@ -38,6 +38,7 @@ import { cn } from "@/lib/utils/cn";
 import { formatCop, parseCopInput } from "@/lib/format/currency";
 import {
   createPendingAction,
+  searchActiveProductsForPendingAction,
   type PendingFormState,
   type PendingSubmittedValues,
 } from "@/server/actions/pending.actions";
@@ -178,6 +179,7 @@ function PendingFormFields({
     previous.manualMode ? previous.manualMode === "on" : !canSelectExisting,
   );
   const manualToggleId = useId();
+  const productSearchId = useId();
 
   // Clave de idempotencia del intento. Se conserva mientras el registro falle
   // —así el reintento no crea un segundo pendiente— y nace nueva tras un éxito,
@@ -194,6 +196,13 @@ function PendingFormFields({
   // campo de encima, y un código inventado es peor que ninguno.
   // --------------------------------------------------------------------------
   const [productId, setProductId] = useState(previous.productId ?? "");
+  const [productSearchQuery, setProductSearchQuery] = useState("");
+  const [productSearchResults, setProductSearchResults] = useState<ProductOption[]>([]);
+  const [productSearchCursor, setProductSearchCursor] = useState<string | null>(null);
+  const [productSearchStatus, setProductSearchStatus] = useState<
+    "idle" | "searching" | "error"
+  >("idle");
+  const productSearchRequestId = useRef(0);
 
   // El dueño del código viene validado por el servidor. Puede no estar entre
   // los primeros productos que recibió la página —ese fue el incidente real:
@@ -221,12 +230,25 @@ function PendingFormFields({
         unit: "Por confirmar",
       }
     : echoedRecoveredHolder;
+  // Los resultados de búsqueda son transitorios; la selección no puede serlo.
+  // Este snapshot solo reconstruye la opción visual. El servidor sigue
+  // validando productId contra la base antes de cualquier escritura.
+  const [preservedSelectedProduct, setPreservedSelectedProduct] = useState<
+    ProductOption | undefined
+  >(() => echoedRecoveredHolder);
   const selectableProducts =
     recoveredConflictHolder &&
     !products.some((product) => product.id === recoveredConflictHolder.id)
       ? [...products, recoveredConflictHolder]
       : products;
-  const selectedProduct = selectableProducts.find((product) => product.id === productId);
+  const visibleProducts = [
+    ...selectableProducts,
+    ...(preservedSelectedProduct ? [preservedSelectedProduct] : []),
+    ...productSearchResults,
+  ].filter(
+    (product, index, all) => all.findIndex((candidate) => candidate.id === product.id) === index,
+  );
+  const selectedProduct = visibleProducts.find((product) => product.id === productId);
 
   // Este draft es controlado porque su identidad de producto puede cambiar sin
   // que el bloque se desmonte. Un `defaultValue` conservaría datos del producto
@@ -262,19 +284,58 @@ function PendingFormFields({
   const changeManualMode = (nextManual: boolean) => {
     if (nextManual === manual) return;
     clearIdentityDraft();
+    setPreservedSelectedProduct(undefined);
     setManual(nextManual);
   };
 
   const changeProduct = (nextProductId: string) => {
     if (nextProductId === productId) return;
     clearIdentityDraft();
+    const nextProduct = visibleProducts.find((product) => product.id === nextProductId);
+    setPreservedSelectedProduct(
+      nextProduct && !products.some((product) => product.id === nextProduct.id)
+        ? nextProduct
+        : undefined,
+    );
     setProductId(nextProductId);
+  };
+
+  const runProductSearch = async (cursor: string | null) => {
+    const query = productSearchQuery.trim();
+    if (!query) return;
+
+    const requestId = (productSearchRequestId.current += 1);
+    setProductSearchStatus("searching");
+    try {
+      const result = await searchActiveProductsForPendingAction(query, cursor);
+      if (requestId !== productSearchRequestId.current) return;
+      setProductSearchResults((current) => {
+        const combined = cursor ? [...current, ...result.items] : result.items;
+        return combined.filter(
+          (product, index, all) =>
+            all.findIndex((candidate) => candidate.id === product.id) === index,
+        );
+      });
+      setProductSearchCursor(result.nextCursor);
+      setProductSearchStatus("idle");
+    } catch {
+      if (requestId !== productSearchRequestId.current) return;
+      setProductSearchStatus("error");
+    }
+  };
+
+  const selectSearchedProduct = (product: ProductOption) => {
+    clearIdentityDraft();
+    setManual(false);
+    setPreservedSelectedProduct(product);
+    setProductId(product.id);
   };
 
   const selectConflictHolder = () => {
     if (!conflictHolder) return;
     clearIdentityDraft();
     setManual(false);
+    setPreservedSelectedProduct(conflictHolder);
     setProductId(conflictHolder.id);
   };
 
@@ -368,23 +429,23 @@ function PendingFormFields({
         defaultValue="unknown"
       />
       <input type="hidden" name="manualMode" value={manual ? "on" : "off"} />
-      {recoveredConflictHolder && productId === recoveredConflictHolder.id ? (
+      {preservedSelectedProduct && productId === preservedSelectedProduct.id ? (
         <>
-          <input type="hidden" name="recoveredProductId" value={recoveredConflictHolder.id} />
+          <input type="hidden" name="recoveredProductId" value={preservedSelectedProduct.id} />
           <input
             type="hidden"
             name="recoveredProductName"
-            value={recoveredConflictHolder.name}
+            value={preservedSelectedProduct.name}
           />
           <input
             type="hidden"
             name="recoveredProductOrionCode"
-            value={recoveredConflictHolder.orionCode ?? ""}
+            value={preservedSelectedProduct.orionCode ?? ""}
           />
           <input
             type="hidden"
             name="recoveredProductUnit"
-            value={recoveredConflictHolder.unit}
+            value={preservedSelectedProduct.unit}
           />
         </>
       ) : null}
@@ -431,22 +492,97 @@ function PendingFormFields({
             />
           </Field>
         ) : (
-          <Field label="Producto" htmlFor="productId" className="sm:col-span-2">
-            <Select
-              id="productId"
-              name="productId"
-              required
-              value={productId}
-              onChange={(event) => changeProduct(event.target.value)}
+          <div className="sm:col-span-2 space-y-3">
+            <Field
+              label="Buscar producto en catálogo"
+              htmlFor={productSearchId}
+              hint="Busca en todo el catálogo por nombre, código interno o código exacto de Orión."
             >
-              <option value="">Elegí un producto…</option>
-              {selectableProducts.map((product) => (
-                <option key={product.id} value={product.id}>
-                  {optionLabel(product)}
-                </option>
-              ))}
-            </Select>
-          </Field>
+              <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                <Input
+                  id={productSearchId}
+                  type="search"
+                  value={productSearchQuery}
+                  onChange={(event) => {
+                    productSearchRequestId.current += 1;
+                    setProductSearchQuery(event.target.value);
+                    setProductSearchResults([]);
+                    setProductSearchCursor(null);
+                    setProductSearchStatus("idle");
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter") return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    void runProductSearch(null);
+                  }}
+                  placeholder="Ej: SEDATIF, MAN-8B1DC5F9 o A15637"
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={productSearchStatus === "searching" || !productSearchQuery.trim()}
+                  onClick={() => runProductSearch(null)}
+                >
+                  {productSearchStatus === "searching"
+                    ? "Buscando…"
+                    : "Buscar en todo el catálogo"}
+                </Button>
+              </div>
+            </Field>
+
+            {productSearchStatus === "error" ? (
+              <p role="alert" className="text-sm font-medium text-danger">
+                No se pudo buscar productos. Reintentá.
+              </p>
+            ) : null}
+
+            {productSearchResults.length > 0 ? (
+              <div role="listbox" aria-label="Resultados de productos" className="space-y-1">
+                {productSearchResults.map((product) => (
+                  <Button
+                    key={product.id}
+                    type="button"
+                    role="option"
+                    aria-selected={product.id === productId}
+                    variant={product.id === productId ? "secondary" : "ghost"}
+                    className="w-full justify-start text-left"
+                    onClick={() => selectSearchedProduct(product)}
+                  >
+                    {optionLabel(product)} · {product.code}
+                  </Button>
+                ))}
+                {productSearchCursor ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="w-full"
+                    disabled={productSearchStatus === "searching"}
+                    onClick={() => runProductSearch(productSearchCursor)}
+                  >
+                    Ver más resultados
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+
+            <Field label="Producto" htmlFor="productId">
+              <Select
+                id="productId"
+                name="productId"
+                required
+                value={productId}
+                onChange={(event) => changeProduct(event.target.value)}
+              >
+                <option value="">Elegí un producto…</option>
+                {visibleProducts.map((product) => (
+                  <option key={product.id} value={product.id}>
+                    {optionLabel(product)}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          </div>
         )}
 
         {/* Presentación del producto del CATÁLOGO: se muestra, no se edita.
