@@ -351,6 +351,95 @@ describe("repairProductIdentity", () => {
     });
   });
 
+  // The legacy management statuses are NOT terminal: the fulfillment-lifecycle
+  // migration copied them into `purchaseStatus` without clearing `status`, so
+  // historical rows still carry them. Ignoring them would deactivate the
+  // duplicate while its live pending stays attached to an invisible product.
+  it.each(["SOLICITADO", "BUSQUEDA", "COTIZANDO", "AGOTADO"])(
+    "refuses when the duplicate has an unlisted pending in legacy state %s",
+    async (status) => {
+      const unlisted = await prisma.pending.create({
+        data: {
+          productId: duplicateId,
+          quantity: 1,
+          promisedAt: new Date("2030-01-01T00:00:00.000Z"),
+          idempotencyKey: randomUUID(),
+          createdById: actorId,
+          status: status as never,
+        },
+      });
+
+      const report = await repairProductIdentity({ ...manifest(), apply: true });
+
+      expect(report.status).toBe("blocked");
+      expect(report.blockers.join(" ")).toContain(unlisted.id);
+      expect(
+        await prisma.product.findUniqueOrThrow({ where: { id: duplicateId } }),
+      ).toMatchObject({ active: true });
+    },
+  );
+
+  it.each(["SOLICITADO", "BUSQUEDA", "COTIZANDO", "AGOTADO"])(
+    "reassigns a listed pending in legacy state %s instead of calling it closed",
+    async (status) => {
+      await prisma.pending.update({
+        where: { id: pendingId },
+        data: { status: status as never },
+      });
+
+      const report = await repairProductIdentity({ ...manifest(), apply: true });
+
+      expect(report.status).toBe("applied");
+      expect(await prisma.pending.findUniqueOrThrow({ where: { id: pendingId } })).toMatchObject({
+        productId: targetId,
+        status,
+      });
+    },
+  );
+
+  // The row lock only covers the repair transaction. A catalog-edit form opened
+  // before the repair would otherwise be accepted afterwards and silently
+  // reactivate the duplicate, because its stale `active: true` still matches.
+  it("advances the duplicate's catalogVersion so a stale catalog edit is rejected", async () => {
+    const before = await prisma.product.findUniqueOrThrow({
+      where: { id: duplicateId },
+      select: { catalogVersion: true },
+    });
+
+    expect((await repairProductIdentity({ ...manifest(), apply: true })).status).toBe("applied");
+
+    const after = await prisma.product.findUniqueOrThrow({
+      where: { id: duplicateId },
+      select: { active: true, catalogVersion: true },
+    });
+    expect(after.active).toBe(false);
+    expect(after.catalogVersion).toBe(before.catalogVersion + 1);
+
+    // The stale form, replayed with the version it was rendered with, no longer
+    // matches: the existing optimistic-concurrency check rejects it.
+    const staleEdit = await prisma.product.updateMany({
+      where: { id: duplicateId, catalogVersion: before.catalogVersion },
+      data: { active: true },
+    });
+    expect(staleEdit.count).toBe(0);
+  });
+
+  it("audits the duplicate's REAL prior review state, not a state that never existed", async () => {
+    await prisma.product.update({
+      where: { id: duplicateId },
+      data: { needsReview: false },
+    });
+
+    expect((await repairProductIdentity({ ...manifest(), apply: true })).status).toBe("applied");
+
+    const entry = await prisma.auditLog.findFirstOrThrow({
+      where: { entityId: duplicateId, entity: "Product" },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(entry.before).toMatchObject({ active: true, needsReview: false });
+    expect(entry.after).toMatchObject({ active: false, needsReview: true });
+  });
+
   it("refuses to reassign a CLOSED pending: that would rewrite history", async () => {
     await prisma.pending.update({
       where: { id: pendingId },
