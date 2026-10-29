@@ -31,6 +31,7 @@ import {
   ManualProductNameConflictError,
   PendingIdempotencyPayloadConflictError,
   registerPending,
+  replayPendingRegistration,
   setPendingManagementStatus,
   setPendingObservation,
   setPendingPurchaseDeposit,
@@ -572,6 +573,72 @@ export async function createPendingAction(
     });
   }
 
+  const registrationInput = {
+    ...capture,
+    // El producto MANUAL recibe el código en su alta, no por una vinculación
+    // aparte: nace con su identidad y nunca existe sin ella.
+    manual:
+      capture.manual && identity?.kind === "CODE"
+        ? { ...capture.manual, orionCode: identity.orionCode }
+        : capture.manual,
+    identitySkippedReason: identity?.kind === "DEFERRED" ? identity.reason : undefined,
+    identitySkippedNote: identity?.kind === "DEFERRED" ? identity.note : undefined,
+    createdById: session.user.id,
+    idempotencyKey,
+  };
+
+  // El replay del MISMO intento manda antes que la alerta de duplicados. Si la
+  // respuesta original se perdió, el producto creado por ese intento aparece
+  // como coincidencia; rechazarlo acá convertiría un éxito idempotente en un
+  // callejón que luego choca por huella distinta.
+  try {
+    const replayed = capture.manual
+      ? await replayPendingRegistration(registrationInput)
+      : null;
+    if (replayed) {
+      logPendingEvent({
+        correlationId,
+        stage: PENDING_STAGES.TRANSACTION_COMMITTED,
+        ...actor,
+        submitMethod,
+        durationMs: elapsed(),
+        transaction: "committed",
+        pendingId: replayed.pending.id,
+        outcome: "success",
+        postCommit: "replay",
+      });
+      logPendingEvent({
+        correlationId,
+        stage: PENDING_STAGES.RESPONSE_SENT,
+        ...actor,
+        submitMethod,
+        durationMs: elapsed(),
+        transaction: "committed",
+        pendingId: replayed.pending.id,
+        outcome: "success",
+        response: "ok",
+      });
+      return { error: null, ok: true, submissionId: correlationId, savedWithoutTotalAmount };
+    }
+  } catch (error) {
+    const { errorClass, errorCode } = describeError(error);
+    logPendingError(correlationId, error);
+    return failure(
+      error instanceof PendingIdempotencyPayloadConflictError
+        ? IDEMPOTENCY_CONFLICT_MESSAGE
+        : "No se pudo verificar el intento anterior. Reintentá.",
+      {
+        ...actor,
+        authState: "valid",
+        outcome:
+          error instanceof PendingIdempotencyPayloadConflictError ? "rejected" : "exception",
+        errorClass,
+        errorCode,
+        transaction: "not_started",
+      },
+    );
+  }
+
   if (
     capture.manual &&
     submitted.manualDuplicateConfirmed.trim() !== capture.manual.name
@@ -821,18 +888,8 @@ export async function createPendingAction(
   let result: Awaited<ReturnType<typeof registerPending>>;
   try {
     result = await registerPending({
-      ...capture,
+      ...registrationInput,
       requestedLaboratoryId: resolvedLabId,
-      // El producto MANUAL recibe el código en su alta, no por una vinculación
-      // aparte: nace con su identidad y nunca existe sin ella.
-      manual:
-        capture.manual && identity?.kind === "CODE"
-          ? { ...capture.manual, orionCode: identity.orionCode }
-          : capture.manual,
-      identitySkippedReason: identity?.kind === "DEFERRED" ? identity.reason : undefined,
-      identitySkippedNote: identity?.kind === "DEFERRED" ? identity.note : undefined,
-      createdById: session.user.id,
-      idempotencyKey,
     });
   } catch (error) {
     if (error instanceof ManualProductNameConflictError) {
@@ -851,9 +908,9 @@ export async function createPendingAction(
           {
             id: error.holder.id,
             name: error.holder.name,
-            code: "Producto provisional",
-            orionCode: null,
-            unit: "Por confirmar",
+            code: error.holder.code,
+            orionCode: error.holder.orionCode,
+            unit: error.holder.unit,
           },
         ],
       );

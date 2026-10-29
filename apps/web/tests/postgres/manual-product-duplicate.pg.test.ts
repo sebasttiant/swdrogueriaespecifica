@@ -104,6 +104,31 @@ describe("manual product duplicates", () => {
     ).toBe(1);
   });
 
+  it("reports the winning product identity after a normalized-name race", async () => {
+    const name = `Carrera con identidad ${Date.now()}`;
+    const orionCode = `RACE-${randomUUID().slice(0, 12)}`.toUpperCase();
+    const winner = await registerPending({
+      ...manualCapture(name),
+      manual: { name, unit: "Caja", orionCode },
+    });
+
+    let conflict: ManualProductNameConflictError | null = null;
+    try {
+      await registerPending(manualCapture(name));
+    } catch (error) {
+      if (error instanceof ManualProductNameConflictError) conflict = error;
+      else throw error;
+    }
+
+    expect(conflict?.holder).toMatchObject({
+      id: winner.createdProduct?.id,
+      name,
+      code: winner.createdProduct?.code,
+      orionCode,
+      unit: "Caja",
+    });
+  });
+
   it("keeps different presentations as different products", async () => {
     const stamp = Date.now();
     const first = await registerPending(manualCapture(`Sedatif PC x 40 tabletas ${stamp}`));

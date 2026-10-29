@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   invoicePending: vi.fn(),
   recordAudit: vi.fn(),
   registerPending: vi.fn(),
+  replayPendingRegistration: vi.fn(),
   setPendingManagementStatus: vi.fn(),
   requireCapability: vi.fn(),
   checkCapability: vi.fn(),
@@ -31,7 +32,15 @@ const mocks = vi.hoisted(() => ({
     }
   },
   ManualProductNameConflictError: class ManualProductNameConflictError extends Error {
-    constructor(readonly holder: { id: string; name: string }) {
+    constructor(
+      readonly holder: {
+        id: string;
+        name: string;
+        code: string;
+        orionCode: string | null;
+        unit: string;
+      },
+    ) {
       super("manual product name already exists");
       this.name = "ManualProductNameConflictError";
     }
@@ -61,6 +70,7 @@ vi.mock("@/server/services/pending.service", () => ({
   ManualProductIdentityConflictError: mocks.ManualProductIdentityConflictError,
   ManualProductNameConflictError: mocks.ManualProductNameConflictError,
   registerPending: mocks.registerPending,
+  replayPendingRegistration: mocks.replayPendingRegistration,
   setPendingManagementStatus: mocks.setPendingManagementStatus,
 }));
 vi.mock("@/server/services/sku-onboarding.service", () => ({
@@ -237,6 +247,7 @@ describe("createPendingAction", () => {
       ok: true,
       session: { user: { id: "op-1", role: "OPERADOR", email: "op1@drogueria.test" } },
     });
+    mocks.replayPendingRegistration.mockResolvedValue(null);
     mocks.registerPending.mockResolvedValue({
       pending: { id: "pend-1", productId: "prod-1" },
       missingItem: null,
@@ -560,6 +571,36 @@ describe("createPendingAction", () => {
       );
     });
 
+    it("devuelve la identidad y presentación reales del dueño de nombre concurrente", async () => {
+      mocks.registerPending.mockRejectedValue(
+        new mocks.ManualProductNameConflictError({
+          id: "prod-9",
+          name: "Eucerin tono medio",
+          code: "MAN-EXISTE",
+          orionCode: "ORN-2002",
+          unit: "Caja",
+        }),
+      );
+
+      const result = await createPendingAction(
+        PREV,
+        createManualFormData({
+          identitySkippedReason: "ORION_UNAVAILABLE",
+          manualDuplicateConfirmed: "Ibuprofeno jarabe",
+        }),
+      );
+
+      expect(result.manualDuplicateCandidates).toEqual([
+        {
+          id: "prod-9",
+          name: "Eucerin tono medio",
+          code: "MAN-EXISTE",
+          orionCode: "ORN-2002",
+          unit: "Caja",
+        },
+      ]);
+    });
+
     it("la unión de identidad NO viaja al service: el contrato son los campos planos", async () => {
       await createPendingAction(PREV, createCatalogFormData({ orionCode: "ORN-1001" }));
 
@@ -795,6 +836,40 @@ describe("createPendingAction", () => {
       expect(result.manualDuplicateCandidates).toEqual([
         expect.objectContaining({ id: "existing-1", name: "Ibuprofeno jarabe" }),
       ]);
+      expect(mocks.registerPending).not.toHaveBeenCalled();
+      expect(mocks.recordAudit).not.toHaveBeenCalled();
+    });
+
+    it("resuelve un replay manual antes de rechazarlo por su propio producto creado", async () => {
+      mocks.replayPendingRegistration.mockResolvedValue({
+        pending: { id: "pend-replayed", productId: "manual-created" },
+        missingItem: null,
+        createdProduct: null,
+        sellableStock: 0,
+        missingQuantity: 2,
+        replayed: true,
+      });
+      mocks.getProducts.mockResolvedValue({
+        items: [
+          {
+            id: "manual-created",
+            name: "Ibuprofeno jarabe",
+            code: "MAN-OLD",
+            orionCode: null,
+            unit: "unidad",
+          },
+        ],
+        nextCursor: null,
+      });
+
+      const result = await createPendingAction(
+        PREV,
+        createManualFormData({ identitySkippedReason: "ORION_UNAVAILABLE" }),
+      );
+
+      expectSuccess(result);
+      expect(mocks.replayPendingRegistration).toHaveBeenCalled();
+      expect(mocks.getProducts).not.toHaveBeenCalled();
       expect(mocks.registerPending).not.toHaveBeenCalled();
       expect(mocks.recordAudit).not.toHaveBeenCalled();
     });
