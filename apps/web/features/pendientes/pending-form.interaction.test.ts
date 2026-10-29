@@ -8,10 +8,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseBogotaWallTime } from "@/lib/datetime/bogota";
 import type { PendingFormState } from "@/server/actions/pending.actions";
 
-const mocks = vi.hoisted(() => ({ createPendingAction: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  createPendingAction: vi.fn(),
+  searchActiveProductsForPendingAction: vi.fn(),
+}));
 
 vi.mock("@/server/actions/pending.actions", () => ({
   createPendingAction: mocks.createPendingAction,
+  searchActiveProductsForPendingAction: mocks.searchActiveProductsForPendingAction,
 }));
 
 import { PendingForm, type ProductOption } from "./pending-form";
@@ -138,16 +142,22 @@ async function submitWithClick(user: ReturnType<typeof userEvent.setup>) {
  * Imita al servidor real: ante un fallo devuelve el eco EXACTO de lo enviado.
  * Es el contrato que hace posible reintentar sin volver a escribir.
  */
+function submittedValues(formData: FormData): PendingFormState["values"] {
+  return Object.fromEntries(
+    [
+      "productId", "manualName", "manualMode", "manualSellerName", "quantity",
+      "promisedAt", "customerName", "customerPhone", "customerAddress",
+      "note", "zone", "totalAmount", "paidAmount", "paymentMethod",
+      "idempotencyKey", "orionCode", "identitySkippedReason", "identitySkippedNote",
+      "recoveredProductId", "recoveredProductName", "recoveredProductOrionCode",
+      "recoveredProductUnit", "requestedLaboratoryId", "requestedLaboratoryName",
+    ].map((key) => [key, String(formData.get(key) ?? "")]),
+  ) as PendingFormState["values"];
+}
+
 function failureEchoing(message: string) {
   return (_prev: PendingFormState, formData: FormData): PendingFormState => {
-    const values = Object.fromEntries(
-      [
-        "productId", "manualName", "manualMode", "manualSellerName", "quantity",
-        "promisedAt", "customerName", "customerPhone", "customerAddress",
-        "note", "zone", "totalAmount", "paidAmount", "paymentMethod",
-        "idempotencyKey",
-      ].map((k) => [k, String(formData.get(k) ?? "")]),
-    ) as PendingFormState["values"];
+    const values = submittedValues(formData);
     return {
       error: `${message} Código: PND-K7M2QX`,
       ok: false,
@@ -171,10 +181,109 @@ function lastFormData(): FormData {
   return calls[calls.length - 1]![1] as FormData;
 }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.searchActiveProductsForPendingAction.mockResolvedValue({
+    items: [],
+    nextCursor: null,
+  });
+});
 afterEach(cleanup);
 
+describe("PendingForm · búsqueda global", () => {
+  it("conserva el producto elegido al limpiar resultados y tras un fallo", async () => {
+    const outside: ProductOption = {
+      id: "p150",
+      name: "SEDATIF PC X 40 TABLETAS",
+      code: "MAN-8B1DC5F9",
+      orionCode: "A15637",
+      unit: "Caja",
+    };
+    mocks.searchActiveProductsForPendingAction.mockResolvedValue({
+      items: [outside],
+      nextCursor: null,
+    });
+    mocks.createPendingAction.mockImplementation(
+      failureEchoing("No se pudo registrar el pendiente."),
+    );
+    const user = userEvent.setup();
+    renderForm();
+
+    const search = screen.getByRole("searchbox", { name: /buscar producto en catálogo/i });
+    await user.type(search, "A15637");
+    await user.click(screen.getByRole("button", { name: /buscar en todo el catálogo/i }));
+    const results = screen.getByRole("listbox", { name: /resultados de productos/i });
+    await user.click(
+      results.querySelector<HTMLButtonElement>('button[role="option"]')!,
+    );
+    await user.clear(search);
+    await user.type(search, "otra búsqueda");
+
+    expect((screen.getByLabelText("Producto") as HTMLSelectElement).value).toBe("p150");
+    await user.type(screen.getByLabelText("Cantidad"), "2");
+    await user.type(screen.getByLabelText("Cliente"), "Ana Pérez");
+    await user.type(screen.getByLabelText("Teléfono"), "3001234567");
+    await submitWithClick(user);
+
+    const select = screen.getByLabelText("Producto") as HTMLSelectElement;
+    expect(select.value).toBe("p150");
+    expect(select.querySelector('option[value="p150"]')?.textContent).toContain(
+      "SEDATIF PC X 40 TABLETAS",
+    );
+  });
+
+  it("Enter en el buscador busca y no envía el pedido", async () => {
+    mocks.createPendingAction.mockImplementation(failureEchoing("No debería enviarse."));
+    const user = userEvent.setup();
+    renderForm();
+    await fillForm(user);
+
+    await user.type(
+      screen.getByRole("searchbox", { name: /buscar producto en catálogo/i }),
+      "sedatif{Enter}",
+    );
+    await settle();
+
+    expect(mocks.searchActiveProductsForPendingAction).toHaveBeenCalledWith("sedatif", null);
+    expect(mocks.createPendingAction).not.toHaveBeenCalled();
+  });
+});
+
 describe("PendingForm · un fallo NUNCA borra lo cargado", () => {
+  it("conserva al dueño recuperado fuera del catálogo tras un segundo fallo", async () => {
+    mocks.createPendingAction
+      .mockImplementationOnce((_prev: PendingFormState, formData: FormData): PendingFormState => ({
+        error: "Ese código de Orión ya pertenece a otro producto.",
+        ok: false,
+        orionConflict: {
+          holder: { productId: "p9", productName: "Eucerin tono medio" },
+        },
+        values: submittedValues(formData),
+        submissionId: "conflict-1",
+      }))
+      .mockImplementationOnce(failureEchoing("No se pudo registrar el pendiente."));
+
+    const user = userEvent.setup();
+    renderForm();
+    await user.selectOptions(screen.getByLabelText("Producto"), "p2");
+    await user.type(screen.getByRole("textbox", { name: /código de orión/i }), "ORN-500");
+    await user.type(screen.getByLabelText("Cantidad"), "2");
+    await user.type(screen.getByLabelText("Cliente"), "Ana Pérez");
+    await user.type(screen.getByLabelText("Teléfono"), "3001234567");
+
+    await submitWithClick(user);
+    await user.click(screen.getByRole("button", { name: /usar eucerin tono medio/i }));
+    expect((screen.getByLabelText("Producto") as HTMLSelectElement).value).toBe("p9");
+
+    await submitWithClick(user);
+
+    const select = screen.getByLabelText("Producto") as HTMLSelectElement;
+    expect(select.value).toBe("p9");
+    expect(select.querySelector('option[value="p9"]')?.textContent).toContain(
+      "Eucerin tono medio",
+    );
+  });
+
   // El caso exacto que reportó el operador: cargar, Enter, y quedarse sin nada.
   it.each([
     ["Enter", submitWithEnter],
