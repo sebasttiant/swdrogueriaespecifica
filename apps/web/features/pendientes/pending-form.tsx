@@ -230,12 +230,22 @@ function PendingFormFields({
         unit: "Por confirmar",
       }
     : echoedRecoveredHolder;
+  // Los resultados de búsqueda son transitorios; la selección no puede serlo.
+  // Este snapshot solo reconstruye la opción visual. El servidor sigue
+  // validando productId contra la base antes de cualquier escritura.
+  const [preservedSelectedProduct, setPreservedSelectedProduct] = useState<
+    ProductOption | undefined
+  >(() => echoedRecoveredHolder);
   const selectableProducts =
     recoveredConflictHolder &&
     !products.some((product) => product.id === recoveredConflictHolder.id)
       ? [...products, recoveredConflictHolder]
       : products;
-  const visibleProducts = [...selectableProducts, ...productSearchResults].filter(
+  const visibleProducts = [
+    ...selectableProducts,
+    ...(preservedSelectedProduct ? [preservedSelectedProduct] : []),
+    ...productSearchResults,
+  ].filter(
     (product, index, all) => all.findIndex((candidate) => candidate.id === product.id) === index,
   );
   const selectedProduct = visibleProducts.find((product) => product.id === productId);
@@ -274,12 +284,19 @@ function PendingFormFields({
   const changeManualMode = (nextManual: boolean) => {
     if (nextManual === manual) return;
     clearIdentityDraft();
+    setPreservedSelectedProduct(undefined);
     setManual(nextManual);
   };
 
   const changeProduct = (nextProductId: string) => {
     if (nextProductId === productId) return;
     clearIdentityDraft();
+    const nextProduct = visibleProducts.find((product) => product.id === nextProductId);
+    setPreservedSelectedProduct(
+      nextProduct && !products.some((product) => product.id === nextProduct.id)
+        ? nextProduct
+        : undefined,
+    );
     setProductId(nextProductId);
   };
 
@@ -310,6 +327,7 @@ function PendingFormFields({
   const selectSearchedProduct = (product: ProductOption) => {
     clearIdentityDraft();
     setManual(false);
+    setPreservedSelectedProduct(product);
     setProductId(product.id);
   };
 
@@ -317,6 +335,7 @@ function PendingFormFields({
     if (!conflictHolder) return;
     clearIdentityDraft();
     setManual(false);
+    setPreservedSelectedProduct(conflictHolder);
     setProductId(conflictHolder.id);
   };
 
@@ -410,23 +429,23 @@ function PendingFormFields({
         defaultValue="unknown"
       />
       <input type="hidden" name="manualMode" value={manual ? "on" : "off"} />
-      {recoveredConflictHolder && productId === recoveredConflictHolder.id ? (
+      {preservedSelectedProduct && productId === preservedSelectedProduct.id ? (
         <>
-          <input type="hidden" name="recoveredProductId" value={recoveredConflictHolder.id} />
+          <input type="hidden" name="recoveredProductId" value={preservedSelectedProduct.id} />
           <input
             type="hidden"
             name="recoveredProductName"
-            value={recoveredConflictHolder.name}
+            value={preservedSelectedProduct.name}
           />
           <input
             type="hidden"
             name="recoveredProductOrionCode"
-            value={recoveredConflictHolder.orionCode ?? ""}
+            value={preservedSelectedProduct.orionCode ?? ""}
           />
           <input
             type="hidden"
             name="recoveredProductUnit"
-            value={recoveredConflictHolder.unit}
+            value={preservedSelectedProduct.unit}
           />
         </>
       ) : null}
@@ -490,6 +509,12 @@ function PendingFormFields({
                     setProductSearchResults([]);
                     setProductSearchCursor(null);
                     setProductSearchStatus("idle");
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter") return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    void runProductSearch(null);
                   }}
                   placeholder="Ej: SEDATIF, MAN-8B1DC5F9 o A15637"
                 />
