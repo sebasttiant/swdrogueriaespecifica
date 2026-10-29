@@ -32,6 +32,24 @@ async function newProduct(name: string, orionCode: string | null) {
   });
 }
 
+async function addInventoryException(
+  productId: string,
+  createdById: string,
+  quantity: number,
+) {
+  return prisma.inventoryEntry.create({
+    data: {
+      productId,
+      createdById,
+      quantity,
+      idempotencyKey: randomUUID(),
+      requestFingerprint: randomUUID(),
+      identityExceptionReason: "CODE_NOT_FOUND",
+      identityExceptionNote: "Caja recibida sin código visible",
+    },
+  });
+}
+
 async function addPending(
   productId: string,
   createdById: string,
@@ -74,10 +92,43 @@ afterAll(async () => {
 
 afterEach(async () => {
   await prisma.pending.deleteMany({ where: { product: { code: { startsWith: stamp } } } });
+  await prisma.inventoryEntry.deleteMany({
+    where: { product: { code: { startsWith: stamp } } },
+  });
   await prisma.product.deleteMany({ where: { code: { startsWith: stamp } } });
 });
 
 describe("listPendingIdentityQueue", () => {
+  it("incluye productos con recepción sin SKU aunque no tengan pendientes", async () => {
+    const product = await newProduct("Inventario sin identidad", null);
+    await addInventoryException(product.id, ownerId, 7);
+
+    const row = (await listPendingIdentityQueue({})).items.find(
+      (item) => item.productId === product.id,
+    );
+
+    expect(row).toMatchObject({
+      pendingCount: 0,
+      inventoryExceptionCount: 1,
+      inventoryExceptionQuantity: 7,
+    });
+  });
+
+  it("prioriza una recepción física sobre productos que solo tienen pendientes", async () => {
+    const received = await newProduct("Caja ya recibida", null);
+    const pendingOnly = await newProduct("Solo pedidos", null);
+    await addInventoryException(received.id, ownerId, 1);
+    for (let index = 0; index < 4; index += 1) {
+      await addPending(pendingOnly.id, ownerId, "ORION_UNAVAILABLE");
+    }
+
+    const mine = (await listPendingIdentityQueue({})).items.filter(
+      (row) => row.productId === received.id || row.productId === pendingOnly.id,
+    );
+
+    expect(mine.map((row) => row.productId)).toEqual([received.id, pendingOnly.id]);
+  });
+
   it("agrupa por producto, cuenta, ordena por cantidad y desempata por id", async () => {
     // Dos productos sin código: uno con dos aplazamientos, otro con uno.
     const many = await newProduct("Sin código A", null);
@@ -176,6 +227,8 @@ describe("listPendingIdentityQueue", () => {
 
     expect(Object.keys(row ?? {}).sort()).toEqual([
       "identityVersion",
+      "inventoryExceptionCount",
+      "inventoryExceptionQuantity",
       "pendingCount",
       "productCode",
       "productId",

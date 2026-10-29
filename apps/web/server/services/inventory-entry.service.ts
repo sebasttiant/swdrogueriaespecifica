@@ -12,6 +12,7 @@
 // --------------------------------------------------------------------------
 
 import { prisma } from "@/lib/db/prisma";
+import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
 import type { Paginated } from "@/lib/pagination";
 import {
   closeMissingItemsByEntry,
@@ -22,7 +23,10 @@ import {
   findOrCreateLaboratory,
   LaboratoryResolutionInvariantError,
 } from "@/server/repositories/laboratory.repository";
-import type { Prisma } from "@/lib/generated/prisma/client";
+import type {
+  PendingIdentityDeferral,
+  Prisma,
+} from "@/lib/generated/prisma/client";
 import { laboratoryCreateCommandKey } from "@/server/domain/laboratory/identity";
 import {
   lockProductForEntry,
@@ -46,6 +50,10 @@ import {
   enqueuePendingAvailabilityNotification,
   type AvailabilityStatus,
 } from "@/server/services/notification-outbox.service";
+import {
+  recordAuditInTransaction,
+  type TransactionalAuditWriter,
+} from "@/server/services/transactional-audit.service";
 
 export type RegisterInventoryEntryInput = {
   productId: string;
@@ -103,6 +111,20 @@ export type RegisterInventoryEntryInput = {
    */
   expectedIdentityVersion?: number;
   expectedCatalogVersion?: number;
+  /**
+   * Decisión explícita de recibir la caja aunque el producto todavía no tenga
+   * código de Orión. No asigna identidad: conserva el motivo como evidencia y
+   * deja al producto en la cola hasta que alguien lo vincule correctamente.
+   */
+  identityException?: {
+    acknowledged: true;
+    reason: PendingIdentityDeferral;
+    note?: string;
+  };
+};
+
+export type RegisterInventoryEntryDependencies = {
+  writeAudit?: TransactionalAuditWriter;
 };
 
 export type RegisterInventoryEntryResult = {
@@ -216,6 +238,18 @@ export class ProductIdentityRequiredError extends Error {
   }
 }
 
+/** La pantalla confirmó una excepción sobre una fotografía que ya quedó vieja. */
+export class ProductIdentityExceptionNotApplicableError extends Error {
+  readonly productId: string;
+  readonly productName: string;
+
+  constructor(params: { productId: string; productName: string }) {
+    super("product already has an Orion code");
+    this.productId = params.productId;
+    this.productName = params.productName;
+  }
+}
+
 /**
  * El `productId` no corresponde a ninguna fila.
  *
@@ -275,6 +309,14 @@ function requestFingerprint(data: RegisterInventoryEntryInput): string {
     // payload que nadie provocó.
     ...(data.receivedLaboratoryId
       ? { receivedLaboratoryId: data.receivedLaboratoryId }
+      : {}),
+    // Igual que laboratorio: se omite por completo en entradas normales para
+    // que los reintentos guardados antes del despliegue sigan coincidiendo.
+    ...(data.identityException
+      ? {
+          identityExceptionReason: data.identityException.reason,
+          identityExceptionNote: data.identityException.note?.trim() || null,
+        }
       : {}),
   });
 }
@@ -365,7 +407,9 @@ function sameExpiryDay(a: Date | null, b: Date | null): boolean {
 
 export async function registerInventoryEntry(
   data: RegisterInventoryEntryInput,
+  deps: RegisterInventoryEntryDependencies = {},
 ): Promise<RegisterInventoryEntryResult> {
+  const writeAudit = deps.writeAudit ?? recordAuditInTransaction;
   try {
     return await prisma.$transaction(async (tx) => {
     // El laboratorio se resuelve PRIMERO y dentro de la transacción, para que
@@ -405,8 +449,14 @@ export async function registerInventoryEntry(
     // ----------------------------------------------------------------------
     const product = await lockProductForEntry(tx, data.productId);
     if (!product) throw new ProductNotFoundError(data.productId);
-    if (!product.orionCode) {
+    if (!product.orionCode && data.identityException?.acknowledged !== true) {
       throw new ProductIdentityRequiredError({
+        productId: product.id,
+        productName: product.name,
+      });
+    }
+    if (product.orionCode && data.identityException) {
+      throw new ProductIdentityExceptionNotApplicableError({
         productId: product.id,
         productName: product.name,
       });
@@ -494,7 +544,26 @@ export async function registerInventoryEntry(
       createdById: data.createdById,
       idempotencyKey,
       requestFingerprint: fingerprint,
+      identityExceptionReason: data.identityException?.reason,
+      identityExceptionNote: data.identityException?.note?.trim() || undefined,
     });
+
+    if (data.identityException) {
+      // La excepción y el stock son un solo hecho: si el testigo de auditoría
+      // falla, también se revierten lote, ledger, asignaciones y notificaciones.
+      await writeAudit(tx, {
+        action: AUDIT_ACTIONS.ENTRY_IDENTITY_DEFERRED,
+        module: AUDIT_MODULES.ENTRADAS,
+        entity: "InventoryEntry",
+        entityId: entry.id,
+        after: {
+          productId: data.productId,
+          reason: data.identityException.reason,
+          acknowledged: true,
+        },
+        context: { userId: data.createdById ?? null },
+      });
+    }
 
     // Compatibilidad segura con recepciones heredadas que no traen operation id.
     if (!data.idempotencyKey) {

@@ -5,6 +5,10 @@ import {
   hasReservedBatchCodeShape,
   normalizeBatchCode,
 } from "@/lib/inventory/reserved-batch-code";
+import {
+  MAX_IDENTITY_DEFERRAL_NOTE_LENGTH,
+  PENDING_IDENTITY_DEFERRAL_REASONS,
+} from "@/features/pendientes/identity-deferral";
 
 // Texto opcional que llega desde FormData: se normaliza vacío/espacios a
 // `undefined` para no persistir cadenas vacías como si fueran datos.
@@ -95,6 +99,15 @@ export const inventoryEntryCreateSchema = z.object({
   // action lo resuelve. Es el mismo par que ya usa el alta de faltantes.
   receivedLaboratoryId: optionalText(64),
   receivedLaboratoryName: optionalText(120),
+  // Una entrada sin SKU es una excepción consciente, nunca el comportamiento
+  // silencioso por defecto. El checkbox viaja como "on" desde FormData y se
+  // convierte a boolean para que la action no tenga que interpretar HTML.
+  identityExceptionAcknowledged: z
+    .literal("on")
+    .optional()
+    .transform((value) => value === "on"),
+  identityExceptionReason: z.enum(PENDING_IDENTITY_DEFERRAL_REASONS).optional(),
+  identityExceptionNote: optionalText(MAX_IDENTITY_DEFERRAL_NOTE_LENGTH),
   idempotencyKey: z.string().uuid(),
   // ------------------------------------------------------------------------
   // La fotografia del producto que la pantalla le MOSTRO a la persona.
@@ -115,6 +128,25 @@ export const inventoryEntryCreateSchema = z.object({
   // distinta de que decia el catalogo.
   displayedSku: optionalText(64),
   displayedPresentation: optionalText(40),
+}).superRefine((data, ctx) => {
+  if (data.identityExceptionAcknowledged && !data.identityExceptionReason) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["identityExceptionReason"],
+      message: "Elegí el motivo para recibir inventario sin código de Orión.",
+    });
+  }
+
+  if (
+    !data.identityExceptionAcknowledged &&
+    (data.identityExceptionReason !== undefined || data.identityExceptionNote !== undefined)
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["identityExceptionAcknowledged"],
+      message: "Confirmá explícitamente la recepción sin código de Orión.",
+    });
+  }
 });
 
 export type InventoryEntryCreateInput = z.infer<

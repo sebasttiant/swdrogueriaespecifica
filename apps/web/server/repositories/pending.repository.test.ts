@@ -647,21 +647,26 @@ describe("updatePendingManagementStatus", () => {
 // que es donde la regla existe de verdad.
 describe("decodeQueueCursor · borde del rango de int4", () => {
   it("HONRA el conteo máximo exacto", () => {
-    expect(decodeQueueCursor(encodeCursor("2147483647:abc"))).toEqual({
+    expect(decodeQueueCursor(encodeCursor("1:2147483647:abc"))).toEqual({
+      priority: 1,
       count: 2147483647,
       productId: "abc",
     });
   });
 
   it("descarta el primer conteo fuera de rango", () => {
-    expect(decodeQueueCursor(encodeCursor("2147483648:abc"))).toBeNull();
+    expect(decodeQueueCursor(encodeCursor("1:2147483648:abc"))).toBeNull();
+  });
+
+  it("descarta prioridades que no existen", () => {
+    expect(decodeQueueCursor(encodeCursor("2:5:abc"))).toBeNull();
   });
 
   // Un NUL sobrevive el round-trip base64 y PostgreSQL lo rechaza (22021).
   it("descarta un NUL en cualquier posición", () => {
     const nul = String.fromCharCode(0);
-    expect(decodeQueueCursor(encodeCursor(`5:${nul}x`))).toBeNull();
-    expect(decodeQueueCursor(encodeCursor(`5${nul}:x`))).toBeNull();
+    expect(decodeQueueCursor(encodeCursor(`1:5:${nul}x`))).toBeNull();
+    expect(decodeQueueCursor(encodeCursor(`1:${nul}5:x`))).toBeNull();
   });
 });
 

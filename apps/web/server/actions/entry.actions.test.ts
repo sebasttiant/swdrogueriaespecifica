@@ -19,6 +19,7 @@ const {
   BatchExpiryConflictError,
   LaboratoryEvidenceConflictError,
   LaboratoryNameResolutionError,
+  ProductIdentityExceptionNotApplicableError,
   ProductIdentityRequiredError,
   ProductNotFoundError,
   ProductVersionConflictError,
@@ -33,6 +34,15 @@ const {
     readonly productName: string;
     constructor(params: { productId: string; productName: string }) {
       super("product has no Orion code");
+      this.productId = params.productId;
+      this.productName = params.productName;
+    }
+  },
+  ProductIdentityExceptionNotApplicableError: class extends Error {
+    readonly productId: string;
+    readonly productName: string;
+    constructor(params: { productId: string; productName: string }) {
+      super("product already has an Orion code");
       this.productId = params.productId;
       this.productName = params.productName;
     }
@@ -91,6 +101,7 @@ vi.mock("@/server/services/inventory-entry.service", () => ({
   BatchExpiryConflictError,
   LaboratoryEvidenceConflictError,
   LaboratoryNameResolutionError,
+  ProductIdentityExceptionNotApplicableError,
   ProductIdentityRequiredError,
   ProductNotFoundError,
   ProductVersionConflictError,
@@ -324,6 +335,60 @@ describe("createInventoryEntryAction · conflicto de vencimiento", () => {
 // nadie puede cuadrar contra Orion: existe acá y no existe allá, y la
 // diferencia aparece recién cuando alguien hace el conteo.
 // --------------------------------------------------------------------------
+describe("createInventoryEntryAction · excepción de identidad", () => {
+  it("pasa confirmación, motivo y nota como una sola decisión al servicio", async () => {
+    const result = await createInventoryEntryAction(
+      PREV,
+      formData({
+        identityExceptionAcknowledged: "on",
+        identityExceptionReason: "NEW_PRODUCT",
+        identityExceptionNote: "Alta pendiente en Orión",
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(registerInventoryEntry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        identityException: {
+          acknowledged: true,
+          reason: "NEW_PRODUCT",
+          note: "Alta pendiente en Orión",
+        },
+      }),
+    );
+  });
+
+  it("no llama al servicio si se confirmó sin motivo", async () => {
+    const result = await createInventoryEntryAction(
+      PREV,
+      formData({ identityExceptionAcknowledged: "on" }),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(registerInventoryEntry).not.toHaveBeenCalled();
+  });
+
+  it("explica cuando la excepción quedó vieja porque ya apareció el SKU", async () => {
+    registerInventoryEntry.mockRejectedValue(
+      new ProductIdentityExceptionNotApplicableError({
+        productId: "prod-1",
+        productName: "Amoxicilina",
+      }),
+    );
+
+    const result = await createInventoryEntryAction(
+      PREV,
+      formData({
+        identityExceptionAcknowledged: "on",
+        identityExceptionReason: "CODE_NOT_FOUND",
+      }),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/ya tiene código de Orión/i);
+  });
+});
+
 describe("createInventoryEntryAction · identidad obligatoria", () => {
   it("nombra el producto y explica qué falta", async () => {
     registerInventoryEntry.mockRejectedValue(

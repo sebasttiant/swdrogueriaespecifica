@@ -881,6 +881,12 @@ model InventoryEntry {
   productBatchId    String?
   productBatch      ProductBatch? @relation(fields: [productBatchId], references: [id], onDelete: SetNull)
   note               String?
+  // Evidencia permanente de una recepción excepcional sin código de Orión.
+  // NULL significa que la entrada siguió el flujo identificado normal. Se
+  // reutiliza el enum cerrado de Pendientes para medir los mismos motivos en
+  // todo el circuito, sin crear dos vocabularios que puedan divergir.
+  identityExceptionReason PendingIdentityDeferral?
+  identityExceptionNote   String?
   createdBy          User?                 @relation(fields: [createdById], references: [id])
   createdById        String?
   createdAt          DateTime              @default(now())
