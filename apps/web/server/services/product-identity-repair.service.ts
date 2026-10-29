@@ -39,6 +39,7 @@
 import { prisma } from "@/lib/db/prisma";
 import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
 import { normalizeOrionCode } from "@/server/domain/catalog/sku-identity";
+import { MANAGEMENT_STATUSES } from "@/features/pendientes/management-status";
 import {
   recordAuditInTransaction,
   type TransactionalAuditWriter,
@@ -48,8 +49,16 @@ import type { Prisma } from "@/lib/generated/prisma/client";
 /**
  * Pending states that are still live work. A closed pending is HISTORY:
  * reassigning it would rewrite what the droguería actually did.
+ *
+ * The management statuses belong here, derived from their own canonical list:
+ * they are NOT terminal, and the fulfillment-lifecycle migration copied them
+ * into `purchaseStatus` without clearing `status`, so historical rows still
+ * carry them. Omitting one would let the repair deactivate a duplicate while
+ * its live pending stayed attached to a product nobody can see — exactly the
+ * dead end the incident created — and would reject that same pending as
+ * closed when the operator did list it.
  */
-const OPEN_PENDING_STATUSES = ["PENDIENTE", "PARCIAL"] as const;
+const OPEN_PENDING_STATUSES = ["PENDIENTE", "PARCIAL", ...MANAGEMENT_STATUSES] as const;
 /** Missing-item states that are still live work, for the same reason. */
 const OPEN_MISSING_STATUSES = ["FALTANTE", "PEDIDO", "EN_BODEGA"] as const;
 
@@ -109,6 +118,8 @@ type LockedProduct = {
   orionCode: string | null;
   active: boolean;
   identityVersion: number;
+  catalogVersion: number;
+  needsReview: boolean;
 };
 type LockedChild = { id: string; productId: string; status: string };
 
@@ -123,6 +134,7 @@ type RepairAssessment =
       ok: true;
       plan: ProductIdentityRepairPlan;
       target: LockedProduct;
+      duplicates: LockedProduct[];
       pendings: LockedChild[];
       missingItems: LockedChild[];
     };
@@ -154,7 +166,7 @@ export async function repairProductIdentity(
       const assessment = await assess(tx, manifest, canonicalCode);
       if (!assessment.ok) return blocked(assessment.blockers);
 
-      const { plan, target, pendings, missingItems } = assessment;
+      const { plan, target, duplicates, pendings, missingItems } = assessment;
       const hasWork =
         plan.orionCode !== null ||
         plan.reassignedPendings.length > 0 ||
@@ -248,11 +260,25 @@ export async function repairProductIdentity(
       }
 
       for (const duplicateId of plan.deactivatedProducts) {
+        // The locked read is the prior state: auditing a placeholder would
+        // describe a row that never existed and void the audited guarantee.
+        const before = duplicates.find((duplicate) => duplicate.id === duplicateId);
+        if (!before) {
+          throw new RepairConcurrencyError(
+            `El duplicado ${duplicateId} no quedó bloqueado por la evaluación.`,
+          );
+        }
         // Deactivated and still flagged for review: somebody has to look at it,
         // and a deleted row cannot be looked at.
+        //
+        // `catalogVersion` advances too. The row lock only covers THIS
+        // transaction: a catalog-edit form opened before the repair would
+        // otherwise still match afterwards and silently reactivate the
+        // duplicate through its stale `active` field. Advancing the version
+        // makes the existing optimistic-concurrency check reject that edit.
         const deactivated = await tx.product.updateMany({
-          where: { id: duplicateId, active: true },
-          data: { active: false, needsReview: true },
+          where: { id: duplicateId, active: true, catalogVersion: before.catalogVersion },
+          data: { active: false, needsReview: true, catalogVersion: { increment: 1 } },
         });
         if (deactivated.count !== 1) {
           throw new RepairConcurrencyError(
@@ -264,8 +290,17 @@ export async function repairProductIdentity(
           module: AUDIT_MODULES.PRODUCTOS,
           entity: "Product",
           entityId: duplicateId,
-          before: { active: true, needsReview: null },
-          after: { active: false, needsReview: true, replacedByProductId: target.id },
+          before: {
+            active: true,
+            needsReview: before.needsReview,
+            catalogVersion: before.catalogVersion,
+          },
+          after: {
+            active: false,
+            needsReview: true,
+            catalogVersion: before.catalogVersion + 1,
+            replacedByProductId: target.id,
+          },
           context,
         });
       }
@@ -486,7 +521,7 @@ async function assess(
       .map((duplicate) => duplicate.id),
   };
 
-  return { ok: true, plan, target, pendings, missingItems };
+  return { ok: true, plan, target, duplicates, pendings, missingItems };
 }
 
 // `FOR UPDATE` and not a plain read: under READ COMMITTED a plain read inside
@@ -499,7 +534,7 @@ function lockProducts(
 ): Promise<LockedProduct[]> {
   if (ids.length === 0) return Promise.resolve([]);
   return tx.$queryRaw<LockedProduct[]>`
-    SELECT id, name, "orionCode", active, "identityVersion"
+    SELECT id, name, "orionCode", active, "identityVersion", "catalogVersion", "needsReview"
       FROM products
      WHERE id = ANY(${ids}::text[])
      ORDER BY id

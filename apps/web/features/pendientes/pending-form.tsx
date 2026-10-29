@@ -214,6 +214,18 @@ function PendingFormFields({
   // el dueño estaba mucho más allá del límite del selector—, pero eso no puede
   // volverlo imposible de elegir. Lo materializamos solo para recuperar este
   // intento; el próximo envío vuelve a releer el producto por ID en el servidor.
+  const echoedRecoveredHolder: ProductOption | undefined =
+    previous.recoveredProductId &&
+    previous.recoveredProductId === previous.productId &&
+    previous.recoveredProductName
+      ? {
+          id: previous.recoveredProductId,
+          name: previous.recoveredProductName,
+          code: "",
+          orionCode: previous.recoveredProductOrionCode || null,
+          unit: previous.recoveredProductUnit || "Por confirmar",
+        }
+      : undefined;
   const recoveredConflictHolder: ProductOption | undefined = conflict
     ? products.find((product) => product.id === conflict.holder.productId) ?? {
         id: conflict.holder.productId,
@@ -222,13 +234,23 @@ function PendingFormFields({
         orionCode: previous.orionCode || null,
         unit: "Por confirmar",
       }
-    : undefined;
+    : echoedRecoveredHolder;
+  // Los resultados de búsqueda son transitorios; la selección no puede serlo.
+  // Este snapshot solo reconstruye la opción visual. El servidor sigue
+  // validando productId contra la base antes de cualquier escritura.
+  const [preservedSelectedProduct, setPreservedSelectedProduct] = useState<
+    ProductOption | undefined
+  >(() => echoedRecoveredHolder);
   const selectableProducts =
     recoveredConflictHolder &&
     !products.some((product) => product.id === recoveredConflictHolder.id)
       ? [...products, recoveredConflictHolder]
       : products;
-  const visibleProducts = [...selectableProducts, ...productSearchResults].filter(
+  const visibleProducts = [
+    ...selectableProducts,
+    ...(preservedSelectedProduct ? [preservedSelectedProduct] : []),
+    ...productSearchResults,
+  ].filter(
     (product, index, all) => all.findIndex((candidate) => candidate.id === product.id) === index,
   );
   const selectedProduct = visibleProducts.find((product) => product.id === productId);
@@ -267,12 +289,19 @@ function PendingFormFields({
   const changeManualMode = (nextManual: boolean) => {
     if (nextManual === manual) return;
     clearIdentityDraft();
+    setPreservedSelectedProduct(undefined);
     setManual(nextManual);
   };
 
   const changeProduct = (nextProductId: string) => {
     if (nextProductId === productId) return;
     clearIdentityDraft();
+    const nextProduct = visibleProducts.find((product) => product.id === nextProductId);
+    setPreservedSelectedProduct(
+      nextProduct && !products.some((product) => product.id === nextProduct.id)
+        ? nextProduct
+        : undefined,
+    );
     setProductId(nextProductId);
   };
 
@@ -304,6 +333,7 @@ function PendingFormFields({
     clearIdentityDraft();
     setManualDuplicateConfirmed("");
     setManual(false);
+    setPreservedSelectedProduct(product);
     setProductId(product.id);
   };
 
@@ -320,6 +350,7 @@ function PendingFormFields({
     if (!conflictHolder) return;
     clearIdentityDraft();
     setManual(false);
+    setPreservedSelectedProduct(conflictHolder);
     setProductId(conflictHolder.id);
   };
 
@@ -418,6 +449,26 @@ function PendingFormFields({
         name="manualDuplicateConfirmed"
         value={manualDuplicateConfirmed}
       />
+      {preservedSelectedProduct && productId === preservedSelectedProduct.id ? (
+        <>
+          <input type="hidden" name="recoveredProductId" value={preservedSelectedProduct.id} />
+          <input
+            type="hidden"
+            name="recoveredProductName"
+            value={preservedSelectedProduct.name}
+          />
+          <input
+            type="hidden"
+            name="recoveredProductOrionCode"
+            value={preservedSelectedProduct.orionCode ?? ""}
+          />
+          <input
+            type="hidden"
+            name="recoveredProductUnit"
+            value={preservedSelectedProduct.unit}
+          />
+        </>
+      ) : null}
 
       {canSelectExisting ? (
         <label
@@ -509,6 +560,12 @@ function PendingFormFields({
                     setProductSearchResults([]);
                     setProductSearchCursor(null);
                     setProductSearchStatus("idle");
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter") return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    void runProductSearch(null);
                   }}
                   placeholder="Ej: SEDATIF, MAN-8B1DC5F9 o A15637"
                 />
