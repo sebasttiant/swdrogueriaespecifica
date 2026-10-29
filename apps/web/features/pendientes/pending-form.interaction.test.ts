@@ -138,16 +138,22 @@ async function submitWithClick(user: ReturnType<typeof userEvent.setup>) {
  * Imita al servidor real: ante un fallo devuelve el eco EXACTO de lo enviado.
  * Es el contrato que hace posible reintentar sin volver a escribir.
  */
+function submittedValues(formData: FormData): PendingFormState["values"] {
+  return Object.fromEntries(
+    [
+      "productId", "manualName", "manualMode", "manualSellerName", "quantity",
+      "promisedAt", "customerName", "customerPhone", "customerAddress",
+      "note", "zone", "totalAmount", "paidAmount", "paymentMethod",
+      "idempotencyKey", "orionCode", "identitySkippedReason", "identitySkippedNote",
+      "recoveredProductId", "recoveredProductName", "recoveredProductOrionCode",
+      "recoveredProductUnit", "requestedLaboratoryId", "requestedLaboratoryName",
+    ].map((key) => [key, String(formData.get(key) ?? "")]),
+  ) as PendingFormState["values"];
+}
+
 function failureEchoing(message: string) {
   return (_prev: PendingFormState, formData: FormData): PendingFormState => {
-    const values = Object.fromEntries(
-      [
-        "productId", "manualName", "manualMode", "manualSellerName", "quantity",
-        "promisedAt", "customerName", "customerPhone", "customerAddress",
-        "note", "zone", "totalAmount", "paidAmount", "paymentMethod",
-        "idempotencyKey",
-      ].map((k) => [k, String(formData.get(k) ?? "")]),
-    ) as PendingFormState["values"];
+    const values = submittedValues(formData);
     return {
       error: `${message} Código: PND-K7M2QX`,
       ok: false,
@@ -175,6 +181,40 @@ beforeEach(() => vi.clearAllMocks());
 afterEach(cleanup);
 
 describe("PendingForm · un fallo NUNCA borra lo cargado", () => {
+  it("conserva al dueño recuperado fuera del catálogo tras un segundo fallo", async () => {
+    mocks.createPendingAction
+      .mockImplementationOnce((_prev: PendingFormState, formData: FormData): PendingFormState => ({
+        error: "Ese código de Orión ya pertenece a otro producto.",
+        ok: false,
+        orionConflict: {
+          holder: { productId: "p9", productName: "Eucerin tono medio" },
+        },
+        values: submittedValues(formData),
+        submissionId: "conflict-1",
+      }))
+      .mockImplementationOnce(failureEchoing("No se pudo registrar el pendiente."));
+
+    const user = userEvent.setup();
+    renderForm();
+    await user.selectOptions(screen.getByLabelText("Producto"), "p2");
+    await user.type(screen.getByRole("textbox", { name: /código de orión/i }), "ORN-500");
+    await user.type(screen.getByLabelText("Cantidad"), "2");
+    await user.type(screen.getByLabelText("Cliente"), "Ana Pérez");
+    await user.type(screen.getByLabelText("Teléfono"), "3001234567");
+
+    await submitWithClick(user);
+    await user.click(screen.getByRole("button", { name: /usar eucerin tono medio/i }));
+    expect((screen.getByLabelText("Producto") as HTMLSelectElement).value).toBe("p9");
+
+    await submitWithClick(user);
+
+    const select = screen.getByLabelText("Producto") as HTMLSelectElement;
+    expect(select.value).toBe("p9");
+    expect(select.querySelector('option[value="p9"]')?.textContent).toContain(
+      "Eucerin tono medio",
+    );
+  });
+
   // El caso exacto que reportó el operador: cargar, Enter, y quedarse sin nada.
   it.each([
     ["Enter", submitWithEnter],
