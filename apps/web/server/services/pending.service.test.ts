@@ -31,6 +31,7 @@ const { prismaMock, tx } = vi.hoisted(() => {
     // con el `tx`. Los tests verifican que estas llamadas queden en cero.
     pending: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     missingItem: { findFirst: vi.fn() },
+    product: { findUnique: vi.fn() },
     pendingInventoryReservation: { findMany: vi.fn() },
     $queryRaw: vi.fn(),
   };
@@ -259,6 +260,7 @@ describe("registerPending", () => {
       name: "Ibuprofeno jarabe",
       unit: "frasco",
       needsReview: true,
+      provisionalNormalizedName: "ibuprofeno jarabe",
     });
     expect(createArg.data.code).toMatch(/^MAN-/);
     // El pendiente y el faltante quedan enlazados al producto recién creado.
@@ -271,6 +273,29 @@ describe("registerPending", () => {
     expect(result.missingQuantity).toBe(5);
     expect(result.missingItem?.id).toBe("miss_m");
     expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("si otro manual con el mismo nombre gana la carrera, rechaza sin crear pendiente ni faltante", async () => {
+    const { productId: _omit, ...withoutProduct } = baseInput;
+    tx.product.create.mockRejectedValue({ code: "P2002" });
+    prismaMock.product.findUnique.mockImplementation(({ where }: { where: Record<string, unknown> }) =>
+      "provisionalNormalizedName" in where
+        ? Promise.resolve({ id: "winner", name: "Ibuprofeno jarabe" })
+        : Promise.resolve(null),
+    );
+
+    await expect(
+      registerPending({
+        ...withoutProduct,
+        manual: { name: "  IBUPROFENO   JARABE  ", unit: "frasco" },
+      }),
+    ).rejects.toMatchObject({
+      name: "ManualProductNameConflictError",
+      holder: { id: "winner", name: "Ibuprofeno jarabe" },
+    });
+
+    expect(tx.pending.create).not.toHaveBeenCalled();
+    expect(tx.missingItem.create).not.toHaveBeenCalled();
   });
 
   it("si falla la creación del faltante: propaga el error y todo va en una sola transacción (rollback)", async () => {

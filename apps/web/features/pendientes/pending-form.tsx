@@ -171,12 +171,17 @@ function PendingFormFields({
   const previous: Partial<PendingSubmittedValues> = state.values ?? {};
 
   const conflict = state.orionConflict;
+  const manualDuplicateCandidates = state.manualDuplicateCandidates ?? [];
   const canSelectExisting = products.length > 0;
   // Modo manual: producto que no está en el catálogo. Si no hay catálogo cargado,
   // el manual es la única vía, así que arranca activo y sin opción de togglear.
   // Tras un fallo se respeta el modo en el que se estaba cargando.
   const [manual, setManual] = useState(
     previous.manualMode ? previous.manualMode === "on" : !canSelectExisting,
+  );
+  const [manualName, setManualName] = useState(previous.manualName ?? "");
+  const [manualDuplicateConfirmed, setManualDuplicateConfirmed] = useState(
+    previous.manualDuplicateConfirmed ?? "",
   );
   const manualToggleId = useId();
   const productSearchId = useId();
@@ -326,9 +331,19 @@ function PendingFormFields({
 
   const selectSearchedProduct = (product: ProductOption) => {
     clearIdentityDraft();
+    setManualDuplicateConfirmed("");
     setManual(false);
     setPreservedSelectedProduct(product);
     setProductId(product.id);
+  };
+
+  const selectManualDuplicateCandidate = (product: ProductOption) => {
+    setProductSearchResults((current) =>
+      current.some((candidate) => candidate.id === product.id)
+        ? current
+        : [...current, product],
+    );
+    selectSearchedProduct(product);
   };
 
   const selectConflictHolder = () => {
@@ -429,6 +444,11 @@ function PendingFormFields({
         defaultValue="unknown"
       />
       <input type="hidden" name="manualMode" value={manual ? "on" : "off"} />
+      <input
+        type="hidden"
+        name="manualDuplicateConfirmed"
+        value={manualDuplicateConfirmed}
+      />
       {preservedSelectedProduct && productId === preservedSelectedProduct.id ? (
         <>
           <input type="hidden" name="recoveredProductId" value={preservedSelectedProduct.id} />
@@ -488,8 +508,39 @@ function PendingFormFields({
               required
               maxLength={120}
               placeholder="Nombre del producto"
-              defaultValue={previous.manualName ?? ""}
+              value={manualName}
+              onChange={(event) => {
+                setManualName(event.target.value);
+                setManualDuplicateConfirmed("");
+              }}
             />
+            {manualDuplicateCandidates.length > 0 &&
+            manualDuplicateConfirmed !== manualName ? (
+              <div role="alert" className="space-y-2 rounded-md border border-warning/50 p-3">
+                <p className="font-medium text-text">
+                  Encontramos productos parecidos. Elegí uno antes de crear otro.
+                </p>
+                {manualDuplicateCandidates.map((product) => (
+                  <Button
+                    key={product.id}
+                    type="button"
+                    variant="secondary"
+                    className="w-full justify-start text-left"
+                    onClick={() => selectManualDuplicateCandidate(product)}
+                  >
+                    Usar {optionLabel(product)} · {product.code}
+                  </Button>
+                ))}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="w-full"
+                  onClick={() => setManualDuplicateConfirmed(manualName)}
+                >
+                  Ninguno corresponde: crear producto nuevo
+                </Button>
+              </div>
+            ) : null}
           </Field>
         ) : (
           <div className="sm:col-span-2 space-y-3">

@@ -55,6 +55,9 @@ export type CreateProductData = {
   // Producto creado al vuelo desde un pendiente manual: queda marcado para que
   // un ADMIN lo revise. Ausente/false para las altas normales del catálogo.
   needsReview?: boolean;
+  // Identidad conservadora del producto provisional. Solo iguala nombre tras
+  // Unicode/case/espacios; no fusiona presentaciones ni variantes parecidas.
+  provisionalNormalizedName?: string | null;
   // Código de Orion en el INSERT, no en un update posterior. Un producto que
   // nace con su identidad nunca existe —ni por un instante— sin ella, así que
   // no hay ventana en la que otro proceso lo vea sin código y se lo asigne.

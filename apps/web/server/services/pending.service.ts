@@ -96,6 +96,7 @@ import {
   type ManagementStatus,
 } from "@/features/pendientes/management-status";
 import { acceptsWaitlistDecision } from "@/features/pendientes/waitlist";
+import { normalizeMissingReportName } from "@/features/faltantes/missing-report-name";
 
 // Producto manual: no está en el catálogo, se crea al vuelo desde el pendiente.
 //
@@ -148,6 +149,15 @@ export class ManualProductIdentityConflictError extends Error {
   constructor(readonly holder: { id: string; name: string }) {
     super(`orion code already belongs to product ${holder.id}`);
     this.name = "ManualProductIdentityConflictError";
+  }
+}
+
+export class ManualProductNameConflictError extends Error {
+  constructor(
+    readonly holder: Pick<Product, "id" | "name" | "code" | "orionCode" | "unit">,
+  ) {
+    super(`manual product name already belongs to provisional product ${holder.id}`);
+    this.name = "ManualProductNameConflictError";
   }
 }
 
@@ -357,18 +367,27 @@ export async function getPendingDashboard(params: {
  * "no existe" antes de que ninguno insertara. Por eso hay DOS lecturas, una
  * antes (camino barato) y otra al chocar contra el índice (camino correcto).
  */
+export async function replayPendingRegistration(
+  data: RegisterPendingInput,
+): Promise<CreatePendingResult | null> {
+  if (data.identitySkippedNote?.trim() && !data.identitySkippedReason) {
+    throw new Error("identitySkippedNote requires identitySkippedReason");
+  }
+  const normalized = withNormalizedIdentity(data);
+  const existing = await findPendingByIdempotencyKey(normalized.idempotencyKey);
+  if (!existing) return null;
+  return replayRegistration(existing, requestFingerprint(normalized));
+}
+
 export async function registerPending(
   data: RegisterPendingInput,
   deps: RegisterPendingDependencies = {},
 ): Promise<CreatePendingResult> {
-  if (data.identitySkippedNote?.trim() && !data.identitySkippedReason) {
-    throw new Error("identitySkippedNote requires identitySkippedReason");
-  }
+  const replayed = await replayPendingRegistration(data);
+  if (replayed) return replayed;
+
   data = withNormalizedIdentity(data);
   const fingerprint = requestFingerprint(data);
-  // Camino barato: el intento ya tiene su pendiente. Ni transacción ni lock.
-  const existing = await findPendingByIdempotencyKey(data.idempotencyKey);
-  if (existing) return replayRegistration(existing, fingerprint);
 
   try {
     return await createPendingRegistration(data, fingerprint, deps);
@@ -391,6 +410,9 @@ export async function registerPending(
       // conflicto fue de otro índice y el error sigue de largo sin disfrazarse.
       const holder = await holderOfManualOrionCode(data);
       if (holder) throw new ManualProductIdentityConflictError(holder);
+
+      const nameHolder = await holderOfManualNormalizedName(data);
+      if (nameHolder) throw new ManualProductNameConflictError(nameHolder);
     }
     throw error;
   }
@@ -448,6 +470,18 @@ async function holderOfManualOrionCode(
   return prisma.product.findUnique({
     where: { orionCode },
     select: { id: true, name: true },
+  });
+}
+
+async function holderOfManualNormalizedName(
+  data: RegisterPendingInput,
+): Promise<Pick<Product, "id" | "name" | "code" | "orionCode" | "unit"> | null> {
+  if (data.productId || !data.manual) return null;
+  return prisma.product.findUnique({
+    where: {
+      provisionalNormalizedName: normalizeMissingReportName(data.manual.name),
+    },
+    select: { id: true, name: true, code: true, orionCode: true, unit: true },
   });
 }
 
@@ -563,6 +597,7 @@ function createPendingRegistration(
           minStock: 0,
           reorderQty: 0,
           needsReview: true,
+          provisionalNormalizedName: normalizeMissingReportName(data.manual.name),
           // Tener código de Orion NO lo vuelve un producto curado: sigue
           // marcado para revisión como cualquier alta manual.
           orionCode: data.manual.orionCode ?? null,
