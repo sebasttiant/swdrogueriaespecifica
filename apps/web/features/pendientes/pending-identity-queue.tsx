@@ -45,7 +45,7 @@ export function PendingIdentityQueue({
         <EmptyState
           icon={ScanBarcode}
           title="Sin identidades pendientes"
-          description="Todos los productos con pendientes abiertos ya tienen su SKU (código de Orión)."
+          description="Todos los productos con pedidos o inventario recibido ya tienen su SKU (código de Orión)."
         />
       </Card>
     );
@@ -58,8 +58,9 @@ export function PendingIdentityQueue({
           {/* La tabla se anuncia sola con lector de pantalla: sin esto, quien
               la escucha entra a una grilla de números sin saber qué cuenta. */}
           <caption className="sr-only">
-            Productos sin SKU (código de Orión), del que más pendientes acumula al que
-            menos. Cada fila incluye un formulario para vincular el código.
+            Productos sin SKU (código de Orión). Primero aparecen los que ya tienen
+            inventario físico recibido; después, los que solo tienen pedidos pendientes.
+            Cada fila incluye un formulario para vincular el código.
           </caption>
           <thead className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
             <tr>
@@ -72,20 +73,39 @@ export function PendingIdentityQueue({
               <th scope="col" className="px-4 py-3 text-right font-medium">
                 Pendientes
               </th>
+              <th scope="col" className="px-4 py-3 text-right font-medium">
+                Recepciones sin SKU
+              </th>
+              <th scope="col" className="px-4 py-3 text-right font-medium">
+                Unidades recibidas
+              </th>
               <th scope="col" className="px-4 py-3 font-medium">
-                Vincular Orion
+                Vincular Orión
               </th>
             </tr>
           </thead>
           <tbody>
             {items.map((item) => (
               <tr key={item.productId} className="border-b border-border last:border-0">
-                <td className="px-4 py-3 font-medium text-text">{item.productName}</td>
+                <td className="px-4 py-3 font-medium text-text">
+                  <span>{item.productName}</span>
+                  {item.inventoryExceptionCount > 0 ? (
+                    <span className="mt-1 block text-xs font-semibold text-warning-foreground">
+                      Atención prioritaria: ya hay inventario recibido
+                    </span>
+                  ) : null}
+                </td>
                 <td className="break-words px-4 py-3 font-mono text-xs text-muted-foreground">
                   {item.productCode}
                 </td>
                 <td className="px-4 py-3 text-right font-semibold tabular-nums text-text">
                   {item.pendingCount}
+                </td>
+                <td className="px-4 py-3 text-right font-semibold tabular-nums text-text">
+                  {item.inventoryExceptionCount}
+                </td>
+                <td className="px-4 py-3 text-right font-semibold tabular-nums text-text">
+                  {item.inventoryExceptionQuantity}
                 </td>
                 <td className="px-4 py-3">
                   <PendingIdentityResolveForm

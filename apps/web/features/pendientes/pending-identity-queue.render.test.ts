@@ -13,6 +13,8 @@ function row(overrides: Partial<PendingIdentityQueueRow> = {}): PendingIdentityQ
     productName: "Acetaminofén 500mg",
     productCode: "ACE-500",
     pendingCount: 3,
+    inventoryExceptionCount: 0,
+    inventoryExceptionQuantity: 0,
     identityVersion: 0,
     ...overrides,
   };
@@ -35,6 +37,18 @@ describe("PendingIdentityQueue · filas agrupadas", () => {
     expect(html).toContain("Ibuprofeno 400mg");
     expect(html).toContain("IBU-400");
     expect(html).toContain("7");
+  });
+
+  it("marca como prioritaria la mercadería ya recibida sin identidad", () => {
+    const html = render({
+      items: [row({ inventoryExceptionCount: 2, inventoryExceptionQuantity: 11 })],
+      nextCursor: null,
+      pageHref,
+    });
+
+    expect(html).toContain("Atención prioritaria");
+    expect(html).toContain("2");
+    expect(html).toContain("11");
   });
 
   // La fila es UN producto con N pendientes, no N filas. Si el agrupado se
@@ -118,7 +132,7 @@ describe("PendingIdentityQueue · estado vacío y accesibilidad", () => {
   it("declara encabezados de columna y un resumen para lector de pantalla", () => {
     const html = render({ items: [row()], nextCursor: null, pageHref });
 
-    expect(html.match(/scope="col"/g)).toHaveLength(4);
+    expect(html.match(/scope="col"/g)).toHaveLength(6);
     expect(html).toContain("<caption");
   });
 });

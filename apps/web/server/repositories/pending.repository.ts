@@ -1186,22 +1186,30 @@ export type PendingIdentityQueueRow = {
   productName: string;
   productCode: string;
   pendingCount: number;
+  /** Recepciones físicas que entraron mediante la excepción controlada. */
+  inventoryExceptionCount: number;
+  /** Unidades recibidas mientras faltaba la identidad. */
+  inventoryExceptionQuantity: number;
   /** Versión de identidad para CAS: el formulario la necesita para no pisar lo que otro vinculó. */
   identityVersion: number;
 };
 
-/**
- * Cursor keyset de la cola: `(cantidad DESC, productId ASC)`.
- *
- * Lleva las DOS claves del orden porque la primera no es única —varios
- * productos empatan en cantidad—, y un cursor que solo llevara el conteo
- * saltearía o repetiría a todos los empatados. Viaja opaco, con el mismo
- * codificador que el resto del proyecto.
- */
-type PendingIdentityQueueCursor = { count: number; productId: string };
+type PendingIdentityQueueRecord = PendingIdentityQueueRow & {
+  /** 1 cuando ya hay mercadería física sin identificar; 0 para solo pedidos. */
+  priority: number;
+  /** Total de evidencias activas para el desempate dentro de la prioridad. */
+  evidenceCount: number;
+};
 
-function encodeQueueCursor(row: PendingIdentityQueueRow): string {
-  return encodeCursor(`${row.pendingCount}:${row.productId}`);
+/** Cursor keyset: `(prioridad DESC, evidencias DESC, productId ASC)`. */
+type PendingIdentityQueueCursor = {
+  priority: number;
+  count: number;
+  productId: string;
+};
+
+function encodeQueueCursor(row: PendingIdentityQueueRecord): string {
+  return encodeCursor(`${row.priority}:${row.evidenceCount}:${row.productId}`);
 }
 
 /** Techo de `int4`. El `::int` del HAVING aborta con 22003 más allá de esto. */
@@ -1234,13 +1242,15 @@ export function decodeQueueCursor(
   // otra secuencia inválida se vuelve U+FFFD al decodificar y ya no re-codifica
   // igual, así que muere en `decodeCursor`.
   if (raw.includes("\u0000")) return null;
-  const separator = raw.indexOf(":");
-  if (separator <= 0) return null;
-  const count = Number(raw.slice(0, separator));
-  const productId = raw.slice(separator + 1);
+  const parts = raw.split(":");
+  if (parts.length !== 3) return null;
+  const priority = Number(parts[0]);
+  const count = Number(parts[1]);
+  const productId = parts[2] ?? "";
+  if (priority !== 0 && priority !== 1) return null;
   if (!Number.isInteger(count) || count < 0 || count > MAX_QUEUE_CURSOR_COUNT) return null;
   if (productId.length === 0) return null;
-  return { count, productId };
+  return { priority, count, productId };
 }
 
 /**
@@ -1267,35 +1277,72 @@ export async function listPendingIdentityQueue(params: {
   // (global/propio × con cursor/sin cursor). Una sola forma de consulta se lee
   // mejor y le deja a PostgreSQL un plan estable.
   const ownerId = params.ownerId ?? null;
+  const cursorPriority = cursor?.priority ?? null;
   const cursorCount = cursor?.count ?? null;
   const cursorProductId = cursor?.productId ?? null;
 
-  // Se pide una fila de más para saber si hay página siguiente sin contar el
-  // total, que sobre un agregado costaría una segunda pasada completa.
-  const rows = await prisma.$queryRaw<PendingIdentityQueueRow[]>`
-    SELECT
-      p."id"   AS "productId",
-      p."name" AS "productName",
-      p."code" AS "productCode",
-      COUNT(*)::int AS "pendingCount",
-      p."identityVersion" AS "identityVersion"
-    FROM "pendings" pe
-    JOIN "products" p ON p."id" = pe."productId"
-    WHERE pe."identitySkippedReason" IS NOT NULL
-      AND p."orionCode" IS NULL
-      AND pe."status"::text = ANY(${OPEN_STATUSES}::text[])
-      AND (${ownerId}::text IS NULL OR pe."createdById" = ${ownerId}::text)
-    GROUP BY p."id", p."name", p."code", p."identityVersion"
-    HAVING
-      ${cursorCount}::int IS NULL
-      OR COUNT(*) < ${cursorCount}::int
-      OR (COUNT(*) = ${cursorCount}::int AND p."id" > ${cursorProductId}::text)
-    ORDER BY COUNT(*) DESC, p."id" ASC
+  // Pendientes y entradas son dos evidencias del MISMO trabajo: identificar el
+  // producto. Se agregan antes de paginar; una recepción física pesa primero
+  // porque ya hay unidades en estantería que no pueden cuadrarse contra Orión.
+  const rows = await prisma.$queryRaw<PendingIdentityQueueRecord[]>`
+    WITH evidence AS (
+      SELECT
+        pe."productId",
+        pe."createdById",
+        1::int AS "pendingCount",
+        0::int AS "inventoryExceptionCount",
+        0::int AS "inventoryExceptionQuantity"
+      FROM "pendings" pe
+      WHERE pe."identitySkippedReason" IS NOT NULL
+        AND pe."status"::text = ANY(${OPEN_STATUSES}::text[])
+
+      UNION ALL
+
+      SELECT
+        ie."productId",
+        ie."createdById",
+        0::int AS "pendingCount",
+        1::int AS "inventoryExceptionCount",
+        ie."quantity"::int AS "inventoryExceptionQuantity"
+      FROM "inventory_entries" ie
+      WHERE ie."identityExceptionReason" IS NOT NULL
+    ), grouped AS (
+      SELECT
+        p."id" AS "productId",
+        p."name" AS "productName",
+        p."code" AS "productCode",
+        SUM(e."pendingCount")::int AS "pendingCount",
+        SUM(e."inventoryExceptionCount")::int AS "inventoryExceptionCount",
+        SUM(e."inventoryExceptionQuantity")::int AS "inventoryExceptionQuantity",
+        p."identityVersion" AS "identityVersion",
+        CASE WHEN SUM(e."inventoryExceptionCount") > 0 THEN 1 ELSE 0 END::int AS "priority",
+        SUM(e."pendingCount" + e."inventoryExceptionCount")::int AS "evidenceCount"
+      FROM evidence e
+      JOIN "products" p ON p."id" = e."productId"
+      WHERE p."orionCode" IS NULL
+        AND (${ownerId}::text IS NULL OR e."createdById" = ${ownerId}::text)
+      GROUP BY p."id", p."name", p."code", p."identityVersion"
+    )
+    SELECT * FROM grouped g
+    WHERE
+      ${cursorPriority}::int IS NULL
+      OR g."priority" < ${cursorPriority}::int
+      OR (
+        g."priority" = ${cursorPriority}::int
+        AND g."evidenceCount" < ${cursorCount}::int
+      )
+      OR (
+        g."priority" = ${cursorPriority}::int
+        AND g."evidenceCount" = ${cursorCount}::int
+        AND g."productId" > ${cursorProductId}::text
+      )
+    ORDER BY g."priority" DESC, g."evidenceCount" DESC, g."productId" ASC
     LIMIT ${take + 1}
   `;
 
-  const items = rows.slice(0, take);
-  const last = items.at(-1);
+  const page = rows.slice(0, take);
+  const last = page.at(-1);
+  const items = page.map(({ priority: _priority, evidenceCount: _count, ...row }) => row);
   return {
     items,
     nextCursor: rows.length > take && last ? encodeQueueCursor(last) : null,
