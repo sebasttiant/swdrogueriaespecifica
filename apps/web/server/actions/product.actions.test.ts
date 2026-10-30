@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const {
   requireCapability,
   addProduct,
+  findProductNameCandidates,
   recordAudit,
   auditContextFromHeaders,
   revalidatePath,
@@ -14,6 +15,7 @@ const {
 } = vi.hoisted(() => ({
   requireCapability: vi.fn(),
   addProduct: vi.fn(),
+  findProductNameCandidates: vi.fn(),
   recordAudit: vi.fn(),
   auditContextFromHeaders: vi.fn(),
   revalidatePath: vi.fn(),
@@ -25,7 +27,10 @@ vi.mock("@/lib/auth/require-role", () => ({ requireCapability }));
 vi.mock("@/lib/generated/prisma/client", () => ({
   Prisma: { PrismaClientKnownRequestError: class {} },
 }));
-vi.mock("@/server/services/product.service", () => ({ addProduct }));
+vi.mock("@/server/services/product.service", () => ({
+  addProduct,
+  findProductNameCandidates,
+}));
 vi.mock("@/server/services/audit.service", () => ({
   recordAudit,
   auditContextFromHeaders,
@@ -42,6 +47,7 @@ const session = { user: { id: "u1", email: "a@x.com", name: "A", role: "ADMIN" }
 beforeEach(() => {
   vi.clearAllMocks();
   auditContextFromHeaders.mockResolvedValue({});
+  findProductNameCandidates.mockResolvedValue([]);
 });
 
 describe("createProductAction · guard DB-authoritative", () => {
@@ -76,6 +82,60 @@ describe("createProductAction · guard DB-authoritative", () => {
     expect(addProduct).toHaveBeenCalledWith(
       expect.objectContaining({ laboratoryId: "lab-1" }),
     );
+  });
+
+  it("rechaza el nombre normalizado repetido y devuelve una opción accionable", async () => {
+    requireCapability.mockResolvedValue(session);
+    safeParse.mockReturnValue({
+      success: true,
+      data: {
+        code: "VAL-2",
+        name: "  VALCOTE   ER 250 MG  ",
+        unit: "Caja",
+        minStock: 0,
+        reorderQty: 0,
+      },
+    });
+    findProductNameCandidates.mockResolvedValue([
+      {
+        id: "existing-valcote",
+        name: "VALCOTE ER 250 MG",
+        code: "PROV-valcote er 250 mg",
+        orionCode: null,
+        unit: "unidad",
+      },
+    ]);
+    const formData = new FormData();
+    formData.set("name", "  VALCOTE   ER 250 MG  ");
+
+    const result = await createProductAction(PREV, formData);
+
+    expect(result.duplicateCandidates).toEqual([
+      expect.objectContaining({ id: "existing-valcote" }),
+    ]);
+    expect(result.values?.name).toBe("  VALCOTE   ER 250 MG  ");
+    expect(addProduct).not.toHaveBeenCalled();
+    expect(recordAudit).not.toHaveBeenCalled();
+  });
+
+  it("permite crear cuando la confirmación coincide exactamente con el nombre enviado", async () => {
+    requireCapability.mockResolvedValue(session);
+    safeParse.mockReturnValue({
+      success: true,
+      data: { code: "P3", name: "Producto legítimo", unit: "Caja", minStock: 0, reorderQty: 0 },
+    });
+    findProductNameCandidates.mockResolvedValue([
+      { id: "similar", name: "PRODUCTO LEGÍTIMO", code: "P2", orionCode: null, unit: "Frasco" },
+    ]);
+    addProduct.mockResolvedValue({ id: "p3" });
+    const formData = new FormData();
+    formData.set("name", "Producto legítimo");
+    formData.set("duplicateNameConfirmed", "Producto legítimo");
+
+    const result = await createProductAction(PREV, formData);
+
+    expect(result.ok).toBe(true);
+    expect(addProduct).toHaveBeenCalledTimes(1);
   });
 
   it("un usuario degradado/desactivado (guard redirige) NO llega a mutar", async () => {

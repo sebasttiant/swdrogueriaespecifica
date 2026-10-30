@@ -4,6 +4,7 @@
 // reglas.
 // --------------------------------------------------------------------------
 
+import { normalizeMissingReportName } from "@/features/faltantes/missing-report-name";
 import { prisma } from "@/lib/db/prisma";
 import type { Paginated } from "@/lib/pagination";
 import { findOrCreateLaboratory } from "@/server/repositories/laboratory.repository";
@@ -12,7 +13,6 @@ import type { Product } from "@/lib/generated/prisma/client";
 import {
   createProduct,
   findActiveEntryProduct,
-  updateProduct,
   updateProductIfVersionMatches,
   type UpdateProductData,
   findProductById,
@@ -87,6 +87,53 @@ export function getProduct(id: string): Promise<Product | null> {
 
 export function addProduct(data: CreateProductData): Promise<Product> {
   return createProduct(data);
+}
+
+export type ProductNameCandidate = Pick<
+  Product,
+  "id" | "name" | "code" | "orionCode" | "unit"
+>;
+
+/**
+ * Coincidencias conservadoras para el alta desde Catálogo.
+ *
+ * No bloquean por sí solas: dos laboratorios pueden vender productos con el
+ * mismo nombre. La decisión queda en la persona, pero tiene que ver primero la
+ * identidad que ya existe. La comparación comparte la normalización de los
+ * provisionales: Unicode NFC, mayúsculas y espacios; no elimina acentos ni
+ * presentaciones, porque hacerlo fusionaría productos distintos.
+ */
+export async function findProductNameCandidates(
+  rawName: string,
+): Promise<ProductNameCandidate[]> {
+  const normalizedName = normalizeMissingReportName(rawName);
+  if (!normalizedName) return [];
+
+  // PostgreSQL hace el recorte antes de devolver filas: nunca cargamos el
+  // catálogo completo para validar un alta. `provisionalNormalizedName` cubre
+  // los PROV/MAN; la expresión cubre productos históricos de catálogo.
+  const candidates = await prisma.$queryRaw<ProductNameCandidate[]>`
+    SELECT id, name, code, "orionCode", unit
+    FROM products
+    WHERE active = true
+      AND (
+        "provisionalNormalizedName" = ${normalizedName}
+        OR lower(
+          normalize(
+            btrim(regexp_replace(name, '[[:space:][:cntrl:]]+', ' ', 'g')),
+            NFC
+          )
+        ) = ${normalizedName}
+      )
+    ORDER BY "createdAt" DESC, id DESC
+    LIMIT 8
+  `;
+
+  // La base reduce el universo; la función canónica toma la decisión final,
+  // incluida NFC, para que Catálogo y los caminos provisionales no diverjan.
+  return candidates.filter(
+    (product) => normalizeMissingReportName(product.name) === normalizedName,
+  );
 }
 
 /**

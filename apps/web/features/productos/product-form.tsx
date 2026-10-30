@@ -22,8 +22,10 @@ export function ProductForm() {
     INITIAL_STATE,
   );
 
+  const previous = state.values;
+
   return (
-    <form action={formAction} className="space-y-4">
+    <form key={state.submissionId ?? "new"} action={formAction} className="space-y-4">
       <div className="grid gap-4 sm:grid-cols-2">
         {/* Este NO es el SKU. Es el código interno del catálogo —`PROV-…`,
             `MED-001`— y no existe del otro lado, en Orion. Decía solo "Código",
@@ -41,7 +43,7 @@ export function ProductForm() {
             que nace con su identidad nunca existe —ni por un instante— sin
             ella", y `pending.service.ts` ya lo crea así. */}
         <Field label="Código interno" htmlFor="code">
-          <Input id="code" name="code" required />
+          <Input id="code" name="code" required defaultValue={previous?.code} />
         </Field>
         {/* Sin este campo TODO producto nuevo nacía sin identidad: caía en
             la cola de "Revisión de identidad" y bloqueaba la entrada cuando
@@ -55,13 +57,14 @@ export function ProductForm() {
             id="orionCode"
             name="orionCode"
             placeholder="Como figura en Orión"
+            defaultValue={previous?.orionCode}
           />
           <p className="mt-1 text-xs text-muted-foreground">
             Si todavía no lo tenés, dejalo vacío y completalo después.
           </p>
         </Field>
         <Field label="Nombre" htmlFor="name">
-          <Input id="name" name="name" required />
+          <Input id="name" name="name" required defaultValue={previous?.name} />
         </Field>
         <Field label="Presentación / unidad" htmlFor="unit">
           <Input
@@ -69,6 +72,7 @@ export function ProductForm() {
             name="unit"
             required
             placeholder="Ej: Caja x 20 tabletas"
+            defaultValue={previous?.unit}
           />
           <p className="mt-1 text-xs text-muted-foreground">
             Ejemplos: Caja x 20 tabletas, Frasco x 120 ml, Blíster x 10, Unidad.
@@ -79,6 +83,8 @@ export function ProductForm() {
             name="laboratoryId"
             label="Laboratorio (opcional)"
             hint="Buscá uno existente o crealo sin salir del formulario."
+            defaultSelectedId={previous?.laboratoryId}
+            defaultSelectedName={previous?.laboratoryName}
           />
         </div>
         <Field label="Stock mín." htmlFor="minStock">
@@ -87,7 +93,7 @@ export function ProductForm() {
             name="minStock"
             type="number"
             min={0}
-            defaultValue={0}
+            defaultValue={previous?.minStock ?? 0}
           />
         </Field>
         <Field label="Reorden" htmlFor="reorderQty">
@@ -96,7 +102,7 @@ export function ProductForm() {
             name="reorderQty"
             type="number"
             min={0}
-            defaultValue={0}
+            defaultValue={previous?.reorderQty ?? 0}
           />
         </Field>
       </div>
@@ -105,6 +111,32 @@ export function ProductForm() {
         <p role="alert" className="text-sm font-medium text-danger">
           {state.error}
         </p>
+      ) : null}
+      {state.duplicateCandidates?.length ? (
+        <div role="alert" className="space-y-2 rounded-md border border-warning/50 p-3">
+          <p className="font-medium text-text">
+            Revisá estos productos antes de crear otro:
+          </p>
+          {state.duplicateCandidates.map((product) => (
+            <Link
+              key={product.id}
+              prefetch={false}
+              href={`/productos/${product.id}`}
+              className="block rounded-md border p-3 font-medium text-primary underline underline-offset-2"
+            >
+              Usar {product.name} · {product.code} · {product.orionCode ?? "sin SKU"} · {product.unit}
+            </Link>
+          ))}
+          <Button
+            type="submit"
+            name="duplicateNameConfirmed"
+            value={previous?.name ?? ""}
+            variant="secondary"
+            disabled={isPending}
+          >
+            Ninguno corresponde: crear producto nuevo
+          </Button>
+        </div>
       ) : null}
       {state.conflictingProductId ? (
         <p className="text-sm">
