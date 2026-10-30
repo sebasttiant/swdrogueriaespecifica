@@ -170,6 +170,12 @@ export type PendingFormState = {
   /** Coincidencias que deben resolverse antes de crear un producto manual. */
   manualDuplicateCandidates?: PendingProductSearchItem[] | null;
   /**
+   * La base encontró al ganador DESPUÉS de una confirmación previa de “ninguno”.
+   * La pantalla debe invalidar esa confirmación y ofrecer al ganador junto al
+   * error, no esconderlo por el valor viejo que vuelve en el eco del formulario.
+   */
+  manualDuplicateConflict?: boolean;
+  /**
    * Corrección que no cambiaba nada: no se escribió ni se auditó. Va aparte de
    * `ok` para que la pantalla diga "no había cambios" y no "corregido".
    */
@@ -394,6 +400,7 @@ export async function createPendingAction(
     log: Omit<PendingLogEvent, "correlationId" | "stage">,
     orionConflict?: PendingOrionConflict,
     manualDuplicateCandidates?: PendingProductSearchItem[],
+    manualDuplicateConflict = false,
   ): PendingFormState => {
     logPendingEvent({
       correlationId,
@@ -407,10 +414,13 @@ export async function createPendingAction(
       error: `${message} Código: ${correlationId}`,
       ok: false,
       supportCode: correlationId,
-      values: submitted,
+      values: manualDuplicateConflict
+        ? { ...submitted, manualDuplicateConfirmed: "" }
+        : submitted,
       submissionId: correlationId,
       orionConflict,
       manualDuplicateCandidates,
+      manualDuplicateConflict,
     };
   };
 
@@ -913,6 +923,7 @@ export async function createPendingAction(
             unit: error.holder.unit,
           },
         ],
+        true,
       );
     }
     if (error instanceof ManualProductIdentityConflictError) {
