@@ -71,6 +71,16 @@ ENV PATH="/app/apps/web/node_modules/.bin:/app/node_modules/.bin:$PATH"
 USER node
 CMD ["node_modules/.bin/prisma", "db", "seed"]
 
+# ---------- audited repair ----------
+# La reparación importa servicios de la app y el Prisma Client generado, igual
+# que el seed. Un target basado en `deps` compila migraciones pero no contiene
+# esos módulos y falla recién durante una ventana operativa.
+FROM builder AS repair
+WORKDIR /app/apps/web
+ENV PATH="/app/apps/web/node_modules/.bin:/app/node_modules/.bin:$PATH"
+USER node
+ENTRYPOINT ["node_modules/.bin/tsx", "prisma/repair-product-identity.ts"]
+
 # ---------- runner ----------
 FROM node:24.22.1-trixie-slim AS runner
 WORKDIR /app

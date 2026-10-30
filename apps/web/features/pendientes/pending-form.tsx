@@ -172,6 +172,7 @@ function PendingFormFields({
 
   const conflict = state.orionConflict;
   const manualDuplicateCandidates = state.manualDuplicateCandidates ?? [];
+  const manualDuplicateConflict = state.manualDuplicateConflict === true;
   const canSelectExisting = products.length > 0;
   // Modo manual: producto que no está en el catálogo. Si no hay catálogo cargado,
   // el manual es la única vía, así que arranca activo y sin opción de togglear.
@@ -515,6 +516,7 @@ function PendingFormFields({
               }}
             />
             {manualDuplicateCandidates.length > 0 &&
+            !manualDuplicateConflict &&
             manualDuplicateConfirmed !== manualName ? (
               <div role="alert" className="space-y-2 rounded-md border border-warning/50 p-3">
                 <p className="font-medium text-text">
@@ -1046,6 +1048,24 @@ function PendingFormFields({
             Los datos siguen cargados. Podés volver a intentar sin escribirlos de
             nuevo.
           </p>
+          {manualDuplicateConflict && manualDuplicateCandidates.length > 0 ? (
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-text">
+                Elegí el producto que ya existe para terminar este pendiente:
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {manualDuplicateCandidates.map((product) => (
+                  <Button
+                    key={product.id}
+                    type="button"
+                    onClick={() => selectManualDuplicateCandidate(product)}
+                  >
+                    Usar {optionLabel(product)}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          ) : null}
           {showConflictRecovery && conflict ? (
             <div className="flex flex-wrap gap-2">
               {conflictHolder ? (
