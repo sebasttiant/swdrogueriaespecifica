@@ -236,7 +236,18 @@ running_calls="$(run_web_state running)"
 # `--no-deps` es el punto: sin él, compose intenta satisfacer web -> seed ->
 # migrate y aborta porque esos jobs one-shot no están en un estado válido.
 web_check 'levanta web sin resolver el grafo de dependencias' \
-  si "$(case "$running_calls" in *'compose up -d --no-deps web'*) printf si ;; *) printf no ;; esac)"
+  si "$(case "$running_calls" in *'--no-deps'*) printf si ;; *) printf no ;; esac)"
+
+# `--no-recreate` es tan necesario como `--no-deps`, y por una razón que no se
+# ve leyendo este script: `docker-compose.yml` resuelve APP_COMMIT a `unknown`
+# cuando nadie lo exporta, y `deploy.sh` lo exporta pero una restauración
+# invocada aparte no. Para compose eso es un cambio de configuración, así que
+# RECREA el contenedor —`--no-deps` no lo impide—. El WEB_ID capturado antes de
+# restaurar queda apuntando a un contenedor eliminado, `docker inspect` falla y
+# el trap de limpieza detiene el reemplazo: la app queda caída después de una
+# restauración exitosa.
+web_check 'preserva el contenedor existente en lugar de recrearlo' \
+  si "$(case "$running_calls" in *'--no-recreate'*) printf si ;; *) printf no ;; esac)"
 
 web_check 'no usa compose start, que no ejecuta los jobs del grafo' \
   no "$(case "$running_calls" in *'compose start'*) printf si ;; *) printf no ;; esac)"

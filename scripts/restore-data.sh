@@ -226,9 +226,17 @@ SQL
 # `--no-deps` también sostiene la promesa de la ayuda: acá no se ejecutan
 # migrate ni seed. El dump restaurado trae su propio esquema, y migrar sobre él
 # sería cambiar lo que se acaba de recuperar.
+#
+# Y `--no-recreate`, que no es opcional: `docker-compose.yml` resuelve
+# APP_COMMIT a `unknown` cuando nadie lo exporta. `deploy.sh` lo exporta, pero
+# una restauración invocada aparte no, así que para compose la configuración
+# cambió y RECREARÍA el contenedor —`--no-deps` no lo impide—. El WEB_ID que se
+# capturó antes de restaurar quedaría apuntando a un contenedor eliminado:
+# `docker inspect` fallaría, el trap de limpieza detendría el reemplazo y la
+# app quedaría caída después de una restauración exitosa.
 restore_web_state() {
   if [[ "$WEB_STATE" == running ]]; then
-    compose up -d --no-deps web
+    compose up -d --no-deps --no-recreate web
     local health i
     for ((i = 0; i < 60; i++)); do
       health="$(docker inspect --format '{{.State.Status}}/{{if .State.Health}}{{.State.Health.Status}}{{else}}sin-healthcheck{{end}}' "$WEB_ID")"
