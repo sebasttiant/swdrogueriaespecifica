@@ -212,8 +212,31 @@ SQL
   tables="$(psql_db -d "$DB_NAME" -Atc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE';")"
   [[ "$tables" =~ ^[0-9]+$ ]] && ((tables > 0)) || die 'Restauración sin tablas públicas verificables.'
   printf 'DB restaurada: %s tablas públicas. Falta reconciliación de inventario y pruebas operativas manuales.\n' "$tables"
+  restore_web_state
+}
+
+# Devuelve `web` al estado que tenía antes de restaurar.
+#
+# `compose up -d --no-deps`, nunca `compose start`: `start` solo arranca
+# contenedores existentes y no ejecuta los jobs one-shot del grafo. Como `web`
+# depende de `seed` (completed_successfully) y `seed` de `migrate`, compose
+# abortaba con "seed is missing dependency migrate" y dejaba `web` detenida
+# después de una restauración que sí había terminado bien.
+#
+# `--no-deps` también sostiene la promesa de la ayuda: acá no se ejecutan
+# migrate ni seed. El dump restaurado trae su propio esquema, y migrar sobre él
+# sería cambiar lo que se acaba de recuperar.
+#
+# Y `--no-recreate`, que no es opcional: `docker-compose.yml` resuelve
+# APP_COMMIT a `unknown` cuando nadie lo exporta. `deploy.sh` lo exporta, pero
+# una restauración invocada aparte no, así que para compose la configuración
+# cambió y RECREARÍA el contenedor —`--no-deps` no lo impide—. El WEB_ID que se
+# capturó antes de restaurar quedaría apuntando a un contenedor eliminado:
+# `docker inspect` fallaría, el trap de limpieza detendría el reemplazo y la
+# app quedaría caída después de una restauración exitosa.
+restore_web_state() {
   if [[ "$WEB_STATE" == running ]]; then
-    compose start web
+    compose up -d --no-deps --no-recreate web
     local health i
     for ((i = 0; i < 60; i++)); do
       health="$(docker inspect --format '{{.State.Status}}/{{if .State.Health}}{{.State.Health.Status}}{{else}}sin-healthcheck{{end}}' "$WEB_ID")"

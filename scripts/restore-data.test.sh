@@ -154,7 +154,15 @@ trap 'exit 129' HUP
         self.assertNotIn('Web debe', result.stderr)
 
     def test_target_and_order_guards(self):
-        self.assertNotIn('compose up', source)
+        # El script es DB-only y no inicia dependencias. Un `compose up` pelado
+        # arrastraría migrate y seed por el grafo de `web`, así que cada uno
+        # tiene que llevar --no-deps. La garantía es la misma que antes; lo que
+        # cambia es que ahora se exige la forma segura en lugar de prohibir el
+        # comando entero.
+        ups = [line for line in source.splitlines() if 'compose up' in line]
+        self.assertTrue(ups)
+        for line in ups:
+            self.assertIn('--no-deps', line)
         self.assertNotIn('down -v', source)
         self.assertIn('pg_restore --exit-on-error', source)
         self.assertIn("<<'SQL'", source)
@@ -162,12 +170,104 @@ trap 'exit 129' HUP
         self.assertLess(source.index('prepare_archive\n'), source.index('QUIESCED=1'))
         self.assertLess(source.index('pg_dump -U'), source.index('DROP DATABASE'))
         compact = ''.join(source.split())
-        self.assertLess(compact.index('((tables>0))'), compact.index('composestartweb'))
+        # El orden se mantiene: las tablas se verifican ANTES de devolver web a
+        # servicio. Arrancarla sobre una restauración sin verificar expondría
+        # una base que nadie comprobó.
+        self.assertLess(compact.index('((tables>0))'), compact.index('restore_web_state'))
         self.assertLess(source.index('package_safety_archive "$safety_path"'), source.index('DROP DATABASE'))
         self.assertIn('|| die "Falló el empaquetado;', source)
         self.assertIn('if [[ "$WEB_STATE" == running ]]; then', source)
+        # `compose start` no ejecuta los jobs one-shot del grafo, así que con
+        # web dependiendo de seed y seed de migrate, compose aborta con
+        # "seed is missing dependency migrate" y deja web detenida tras una
+        # restauración que sí terminó bien. Reproducido el 30/10/2026.
+        self.assertNotIn('compose start web', source)
         self.assertIn('i<60', compact)
         self.assertIn('SIN RESPALDO', source)
 
 unittest.main(verbosity=2)
 PY
+
+# --------------------------------------------------------------------------
+# Devolver `web` a servicio, con `compose` y `docker` stubeados. Se prueba qué
+# comandos invoca, no el texto del script: un grep demostraría que la cadena
+# está, no que el arranque funciona.
+# --------------------------------------------------------------------------
+web_state_body="$(sed -n '/^restore_web_state() {/,/^}/p' scripts/restore-data.sh)"
+[ -n "$web_state_body" ] || {
+  printf 'ERROR: restore-data.sh no define restore_web_state()\n' >&2
+  exit 1
+}
+
+run_web_state() {
+  (
+    CALLS=''
+    # Las consume `restore_web_state`, que entra por `eval` más abajo: el
+    # análisis estático no puede verlo, pero quitarlas rompe la prueba.
+    # shellcheck disable=SC2034
+    WEB_STATE="$1"
+    # shellcheck disable=SC2034
+    WEB_ID=contenedor-falso
+    compose() { CALLS="$CALLS|compose $*"; }
+    docker() { printf 'running/healthy'; }
+    die() {
+      CALLS="$CALLS|die $*"
+      return 1
+    }
+    eval "$web_state_body"
+    restore_web_state >/dev/null 2>&1 || true
+    printf '%s' "$CALLS"
+  )
+}
+
+web_failures=0
+web_check() {
+  if [ "$2" = "$3" ]; then
+    printf '  ok   %s\n' "$1"
+  else
+    printf '  FAIL %s — esperado "%s", obtenido "%s"\n' "$1" "$2" "$3" >&2
+    web_failures=$((web_failures + 1))
+  fi
+}
+
+printf '\n== restore_web_state ==\n'
+running_calls="$(run_web_state running)"
+
+# `--no-deps` es el punto: sin él, compose intenta satisfacer web -> seed ->
+# migrate y aborta porque esos jobs one-shot no están en un estado válido.
+web_check 'levanta web sin resolver el grafo de dependencias' \
+  si "$(case "$running_calls" in *'--no-deps'*) printf si ;; *) printf no ;; esac)"
+
+# `--no-recreate` es tan necesario como `--no-deps`, y por una razón que no se
+# ve leyendo este script: `docker-compose.yml` resuelve APP_COMMIT a `unknown`
+# cuando nadie lo exporta, y `deploy.sh` lo exporta pero una restauración
+# invocada aparte no. Para compose eso es un cambio de configuración, así que
+# RECREA el contenedor —`--no-deps` no lo impide—. El WEB_ID capturado antes de
+# restaurar queda apuntando a un contenedor eliminado, `docker inspect` falla y
+# el trap de limpieza detiene el reemplazo: la app queda caída después de una
+# restauración exitosa.
+web_check 'preserva el contenedor existente en lugar de recrearlo' \
+  si "$(case "$running_calls" in *'--no-recreate'*) printf si ;; *) printf no ;; esac)"
+
+web_check 'no usa compose start, que no ejecuta los jobs del grafo' \
+  no "$(case "$running_calls" in *'compose start'*) printf si ;; *) printf no ;; esac)"
+
+# El script promete en su propia ayuda que no ejecuta migrate ni seed: el dump
+# restaurado trae su esquema y migrar acá lo pisaría.
+web_check 'no ejecuta migrate' \
+  no "$(case "$running_calls" in *migrate*) printf si ;; *) printf no ;; esac)"
+
+web_check 'no ejecuta seed' \
+  no "$(case "$running_calls" in *seed*) printf si ;; *) printf no ;; esac)"
+
+# Si web estaba detenida antes de restaurar, se conserva ese estado: devolverla
+# a servicio por iniciativa propia cambiaría la disponibilidad sin que nadie lo
+# pidiera.
+web_check 'web detenida: no la arranca' \
+  '' "$(run_web_state exited)"
+
+if ((web_failures > 0)); then
+  printf '\n%s prueba(s) de arranque fallaron.\n' "$web_failures" >&2
+  exit 1
+fi
+printf '\nArranque de web verificado.\n'
