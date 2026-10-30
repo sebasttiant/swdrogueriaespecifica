@@ -30,11 +30,62 @@ BRANCH="${BRANCH:-main}"
 # seguía, ahora se detiene con un mensaje.
 EXPECTED_SHA="${EXPECTED_SHA:-}"
 EXPECTED_SHA="${EXPECTED_SHA,,}"   # se acepta en mayúsculas, como lo muestran algunas UIs
+# Host contra el que se autoriza este despliegue, verificado contra el hostname
+# real antes de tocar nada. Mismo criterio que EXPECTED_SHA: el operador declara
+# lo que espera y el script comprueba. Vacío = sin verificar, que es el
+# comportamiento histórico.
+#
+# El 30 de octubre de 2026 un despliegue destinado al VPS de pruebas entró en
+# producción: había dos sesiones SSH abiertas y el comando cayó en la
+# equivocada. El script verificaba QUÉ desplegaba —rama, commit, árbol limpio—
+# y nada sobre DÓNDE. Lo único que separaba los dos servidores era la memoria
+# del operador sobre qué terminal estaba mirando.
+DEPLOY_TARGET="${DEPLOY_TARGET:-}"
+# Con 1, el script se posiciona en "$BRANCH" por su cuenta en lugar de abortar.
+# Es autorización explícita: por defecto nada mueve el checkout, y la rama la
+# sigue nombrando el operador mediante BRANCH.
+SWITCH_BRANCH="${SWITCH_BRANCH:-0}"
 WEB_SERVICE="${WEB_SERVICE:-web}"
 DB_SERVICE="${DB_SERVICE:-postgres}"
 MIGRATE_SERVICE="${MIGRATE_SERVICE:-migrate}"
 SEED_SERVICE="${SEED_SERVICE:-seed}"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-180}"   # segundos a esperar a que `web` quede healthy
+
+# --------------------------------------------------------------------------
+# Guardas puras: deciden y no actúan. El efecto (fetch, switch, build) vive en
+# el flujo principal, así que estas funciones se pueden probar sin Docker, sin
+# git y sin red —ver scripts/deploy.test.sh.
+# --------------------------------------------------------------------------
+
+# Compara el destino declarado con el hostname real. Coincidencia EXACTA: una
+# guarda que aceptara prefijos haría que "vps" validara los dos servidores, y
+# una guarda ambigua no es una guarda.
+assert_deploy_target() {
+  local declared="$1" actual="$2"
+  [ -n "$declared" ] || return 0
+  if [ -z "$actual" ]; then
+    echo "ERROR: DEPLOY_TARGET='$declared' pero no se pudo resolver el hostname de esta máquina."
+    echo "       No se verifica a ciegas: desplegar sin saber dónde es el riesgo que esta guarda evita."
+    return 1
+  fi
+  [ "$declared" = "$actual" ] && return 0
+  echo "ERROR: este servidor es '$actual' y DEPLOY_TARGET='$declared'."
+  echo "       No se tocó nada. Si de verdad querés desplegar acá:  DEPLOY_TARGET=$actual ./deploy.sh"
+  return 1
+}
+
+# Qué hacer con la rama actual: ok (ya estamos), switch (autorizado) o abort.
+# Solo el 1 exacto autoriza; un valor accidental no puede mover el checkout.
+branch_action() {
+  local current="$1" wanted="$2" allow_switch="$3"
+  if [ "$current" = "$wanted" ]; then
+    printf 'ok'
+  elif [ "$allow_switch" = 1 ]; then
+    printf 'switch'
+  else
+    printf 'abort'
+  fi
+}
 
 cd "$APP_DIR"
 
@@ -56,13 +107,36 @@ if [ -n "$EXPECTED_SHA" ] && ! [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
   exit 1
 fi
 
+# `hostname -s` para el nombre corto, que es como se nombran estos VPS. Si no
+# se puede resolver queda vacío y la guarda decide: sin destino declarado no
+# pasa nada, con destino declarado aborta.
+ACTUAL_HOST="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+assert_deploy_target "$DEPLOY_TARGET" "$ACTUAL_HOST" || exit 1
+[ -n "$DEPLOY_TARGET" ] && echo "    ✓ Servidor verificado: $ACTUAL_HOST"
+
 CURRENT_BRANCH="$(git branch --show-current)"
-if [ "$CURRENT_BRANCH" != "$BRANCH" ]; then
+case "$(branch_action "$CURRENT_BRANCH" "$BRANCH" "$SWITCH_BRANCH")" in
+ok) ;;
+switch)
+  echo "    La rama actual es '${CURRENT_BRANCH:-HEAD desacoplado}'; SWITCH_BRANCH=1 autoriza pasar a '$BRANCH'."
+  git fetch origin "$BRANCH"
+  git switch "$BRANCH" 2>/dev/null || git switch --track "origin/$BRANCH"
+  CURRENT_BRANCH="$(git branch --show-current)"
+  # El switch puede no dejarnos donde pedimos (rama protegida por cambios
+  # locales, por ejemplo). Se vuelve a comprobar antes de construir.
+  [ "$CURRENT_BRANCH" = "$BRANCH" ] || {
+    echo "ERROR: tras el switch la rama es '${CURRENT_BRANCH:-HEAD desacoplado}' y se esperaba '$BRANCH'."
+    exit 1
+  }
+  ;;
+*)
   echo "ERROR: la rama actual es '${CURRENT_BRANCH:-HEAD desacoplado}' y BRANCH='$BRANCH'."
   echo "       Cambiá primero de rama:  git fetch origin && git switch --track origin/$BRANCH"
   echo "       (o, si ya existe localmente:  git switch $BRANCH)"
+  echo "       O autorizá que lo haga el script:  SWITCH_BRANCH=1 BRANCH=$BRANCH ./deploy.sh"
   exit 1
-fi
+  ;;
+esac
 
 LOCAL_CHANGES="$(git status --porcelain --untracked-files=normal)"
 if [ -n "$LOCAL_CHANGES" ]; then

@@ -20,6 +20,12 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      # Ver ci-pr.yml: estas pruebas existían pero no se ejecutaban en ningún
+      # workflow, así que un defecto en una guarda de entrega llegaba intacto
+      # a la operación.
+      - name: Guardas de scripts de entrega
+        run: pnpm scripts:test
+
       - name: Typecheck
         run: pnpm typecheck
 

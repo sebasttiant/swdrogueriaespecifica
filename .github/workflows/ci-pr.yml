@@ -21,6 +21,13 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      # Las guardas de los scripts de entrega solo se ejercitan durante un
+      # despliegue o una restauración real, que es el peor momento para
+      # descubrir que una está mal. Sin este paso las pruebas existían pero
+      # nadie las corría, así que no protegían nada.
+      - name: Guardas de scripts de entrega
+        run: pnpm scripts:test
+
       - name: Typecheck
         run: pnpm typecheck
 

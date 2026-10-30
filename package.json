@@ -30,6 +30,8 @@
     "data:restore:drill": "bash scripts/restore-drill.sh",
     "data:restore": "bash scripts/restore-data.sh",
     "data:restore:test": "bash scripts/restore-data.test.sh",
+    "deploy:test": "bash scripts/deploy.test.sh",
+    "scripts:test": "bash scripts/deploy.test.sh && bash scripts/restore-data.test.sh",
     "docker:build": "docker build -f apps/web/Dockerfile -t drogueria-especifica-web:local ."
   }
 }
