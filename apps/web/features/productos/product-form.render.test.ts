@@ -49,6 +49,52 @@ describe("ProductForm", () => {
     expect(html).toContain("Unidad");
   });
 
+  it("muestra coincidencias accionables y una confirmación atada al nombre", () => {
+    useActionStateMock.mockReturnValue([
+      {
+        error: "Encontramos productos con el mismo nombre.",
+        ok: false,
+        submissionId: "duplicate-1",
+        values: {
+          code: "VAL-2",
+          name: "VALCOTE ER 250 MG",
+          unit: "Caja",
+          minStock: "0",
+          reorderQty: "0",
+          laboratoryId: "lab-abbott",
+          laboratoryName: "Abbott",
+          orionCode: "428",
+          active: "",
+          expectedVersion: "",
+          duplicateNameConfirmed: "",
+        },
+        duplicateCandidates: [
+          {
+            id: "existing-valcote",
+            name: "VALCOTE ER 250 MG",
+            code: "PROV-valcote er 250 mg",
+            orionCode: null,
+            unit: "unidad",
+          },
+        ],
+      },
+      vi.fn(),
+      false,
+    ]);
+
+    const html = render();
+
+    expect(html).toContain("Usar VALCOTE ER 250 MG");
+    expect(html).toContain('/productos/existing-valcote');
+    expect(html).toContain('name="duplicateNameConfirmed"');
+    expect(html).toContain('value="VALCOTE ER 250 MG"');
+    expect(html).toContain('value="428"');
+    // El laboratorio elegido sobrevive a la alerta: sin el nombre, la
+    // confirmación creaba el producto sin laboratorio.
+    expect(html).toContain('name="laboratoryId" value="lab-abbott"');
+    expect(html).toContain('name="laboratoryName" value="Abbott"');
+  });
+
   it("ubica laboratorio después de presentación y antes de stock mínimo", () => {
     const html = render();
 

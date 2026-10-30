@@ -4,6 +4,7 @@
 // reglas.
 // --------------------------------------------------------------------------
 
+import { normalizeMissingReportName } from "@/features/faltantes/missing-report-name";
 import { prisma } from "@/lib/db/prisma";
 import type { Paginated } from "@/lib/pagination";
 import { findOrCreateLaboratory } from "@/server/repositories/laboratory.repository";
@@ -12,7 +13,6 @@ import type { Product } from "@/lib/generated/prisma/client";
 import {
   createProduct,
   findActiveEntryProduct,
-  updateProduct,
   updateProductIfVersionMatches,
   type UpdateProductData,
   findProductById,
@@ -87,6 +87,63 @@ export function getProduct(id: string): Promise<Product | null> {
 
 export function addProduct(data: CreateProductData): Promise<Product> {
   return createProduct(data);
+}
+
+export type ProductNameCandidate = Pick<
+  Product,
+  "id" | "name" | "code" | "orionCode" | "unit"
+>;
+
+/**
+ * Coincidencias conservadoras para el alta desde Catálogo.
+ *
+ * No bloquean por sí solas: dos laboratorios pueden vender productos con el
+ * mismo nombre. La decisión queda en la persona, pero tiene que ver primero la
+ * identidad que ya existe. La comparación comparte la normalización de los
+ * provisionales: Unicode NFC, mayúsculas y espacios; no elimina acentos ni
+ * presentaciones, porque hacerlo fusionaría productos distintos.
+ */
+export async function findProductNameCandidates(
+  rawName: string,
+): Promise<ProductNameCandidate[]> {
+  const normalizedName = normalizeMissingReportName(rawName);
+  if (!normalizedName) return [];
+
+  // PostgreSQL hace el recorte antes de devolver filas: nunca cargamos el
+  // catálogo completo para validar un alta. `provisionalNormalizedName` cubre
+  // los PROV/MAN; la expresión cubre productos históricos de catálogo.
+  //
+  // El prefiltro tiene que ser un SUPERCONJUNTO de lo que el normalizador JS
+  // considera igual. `[[:space:]]` de PostgreSQL no incluye el espacio duro
+  // (U+00A0) ni los espacios Unicode que `\s` de JavaScript sí colapsa, así
+  // que acá se ELIMINAN todos los separadores en los dos lados: dos nombres
+  // iguales tras colapsar espacios siguen iguales tras quitarlos. La decisión
+  // exacta la toma después el filtro con la función canónica.
+  const compactName = normalizedName.replace(/ /g, "");
+  const candidates = await prisma.$queryRaw<ProductNameCandidate[]>`
+    SELECT id, name, code, "orionCode", unit
+    FROM products
+    WHERE active = true
+      AND (
+        "provisionalNormalizedName" = ${normalizedName}
+        OR lower(
+          regexp_replace(
+            normalize(name, NFC),
+            '[[:space:][:cntrl:]\\u0080-\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000\\uFEFF]+',
+            '',
+            'g'
+          )
+        ) = ${compactName}
+      )
+    ORDER BY "createdAt" DESC, id DESC
+    LIMIT 8
+  `;
+
+  // La base reduce el universo; la función canónica toma la decisión final,
+  // incluida NFC, para que Catálogo y los caminos provisionales no diverjan.
+  return candidates.filter(
+    (product) => normalizeMissingReportName(product.name) === normalizedName,
+  );
 }
 
 /**

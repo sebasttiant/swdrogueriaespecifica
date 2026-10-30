@@ -11,7 +11,12 @@ import {
   auditContextFromHeaders,
   recordAudit,
 } from "@/server/services/audit.service";
-import { addProduct, editProduct } from "@/server/services/product.service";
+import {
+  addProduct,
+  editProduct,
+  findProductNameCandidates,
+  type ProductNameCandidate,
+} from "@/server/services/product.service";
 import {
   productCreateSchema,
   productUpdateSchema,
@@ -37,6 +42,8 @@ export type ProductFormState = {
    * repite el problema que la identidad exacta existe para cerrar.
    */
   conflictingProductId?: string;
+  /** Productos activos con el mismo nombre conservador. */
+  duplicateCandidates?: ProductNameCandidate[];
   /**
    * Eco EXACTO de lo enviado, presente SOLO cuando el guardado falla.
    *
@@ -79,6 +86,9 @@ export type ProductSubmittedValues = {
    * fresco y pasaría el control.
    */
   expectedVersion: string;
+  orionCode: string;
+  /** Confirmación explícita, válida solo para este nombre exacto. */
+  duplicateNameConfirmed: string;
 };
 
 /** El eco: lo que vino en el FormData, sin interpretar. */
@@ -94,6 +104,8 @@ function submittedValues(formData: FormData): ProductSubmittedValues {
     laboratoryName: text("laboratoryName"),
     active: formData.get("active") === "on" ? "on" : "",
     expectedVersion: text("expectedVersion"),
+    orionCode: text("orionCode"),
+    duplicateNameConfirmed: text("duplicateNameConfirmed"),
   };
 }
 
@@ -158,7 +170,22 @@ export async function createProductAction(
     return { error: "Revisá los datos del producto.", ok: false };
   }
 
+  const echo = submittedValues(formData);
   try {
+    if (echo.duplicateNameConfirmed !== echo.name) {
+      const duplicateCandidates = await findProductNameCandidates(parsed.data.name);
+      if (duplicateCandidates.length > 0) {
+        return {
+          error:
+            "Encontramos productos con el mismo nombre. Usá uno existente o confirmá que ninguno corresponde.",
+          ok: false,
+          values: echo,
+          submissionId: randomUUID(),
+          duplicateCandidates,
+        };
+      }
+    }
+
     const product = await addProduct(parsed.data);
     await recordAudit({
       action: AUDIT_ACTIONS.PRODUCT_CREATE,
@@ -361,6 +388,9 @@ export async function updateProductAction(
       // La versión YA INCREMENTADA: la siguiente edición desde este mismo
       // formulario declara N+1 y no vuelve a chocar contra su propio guardado.
       expectedVersion: String(changed.after.catalogVersion),
+      // El SKU no se edita en este formulario, pero forma parte del eco común.
+      orionCode: echo.orionCode,
+      duplicateNameConfirmed: "",
     },
   };
 }
