@@ -107,6 +107,7 @@ import {
   createPendingAction,
   deliverPendingAction,
   invoicePendingAction,
+  type PendingFormState,
   resolvePendingIdentityAction,
   searchActiveProductsForPendingAction,
   updatePendingManagementStatusAction,
@@ -599,6 +600,11 @@ describe("createPendingAction", () => {
           unit: "Caja",
         },
       ]);
+      expect(
+        (result as PendingFormState & { manualDuplicateConflict?: boolean })
+          .manualDuplicateConflict,
+      ).toBe(true);
+      expect(result.values?.manualDuplicateConfirmed).toBe("");
     });
 
     it("la unión de identidad NO viaja al service: el contrato son los campos planos", async () => {
