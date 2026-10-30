@@ -582,7 +582,10 @@ function blocked(blockers: string[]): ProductIdentityRepairReport {
  * validated against the restored copy, and a count of three cannot be compared
  * against another count of three.
  */
-export function formatRepairReport(report: ProductIdentityRepairReport): string {
+export function formatRepairReport(
+  report: ProductIdentityRepairReport,
+  options: { applyRequested?: boolean } = {},
+): string {
   const lines: string[] = [`Estado: ${report.status}`];
 
   if (report.blockers.length > 0) {
@@ -604,8 +607,17 @@ export function formatRepairReport(report: ProductIdentityRepairReport): string 
     ...idLines(report.plan.deactivatedProducts),
   );
 
-  if (!report.applied) {
+  if (report.status === "planned") {
     lines.push("", "Dry-run: no se escribió nada. Usá --apply para ejecutar.");
+  } else if (report.status === "blocked") {
+    lines.push("", "Bloqueado: no se escribió nada.");
+  } else if (report.status === "noop") {
+    lines.push(
+      "",
+      options.applyRequested
+        ? "No había cambios pendientes; no se escribió nada."
+        : "Dry-run: la base ya coincide con el resultado esperado; no se escribió nada.",
+    );
   }
 
   return lines.join("\n");

@@ -88,7 +88,7 @@ async function main(): Promise<boolean> {
   const manifest = readManifest();
   const report = await repairProductIdentity(manifest);
 
-  console.log(formatRepairReport(report));
+  console.log(formatRepairReport(report, { applyRequested: manifest.apply === true }));
 
   if (report.status === "blocked") {
     console.log(
@@ -108,6 +108,13 @@ main()
   })
   .catch(async (error) => {
     console.error(error instanceof Error ? error.message : error);
-    await prisma.$disconnect();
+    // Si el fallo ocurrió antes de crear Prisma (por ejemplo, manifiesto
+    // inválido), desconectar no debe tapar el error original con otro fallo de
+    // validación de entorno.
+    try {
+      await prisma.$disconnect();
+    } catch {
+      // El error original ya fue impreso y es el que guía la operación.
+    }
     process.exit(1);
   });

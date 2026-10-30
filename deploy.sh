@@ -49,6 +49,7 @@ WEB_SERVICE="${WEB_SERVICE:-web}"
 DB_SERVICE="${DB_SERVICE:-postgres}"
 MIGRATE_SERVICE="${MIGRATE_SERVICE:-migrate}"
 SEED_SERVICE="${SEED_SERVICE:-seed}"
+REPAIR_SERVICE="${REPAIR_SERVICE:-repair}"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-180}"   # segundos a esperar a que `web` quede healthy
 
 # --------------------------------------------------------------------------
@@ -203,9 +204,15 @@ export APP_COMMIT
 echo "==> Deploying commit $APP_COMMIT"
 
 echo "==> Building web image..."
-# Build the deploy images explicitly. `web` is the runtime image; `migrate` and
-# `seed` are one-shot images used below so the runtime container stays minimal.
-docker compose build "$WEB_SERVICE" "$MIGRATE_SERVICE" "$SEED_SERVICE"
+# Build the deploy images explicitly. `web` is the runtime image; the others
+# are one-shot operational images. Building `repair` here proves that the exact
+# artifact needed in a maintenance window exists before the deploy is declared
+# healthy.
+docker compose build \
+  "$WEB_SERVICE" \
+  "$MIGRATE_SERVICE" \
+  "$SEED_SERVICE" \
+  "$REPAIR_SERVICE"
 
 echo "==> Starting database..."
 docker compose up -d "$DB_SERVICE"
