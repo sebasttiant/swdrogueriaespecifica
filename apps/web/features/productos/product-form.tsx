@@ -81,6 +81,7 @@ export function ProductForm() {
         <div className="sm:col-span-2">
           <LaboratorySearch
             name="laboratoryId"
+            nameForLabel="laboratoryName"
             label="Laboratorio (opcional)"
             hint="Buscá uno existente o crealo sin salir del formulario."
             defaultSelectedId={previous?.laboratoryId}

@@ -112,6 +112,14 @@ export async function findProductNameCandidates(
   // PostgreSQL hace el recorte antes de devolver filas: nunca cargamos el
   // catálogo completo para validar un alta. `provisionalNormalizedName` cubre
   // los PROV/MAN; la expresión cubre productos históricos de catálogo.
+  //
+  // El prefiltro tiene que ser un SUPERCONJUNTO de lo que el normalizador JS
+  // considera igual. `[[:space:]]` de PostgreSQL no incluye el espacio duro
+  // (U+00A0) ni los espacios Unicode que `\s` de JavaScript sí colapsa, así
+  // que acá se ELIMINAN todos los separadores en los dos lados: dos nombres
+  // iguales tras colapsar espacios siguen iguales tras quitarlos. La decisión
+  // exacta la toma después el filtro con la función canónica.
+  const compactName = normalizedName.replace(/ /g, "");
   const candidates = await prisma.$queryRaw<ProductNameCandidate[]>`
     SELECT id, name, code, "orionCode", unit
     FROM products
@@ -119,11 +127,13 @@ export async function findProductNameCandidates(
       AND (
         "provisionalNormalizedName" = ${normalizedName}
         OR lower(
-          normalize(
-            btrim(regexp_replace(name, '[[:space:][:cntrl:]]+', ' ', 'g')),
-            NFC
+          regexp_replace(
+            normalize(name, NFC),
+            '[[:space:][:cntrl:]\\u0080-\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000\\uFEFF]+',
+            '',
+            'g'
           )
-        ) = ${normalizedName}
+        ) = ${compactName}
       )
     ORDER BY "createdAt" DESC, id DESC
     LIMIT 8

@@ -40,6 +40,14 @@ describe("catalog product duplicate warning", () => {
     ]);
   });
 
+  it("finds an existing catalog name written with a non-breaking space", async () => {
+    const existing = await createProduct(`VALCOTE\u00a0ER NBSP ${run}`, "nbsp");
+
+    const candidates = await findProductNameCandidates(`valcote er nbsp ${run}`);
+
+    expect(candidates).toEqual([expect.objectContaining({ id: existing.id })]);
+  });
+
   it("does not merge a different presentation", async () => {
     await createProduct(`VALCOTE ER ${run} CAJA X 30`, "x30");
 

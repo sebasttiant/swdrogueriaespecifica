@@ -61,8 +61,8 @@ describe("ProductForm", () => {
           unit: "Caja",
           minStock: "0",
           reorderQty: "0",
-          laboratoryId: "",
-          laboratoryName: "",
+          laboratoryId: "lab-abbott",
+          laboratoryName: "Abbott",
           orionCode: "428",
           active: "",
           expectedVersion: "",
@@ -89,6 +89,10 @@ describe("ProductForm", () => {
     expect(html).toContain('name="duplicateNameConfirmed"');
     expect(html).toContain('value="VALCOTE ER 250 MG"');
     expect(html).toContain('value="428"');
+    // El laboratorio elegido sobrevive a la alerta: sin el nombre, la
+    // confirmación creaba el producto sin laboratorio.
+    expect(html).toContain('name="laboratoryId" value="lab-abbott"');
+    expect(html).toContain('name="laboratoryName" value="Abbott"');
   });
 
   it("ubica laboratorio después de presentación y antes de stock mínimo", () => {
