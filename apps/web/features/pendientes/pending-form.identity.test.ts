@@ -590,6 +590,51 @@ describe("PendingForm · identidad Orion", () => {
     );
   });
 
+  it("la colisión posterior a confirmar ninguno muestra al ganador junto al error", async () => {
+    const user = userEvent.setup();
+    const state = conflictState({ productId: "unused", productName: "unused" });
+    state.orionConflict = null;
+    state.error =
+      "Otro intento creó un producto con el mismo nombre. Usá ese producto existente.";
+    state.values = {
+      ...state.values!,
+      productId: "",
+      manualMode: "on",
+      manualName: "VALCOTE ER 250 MG X 30 TAB REGULADO",
+      manualDuplicateConfirmed: "VALCOTE ER 250 MG X 30 TAB REGULADO",
+      orionCode: "428",
+    };
+    const conflict = state as PendingFormState & {
+      manualDuplicateCandidates: ProductOption[];
+      manualDuplicateConflict: boolean;
+    };
+    conflict.manualDuplicateConflict = true;
+    conflict.manualDuplicateCandidates = [
+      {
+        id: "existing-valcote",
+        name: "VALCOTE ER 250 MG X 30 TAB REGULADO",
+        code: "PROV-valcote er 250 mg x 30 tab regulado",
+        orionCode: null,
+        unit: "unidad",
+      },
+    ];
+    renderForm(state);
+
+    const alert = screen.getByRole("alert");
+    const useExisting = within(alert).getByRole("button", {
+      name: /usar valcote er 250 mg x 30 tab regulado/i,
+    });
+    await user.click(useExisting);
+
+    expect(productSelect().value).toBe("existing-valcote");
+    expect((screen.getByRole("spinbutton", { name: "Cantidad" }) as HTMLInputElement).value).toBe(
+      "7",
+    );
+    expect((screen.getByRole("textbox", { name: "Cliente" }) as HTMLInputElement).value).toBe(
+      "Ana Pérez",
+    );
+  });
+
   it("el conflicto manual obliga a usar al dueño y no ofrece crear otro producto aplazado", async () => {
     const user = userEvent.setup();
     const state = conflictState({ productId: "p9", productName: "Eucerin tono medio" });
