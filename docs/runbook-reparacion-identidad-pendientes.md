@@ -145,9 +145,15 @@ Si la base dice otra cosa cuando ejecutes, la reparación se niega.
 ## Paso 5 — Dry-run en el VPS de pruebas
 
 ```bash
-DATABASE_URL=postgresql://... AUTH_SECRET=... \
-  pnpm --filter @drogueria/web db:repair:identidad -- --manifest=./repair.json
+cd /opt/docker/swdrogueriaespecifica
+DEPLOY_TARGET=vpsovhcloudsoprotelco \
+  ./scripts/run-product-identity-repair.sh repair.json
 ```
+
+El wrapper comprueba el hostname, valida el JSON, monta el manifiesto en solo
+lectura y ejecuta el servicio `repair`. Ese servicio usa la imagen construida
+durante el deploy y recibe `DATABASE_URL` y `AUTH_SECRET` desde el `.env`
+mediante Compose. No exportes ni imprimas secretos en la terminal.
 
 Sin `--apply` no escribe nada. El plan imprime **cada ID**, no solo cantidades,
 porque eso es lo que después vas a comparar contra producción.
@@ -167,9 +173,14 @@ herramienta diciendo que la base no es la que vos describiste.
 ## Paso 6 — Aplicar en el VPS de pruebas
 
 ```bash
-DATABASE_URL=postgresql://... AUTH_SECRET=... \
-  pnpm --filter @drogueria/web db:repair:identidad -- --manifest=./repair.json --apply
+cd /opt/docker/swdrogueriaespecifica
+DEPLOY_TARGET=vpsovhcloudsoprotelco \
+CONFIRM_REPAIR_APPLY=apply-product-identity-repair \
+  ./scripts/run-product-identity-repair.sh repair.json --apply
 ```
+
+Repetir este mismo comando después de una aplicación correcta debe devolver
+`Estado: noop` y `No había cambios pendientes; no se escribió nada.`
 
 ## Paso 7 — Validar el resultado en pruebas
 
@@ -222,12 +233,14 @@ y no reabras hasta el punto 8.8.
 3. Reconstruir el manifiesto **contra producción** corriendo de nuevo las
    consultas del paso 4. No se copian los IDs del manifiesto de pruebas: la
    copia restaurada y producción divergieron desde el momento del backup.
-4. Dry-run en producción. Leer el plan **ID por ID**.
+4. Dry-run en producción con el wrapper del paso 5, declarando explícitamente
+   `DEPLOY_TARGET=vpsovhcloudilasesorias`. Leer el plan **ID por ID**.
 5. Comparar esa salida contra la del paso 5. `--apply` únicamente si los IDs
    coinciden con los validados en pruebas. Si aparece un ID nuevo, algo pasó
    después del backup: cerrá sin aplicar y volvé al paso 2 con una ventana
    nueva.
-6. `--apply`.
+6. Ejecutar el wrapper del paso 6 con
+   `DEPLOY_TARGET=vpsovhcloudilasesorias`, `--apply` y la confirmación exacta.
 7. Repetir las validaciones del paso 7 contra producción.
 8. **Cerrar la ventana** recién con esas validaciones en verde. Desde este
    punto el rollback por restauración ya no es seguro: cualquier escritura

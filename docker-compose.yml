@@ -80,6 +80,24 @@ services:
     networks:
       - drogueria
 
+  # Ejecuta la reparación auditada. No forma parte del arranque normal: el
+  # operador la invoca explícitamente con un manifiesto montado en solo lectura.
+  repair:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      target: repair
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL es obligatorio}
+      AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET es obligatorio}
+      NODE_ENV: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - drogueria
+
   web:
     build:
       context: .
@@ -113,7 +131,11 @@ services:
       seed:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      test:
+        - CMD-SHELL
+        - >-
+          node -e "fetch('http://127.0.0.1:3000/api/health')
+          .then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
       interval: 15s
       timeout: 5s
       retries: 5

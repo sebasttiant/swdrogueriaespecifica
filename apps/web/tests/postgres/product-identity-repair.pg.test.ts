@@ -523,6 +523,26 @@ describe("repairProductIdentity", () => {
     expect(text).toMatch(/dry-run/i);
   });
 
+  it("does not call an --apply noop a dry-run", () => {
+    const text = formatRepairReport(
+      {
+        status: "noop",
+        applied: false,
+        plan: {
+          orionCode: null,
+          reassignedPendings: [],
+          reassignedMissingItems: [],
+          deactivatedProducts: [],
+        },
+        blockers: [],
+      },
+      { applyRequested: true },
+    );
+
+    expect(text).toContain("No había cambios pendientes");
+    expect(text).not.toMatch(/Usá --apply/i);
+  });
+
   it("audits one entry per effect, with the real prior state", async () => {
     await repairProductIdentity({ ...manifest(), apply: true });
 
