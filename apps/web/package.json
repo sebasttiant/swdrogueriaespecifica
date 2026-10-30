@@ -28,17 +28,17 @@
     "db:repair:identidad": "tsx prisma/repair-product-identity.ts"
   },
   "dependencies": {
-    "@node-rs/argon2": "2.2.1",
-    "@prisma/adapter-pg": "7.10.0",
-    "@prisma/client": "7.10.0",
+    "@node-rs/argon2": "2.2.2",
+    "@prisma/adapter-pg": "7.10.1",
+    "@prisma/client": "7.10.1",
     "clsx": "2.1.1",
     "dotenv": "17.4.2",
     "exceljs": "4.4.0",
-    "jose": "6.2.12",
+    "jose": "6.2.13",
     "lucide-react": "1.46.0",
-    "next": "16.4.1",
-    "react": "19.3.0",
-    "react-dom": "19.3.0",
+    "next": "16.4.3",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
     "recharts": "3.10.1",
     "tailwind-merge": "3.7.0",
     "zod": "4.6.7"
@@ -47,17 +47,17 @@
     "@tailwindcss/postcss": "4.3.3",
     "@testing-library/dom": "10.4.2",
     "@testing-library/react": "16.3.3",
-    "@testing-library/user-event": "14.6.7",
+    "@testing-library/user-event": "14.6.8",
     "@types/node": "24.13.4",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "eslint": "9.39.5",
-    "eslint-config-next": "16.4.1",
+    "eslint-config-next": "16.4.3",
     "jsdom": "30.0.1",
-    "prisma": "7.10.0",
+    "prisma": "7.10.1",
     "tailwindcss": "4.3.3",
-    "tsx": "4.23.13",
+    "tsx": "4.23.15",
     "typescript": "6.0.3",
-    "vitest": "5.0.0"
+    "vitest": "5.0.5"
   }
 }
