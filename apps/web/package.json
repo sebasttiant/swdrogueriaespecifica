@@ -27,7 +27,8 @@
     "postinstall": "prisma generate",
     "db:repair:identidad": "tsx prisma/repair-product-identity.ts",
     "db:normalize:orion": "tsx prisma/normalize-orion-codes.ts",
-    "db:merge:orion": "tsx prisma/merge-orion-conflicts.ts"
+    "db:merge:orion": "tsx prisma/merge-orion-conflicts.ts",
+    "db:reconcile:claims": "tsx prisma/reconcile-pending-claims.ts"
   },
   "dependencies": {
     "@node-rs/argon2": "2.2.1",
