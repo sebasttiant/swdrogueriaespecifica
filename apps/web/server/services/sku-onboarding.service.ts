@@ -4,6 +4,7 @@ import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
 import type { SessionRole } from "@/lib/auth/session";
 import { prisma } from "@/lib/db/prisma";
 import type { Product } from "@/lib/generated/prisma/client";
+import { isSameOrionIdentity } from "@/server/domain/catalog/orion-code";
 import {
   assertAttemptWithinBudget,
   assertCanLinkAtCapture,
@@ -21,6 +22,7 @@ import {
   applyOrionLink,
   findProductByIdentity,
   findProductByIdentityCommandKey,
+  findProductsSharingOrionIdentity,
   insertProvisionalProduct,
   isUniqueViolation,
   mintInternalSku,
@@ -226,10 +228,15 @@ export async function linkOrionCodeAtCapture(
   const orionCode = normalizeOrionCode(input.orionCode);
   const product = await findProductByIdentity(input.identity);
   assertIdentityMatches(input.identity, product);
-  const holder = await findProductByIdentity({ orionCode });
-  if (holder && holder.id !== product?.id) {
-    return { status: "ORION_CONFLICT", holder: { id: holder.id, name: holder.name } };
+  // Por número, no por grafía: con el histórico sin renombrar, `A31972` y
+  // `31972` son el mismo Orión. Si `findProductByIdentity` devolviera null ante
+  // varias copias y acá no miráramos la lista, el LINK acuñaría una tercera.
+  const sharing = await findProductsSharingOrionIdentity(orionCode);
+  const foreign = sharing.find((row) => row.id !== product!.id);
+  if (foreign) {
+    return { status: "ORION_CONFLICT", holder: { id: foreign.id, name: foreign.name } };
   }
+  const holder = sharing.find((row) => row.id === product!.id) ?? null;
 
   const plan = planOrionLink({
     product: product as SkuIdentityRecord,
@@ -247,10 +254,13 @@ export async function linkOrionCodeAtCapture(
     const current = await prisma.$transaction((tx) =>
       tx.product.findUnique({ where: { id: product!.id } }),
     );
+    // Comparar por identidad de Orión, no por string: el producto puede seguir
+    // con la grafía histórica hasta el renombre masivo.
     if (
       !current ||
-      current.orionCode !== orionCode ||
-      current.identityVersion !== input.expectedVersion
+      current.orionCode === null ||
+      current.identityVersion !== input.expectedVersion ||
+      !isSameOrionIdentity(current.orionCode, orionCode)
     ) {
       throw new SkuConcurrencyError();
     }
@@ -279,7 +289,8 @@ export async function linkOrionCodeAtCapture(
     }
     // The failed transaction is aborted. Query with the root client only after
     // rollback, otherwise PostgreSQL raises 25P02 and hides the real conflict.
-    const winner = await findProductByIdentity({ orionCode });
+    const winners = await findProductsSharingOrionIdentity(orionCode);
+    const winner = winners[0];
     if (!winner) throw error;
     return { status: "ORION_CONFLICT", holder: { id: winner.id, name: winner.name } };
   }
@@ -340,7 +351,12 @@ export async function linkOrionCode(
   const product = await findProductByIdentity(input.identity);
   assertIdentityMatches(input.identity, product);
 
-  const holder = await findProductByIdentity({ orionCode });
+  const sharing = await findProductsSharingOrionIdentity(orionCode);
+  const foreign = sharing.find((row) => row.id !== product!.id) ?? null;
+  // Para RELINK/FIX el plan necesita al holder (otra fila). Si hay varias
+  // copias del mismo número, la primera basta para bloquear: fusionarlas es
+  // trabajo del repair auditado, no de este vínculo.
+  const holder = foreign ?? sharing.find((row) => row.id === product!.id) ?? null;
   const plan = planOrionLink({
     product: product as SkuIdentityRecord,
     orionCode,

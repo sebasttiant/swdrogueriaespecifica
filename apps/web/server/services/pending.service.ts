@@ -62,6 +62,7 @@ import {
 } from "@/server/repositories/pending.repository";
 import { createProduct } from "@/server/repositories/product.repository";
 import { normalizeOrionCode } from "@/server/domain/catalog/sku-identity";
+import { findProductsSharingOrionIdentity } from "@/server/repositories/sku-review.repository";
 import { createMissingItem } from "@/server/repositories/missing-item.repository";
 import {
   claimableStockForPending,
@@ -467,10 +468,13 @@ async function holderOfManualOrionCode(
   if (!orionCode) return null;
   // Después del rollback, nunca dentro de la transacción abortada: ahí
   // PostgreSQL responde 25P02 y taparía el conflicto real.
-  return prisma.product.findUnique({
-    where: { orionCode },
-    select: { id: true, name: true },
-  });
+  //
+  // Por número de Orión, no por grafía exacta: si el alta canoniza a `A31972`
+  // y el catálogo todavía tiene `31972`, el índice único no choca y sin esta
+  // búsqueda nacería un duplicado.
+  const sharing = await findProductsSharingOrionIdentity(orionCode);
+  const holder = sharing[0];
+  return holder ? { id: holder.id, name: holder.name } : null;
 }
 
 async function holderOfManualNormalizedName(

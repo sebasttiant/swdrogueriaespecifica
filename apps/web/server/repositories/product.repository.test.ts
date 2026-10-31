@@ -49,7 +49,8 @@ describe("listProducts · q filter", () => {
       OR: [
         { name: { contains: "aceta", mode: "insensitive" } },
         { code: { contains: "aceta", mode: "insensitive" } },
-        { orionCode: { equals: "aceta", mode: "insensitive" } },
+        // Fuera de convención Orión → una sola forma comparable (mayúsculas).
+        { orionCode: { equals: "ACETA", mode: "insensitive" } },
       ],
     });
   });
@@ -64,7 +65,28 @@ describe("listProducts · q filter", () => {
       OR: [
         { name: { contains: "A15637", mode: "insensitive" } },
         { code: { contains: "A15637", mode: "insensitive" } },
+        { orionCode: { equals: "15637", mode: "insensitive" } },
         { orionCode: { equals: "A15637", mode: "insensitive" } },
+        { orionCode: { equals: "A-15637", mode: "insensitive" } },
+        { orionCode: { equals: "SKU15637", mode: "insensitive" } },
+      ],
+    });
+  });
+
+  it("typing only the number finds every historical Orion spelling", async () => {
+    prismaMock.product.findMany.mockResolvedValueOnce([makeRow()]);
+
+    await listProducts({ q: "20956" });
+
+    const args = prismaMock.product.findMany.mock.calls[0]![0];
+    expect(args.where).toEqual({
+      OR: [
+        { name: { contains: "20956", mode: "insensitive" } },
+        { code: { contains: "20956", mode: "insensitive" } },
+        { orionCode: { equals: "20956", mode: "insensitive" } },
+        { orionCode: { equals: "A20956", mode: "insensitive" } },
+        { orionCode: { equals: "A-20956", mode: "insensitive" } },
+        { orionCode: { equals: "SKU20956", mode: "insensitive" } },
       ],
     });
   });
@@ -109,7 +131,7 @@ describe("listProducts · q filter", () => {
       OR: [
         { name: { contains: "aceta", mode: "insensitive" } },
         { code: { contains: "aceta", mode: "insensitive" } },
-        { orionCode: { equals: "aceta", mode: "insensitive" } },
+        { orionCode: { equals: "ACETA", mode: "insensitive" } },
       ],
     });
   });
@@ -162,7 +184,7 @@ describe("listProducts · active filter", () => {
       OR: [
         { name: { contains: "aceta", mode: "insensitive" } },
         { code: { contains: "aceta", mode: "insensitive" } },
-        { orionCode: { equals: "aceta", mode: "insensitive" } },
+        { orionCode: { equals: "ACETA", mode: "insensitive" } },
       ],
     });
   });

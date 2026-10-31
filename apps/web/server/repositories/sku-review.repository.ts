@@ -14,6 +14,7 @@
 
 import { prisma } from "@/lib/db/prisma";
 import type { Prisma, Product } from "@/lib/generated/prisma/client";
+import { orionCodeVariants } from "@/server/domain/catalog/orion-code";
 import {
   assertAttemptWithinBudget,
   generateUlid,
@@ -164,9 +165,89 @@ export async function findProductByIdentity(
       return client.product.findUnique({ where: { id: identity.value } });
     case "INTERNAL_SKU":
       return client.product.findUnique({ where: { internalSku: identity.value } });
-    case "ORION_CODE":
-      return client.product.findUnique({ where: { orionCode: identity.value } });
+    case "ORION_CODE": {
+      // Primero la forma canónica exacta (post-renombre). Si no está, el
+      // histórico todavía puede tener otra grafía del MISMO número —y WINDOW 1
+      // tiene que encontrarla ANTES de renombrar, o tipear `20956` deja de
+      // ver `a-20956`.
+      const exact = await client.product.findUnique({
+        where: { orionCode: identity.value },
+      });
+      if (exact) return exact;
+
+      const variants = orionCodeVariants(identity.value).filter((variant) => variant !== "");
+      if (variants.length === 0) return null;
+
+      const sharing = await client.product.findMany({
+        where: {
+          OR: variants.map((variant) => ({
+            orionCode: { equals: variant, mode: "insensitive" as const },
+          })),
+        },
+        // Dos alcanza: singular vs “hay copias”. Si hay varias, esta API no
+        // elige — el llamador usa `findProductsSharingOrionIdentity`.
+        take: 2,
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      });
+      return sharing.length === 1 ? sharing[0]! : null;
+    }
   }
+}
+
+/** Lo que la pantalla necesita para que una persona elija entre copias. */
+export type OrionIdentityCandidate = Pick<
+  Product,
+  "id" | "code" | "name" | "orionCode" | "unit" | "active"
+>;
+
+/**
+ * Los productos que YA tienen este número de Orión, sin importar cómo se
+ * escribió el código.
+ *
+ * Es deliberadamente una función APARTE de `findProductByIdentity`, que sigue
+ * siendo exacta. La diferencia no es técnica, es de responsabilidad:
+ *
+ *   exacta   responde "¿quién tiene EXACTAMENTE este código?" y de su
+ *            respuesta cuelga el vínculo de identidad, que escribe sola.
+ *   por número  responde "¿quiénes podrían ser el mismo producto?" y su
+ *            respuesta SIEMPRE termina en una persona eligiendo.
+ *
+ * Mientras el histórico siga sin normalizar, un mismo número puede devolver
+ * varias filas —hubo hasta CINCO del mismo producto—. Por eso devuelve una
+ * lista: que el sistema eligiera una por su cuenta es exactamente el error que
+ * esto viene a cerrar.
+ *
+ * Se resuelve con una consulta normal de Prisma, no con SQL crudo: las formas
+ * en que un número pudo escribirse son pocas y enumerables
+ * (`orionCodeVariants`), así que no hace falta recortar prefijos dentro de la
+ * base. Sale tipado, usa el índice y no hay una sola cadena interpolada.
+ */
+export async function findProductsSharingOrionIdentity(
+  rawCode: string,
+  options: { excludeProductId?: string } = {},
+  client: Prisma.TransactionClient = prisma,
+): Promise<OrionIdentityCandidate[]> {
+  const variants = orionCodeVariants(rawCode).filter((variant) => variant !== "");
+  if (variants.length === 0) return [];
+
+  return client.product.findMany({
+    where: {
+      // `insensitive` cubre `a-20956` y `sku20956` sin listarlos aparte.
+      OR: variants.map((variant) => ({
+        orionCode: { equals: variant, mode: "insensitive" as const },
+      })),
+      ...(options.excludeProductId ? { id: { not: options.excludeProductId } } : {}),
+    },
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      orionCode: true,
+      unit: true,
+      active: true,
+    },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  });
 }
 
 export type ApplyOrionLinkOptions = {
