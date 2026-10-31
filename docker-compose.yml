@@ -99,12 +99,30 @@ services:
       - drogueria
 
   # Renombra códigos de Orión a la forma canónica (A + número). Dry-run por
-  # defecto. NO fusiona filas duplicadas — eso sigue en `repair`.
+  # defecto. NO fusiona filas duplicadas — eso sigue en `repair-merges`.
   repair-codes:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
       target: repair-codes
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL es obligatorio}
+      AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET es obligatorio}
+      NODE_ENV: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - drogueria
+
+  # WINDOW 3: fusiona filas con el mismo número de Orión escrito distinto.
+  # Dry-run por defecto. Bloquea grupos donde más de una copia tiene stock.
+  repair-merges:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      target: repair-merges
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL es obligatorio}
       AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET es obligatorio}
