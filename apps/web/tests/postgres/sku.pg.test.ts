@@ -183,7 +183,7 @@ describe("applyOrionLink", () => {
       expectedVersion: product.identityVersion,
     });
 
-    expect(linked.orionCode).toBe("7702001234567");
+    expect(linked.orionCode).toBe("A7702001234567");
     expect(linked.identityVersion).toBe(product.identityVersion + 1);
     expect(linked.skuStatus).toBe("CONFIRMED");
   });
@@ -256,7 +256,7 @@ describe("applyOrionLink", () => {
       },
     );
 
-    expect(relinked.orionCode).toBe("7702007777777");
+    expect(relinked.orionCode).toBe("A7702007777777");
     expect((await findProductByIdentity({ productId: holder.id }))?.orionCode).toBeNull();
   });
 

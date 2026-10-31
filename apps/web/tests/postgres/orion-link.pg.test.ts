@@ -28,7 +28,9 @@ function nextCommandKey(): string {
 }
 function nextOrionCode(): string {
   seq += 1;
-  return `770200${String(seq).padStart(7, "0")}`;
+  // Forma canónica (WINDOW 1): Orión muestra A + número. Los tests ejercitan
+  // el camino real de captura, no la grafía histórica que estamos dejando atrás.
+  return `A770200${String(seq).padStart(7, "0")}`;
 }
 
 async function newProduct(name: string) {
