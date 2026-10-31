@@ -13,10 +13,10 @@ Objective: stop splitting one Orion product into multiple catalog rows; typing a
 
 ## Tasks
 
-- T1 S1,S4,S5 — Domain `orion-code` + `normalizeOrionCode` canonical on capture — inline — done (unit GREEN)
-- T2 S1,S2,S5,S6 — Variant lookup wired into identity holder checks + product search — inline — done (70 unit tests GREEN)
-- T3 S2 — Dry-run normalization CLI (rename only; no merge) + package/compose entry — inline — done (not applied in prod yet)
-- T4 S3 — Document diagnostic SQL/commands for false "Ya llegó a bodega" — inline — done (in session reply)
+- T1 S1,S4,S5 — Domain `orion-code` + `normalizeOrionCode` canonical on capture — inline — done — commit `a5b85090` / PR #323 / issue #322
+- T2 S1,S2,S5,S6 — Variant lookup wired into identity holder checks + product search — inline — done — same commit
+- T3 S2 — Dry-run normalization CLI (rename only; no merge) + package/compose entry — inline — done — same commit (not applied in prod)
+- T4 S3 — Document diagnostic SQL/commands for false "Ya llegó a bodega" — inline — done
 
 ## Log
 
