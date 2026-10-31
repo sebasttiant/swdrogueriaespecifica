@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
 import { prisma } from "@/lib/db/prisma";
@@ -29,6 +29,9 @@ const run = `${Date.now()}${process.pid}`;
 let productId = "";
 let actorId = "";
 const createdBatchIds: string[] = [];
+const createdPendingIds: string[] = [];
+const touchedProductIds: string[] = [];
+const touchedActorIds: string[] = [];
 
 async function seedBatch(quantity: number) {
   const batch = await prisma.productBatch.create({
@@ -55,10 +58,46 @@ async function reserve(batchId: string, quantity: number) {
       createdById: actorId,
     },
   });
+  createdPendingIds.push(pending.id);
   await prisma.pendingInventoryReservation.create({
     data: { pendingId: pending.id, batchId, quantity },
   });
   return pending.id;
+}
+
+/** La suite comparte una sola base: si esto no limpia, el harness ve basura. */
+async function cleanupTouchedRows() {
+  if (createdPendingIds.length > 0) {
+    await prisma.pendingInventoryReservation.deleteMany({
+      where: { pendingId: { in: createdPendingIds } },
+    });
+    await prisma.pending.deleteMany({
+      where: { id: { in: createdPendingIds } },
+    });
+    createdPendingIds.length = 0;
+  }
+  if (createdBatchIds.length > 0) {
+    await prisma.auditLog.deleteMany({
+      where: { entityId: { in: createdBatchIds } },
+    });
+    await prisma.operationalCommand.deleteMany({
+      where: { actorId: { in: touchedActorIds } },
+    });
+    await prisma.productBatch.deleteMany({
+      where: { id: { in: createdBatchIds } },
+    });
+    createdBatchIds.length = 0;
+  }
+  if (touchedProductIds.length > 0) {
+    await prisma.product.deleteMany({
+      where: { id: { in: touchedProductIds } },
+    });
+    touchedProductIds.length = 0;
+  }
+  if (touchedActorIds.length > 0) {
+    await prisma.user.deleteMany({ where: { id: { in: touchedActorIds } } });
+    touchedActorIds.length = 0;
+  }
 }
 
 function input(
@@ -76,6 +115,7 @@ function input(
 }
 
 beforeEach(async () => {
+  await cleanupTouchedRows();
   const product = await prisma.product.create({
     data: {
       code: `ADJP-${run}-${randomUUID().slice(0, 8)}`,
@@ -86,14 +126,20 @@ beforeEach(async () => {
     },
   });
   productId = product.id;
+  touchedProductIds.push(product.id);
   const user = await prisma.user.create({
     data: { email: `ajuste-${randomUUID()}@test.local`, name: "Bodega" },
   });
   actorId = user.id;
-  createdBatchIds.length = 0;
+  touchedActorIds.push(user.id);
+});
+
+afterEach(async () => {
+  await cleanupTouchedRows();
 });
 
 afterAll(async () => {
+  await cleanupTouchedRows();
   await prisma.$disconnect();
 });
 
