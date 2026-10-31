@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { Badge } from "@/app/_components/ui/badge";
 import { Card } from "@/app/_components/ui/card";
+import { BatchAdjustmentForm } from "@/features/inventario/batch-adjustment-form";
 import { expiryLevel, isAgotado, type ExpiryLevel } from "@/lib/inventory/batch-status";
 import type { BatchListItem } from "@/server/repositories/product-batch.repository";
 
@@ -11,6 +12,8 @@ type BatchListProps = {
   productId: string;
   items: BatchListItem[];
   nextCursor: string | null;
+  /** Quién puede corregir el stock de un lote desde esta ficha. */
+  canAdjust?: boolean;
 };
 
 // 5-tier label/tone maps. Both expired and critical map to "danger" tone.
@@ -40,7 +43,12 @@ const EXPIRY_LABEL: Record<ExpiryLevel, string> = {
 // S3: supports 5 tiers (expired / critical / warning / ok / unknown) with
 // calendar-day Bogota semantics. El lote y la fecha se leen a través de
 // `batch-labels`, que traduce el código reservado a "Sin lote".
-export function BatchList({ productId, items, nextCursor }: BatchListProps) {
+export function BatchList({
+  productId,
+  items,
+  nextCursor,
+  canAdjust = false,
+}: BatchListProps) {
   const now = new Date();
 
   if (items.length === 0) {
@@ -78,6 +86,13 @@ export function BatchList({ productId, items, nextCursor }: BatchListProps) {
                 <span className="font-medium text-danger">Agotado</span>
               ) : null}
             </div>
+            {canAdjust ? (
+              <BatchAdjustmentForm
+                productId={productId}
+                batchId={batch.id}
+                currentQuantity={batch.quantity}
+              />
+            ) : null}
           </Card>
         );
       })}
