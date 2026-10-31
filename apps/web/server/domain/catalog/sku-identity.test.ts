@@ -138,11 +138,26 @@ describe("presupuesto de colisión", () => {
 
 describe("normalizeOrionCode", () => {
   it("recorta los espacios de los extremos", () => {
-    expect(normalizeOrionCode("  7702001234567  ")).toBe("7702001234567");
+    expect(normalizeOrionCode("  7702001234567  ")).toBe("A7702001234567");
   });
 
-  // La identidad es EXACTA: cambiarle las mayúsculas sería inventar otro código.
-  it("conserva las mayúsculas y minúsculas tal cual", () => {
+  // Hasta el 31/10/2026 esta función devolvía el texto TAL CUAL, para no
+  // inventar identidades. El argumento era bueno mientras no supiéramos qué
+  // formato usa Orión; lo que se midió ese día en producción es que el costo de
+  // no saberlo fue peor: cuatro grafías conviviendo —`A-####` 603, solo número
+  // 443, `SKU####` 63— y 139 productos partidos en hasta CINCO copias, cada una
+  // con su stock y sus pendientes. Orión usa una sola forma y ahora se impone
+  // al guardar.
+  it("guarda el número en forma canónica, venga como venga", () => {
+    for (const tipeado of ["7702001234567", "a-7702001234567", "SKU7702001234567"]) {
+      expect(normalizeOrionCode(tipeado)).toBe("A7702001234567");
+    }
+  });
+
+  // La excepción que conserva la promesa vieja donde todavía vale: si al quitar
+  // el prefijo no queda un número, no hay convención que aplicar y el código se
+  // respeta letra por letra, mayúsculas incluidas.
+  it("conserva tal cual un código fuera de la convención", () => {
     expect(normalizeOrionCode("Ori-8842a")).toBe("Ori-8842a");
   });
 
@@ -171,7 +186,7 @@ describe("resolveIdentityMode", () => {
     });
     expect(resolveIdentityMode({ orionCode: " 7702001234567 " })).toEqual({
       mode: "ORION_CODE",
-      value: "7702001234567",
+      value: "A7702001234567",
     });
   });
 
@@ -201,7 +216,7 @@ describe("resolveIdentityMode", () => {
 });
 
 describe("assertIdentityMatches", () => {
-  const product = { id: "p1", internalSku: "PRV-ABC", orionCode: "7702001234567" };
+  const product = { id: "p1", internalSku: "PRV-ABC", orionCode: "A7702001234567" };
 
   it("acepta el producto que corresponde a la identidad pedida", () => {
     expect(() =>
@@ -228,13 +243,13 @@ describe("assertIdentityMatches", () => {
 
 describe("planOrionLink", () => {
   const target = { id: "p1", internalSku: "PRV-ABC", orionCode: null };
-  const linked = { id: "p1", internalSku: "PRV-ABC", orionCode: "7702001234567" };
-  const otro = { id: "p2", internalSku: "PRV-DEF", orionCode: "7702001234567" };
+  const linked = { id: "p1", internalSku: "PRV-ABC", orionCode: "A7702001234567" };
+  const otro = { id: "p2", internalSku: "PRV-DEF", orionCode: "A7702001234567" };
 
   it("vincula un código libre", () => {
     expect(
-      planOrionLink({ product: target, orionCode: "7702001234567", holder: null, intent: "LINK" }),
-    ).toEqual({ action: "LINK", productId: "p1", orionCode: "7702001234567" });
+      planOrionLink({ product: target, orionCode: "A7702001234567", holder: null, intent: "LINK" }),
+    ).toEqual({ action: "LINK", productId: "p1", orionCode: "A7702001234567" });
   });
 
   // Idempotencia: repetir el mismo vínculo no es un conflicto ni una escritura.
@@ -242,11 +257,26 @@ describe("planOrionLink", () => {
     expect(
       planOrionLink({
         product: linked,
-        orionCode: "7702001234567",
+        orionCode: "A7702001234567",
         holder: linked,
         intent: "LINK",
       }),
-    ).toEqual({ action: "NOOP", productId: "p1", orionCode: "7702001234567" });
+    ).toEqual({ action: "NOOP", productId: "p1", orionCode: "A7702001234567" });
+  });
+
+  // PROBIOESEENS / ROZELAIC: la fila histórica tiene `31972` y el operador
+  // tipea `A31972`. Misma identidad → NOOP conserva la grafía guardada hasta
+  // el renombre masivo; reescribir acá es exactamente cómo nacían duplicados.
+  it("NOOP cuando la grafía histórica es el mismo número de Orión", () => {
+    const historico = { id: "p1", internalSku: "PRV-ABC", orionCode: "31972" };
+    expect(
+      planOrionLink({
+        product: historico,
+        orionCode: "a-31972",
+        holder: historico,
+        intent: "LINK",
+      }),
+    ).toEqual({ action: "NOOP", productId: "p1", orionCode: "31972" });
   });
 
   // El código Orion es INMUTABLE: pisarlo silenciosamente rompería la
@@ -269,7 +299,7 @@ describe("planOrionLink", () => {
       codeOf(() =>
         planOrionLink({
           product: target,
-          orionCode: "7702001234567",
+          orionCode: "A7702001234567",
           holder: otro,
           intent: "LINK",
         }),
@@ -283,14 +313,14 @@ describe("planOrionLink", () => {
     expect(
       planOrionLink({
         product: target,
-        orionCode: "7702001234567",
+        orionCode: "A7702001234567",
         holder: otro,
         intent: "RELINK",
       }),
     ).toEqual({
       action: "RELINK",
       productId: "p1",
-      orionCode: "7702001234567",
+      orionCode: "A7702001234567",
       releasedFromProductId: "p2",
     });
   });
@@ -329,25 +359,25 @@ describe("planOrionLink", () => {
 // cambia el código equivocado de ESTE producto por el correcto.
 // --------------------------------------------------------------------------
 describe("corrección de identidad", () => {
-  const conCodigo = { id: "p1", internalSku: "PRV-ABC", orionCode: "7702001234567" };
+  const conCodigo = { id: "p1", internalSku: "PRV-ABC", orionCode: "A7702001234567" };
   const sinCodigo = { id: "p1", internalSku: "PRV-ABC", orionCode: null };
-  const otro = { id: "p2", internalSku: "PRV-DEF", orionCode: "7702009999999" };
+  const otro = { id: "p2", internalSku: "PRV-DEF", orionCode: "A7702009999999" };
 
   it("cambia el código equivocado por el correcto", () => {
     expect(
       planOrionLink({
         product: conCodigo,
-        orionCode: "7702009999999",
+        orionCode: "A7702009999999",
         holder: null,
         intent: "FIX",
       }),
     ).toEqual({
       action: "FIX",
       productId: "p1",
-      orionCode: "7702009999999",
+      orionCode: "A7702009999999",
       // El anterior viaja en el plan porque es el compare-and-set de la
       // escritura: sin él se podría pisar un código que cambió en el medio.
-      previousOrionCode: "7702001234567",
+      previousOrionCode: "A7702001234567",
     });
   });
 
@@ -359,7 +389,7 @@ describe("corrección de identidad", () => {
       codeOf(() =>
         planOrionLink({
           product: conCodigo,
-          orionCode: "7702009999999",
+          orionCode: "A7702009999999",
           holder: otro,
           intent: "FIX",
         }),
@@ -371,11 +401,11 @@ describe("corrección de identidad", () => {
     expect(
       planOrionLink({
         product: conCodigo,
-        orionCode: "7702001234567",
+        orionCode: "A7702001234567",
         holder: conCodigo,
         intent: "FIX",
       }),
-    ).toEqual({ action: "NOOP", productId: "p1", orionCode: "7702001234567" });
+    ).toEqual({ action: "NOOP", productId: "p1", orionCode: "A7702001234567" });
   });
 
   // Corregir un producto que todavía no tiene código no es un error del que
@@ -386,11 +416,11 @@ describe("corrección de identidad", () => {
     expect(
       planOrionLink({
         product: sinCodigo,
-        orionCode: "7702001234567",
+        orionCode: "A7702001234567",
         holder: null,
         intent: "FIX",
       }),
-    ).toEqual({ action: "LINK", productId: "p1", orionCode: "7702001234567" });
+    ).toEqual({ action: "LINK", productId: "p1", orionCode: "A7702001234567" });
   });
 
   // La intención sigue siendo explícita: LINK nunca pisa un código puesto.
@@ -399,7 +429,7 @@ describe("corrección de identidad", () => {
       codeOf(() =>
         planOrionLink({
           product: conCodigo,
-          orionCode: "7702009999999",
+          orionCode: "A7702009999999",
           holder: null,
           intent: "LINK",
         }),
@@ -478,9 +508,20 @@ describe("normalizeOrionCode · forma del código", () => {
     }
   });
 
-  it("acepta 80 y rechaza 81 en ASCII", () => {
-    expect(normalizeOrionCode("7".repeat(80))).toHaveLength(80);
-    expect(codeOf(() => normalizeOrionCode("7".repeat(81)))).toBe("MISSING_EXACT_IDENTITY");
+  // El tope se mide sobre lo que SE GUARDA, no sobre lo que se tipea. Canonizar
+  // antepone una `A`, así que un código numérico entra con 79 dígitos: con 80
+  // la forma guardada tendría 81 y no cabría en la columna. Validar la entrada
+  // en vez de la salida era justamente la forma de escribir 81 sin enterarse.
+  it("acepta 80 caracteres GUARDADOS y rechaza 81", () => {
+    expect(normalizeOrionCode("7".repeat(79))).toHaveLength(80);
+    expect(codeOf(() => normalizeOrionCode("7".repeat(80)))).toBe(
+      "MISSING_EXACT_IDENTITY",
+    );
+  });
+
+  // Un código fuera de la convención no recibe la `A`, así que conserva los 80.
+  it("un código no canónico sigue entrando con 80", () => {
+    expect(normalizeOrionCode(`X${"7".repeat(79)}`)).toHaveLength(80);
   });
 
   // El límite cuenta CARACTERES Unicode, no unidades UTF-16. Un par suplente

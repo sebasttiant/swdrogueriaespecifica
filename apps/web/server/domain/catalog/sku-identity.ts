@@ -15,6 +15,7 @@
 // --------------------------------------------------------------------------
 
 import type { SessionRole } from "@/lib/auth/session";
+import { canonicalOrionCode, isSameOrionIdentity } from "./orion-code";
 
 // --------------------------------------------------------------------------
 // Errores tipados. La Server Action los mapea a un mensaje para el operador.
@@ -195,19 +196,40 @@ export function assertAttemptWithinBudget(attempt: number): void {
 export const ORION_CODE_MAX_CHARS = 80;
 const INTERNAL_ORION_CODE_WHITESPACE = /[\p{White_Space}\uFEFF]/u;
 
-/** Recorta los extremos y valida; NO cambia mayúsculas: la identidad es exacta. */
+/**
+ * Valida y deja el código en su FORMA CANÓNICA: `A` + número, como lo muestra
+ * Orión.
+ *
+ * Antes devolvía el texto tal cual se había tipeado, con el argumento de que la
+ * identidad es exacta y normalizar podría fusionar productos distintos. El
+ * argumento era bueno mientras no supiéramos qué formato usa Orión de verdad.
+ *
+ * Ya lo sabemos, y el costo de no haberlo sabido está medido en producción
+ * (31/10/2026): cuatro formatos conviviendo —`A-####` 603, solo número 443,
+ * `SKU####` 63— y 139 productos partidos en hasta cinco copias. Un mismo
+ * remedio con cinco identidades: cada copia con su stock, sus pendientes y sus
+ * faltantes, y el mostrador cargando contra una mientras bodega miraba otra.
+ *
+ * Canonizar acá —el ÚNICO punto por el que pasa todo código antes de guardarse—
+ * cierra esa puerta. Lo que NO hace es adivinar: un código que no sigue la
+ * convención se respeta tal cual (ver `canonicalOrionCode`).
+ */
 export function normalizeOrionCode(raw: string): string {
   const code = raw.trim();
 
-  if (
-    code === "" ||
-    INTERNAL_ORION_CODE_WHITESPACE.test(code) ||
-    [...code].length > ORION_CODE_MAX_CHARS
-  ) {
+  if (code === "" || INTERNAL_ORION_CODE_WHITESPACE.test(code)) {
     throw new SkuIdentityError("MISSING_EXACT_IDENTITY");
   }
 
-  return code;
+  // El tope se mide sobre la forma QUE SE VA A GUARDAR, no sobre la tipeada:
+  // canonizar agrega una `A`, así que validar la entrada dejaría pasar 80
+  // caracteres y escribir 81 en una columna que acepta 80.
+  const canonical = canonicalOrionCode(code);
+  if ([...canonical].length > ORION_CODE_MAX_CHARS) {
+    throw new SkuIdentityError("MISSING_EXACT_IDENTITY");
+  }
+
+  return canonical;
 }
 
 export type IdentityInput = {
@@ -295,8 +317,11 @@ export type OrionLinkPlan =
 export function planOrionLink(params: {
   product: SkuIdentityRecord;
   orionCode: string;
-  /** Producto que hoy tiene ese código Orion, si alguno lo tiene. */
-  holder: SkuIdentityRecord | null;
+  /**
+   * Producto que hoy tiene ese número de Orión, si alguno lo tiene.
+   * Solo se miran `id` y `orionCode`: el SKU interno no decide el vínculo.
+   */
+  holder: Pick<SkuIdentityRecord, "id" | "orionCode"> | null;
   /**
    * `RELINK` y `FIX` son decisiones explícitas y auditadas, nunca efectos
    * colaterales. RELINK mueve un código de un producto a OTRO; FIX cambia el
@@ -307,9 +332,12 @@ export function planOrionLink(params: {
   const orionCode = normalizeOrionCode(params.orionCode);
   const { product, holder, intent } = params;
 
-  // Repetir el mismo vínculo no es conflicto ni escritura.
-  if (product.orionCode === orionCode) {
-    return { action: "NOOP", productId: product.id, orionCode };
+  // Misma identidad de Orión, aunque la grafía histórica sea otra
+  // (`31972` vs `A31972`). Hasta que el renombre masivo corra, NOOP conserva
+  // lo ya guardado: reescribir acá crearía un segundo código canónico al lado
+  // del viejo si el holder se resolviera mal.
+  if (product.orionCode !== null && isSameOrionIdentity(product.orionCode, orionCode)) {
+    return { action: "NOOP", productId: product.id, orionCode: product.orionCode };
   }
 
   // Un código ya puesto no se cambia por accidente. Solo `FIX` puede, porque

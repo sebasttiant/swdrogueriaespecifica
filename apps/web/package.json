@@ -25,7 +25,8 @@
     "db:reconcile": "tsx prisma/reconcile-inventory.ts",
     "db:backfill:reportes": "tsx prisma/backfill-missing-reports.ts",
     "postinstall": "prisma generate",
-    "db:repair:identidad": "tsx prisma/repair-product-identity.ts"
+    "db:repair:identidad": "tsx prisma/repair-product-identity.ts",
+    "db:normalize:orion": "tsx prisma/normalize-orion-codes.ts"
   },
   "dependencies": {
     "@node-rs/argon2": "2.2.1",

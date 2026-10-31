@@ -14,6 +14,7 @@ import type { Prisma, Product } from "@/lib/generated/prisma/client";
 // Módulo PURO (sin Prisma ni reloj): la presentación tiene una sola
 // definición y su fallback vive ahí, no copiado acá.
 import { MANUAL_UNIT_FALLBACK } from "@/features/pendientes/presentation";
+import { orionCodeVariants } from "@/server/domain/catalog/orion-code";
 
 export type ProductListItem = Pick<
   Product,
@@ -125,10 +126,13 @@ export async function listProducts(params: {
                 OR: [
                   { name: { contains: search, mode: "insensitive" as const } },
                   { code: { contains: search, mode: "insensitive" as const } },
-                  // El SKU de Orión es una identidad, no texto libre: solo una
-                  // coincidencia exacta puede recuperar al dueño sin sugerir
-                  // variantes parecidas como si fueran el mismo código.
-                  { orionCode: { equals: search, mode: "insensitive" as const } },
+                  // Identidad de Orión por NÚMERO: tipear `20956` tiene que
+                  // encontrar `a-20956` / `SKU20956` / `A-20956` mientras el
+                  // histórico no esté renombrado. Sigue siendo igualdad por
+                  // variante, no `contains` — no sugerimos códigos parecidos.
+                  ...orionCodeVariants(search).map((variant) => ({
+                    orionCode: { equals: variant, mode: "insensitive" as const },
+                  })),
                 ],
               }
             : {}),
