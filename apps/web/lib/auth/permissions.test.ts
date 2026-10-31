@@ -803,6 +803,28 @@ describe("recepción · quién marca la llegada y carga la entrada", () => {
 });
 
 // --------------------------------------------------------------------------
+// Ajuste de inventario. Corregir stock NO es recibir: no hay factura detrás.
+// Misma terna que recepción (SUPERADMIN, ADMIN, BODEGA); OPERADOR/SUPERVISOR
+// quedan afuera a propósito.
+// --------------------------------------------------------------------------
+describe("ajuste de inventario · quién corrige el stock de un lote", () => {
+  it("es exactamente SUPERADMIN, ADMIN y BODEGA", () => {
+    expect(rolesWithCapability("canAdjustInventory")).toEqual([
+      "SUPERADMIN",
+      "ADMIN",
+      "BODEGA",
+    ]);
+  });
+
+  it.each(["SUPERVISOR", "OPERADOR"] as const)(
+    "%s no puede ajustar inventario",
+    (role) => {
+      expect(can(role, "canAdjustInventory")).toBe(false);
+    },
+  );
+});
+
+// --------------------------------------------------------------------------
 // QUIÉN CARGA UN PENDIENTE. Gerencia también atiende el mostrador: un pendiente
 // no es exclusivo del vendedor.
 //

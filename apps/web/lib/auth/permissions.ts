@@ -161,6 +161,11 @@ export const CAPABILITIES = [
   "canLinkProductIdentity",
   "canCreatePendientes",
   "canCreateEntries",
+  // Corregir el stock de un lote cuando el conteo no coincide con el sistema.
+  // Eje PROPIO y no `canCreateEntries`: recibir tiene factura y mercadería
+  // física detrás; ajustar declara que la realidad y el sistema no coinciden.
+  // Confundirlas haría imposible responder "¿cuánto entró de verdad este mes?".
+  "canAdjustInventory",
   // Reporting a name that is missing from stock is an operational observation,
   // not a catalog mutation or purchasing decision, so every role may do it.
   "canSubmitMissingReports",
@@ -434,6 +439,9 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     "canManageProducts",
     "canFixProductIdentity",
     "canCreateEntries",
+    // Ajusta stock cuando el conteo no cierra. Misma terna que recepción:
+    // SUPERADMIN/ADMIN lo heredan de CAPABILITIES; bodega lo tiene acá.
+    "canAdjustInventory",
     "canLinkProductIdentity",
     "canCreatePendientes",
     "canSubmitMissingReports",

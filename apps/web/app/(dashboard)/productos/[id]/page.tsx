@@ -93,6 +93,7 @@ export default async function ProductDetailPage({
           productId={id}
           items={batches.items}
           nextCursor={batches.nextCursor}
+          canAdjust={can(session.user.role, "canAdjustInventory")}
         />
       </div>
     </div>

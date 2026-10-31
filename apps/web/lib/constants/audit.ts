@@ -93,6 +93,11 @@ export const AUDIT_ACTIONS = {
   MISSING_REPORT_RECEIVED: "missing.report.received",
   // Entradas
   ENTRY_CREATE: "entry.create",
+  // Corrección manual del stock de un lote. Acción PROPIA y no una variante de
+  // `ENTRY_CREATE`: una entrada tiene una factura y mercadería física detrás,
+  // un ajuste declara que el sistema y la realidad no coinciden. Confundirlas
+  // haría imposible responder después "¿cuánto entró de verdad este mes?".
+  INVENTORY_ADJUST: "inventory.adjust",
   // Recepción física aceptada explícitamente aunque el producto todavía no
   // tenga código de Orión. Es distinta de ENTRY_CREATE porque debe vivir en la
   // misma transacción que el inventario: si falta este testigo, no entra stock.
