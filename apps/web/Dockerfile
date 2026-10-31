@@ -88,6 +88,13 @@ ENV PATH="/app/apps/web/node_modules/.bin:/app/node_modules/.bin:$PATH"
 USER node
 ENTRYPOINT ["node_modules/.bin/tsx", "prisma/normalize-orion-codes.ts"]
 
+# ---------- Orion same-core merge (WINDOW 3) ----------
+FROM builder AS repair-merges
+WORKDIR /app/apps/web
+ENV PATH="/app/apps/web/node_modules/.bin:/app/node_modules/.bin:$PATH"
+USER node
+ENTRYPOINT ["node_modules/.bin/tsx", "prisma/merge-orion-conflicts.ts"]
+
 # ---------- runner ----------
 FROM node:24.22.1-trixie-slim AS runner
 WORKDIR /app
