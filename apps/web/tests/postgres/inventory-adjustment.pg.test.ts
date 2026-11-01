@@ -5,7 +5,6 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
 import { prisma } from "@/lib/db/prisma";
 import {
-  AdjustmentBelowReservedError,
   AdjustmentIdempotencyConflictError,
   BatchNotFoundError,
   adjustBatchQuantity,
@@ -56,6 +55,9 @@ async function reserve(batchId: string, quantity: number) {
       customerPhone: "3000000000",
       promisedAt: new Date(Date.now() + 86_400_000),
       createdById: actorId,
+      inventoryReadyQuantity: quantity,
+      reservedInventoryQuantity: quantity,
+      availabilityStatus: "DISPONIBLE_COMPLETO",
     },
   });
   createdPendingIds.push(pending.id);
@@ -70,6 +72,12 @@ async function cleanupTouchedRows() {
   if (createdPendingIds.length > 0) {
     await prisma.pendingInventoryReservation.deleteMany({
       where: { pendingId: { in: createdPendingIds } },
+    });
+    await prisma.missingItem.deleteMany({
+      where: { originId: { in: createdPendingIds } },
+    });
+    await prisma.auditLog.deleteMany({
+      where: { entityId: { in: createdPendingIds } },
     });
     await prisma.pending.deleteMany({
       where: { id: { in: createdPendingIds } },
@@ -89,6 +97,9 @@ async function cleanupTouchedRows() {
     createdBatchIds.length = 0;
   }
   if (touchedProductIds.length > 0) {
+    await prisma.missingItem.deleteMany({
+      where: { productId: { in: touchedProductIds } },
+    });
     await prisma.product.deleteMany({
       where: { id: { in: touchedProductIds } },
     });
@@ -218,29 +229,43 @@ describe("adjustBatchQuantity", () => {
     expect(stored.quantity).toBe(2);
   });
 
-  it("NO saca unidades ya prometidas a un cliente", async () => {
+  it("al bajar el estante reclama el falso Ya llegó del pendiente", async () => {
     const batch = await seedBatch(5);
-    await reserve(batch.id, 4);
-
-    await expect(
-      adjustBatchQuantity(input({ batchId: batch.id, targetQuantity: 3 })),
-    ).rejects.toBeInstanceOf(AdjustmentBelowReservedError);
-
-    const stored = await prisma.productBatch.findUniqueOrThrow({
-      where: { id: batch.id },
-    });
-    expect(stored.quantity).toBe(5);
-  });
-
-  it("permite ajustar hasta lo reservado, pero ni una unidad más", async () => {
-    const batch = await seedBatch(5);
-    await reserve(batch.id, 3);
+    const pendingId = await reserve(batch.id, 5);
 
     const result = await adjustBatchQuantity(
-      input({ batchId: batch.id, targetQuantity: 3 }),
+      input({ batchId: batch.id, targetQuantity: 0 }),
     );
 
-    expect(result.quantityAfter).toBe(3);
+    expect(result.quantityAfter).toBe(0);
+    expect(result.clampedPendingIds).toContain(pendingId);
+
+    const pending = await prisma.pending.findUniqueOrThrow({
+      where: { id: pendingId },
+    });
+    expect(pending.inventoryReadyQuantity).toBe(0);
+    expect(pending.availabilityStatus).toBe("ESPERANDO");
+
+    const missing = await prisma.missingItem.findFirst({
+      where: { originId: pendingId, status: "FALTANTE" },
+    });
+    expect(missing?.quantity).toBe(5);
+  });
+
+  it("si el estante alcanza parcial, deja DISPONIBLE_PARCIAL", async () => {
+    const batch = await seedBatch(5);
+    const pendingId = await reserve(batch.id, 5);
+
+    const result = await adjustBatchQuantity(
+      input({ batchId: batch.id, targetQuantity: 2 }),
+    );
+
+    expect(result.quantityAfter).toBe(2);
+    const pending = await prisma.pending.findUniqueOrThrow({
+      where: { id: pendingId },
+    });
+    expect(pending.inventoryReadyQuantity).toBe(2);
+    expect(pending.availabilityStatus).toBe("DISPONIBLE_PARCIAL");
   });
 
   it("un reintento del MISMO intento no ajusta dos veces", async () => {
@@ -296,16 +321,13 @@ describe("adjustBatchQuantity", () => {
     ).rejects.toBeInstanceOf(BatchNotFoundError);
   });
 
-  it("no deja rastro de auditoría cuando el ajuste se rechaza", async () => {
-    const batch = await seedBatch(1);
-    await reserve(batch.id, 1);
-
+  it("no deja rastro de auditoría cuando el lote no existe", async () => {
     await expect(
-      adjustBatchQuantity(input({ batchId: batch.id, targetQuantity: 0 })),
-    ).rejects.toBeInstanceOf(AdjustmentBelowReservedError);
+      adjustBatchQuantity(input({ batchId: "no-existe", targetQuantity: 0 })),
+    ).rejects.toBeInstanceOf(BatchNotFoundError);
 
     const audits = await prisma.auditLog.findMany({
-      where: { entityId: batch.id },
+      where: { entityId: "no-existe" },
     });
     expect(audits).toHaveLength(0);
   });

@@ -4,6 +4,10 @@ import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
 import { prisma } from "@/lib/db/prisma";
 import type { AdjustmentReason } from "@/features/inventario/adjustment-reason";
 import {
+  reconcilePendingClaimsForProduct,
+  trimBatchReservationsToCap,
+} from "@/server/services/pending-claim-reconcile.service";
+import {
   recordAuditInTransaction,
   type TransactionalAuditWriter,
 } from "@/server/services/transactional-audit.service";
@@ -100,6 +104,8 @@ export type AdjustBatchQuantityResult = {
   batchId: string;
   quantityBefore: number;
   quantityAfter: number;
+  /** Pendientes cuyo "Ya llegó" se reclamó porque el estante ya no alcanza. */
+  clampedPendingIds: string[];
   /** True cuando este intento ya se había aplicado y se devuelve lo guardado. */
   replayed: boolean;
 };
@@ -155,14 +161,15 @@ export async function adjustBatchQuantity(
         batchId: input.batchId,
         quantityBefore: stored?.quantityBefore ?? 0,
         quantityAfter: stored?.quantityAfter ?? 0,
+        clampedPendingIds: [],
         replayed: true,
       };
     }
 
     // FOR UPDATE serializa a quien toque ESTE lote. Sin el lock, dos ajustes
     // simultáneos leen la misma cantidad vieja y el segundo pisa al primero.
-    const locked = await tx.$queryRaw<{ quantity: number }[]>`
-      SELECT quantity FROM product_batches
+    const locked = await tx.$queryRaw<{ quantity: number; productId: string }[]>`
+      SELECT quantity, "productId" FROM product_batches
        WHERE id = ${input.batchId}
        FOR UPDATE
     `;
@@ -189,14 +196,19 @@ export async function adjustBatchQuantity(
       );
     }
 
-    // Lo prometido sale de la tabla de reservas, no de una columna acumulada:
-    // es lo único que dice cuántas unidades de ESTE lote tienen dueño hoy.
+    // Si el estante baja por debajo de reservas viejas, primero se recortan
+    // esas filas (pendientes más nuevos primero). El ajuste CORRIGE la
+    // realidad: no puede quedar bloqueado por una promesa que el estante ya
+    // no sostiene. El reclamo de `inventoryReadyQuantity` viene después.
+    if (quantityDelta < 0) {
+      await trimBatchReservationsToCap(tx, input.batchId, quantityAfter);
+    }
+
     const { _sum } = await tx.pendingInventoryReservation.aggregate({
       where: { batchId: input.batchId },
       _sum: { quantity: true },
     });
     const reserved = _sum.quantity ?? 0;
-
     if (quantityAfter < reserved) {
       throw new AdjustmentBelowReservedError(
         input.batchId,
@@ -227,6 +239,17 @@ export async function adjustBatchQuantity(
       context: { userId: input.actorId },
     });
 
+    let clampedPendingIds: string[] = [];
+    if (quantityDelta < 0) {
+      const reconciled = await reconcilePendingClaimsForProduct(tx, {
+        productId: batch.productId,
+        actorId: input.actorId,
+        writeAudit,
+        reason: "Claw back pending claims after inventory.adjust",
+      });
+      clampedPendingIds = reconciled.clampedPendingIds;
+    }
+
     // El comando se registra DESPUÉS del efecto y con su resultado: así el
     // reintento devuelve exactamente lo que pasó, no lo que se pretendía.
     await tx.operationalCommand.create({
@@ -235,10 +258,21 @@ export async function adjustBatchQuantity(
         commandType: COMMAND_TYPE,
         commandKey: input.idempotencyKey,
         fingerprint,
-        result: { batchId: input.batchId, quantityBefore, quantityAfter },
+        result: {
+          batchId: input.batchId,
+          quantityBefore,
+          quantityAfter,
+          clampedPendingIds,
+        },
       },
     });
 
-    return { batchId: input.batchId, quantityBefore, quantityAfter, replayed: false };
+    return {
+      batchId: input.batchId,
+      quantityBefore,
+      quantityAfter,
+      clampedPendingIds,
+      replayed: false,
+    };
   });
 }

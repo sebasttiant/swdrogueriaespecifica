@@ -134,6 +134,24 @@ services:
     networks:
       - drogueria
 
+  # Reclama pendientes con inventoryReady > stock físico DISPONIBLE.
+  # Dry-run por defecto. Con --apply escribe y audita.
+  repair-claims:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      target: repair-claims
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL es obligatorio}
+      AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET es obligatorio}
+      NODE_ENV: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - drogueria
+
   web:
     build:
       context: .

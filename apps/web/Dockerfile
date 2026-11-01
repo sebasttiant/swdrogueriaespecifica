@@ -95,6 +95,13 @@ ENV PATH="/app/apps/web/node_modules/.bin:/app/node_modules/.bin:$PATH"
 USER node
 ENTRYPOINT ["node_modules/.bin/tsx", "prisma/merge-orion-conflicts.ts"]
 
+# ---------- Reclaim pending claims that exceed physical stock ----------
+FROM builder AS repair-claims
+WORKDIR /app/apps/web
+ENV PATH="/app/apps/web/node_modules/.bin:/app/node_modules/.bin:$PATH"
+USER node
+ENTRYPOINT ["node_modules/.bin/tsx", "prisma/reconcile-pending-claims.ts"]
+
 # ---------- runner ----------
 FROM node:24.22.1-trixie-slim AS runner
 WORKDIR /app
