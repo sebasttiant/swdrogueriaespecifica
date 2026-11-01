@@ -73,6 +73,12 @@ async function cleanupTouchedRows() {
     await prisma.pendingInventoryReservation.deleteMany({
       where: { pendingId: { in: createdPendingIds } },
     });
+    await prisma.missingItem.deleteMany({
+      where: { originId: { in: createdPendingIds } },
+    });
+    await prisma.auditLog.deleteMany({
+      where: { entityId: { in: createdPendingIds } },
+    });
     await prisma.pending.deleteMany({
       where: { id: { in: createdPendingIds } },
     });
@@ -91,6 +97,9 @@ async function cleanupTouchedRows() {
     createdBatchIds.length = 0;
   }
   if (touchedProductIds.length > 0) {
+    await prisma.missingItem.deleteMany({
+      where: { productId: { in: touchedProductIds } },
+    });
     await prisma.product.deleteMany({
       where: { id: { in: touchedProductIds } },
     });
