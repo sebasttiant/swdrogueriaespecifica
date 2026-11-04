@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useActionState } from "@/lib/hooks/use-action-state";
 
 import { Button } from "@/app/_components/ui/button";
@@ -102,6 +102,36 @@ export function PendingEditForm({
   productLockReason = "committed",
 }: PendingEditFormProps) {
   const [state, action, saving] = useActionState(updatePendingAction, INITIAL_STATE);
+
+  // --------------------------------------------------------------------------
+  // El producto del pendiente ENCABEZA la lista, y si no está, no se cambia.
+  //
+  // El 03/11/2026 corregir la cantidad de un pedido le cambió el producto. La
+  // página ofrecía los 100 más nuevos de un catálogo de 1100; el del pedido era
+  // viejo y no entraba. Un `<select>` cuyo `defaultValue` no coincide con
+  // ninguna opción NO queda vacío: el navegador elige la primera. La vendedora
+  // cambió un 1 por un 2 y guardó otro remedio a nombre de su clienta.
+  //
+  // Dos defensas, y hacen falta las dos:
+  //
+  //   primero   ponerlo al frente vuelve inofensivo ese respaldo del navegador:
+  //             si cae en la primera opción, la primera opción es la correcta.
+  //   bloquear  si ni siquiera está en la lista, no se ofrece cambiar nada. Un
+  //             menú que no puede representar lo que hay guardado solo sirve
+  //             para reemplazarlo por error.
+  // --------------------------------------------------------------------------
+  const selectableProducts = useMemo(() => {
+    const current = products.find((product) => product.id === pending.productId);
+    if (!current) return products;
+    return [current, ...products.filter((product) => product.id !== current.id)];
+  }, [products, pending.productId]);
+
+  const currentIsSelectable = selectableProducts.some(
+    (product) => product.id === pending.productId,
+  );
+  // Bloquear por no poder representarlo es distinto de bloquear por mercadería
+  // comprometida: el mensaje tiene que decir cuál de las dos pasó.
+  const lockProduct = productLocked || !currentIsSelectable;
   // Abono y medio CONTROLADOS: el medio se muestra solo cuando hay plata, así
   // que el formulario tiene que saber qué dice el campo mientras se escribe.
   // El resto de los campos siguen sin estado, que es como estaban.
@@ -147,24 +177,26 @@ export function PendingEditForm({
               un campo oculto para que la corrección conserve el que ya tiene. */}
           <Select
             id="productId"
-            name={productLocked ? undefined : "productId"}
+            name={lockProduct ? undefined : "productId"}
             required
-            disabled={productLocked}
+            disabled={lockProduct}
             defaultValue={pending.productId}
           >
-            {products.map((product) => (
+            {selectableProducts.map((product) => (
               <option key={product.id} value={product.id}>
                 {optionLabel(product)}
               </option>
             ))}
           </Select>
-          {productLocked ? (
+          {lockProduct ? (
             <>
               <input type="hidden" name="productId" value={pending.productId} />
               <p className="mt-1 text-xs text-muted-foreground">
-                {productLockReason === "stockSetAside"
-                  ? "No podés cambiar el producto: este pendiente ya tiene mercadería apartada. Pedile el cambio a gerencia."
-                  : "El producto no se puede cambiar: este pendiente ya tiene unidades facturadas o entregadas."}
+                {!currentIsSelectable
+                  ? "El producto de este pendiente no está disponible para elegir, así que no se puede cambiar desde acá. El resto sí se corrige y el producto queda como está."
+                  : productLockReason === "stockSetAside"
+                    ? "No podés cambiar el producto: este pendiente ya tiene mercadería apartada. Pedile el cambio a gerencia."
+                    : "El producto no se puede cambiar: este pendiente ya tiene unidades facturadas o entregadas."}
               </p>
             </>
           ) : null}
