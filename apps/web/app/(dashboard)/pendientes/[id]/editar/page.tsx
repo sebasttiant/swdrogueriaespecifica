@@ -8,7 +8,7 @@ import { requireCapability } from "@/lib/auth/require-role";
 import { MAX_PAGE_SIZE } from "@/lib/pagination";
 import { PendingEditForm } from "@/features/pendientes/pending-edit-form";
 import type { ProductOption } from "@/features/pendientes/pending-form";
-import { getProducts } from "@/server/services/product.service";
+import { getProduct, getProducts } from "@/server/services/product.service";
 import { getPendingForEdit, getUsedZones } from "@/server/services/pending.service";
 
 export const metadata: Metadata = { title: "Corregir pendiente" };
@@ -69,21 +69,48 @@ export default async function EditarPendientePage({
   // mostrarle algo que no va a poder guardar.
   if (!correctsAll && pending.sellerEditedAt !== null) notFound();
 
-  const [products, zones] = await Promise.all([
+  // El producto del pendiente se pide APARTE, por id.
+  //
+  // `getProducts` devuelve una página —los 100 más nuevos— de un catálogo de
+  // más de mil, y además filtra inactivos. El 03/11/2026 eso le cambió el
+  // producto a un pedido: el CITIVITAE era viejo, no entraba en esa ventana, y
+  // un `<select>` sin opción que coincida se queda con la primera. Corregir la
+  // cantidad guardó otro remedio a nombre de la misma clienta.
+  //
+  // Traerlo por id no depende de dónde caiga en el catálogo ni de si sigue
+  // activo: un pendiente viejo tiene que poder corregirse igual.
+  const [products, zones, current] = await Promise.all([
     getProducts({ take: MAX_PAGE_SIZE }),
     getUsedZones(),
+    getProduct(pending.productId),
   ]);
 
-  const productOptions: ProductOption[] = products.items
+  const toOption = (product: {
+    id: string;
+    name: string;
+    code: string;
+    orionCode: string | null;
+    unit: string;
+  }): ProductOption => ({
+    id: product.id,
+    name: product.name,
+    code: product.code,
+    orionCode: product.orionCode,
+    // Se muestra junto al producto elegido; no se edita desde acá.
+    unit: product.unit,
+  });
+
+  const listed = products.items
     .filter((product) => product.active)
-    .map((product) => ({
-      id: product.id,
-      name: product.name,
-      code: product.code,
-      orionCode: product.orionCode,
-      // Se muestra junto al producto elegido; no se edita desde acá.
-      unit: product.unit,
-    }));
+    .map(toOption);
+
+  // Si ya venía en la página no se duplica; si no, encabeza la lista. El
+  // formulario vuelve a ordenarlo por su cuenta: son dos defensas distintas
+  // —una trae el dato, la otra no confía en que haya llegado—.
+  const productOptions: ProductOption[] =
+    current && !listed.some((product) => product.id === current.id)
+      ? [toOption(current), ...listed]
+      : listed;
 
   return (
     <div className="space-y-6">

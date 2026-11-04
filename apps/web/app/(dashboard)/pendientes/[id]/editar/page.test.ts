@@ -13,8 +13,12 @@ vi.mock("@/server/services/pending.service", () => ({
   getPendingForEdit: mocks.getPendingForEdit,
   getUsedZones: vi.fn().mockResolvedValue([]),
 }));
+// `getProduct` trae el producto del pendiente POR ID, aparte del listado
+// paginado: es la defensa que impide que corregir la cantidad le cambie el
+// producto cuando el suyo queda fuera de los 100 más nuevos.
 vi.mock("@/server/services/product.service", () => ({
   getProducts: vi.fn().mockResolvedValue({ items: [] }),
+  getProduct: vi.fn().mockResolvedValue(null),
 }));
 vi.mock("@/app/_components/app-shell/page-header", () => ({ PageHeader: () => null }));
 vi.mock("@/features/pendientes/pending-edit-form", () => ({
@@ -25,6 +29,8 @@ vi.mock("@/features/pendientes/pending-edit-form", () => ({
 }));
 
 import { renderToStaticMarkup } from "react-dom/server";
+
+import { getProduct, getProducts } from "@/server/services/product.service";
 
 import EditarPendientePage from "./page";
 
@@ -60,6 +66,92 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.notFound.mockImplementation(() => {
     throw new Error("NEXT_NOT_FOUND");
+  });
+});
+
+// --------------------------------------------------------------------------
+// El 03/11/2026 corregir la CANTIDAD de un pedido le cambió el PRODUCTO.
+//
+// La pantalla ofrecía `getProducts({ take: 100 })` sobre un catálogo de más de
+// mil. El producto del pedido era viejo y no entraba en esa ventana, y un
+// `<select>` sin opción que coincida se queda con la primera. Se guardó otro
+// remedio a nombre de la misma clienta.
+//
+// La pantalla ahora lo pide POR ID, que no depende de la paginación ni de si
+// el producto sigue activo.
+// --------------------------------------------------------------------------
+describe("EditarPendientePage · el producto del pendiente siempre se puede elegir", () => {
+  const VIEJO = {
+    id: "prod-1",
+    name: "Citivitae 1000 mg x 10 sobres",
+    code: "CIT-1",
+    orionCode: "A33731",
+    unit: "Caja",
+    active: true,
+  };
+  const NUEVO = {
+    id: "prod-9",
+    name: "Atoder Crema Ultra Hydratante",
+    code: "ATO-1",
+    orionCode: null,
+    unit: "Frasco",
+    active: true,
+  };
+
+  function optionIds(): string[] {
+    const props = mocks.formProps.mock.calls.at(-1)?.[0] as {
+      products: { id: string }[];
+    };
+    return props.products.map((product) => product.id);
+  }
+
+  beforeEach(() => {
+    mocks.requireCapability.mockResolvedValue({
+      user: { id: "op-1", role: "ADMIN" },
+    });
+    mocks.getPendingForEdit.mockResolvedValue({
+      pending: PENDING,
+      restricted: false,
+    });
+  });
+
+  it("lo agrega aunque no venga en la página del catálogo", async () => {
+    vi.mocked(getProducts).mockResolvedValue({ items: [NUEVO] } as never);
+    vi.mocked(getProduct).mockResolvedValue(VIEJO as never);
+
+    await render();
+
+    expect(optionIds()).toContain("prod-1");
+  });
+
+  it("lo pide por el id del pendiente, no por búsqueda", async () => {
+    vi.mocked(getProducts).mockResolvedValue({ items: [NUEVO] } as never);
+    vi.mocked(getProduct).mockResolvedValue(VIEJO as never);
+
+    await render();
+
+    expect(vi.mocked(getProduct)).toHaveBeenCalledWith("prod-1");
+  });
+
+  // Un pendiente viejo cuyo producto se desactivó —por ejemplo al fusionar
+  // duplicados— tiene que poder corregirse igual: su producto no es elegible
+  // para pedidos nuevos, pero sigue siendo el suyo.
+  it("lo agrega aunque el producto esté inactivo", async () => {
+    vi.mocked(getProducts).mockResolvedValue({ items: [NUEVO] } as never);
+    vi.mocked(getProduct).mockResolvedValue({ ...VIEJO, active: false } as never);
+
+    await render();
+
+    expect(optionIds()).toContain("prod-1");
+  });
+
+  it("no lo duplica cuando ya venía en la página", async () => {
+    vi.mocked(getProducts).mockResolvedValue({ items: [VIEJO, NUEVO] } as never);
+    vi.mocked(getProduct).mockResolvedValue(VIEJO as never);
+
+    await render();
+
+    expect(optionIds().filter((id) => id === "prod-1")).toHaveLength(1);
   });
 });
 
