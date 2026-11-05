@@ -33,7 +33,7 @@ export const APPROVED_PENDING_PRODUCT_REPAIR: ApprovedPendingProductRepair = {
   pendingId: "cmw15djdt00ph01qsk9oqssrp",
   expectedCurrentProductId: "cmw15hzoy00pt01qs7m2g73b8",
   expectedCurrentProductName: "ATODER CREMA ULTRA HYDRATANTE X 500 ML ref",
-  expectedCurrentProductOrionCode: null,
+  expectedCurrentProductOrionCode: "A33915",
   targetProductId: "cmtvwdmrw00ce01nxpuzhebl8",
   expectedQuantity: 2,
   expectedStatus: "PENDIENTE",

@@ -20,7 +20,7 @@ assert_contains docs/runbook-reparacion-producto-pendiente.md 'CONFIRM_REPAIR_AP
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 cat > "$TMP/manifest.json" <<'JSON'
-{"repairId":"incident-330-laura-pending-product","actorEmail":"admin@ilasesorias.com","pendingId":"cmw15djdt00ph01qsk9oqssrp","expectedCurrentProductId":"cmw15hzoy00pt01qs7m2g73b8","expectedCurrentProductName":"ATODER CREMA ULTRA HYDRATANTE X 500 ML ref","expectedCurrentProductOrionCode":null,"targetProductId":"cmtvwdmrw00ce01nxpuzhebl8","expectedQuantity":2,"expectedStatus":"PENDIENTE","expectedPurchaseStatus":"SOLICITADO","expectedAvailabilityStatus":"ESPERANDO","expectedCustomerStatus":"POR_CONTACTAR","expectedTargetName":"CITIVITAE 1000 MG X 10 SOBRES","expectedTargetOrionCode":"A33731","reason":"Restore the product confirmed by the original request fingerprint and incident #330."}
+{"repairId":"incident-330-laura-pending-product","actorEmail":"admin@ilasesorias.com","pendingId":"cmw15djdt00ph01qsk9oqssrp","expectedCurrentProductId":"cmw15hzoy00pt01qs7m2g73b8","expectedCurrentProductName":"ATODER CREMA ULTRA HYDRATANTE X 500 ML ref","expectedCurrentProductOrionCode":"A33915","targetProductId":"cmtvwdmrw00ce01nxpuzhebl8","expectedQuantity":2,"expectedStatus":"PENDIENTE","expectedPurchaseStatus":"SOLICITADO","expectedAvailabilityStatus":"ESPERANDO","expectedCustomerStatus":"POR_CONTACTAR","expectedTargetName":"CITIVITAE 1000 MG X 10 SOBRES","expectedTargetOrionCode":"A33731","reason":"Restore the product confirmed by the original request fingerprint and incident #330."}
 JSON
 cat > "$TMP/hostname" <<'SH'
 #!/usr/bin/env bash
