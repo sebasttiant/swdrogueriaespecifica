@@ -17,9 +17,9 @@ Canonicalize physical stock and pending reservations before production resumes.
 
 - [x] **T1** — S1-S3 — Map every stock/reservation mutation and freeze the canonical invariant. Route: parent + bounded explorer. Commit: pending.
 - [x] **T2** — S2-S3,S6 — Add RED PostgreSQL tests for creation, reception, release, correction, delivery, adjustment, and concurrency. Route: parent. Commit: pending.
-- [x] **T3** — S2-S3 — Implement the unified runtime reservation model. Route: parent. Commit: pending (full validation running).
+- [x] **T3** — S2-S3 — Implement the unified runtime reservation model. Route: parent. Commit: bde8c8ab.
 - **T4** — S3-S4,S6 — Add RED repair tests and implement audited legacy reconciliation with dry-run/apply/replay. Route: parent. Commit: pending.
-- **T5** — S5-S6 — Correct availability/arrival copy and its public-interface tests. Route: parent. Commit: pending.
+- [x] **T5** — S5-S6 — Correct availability/arrival copy and its public-interface tests. Route: parent. Commit: 992ab623.
 - **T6** — S1-S6 — Run focused and full verification, LSP diagnostics, differential checks where shared behavior is touched, and independent high-risk verification. Route: parent + verifier. Commit: pending.
 - **T7** — S1-S6 — Open PR, pass CI, resolve review threads, and squash merge. Route: parent. Commit: pending.
 - **T8** — S3-S4,S6 — Deploy, run dry-run → reviewed apply → replay, and verify the four incident pendings plus global invariants. Route: parent/operator. Commit: production evidence.
@@ -34,4 +34,6 @@ Canonicalize physical stock and pending reservations before production resumes.
 - **L6** — “continua hazlo bien no quiero que vuelva a sucede y que se corriga correctamente y me explicas que paso como y porque y como lo corregis”.
 - **L8** — Runtime GREEN: 72/72 focused PostgreSQL tests. Creation reserves per batch; reception no longer subtracts batches (`reserveReceivedBatchQuantity` deleted) and links the entry to its batch; delivery subtracts the physical batch under product→batch→pending lock order; invoicing uses live reservations, not counters; cancel/partial-close/reconcile keep ready = delivered + live reserved.
 - **L9** — Legacy repair needs production scope: read-only diagnosis `docs/sql/diagnostico-invariante-reservas.sql` classifies live reservations as RECEPTION (subtracted by legacy code) or SOFT. GLAUCOMED script left no residue (it subtracted, delivered and deleted its rows).
+- **L10** — Full validation after T3/T5: typecheck 0, lint 0, unit 3126/3126, PostgreSQL 685/687 (the two `laboratory-*` failures pre-exist on main). Wording RED 7 → GREEN 701/701.
+- **L11** — Slice boundary: runtime + wording reached 588 authored lines. Delivery strategy: runtime (bde8c8ab) must not deploy without the T4 legacy repair, so T3+T4+T5 ship as one PR with separate commits; the repair commit stays its own reviewable unit.
 - **L7** — First runtime GREEN: 29/29 focused PostgreSQL tests pass for creation, reception, delivery, cancellation and product correction under the physical-total invariant.
