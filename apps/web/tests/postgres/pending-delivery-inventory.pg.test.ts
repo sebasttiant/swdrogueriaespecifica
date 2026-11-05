@@ -53,6 +53,7 @@ afterEach(async () => {
   await prisma.pendingInventoryReservation.deleteMany({ where: { batchId } });
   await prisma.pendingDelivery.deleteMany({ where: { pending: { productId } } });
   await prisma.pending.deleteMany({ where: { productId } });
+  await prisma.productBatch.update({ where: { id: batchId }, data: { quantity: 100 } });
 });
 
 // El lote y el producto nacen una sola vez, así que se borran una sola vez. El
@@ -90,7 +91,7 @@ async function nuevoPendiente(estado: Estado = {}): Promise<string> {
       invoicedQuantity: estado.invoicedQuantity ?? quantity,
       deliveredQuantity: estado.deliveredQuantity ?? 0,
       inventoryReadyQuantity: estado.inventoryReadyQuantity ?? 0,
-      reservedInventoryQuantity: estado.reservedInventoryQuantity ?? 0,
+      reservedInventoryQuantity: estado.reservedInventoryQuantity ?? estado.reservas ?? 0,
     },
   });
 
@@ -168,6 +169,12 @@ describe("deliverPending · no se entrega lo que no hay", () => {
       where: { pendingId: id }, _sum: { quantity: true },
     });
     expect(restante._sum.quantity).toBe(3);
+    const pending = await prisma.pending.findUniqueOrThrow({ where: { id } });
+    expect(pending.inventoryReadyQuantity).toBe(5);
+    expect(pending.reservedInventoryQuantity).toBe(3);
+    expect(
+      (await prisma.productBatch.findUniqueOrThrow({ where: { id: batchId } })).quantity,
+    ).toBe(98);
   });
 
   // CASO F — la reserva ya consumida no se puede volver a gastar.

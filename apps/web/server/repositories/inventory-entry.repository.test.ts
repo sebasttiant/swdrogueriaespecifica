@@ -26,6 +26,7 @@ const txMock = {
 
 const BASE_ENTRY_DATA = {
   productId: "prod_1",
+  productBatchId: "batch_1",
   quantity: 10,
   note: "Recepción proveedor",
   createdById: "user_1",
@@ -50,6 +51,7 @@ describe("createInventoryEntry", () => {
     expect(call.data).toEqual(
       expect.objectContaining({
         productId: "prod_1",
+        productBatchId: "batch_1",
         quantity: 10,
         createdById: "user_1",
       }),

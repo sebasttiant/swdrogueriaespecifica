@@ -689,12 +689,14 @@ export async function createPending(
 
 export type PendingForDelivery = {
   id: string;
+  productId: string;
   quantity: number;
   deliveredQuantity: number;
   status: PendingStatus;
   createdById: string | null;
   cancelledQuantity: number;
   inventoryReadyQuantity: number;
+  reservedInventoryQuantity: number;
   invoicedQuantity: number;
   customerStatus: "POR_CONTACTAR" | "CONTACTADO" | "FACTURADO" | "ENTREGADO" | "CANCELADO";
   // Si el cliente YA respondió si espera. Va en la fila bloqueada porque la
@@ -723,7 +725,7 @@ export async function lockPendingForUpdate(
   id: string,
 ): Promise<PendingForDelivery | null> {
   const rows = await client.$queryRaw<PendingForDelivery[]>`
-    SELECT id, quantity, "deliveredQuantity", "cancelledQuantity", status, "createdById", "inventoryReadyQuantity", "invoicedQuantity", "customerStatus",
+    SELECT id, "productId", quantity, "deliveredQuantity", "cancelledQuantity", status, "createdById", "inventoryReadyQuantity", "reservedInventoryQuantity", "invoicedQuantity", "customerStatus",
            -- La COLUMNA sigue llamándose como nació; en el modelo el campo se
            -- llama waitlistDecision vía @map. Prisma traduce ese alias solo,
            -- pero el SQL crudo no pasa por Prisma: acá se escribe a mano.
@@ -776,6 +778,7 @@ export type UpdatePendingAfterDeliveryData = {
   expectedStatus: PendingStatus;
   expectedDeliveredQuantity: number;
   deliveredQuantity: number;
+  reservedInventoryQuantity: number;
   status: PendingStatus;
   completedAt: Date | null;
 };
@@ -799,6 +802,7 @@ export async function updatePendingAfterDelivery(
     },
     data: {
       deliveredQuantity: data.deliveredQuantity,
+      reservedInventoryQuantity: data.reservedInventoryQuantity,
       status: data.status,
       completedAt: data.completedAt,
     },

@@ -65,10 +65,11 @@ import { normalizeOrionCode } from "@/server/domain/catalog/sku-identity";
 import { findProductsSharingOrionIdentity } from "@/server/repositories/sku-review.repository";
 import { createMissingItem } from "@/server/repositories/missing-item.repository";
 import {
-  claimableStockForPending,
   consumePendingReservations,
   liveReservedQuantityForPending,
+  lockReservationBatchesForPending,
   releasePendingReservations,
+  reserveClaimableStockForPending,
   lockReservedQuantityForPending,
 } from "@/server/repositories/product-batch.repository";
 import { prisma } from "@/lib/db/prisma";
@@ -666,12 +667,12 @@ function createPendingRegistration(
         context: { userId: data.createdById ?? null },
       });
     }
-    const inventoryReadyQuantity = await claimableStockForPending(
-      tx,
+    const inventoryReadyQuantity = await reserveClaimableStockForPending(tx, {
+      pendingId: pending.id,
       productId,
-      data.quantity,
-      new Date(),
-    );
+      requestedQuantity: data.quantity,
+      now: new Date(),
+    });
     await tx.pending.update({
       where: { id: pending.id },
       data: {
@@ -775,9 +776,20 @@ export async function deliverPending(
   now: Date = new Date(),
 ): Promise<DeliverPendingResult> {
   return prisma.$transaction(async (tx) => {
+    // Global lock order: product → reservation batches → pending → reservations.
+    // Reception follows the same product/batch-before-pending order, so delivery
+    // can consume physical stock without forming a deadlock cycle with an entry.
+    const productId = await readPendingProductId(tx, input.id);
+    if (!productId) throw new Error("Pending not found");
+    await lockProductForPendingReference(tx, productId);
+    await lockReservationBatchesForPending(tx, input.id);
+
     const current = await lockPendingForUpdate(tx, input.id);
     if (!current) {
       throw new Error("Pending not found");
+    }
+    if (current.productId !== productId) {
+      throw new PendingConcurrentModificationError(current.id);
     }
 
     // Reintento del MISMO intento (doble tap, reenvío tras un timeout): con la
@@ -856,6 +868,7 @@ export async function deliverPending(
       expectedStatus: current.status,
       expectedDeliveredQuantity: current.deliveredQuantity,
       deliveredQuantity,
+      reservedInventoryQuantity: current.reservedInventoryQuantity - input.quantity,
       status,
       completedAt,
     });
@@ -956,7 +969,14 @@ export async function cancelPendingCommitment(
       where: { originId: current.id, status: { in: ["FALTANTE", "PEDIDO", "EN_BODEGA"] } },
       data: { status: "CANCELADO" },
     });
-    await tx.pending.update({ where: { id: current.id }, data: { customerStatus: "CANCELADO" } });
+    await tx.pending.update({
+      where: { id: current.id },
+      data: {
+        customerStatus: "CANCELADO",
+        inventoryReadyQuantity: current.deliveredQuantity,
+        reservedInventoryQuantity: 0,
+      },
+    });
 
     return {
       pending: { id: current.id, status: "CANCELADO", cancelledAt: now },
@@ -1088,6 +1108,8 @@ export async function resolveWaitlistDecision(
         status: "CLOSED_PARTIAL",
         customerStatus: "ENTREGADO",
         cancelledQuantity: remaining,
+        inventoryReadyQuantity: current.deliveredQuantity,
+        reservedInventoryQuantity: 0,
         completedAt: now,
         cancelReason: `Cerrado sin los ${remaining} restantes: el cliente no los espera`,
       },
@@ -1243,8 +1265,13 @@ export async function invoicePending(
       if (pending.invoicedQuantity !== input.expectedInvoicedQuantity) return "STALE";
 
       const pendingToInvoice = Math.max(pending.quantity - pending.invoicedQuantity, 0);
+      const liveReservedQuantity = await liveReservedQuantityForPending(tx, pending.id);
+      const invoicedNotDelivered = Math.max(
+        pending.invoicedQuantity - pending.deliveredQuantity,
+        0,
+      );
       const stockToInvoice = Math.max(
-        pending.inventoryReadyQuantity - pending.invoicedQuantity,
+        liveReservedQuantity - invoicedNotDelivered,
         0,
       );
 

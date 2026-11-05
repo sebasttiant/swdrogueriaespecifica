@@ -135,6 +135,11 @@ describe("creación con stock completo", () => {
       _sum: { quantity: true },
     });
     expect(lotesDespues._sum.quantity).toBe(lotesAntes._sum.quantity);
+    const reservation = await prisma.pendingInventoryReservation.aggregate({
+      where: { pendingId: pending.id },
+      _sum: { quantity: true },
+    });
+    expect(reservation._sum.quantity).toBe(12);
     // Y no queda nada para que bodega busque.
     expect(await countPendingReception()).toBe(0);
   });
@@ -148,6 +153,11 @@ describe("creación con stock parcial", () => {
     const fila = await prisma.pending.findUniqueOrThrow({ where: { id: pending.id } });
     expect(fila.inventoryReadyQuantity).toBe(5);
     expect(fila.availabilityStatus).toBe("DISPONIBLE_PARCIAL");
+    const reservation = await prisma.pendingInventoryReservation.aggregate({
+      where: { pendingId: pending.id },
+      _sum: { quantity: true },
+    });
+    expect(reservation._sum.quantity).toBe(5);
 
     const cola = await listPendingReception();
     const item = cola.find((c) => c.pendingId === pending.id);
@@ -334,12 +344,15 @@ describe("entrada parcial y completa", () => {
     await registerInventoryEntry(comun);
     await registerInventoryEntry(comun);
 
-    // Se mide sobre las ENTRADAS y sobre lo reservado, no sobre el saldo del
-    // lote: reservar unidades para un pendiente BAJA ese saldo a propósito
-    // —dejan de estar disponibles para otro—, así que el lote puede quedar en
-    // cero sin que nada se haya duplicado.
-    const entradas = await prisma.inventoryEntry.count({ where: { productId } });
-    expect(entradas).toBe(1);
+    // La entrada física se suma una sola vez y reservarla no altera el conteo
+    // del lote. La disponibilidad libre se deriva restando el ledger vivo.
+    const entradas = await prisma.inventoryEntry.findMany({ where: { productId } });
+    expect(entradas).toHaveLength(1);
+    const lote = await prisma.productBatch.findFirstOrThrow({
+      where: { productId, batchCode: "L-IDEM" },
+    });
+    expect(lote.quantity).toBe(6);
+    expect(entradas[0]?.productBatchId).toBe(lote.id);
 
     const reservado = await prisma.pending.aggregate({
       where: { productId },

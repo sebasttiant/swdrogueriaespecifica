@@ -15,8 +15,8 @@ const { prismaMock, tx } = vi.hoisted(() => {
     },
     pendingDelivery: { create: vi.fn(), findUnique: vi.fn() },
     missingItem: { create: vi.fn(), updateMany: vi.fn() },
-    pendingInventoryReservation: { findMany: vi.fn(), upsert: vi.fn(), deleteMany: vi.fn(), delete: vi.fn(), update: vi.fn() },
-    productBatch: { aggregate: vi.fn(), update: vi.fn() },
+    pendingInventoryReservation: { findMany: vi.fn(), upsert: vi.fn(), deleteMany: vi.fn(), delete: vi.fn(), update: vi.fn(), groupBy: vi.fn() },
+    productBatch: { aggregate: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     product: { create: vi.fn() },
     // `lockPendingForUpdate` usa `$queryRaw` (SELECT ... FOR UPDATE), no
     // `findUnique`: bajo READ COMMITTED una relectura plana dentro de la
@@ -110,11 +110,15 @@ const baseInput = {
 // otros pendientes abiertos. La disponibilidad de un pendiente nuevo sale de la
 // resta: se LEE el lote, nunca se lo modifica.
 function mockStock(quantity: number, committedToOtherPendings = 0) {
-  tx.$queryRaw.mockResolvedValue([]);
-  tx.productBatch.aggregate.mockResolvedValue({ _sum: { quantity } });
-  tx.pending.aggregate.mockResolvedValue({
-    _sum: { inventoryReadyQuantity: committedToOtherPendings },
-  });
+  // One physical batch, locked FOR UPDATE; live reservations of other open
+  // pendings are read afterwards and subtracted. The batch itself is never
+  // written by a registration.
+  tx.$queryRaw.mockResolvedValue(quantity > 0 ? [{ id: "batch-1", quantity }] : []);
+  tx.pendingInventoryReservation.groupBy.mockResolvedValue(
+    committedToOtherPendings > 0
+      ? [{ batchId: "batch-1", _sum: { quantity: committedToOtherPendings } }]
+      : [],
+  );
 }
 
 // Typed fixture for `listPendings`/`listUrgentPendings` rows — mirrors
@@ -488,11 +492,13 @@ type PendingRow = PendingForDelivery;
 function pendingForDelivery(overrides: Partial<PendingRow> = {}): PendingRow {
   return {
     id: "pend-1",
+    productId: "prod-1",
     quantity: 10,
     deliveredQuantity: 0,
     status: "PENDIENTE",
     createdById: "op-1",
     inventoryReadyQuantity: 10,
+    reservedInventoryQuantity: 10,
     invoicedQuantity: 10,
     customerStatus: "FACTURADO",
     cancelledQuantity: 0,
@@ -505,7 +511,10 @@ function pendingForDelivery(overrides: Partial<PendingRow> = {}): PendingRow {
 // pendiente y las reservas vivas. Se responden por SQL y no por orden de
 // llamada, porque atarse al orden convierte cualquier reordenamiento futuro en
 // una falla que no dice nada sobre el comportamiento.
-function mockLockedPending(row: PendingRow | null, reserved = 999) {
+function mockLockedPending(
+  row: PendingRow | null,
+  reserved = row ? Math.max(row.inventoryReadyQuantity - row.deliveredQuantity, 0) : 0,
+) {
   tx.$queryRaw.mockImplementation((...args: unknown[]) => {
     const sql = lockSqlFrom(args);
     if (sql.includes("pending_inventory_reservations")) {
@@ -523,6 +532,8 @@ function mockLockedPending(row: PendingRow | null, reserved = 999) {
   } else {
     tx.pendingInventoryReservation.findMany.mockResolvedValue([]);
   }
+  // Delivery subtracts the physical batch with a guarded decrement.
+  tx.productBatch.updateMany.mockResolvedValue({ count: 1 });
 }
 
 // El CAS escribió la fila (caso normal, con el lock tomado).
@@ -540,14 +551,17 @@ describe("deliverPending", () => {
 
     await deliverPending(input, now);
 
-    // Dos consultas crudas: la fila del pendiente y las reservas vivas. Las dos
-    // bloquean, y las dos tienen que estar dentro de la misma transacción.
-    expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
-    const sql = lockSqlFrom(tx.$queryRaw.mock.calls[0]!);
-    // El lock de fila es LA garantía de serialización: sin `FOR UPDATE` dos
-    // operadores leen el mismo `deliveredQuantity` y sobre-entregan.
-    expect(sql).toContain("FOR UPDATE");
-    expect(sql).toContain("FROM pendings");
+    // Lock order: product → reservation batches → pending → reservations.
+    // Reception takes product and batch before pendings, so delivery must too.
+    const statements = tx.$queryRaw.mock.calls.map((call) => lockSqlFrom(call));
+    const productLock = statements.findIndex((sql) => sql.includes("FROM products"));
+    const batchLock = statements.findIndex((sql) => sql.includes("FROM product_batches"));
+    const pendingLock = statements.findIndex(
+      (sql) => sql.includes("FROM pendings") && sql.includes("FOR UPDATE"),
+    );
+    expect(productLock).toBeGreaterThanOrEqual(0);
+    expect(batchLock).toBeGreaterThan(productLock);
+    expect(pendingLock).toBeGreaterThan(batchLock);
     // Nunca `findUnique`: esa lectura no bloquea nada bajo READ COMMITTED.
     expect(tx.pending.findUnique).not.toHaveBeenCalled();
     // Y nada corre fuera de la transacción.

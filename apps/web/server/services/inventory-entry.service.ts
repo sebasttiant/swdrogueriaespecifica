@@ -34,7 +34,6 @@ import {
 } from "@/server/repositories/product.repository";
 import {
   lockBatchForEntry,
-  reserveReceivedBatchQuantity,
   reserveBatchForPending,
   upsertBatchQuantity,
 } from "@/server/repositories/product-batch.repository";
@@ -539,6 +538,7 @@ export async function registerInventoryEntry(
 
     const entry = await createInventoryEntry(tx, {
       productId: data.productId,
+      productBatchId: batch.id,
       quantity: data.quantity,
       note: data.note,
       createdById: data.createdById,
@@ -601,7 +601,6 @@ export async function registerInventoryEntry(
       id: string; quantity: number; orderedQuantity: number | null; receivedQuantity: number; originId: string | null;
     }>>`SELECT id, quantity, "orderedQuantity", "receivedQuantity", "originId" FROM missing_items WHERE "productId" = ${data.productId} AND status IN ('FALTANTE', 'PEDIDO', 'EN_BODEGA') AND "originId" = ANY(${lockedOrigins}::text[]) AND "receivedQuantity" < CASE WHEN "originId" IS NULL THEN COALESCE("orderedQuantity", quantity) ELSE quantity END ORDER BY "createdAt" ASC, id ASC FOR UPDATE`;
     let remaining = data.quantity;
-    let reservedQuantity = 0;
     let allocatedMissingCount = 0;
     const closedMissingIds: string[] = [];
     for (const item of rows) {
@@ -646,12 +645,8 @@ export async function registerInventoryEntry(
       remaining -= allocated;
       // A manual MissingItem has no customer Pending. Receiving it closes the
       // purchasing/report workflow but leaves the physical units sellable.
-      if (item.originId) reservedQuantity += allocated;
       allocatedMissingCount += 1;
       if (receivedQuantity === needed) closedMissingIds.push(item.id);
-    }
-    if (reservedQuantity > 0) {
-      await reserveReceivedBatchQuantity(tx, batch.id, reservedQuantity);
     }
     await markReportsReceivedByMissingItemIds(tx, closedMissingIds);
     return { entry, allocatedMissingCount, closedMissingCount: allocatedMissingCount, idempotent: false, product };

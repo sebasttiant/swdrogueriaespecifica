@@ -27,6 +27,7 @@ export type InventoryEntryListItem = {
 
 export type CreateInventoryEntryData = {
   productId: string;
+  productBatchId: string;
   quantity: number;
   note?: string;
   createdById?: string | null;
@@ -53,6 +54,7 @@ export async function createInventoryEntry(
   return client.inventoryEntry.create({
     data: {
       productId: data.productId,
+      productBatchId: data.productBatchId,
       quantity: data.quantity,
       note: data.note ?? null,
       createdById: data.createdById ?? null,

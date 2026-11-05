@@ -182,6 +182,8 @@ export async function reconcilePendingClaimsForProduct(
     select: {
       id: true,
       quantity: true,
+      deliveredQuantity: true,
+      invoicedQuantity: true,
       inventoryReadyQuantity: true,
       reservedInventoryQuantity: true,
       availabilityStatus: true,
@@ -192,14 +194,22 @@ export async function reconcilePendingClaimsForProduct(
   const clampedPendingIds: string[] = [];
 
   for (const pending of pendings) {
-    const keepTarget = Math.min(
-      pending.inventoryReadyQuantity,
-      pending.quantity,
-      remaining,
+    const remainingDemand = Math.max(
+      pending.quantity - pending.deliveredQuantity,
+      0,
     );
+    const desiredLiveReservation = Math.min(
+      remainingDemand,
+      Math.max(
+        pending.inventoryReadyQuantity - pending.deliveredQuantity,
+        pending.invoicedQuantity - pending.deliveredQuantity,
+        0,
+      ),
+    );
+    const keepTarget = Math.min(desiredLiveReservation, remaining);
 
-    // Las reservas se reconstruyen contra el cupo: pueden estar desfasadas del
-    // ready (GLAUCOMED: 15 reservadas con 5 en estante).
+    // Reservations cover only undelivered physical units. Delivered units have
+    // already left the batch and remain represented in inventoryReadyQuantity.
     const placed = await rebuildSoftReservations(
       tx,
       pending.id,
@@ -207,23 +217,24 @@ export async function reconcilePendingClaimsForProduct(
       keepTarget,
       now,
     );
-    const keep = Math.min(keepTarget, placed);
-    remaining -= keep;
+    const keepReservation = Math.min(keepTarget, placed);
+    const keepReady = pending.deliveredQuantity + keepReservation;
+    remaining -= keepReservation;
 
     if (
-      keep === pending.inventoryReadyQuantity &&
-      keep === pending.reservedInventoryQuantity &&
+      keepReady === pending.inventoryReadyQuantity &&
+      keepReservation === pending.reservedInventoryQuantity &&
       placed === keepTarget
     ) {
       continue;
     }
 
-    const availabilityStatus = availabilityFor(pending.quantity, keep);
+    const availabilityStatus = availabilityFor(pending.quantity, keepReady);
     await tx.pending.update({
       where: { id: pending.id },
       data: {
-        inventoryReadyQuantity: keep,
-        reservedInventoryQuantity: keep,
+        inventoryReadyQuantity: keepReady,
+        reservedInventoryQuantity: keepReservation,
         availabilityStatus,
       },
     });
@@ -231,7 +242,7 @@ export async function reconcilePendingClaimsForProduct(
     await upsertDeficitMissingItem(tx, {
       pendingId: pending.id,
       productId: input.productId,
-      deficit: pending.quantity - keep,
+      deficit: pending.quantity - keepReady,
       actorId: input.actorId,
     });
 
@@ -246,8 +257,8 @@ export async function reconcilePendingClaimsForProduct(
         availabilityStatus: pending.availabilityStatus,
       },
       after: {
-        inventoryReadyQuantity: keep,
-        reservedInventoryQuantity: keep,
+        inventoryReadyQuantity: keepReady,
+        reservedInventoryQuantity: keepReservation,
         availabilityStatus,
         reason: input.reason,
         physicalStock,

@@ -94,12 +94,13 @@ type Seed = {
 };
 
 async function seed(options: Seed = {}): Promise<string> {
+  const reservations = options.reservations ?? options.ready ?? 0;
   const pending = await prisma.pending.create({
     data: {
       productId,
       quantity: options.quantity ?? 10,
       inventoryReadyQuantity: options.ready ?? 0,
-      reservedInventoryQuantity: options.reserved ?? 0,
+      reservedInventoryQuantity: options.reserved ?? reservations,
       invoicedQuantity: options.invoiced ?? 0,
       deliveredQuantity: 0,
       status: "PENDIENTE",
@@ -109,9 +110,9 @@ async function seed(options: Seed = {}): Promise<string> {
       createdById: options.owner ?? ownerId,
     },
   });
-  if (options.reservations && options.reservations > 0) {
+  if (reservations > 0) {
     await prisma.pendingInventoryReservation.create({
-      data: { pendingId: pending.id, batchId, quantity: options.reservations },
+      data: { pendingId: pending.id, batchId, quantity: reservations },
     });
   }
   return pending.id;
@@ -306,6 +307,21 @@ describe("la excepción no crea stock ni habilita la entrega", () => {
 });
 
 describe("la marca no cambia los otros caminos", () => {
+  it("rechaza un contador histórico que no tiene reserva viva", async () => {
+    const id = await seed({ ready: 10, reserved: 10, reservations: 0 });
+
+    await expect(
+      invoicePending({
+        id,
+        quantity: 1,
+        expectedInvoicedQuantity: 0,
+        actorId: ownerId,
+        scope: "all",
+        allowWithoutStock: false,
+      }),
+    ).resolves.toBe("NO_STOCK");
+  });
+
   it("con stock suficiente es una factura normal, sin asiento de excepción", async () => {
     const id = await seed({ ready: 10 });
 
