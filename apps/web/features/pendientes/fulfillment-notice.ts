@@ -35,15 +35,19 @@ export function isTerminal(item: PendingListItem): boolean {
   );
 }
 
-// Si la mercancía ya llegó a bodega, dicho con palabras y no solo con un color.
-// Es independiente de lo facturable: una fila puede haber llegado y además estar
-// lista para facturar, y entonces se dicen las dos cosas.
+// Where the pending's goods stand, in words and not only as a color. It is
+// independent of what can be invoiced: a row can be reserved and also ready to
+// invoice, and then both are said.
+//
+// Only LLEGO_BODEGA is an arrival event recorded by the warehouse. DISPONIBLE_*
+// means units are reserved for this pending, which also happens at registration
+// when the stock was already on the shelf. Calling that "arrived" made sellers
+// believe the warehouse had received something it never touched (#332).
 export function arrivalNotice(item: PendingListItem): string | null {
   if (isTerminal(item)) return null;
-  if (item.availabilityStatus === "LLEGO_BODEGA" || item.availabilityStatus === "DISPONIBLE_COMPLETO") {
-    return "Ya llegó a bodega";
-  }
-  if (item.availabilityStatus === "DISPONIBLE_PARCIAL") return "Ya llegó parte a bodega";
+  if (item.availabilityStatus === "LLEGO_BODEGA") return "Ya llegó a bodega";
+  if (item.availabilityStatus === "DISPONIBLE_COMPLETO") return "Reservado en bodega";
+  if (item.availabilityStatus === "DISPONIBLE_PARCIAL") return "Reservado en bodega: una parte";
   return null;
 }
 
