@@ -14,7 +14,7 @@ const { prismaMock, tx } = vi.hoisted(() => {
       updateMany: vi.fn(),
     },
     pendingDelivery: { create: vi.fn(), findUnique: vi.fn() },
-    missingItem: { create: vi.fn(), updateMany: vi.fn() },
+    missingItem: { create: vi.fn(), updateMany: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
     pendingInventoryReservation: { findMany: vi.fn(), upsert: vi.fn(), deleteMany: vi.fn(), delete: vi.fn(), update: vi.fn(), groupBy: vi.fn() },
     productBatch: { aggregate: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     product: { create: vi.fn() },
@@ -1921,9 +1921,18 @@ describe("updatePending", () => {
     );
   }
 
+  // The corrected fields are written in their own update. A quantity or
+  // product change also writes the claim counters (release, then rebuild), so
+  // the first update is not necessarily the correction itself.
+  function detailWrites(): Array<Record<string, unknown>> {
+    return tx.pending.update.mock.calls
+      .map(([update]) => update.data as Record<string, unknown>)
+      .filter((data) => "quantity" in data);
+  }
   function writtenData(): Record<string, unknown> {
-    const [update] = tx.pending.update.mock.calls[0]!;
-    return update.data as Record<string, unknown>;
+    const [data] = detailWrites();
+    if (!data) throw new Error("no correction was written");
+    return data;
   }
 
   it("el lock lee updatedAt para comparar el testigo bajo el FOR UPDATE", async () => {
@@ -1964,12 +1973,20 @@ describe("updatePending", () => {
       expect(tx.$queryRaw.mock.calls[productAt]!.slice(1)).toContain("prod-2");
     });
 
-    it("con el mismo producto no toma candado sobre productos", async () => {
+    it("con el mismo producto toma producto y lotes ANTES que el pendiente", async () => {
       lockedForEdit();
 
       await updatePending({ ...correction, ...MANAGER }, now);
 
-      expect(sqls().some((sql) => sql.includes("FROM products"))).toBe(false);
+      // A quantity correction rebuilds the claim, so it needs the same order
+      // as delivery and reception: products → batches → pendings.
+      const all = sqls();
+      const productAt = all.findIndex((sql) => /FROM products[\s\S]*FOR KEY SHARE/.test(sql));
+      const batchAt = all.findIndex((sql) => /FROM product_batches[\s\S]*FOR UPDATE/.test(sql));
+      const pendingAt = all.findIndex((sql) => /FROM pendings[\s\S]*FOR UPDATE/.test(sql));
+      expect(productAt).toBeGreaterThanOrEqual(0);
+      expect(batchAt).toBeGreaterThan(productAt);
+      expect(pendingAt).toBeGreaterThan(batchAt);
     });
   });
 
@@ -1989,7 +2006,7 @@ describe("updatePending", () => {
       const result = await updatePending({ ...restricted, ...FOREIGN_EDITOR }, now);
 
       expect(result.rejection).toBeNull();
-      expect(tx.pending.update).toHaveBeenCalledTimes(1);
+      expect(detailWrites()).toHaveLength(1);
     });
 
     it("gerencia corrige una fila ajena con todos los campos", async () => {

@@ -436,6 +436,34 @@ export async function stockByProduct(
 }
 
 /**
+ * Sellable stock: physical units minus units already reserved for open
+ * pendings. `stockByProduct` stays the physical total because reconciliation
+ * measures promises against it; screens that say "vendible" must use this.
+ */
+export async function freeStockByProduct(
+  productId: string,
+  now: Date = new Date(),
+  client: Prisma.TransactionClient = prisma,
+): Promise<number> {
+  const [physical, reserved] = await Promise.all([
+    stockByProduct(productId, now, client),
+    client.pendingInventoryReservation.aggregate({
+      where: {
+        batch: {
+          productId,
+          status: "DISPONIBLE",
+          quantity: { gt: 0 },
+          OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+        },
+        pending: { status: { notIn: ["ENTREGADO", "CANCELADO", "CLOSED_PARTIAL"] } },
+      },
+      _sum: { quantity: true },
+    }),
+  ]);
+  return Math.max(physical - (reserved._sum.quantity ?? 0), 0);
+}
+
+/**
  * Units a new Pending can claim, WITHOUT touching physical stock.
  *
  * Registering a customer request must never move `product_batches.quantity`:
@@ -549,6 +577,10 @@ export async function reserveClaimableStockForPending(
   return reserved;
 }
 
+// Every FOR UPDATE on product_batches uses this one total order:
+// "expiresAt" ASC NULLS LAST, id ASC. Two paths locking overlapping batch sets
+// in different orders deadlock (40P01), so no path may pick its own order.
+
 export async function lockReservationBatchesForPending(
   client: Prisma.TransactionClient,
   pendingId: string,
@@ -558,8 +590,21 @@ export async function lockReservationBatchesForPending(
     FROM product_batches pb
     JOIN pending_inventory_reservations pir ON pir."batchId" = pb.id
     WHERE pir."pendingId" = ${pendingId}
-    ORDER BY pb.id
+    ORDER BY pb."expiresAt" ASC NULLS LAST, pb.id ASC
     FOR UPDATE OF pb
+  `;
+}
+
+/** Locks every batch of a product, in the canonical batch order. */
+export async function lockProductBatches(
+  client: Prisma.TransactionClient,
+  productId: string,
+): Promise<void> {
+  await client.$queryRaw`
+    SELECT id FROM product_batches
+    WHERE "productId" = ${productId}
+    ORDER BY "expiresAt" ASC NULLS LAST, id ASC
+    FOR UPDATE
   `;
 }
 

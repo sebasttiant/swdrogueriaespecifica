@@ -1,6 +1,7 @@
 import type { Prisma } from "@/lib/generated/prisma/client";
 import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
 import {
+  lockProductBatches,
   releasePendingReservations,
   reserveBatchForPending,
   stockByProduct,
@@ -174,6 +175,18 @@ export async function reconcilePendingClaimsForProduct(
   },
 ): Promise<ClaimReconcileResult> {
   const now = new Date();
+  // Lock order: products → batches → pendings. Callers hold the product row
+  // FOR UPDATE; the batches and open pendings are locked here BEFORE they are
+  // read, so a concurrent delivery or cancellation cannot change them between
+  // the read and the rebuild.
+  await lockProductBatches(tx, input.productId);
+  await tx.$queryRaw`
+    SELECT id FROM pendings
+    WHERE "productId" = ${input.productId}
+      AND status NOT IN ('ENTREGADO', 'CANCELADO', 'CLOSED_PARTIAL')
+    ORDER BY id
+    FOR UPDATE
+  `;
   const physicalStock = await stockByProduct(input.productId, now, tx);
 
   const pendings = await tx.pending.findMany({

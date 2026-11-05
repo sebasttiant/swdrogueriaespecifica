@@ -67,6 +67,7 @@ import { createMissingItem } from "@/server/repositories/missing-item.repository
 import {
   consumePendingReservations,
   liveReservedQuantityForPending,
+  lockProductBatches,
   lockReservationBatchesForPending,
   releasePendingReservations,
   reserveClaimableStockForPending,
@@ -1689,6 +1690,75 @@ async function hasSupplyInProgress(
   return (await liveReservedQuantityForPending(tx, current.id)) > 0;
 }
 
+/**
+ * Rebuilds a pending's claim against the current shelf, as registration would:
+ * releases its live reservations, reserves what is still owed (quantity minus
+ * delivered) from free stock, and keeps exactly one open missing item for the
+ * rest. Delivered units already left the shelf, so they count as ready but are
+ * never reserved or bought again. Caller must hold product → batches → pending
+ * locks.
+ */
+async function reclaimPendingStock(
+  tx: Prisma.TransactionClient,
+  input: {
+    pendingId: string;
+    productId: string;
+    quantity: number;
+    deliveredQuantity: number;
+    ownerId: string | null;
+    now: Date;
+  },
+): Promise<void> {
+  await releasePendingReservations(tx, input.pendingId);
+  const owed = Math.max(input.quantity - input.deliveredQuantity, 0);
+  const reserved = await reserveClaimableStockForPending(tx, {
+    pendingId: input.pendingId,
+    productId: input.productId,
+    requestedQuantity: owed,
+    now: input.now,
+  });
+  const ready = input.deliveredQuantity + reserved;
+  await tx.pending.update({
+    where: { id: input.pendingId },
+    data: {
+      inventoryReadyQuantity: ready,
+      reservedInventoryQuantity: reserved,
+      availabilityStatus:
+        ready === 0 ? "ESPERANDO" : ready >= input.quantity ? "DISPONIBLE_COMPLETO" : "DISPONIBLE_PARCIAL",
+    },
+  });
+
+  const deficit = computeMissingQuantity(input.quantity, ready);
+  const open = await tx.missingItem.findFirst({
+    where: {
+      originId: input.pendingId,
+      productId: input.productId,
+      status: { in: ["FALTANTE", "PEDIDO", "EN_BODEGA"] },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  if (open) {
+    // `quantity` is the total need and `receivedQuantity` what already came
+    // in, so the outstanding part is their difference.
+    await tx.missingItem.update({
+      where: { id: open.id },
+      data: deficit > 0 ? { quantity: open.receivedQuantity + deficit } : { status: "CANCELADO" },
+    });
+  } else if (deficit > 0) {
+    await createMissingItem(
+      {
+        productId: input.productId,
+        quantity: deficit,
+        originId: input.pendingId,
+        // Same attribution as registration: the need belongs to the pending's
+        // owner. Who corrected it is recorded by the audit.
+        createdById: input.ownerId,
+      },
+      tx,
+    );
+  }
+}
+
 export async function updatePending(
   input: UpdatePendingInput,
   now: Date = new Date(),
@@ -1706,8 +1776,15 @@ export async function updatePending(
     // escritura por SQL crudo de `productId` tendría que actualizar
     // `"updatedAt"` también, o esta lectura sin candado dejaría de ser segura.
     const storedProductId = await readPendingProductId(tx, input.id);
-    if (storedProductId !== null && storedProductId !== input.productId) {
+    if (storedProductId !== null) {
+      // Global lock order: products → batches → pendings. A correction may
+      // release and re-reserve stock, so it takes the product and the batches
+      // it can touch BEFORE the pending, like delivery and reception do.
+      // Taking the pending first and the batches later formed a cycle with a
+      // delivery of the same pending (batches → pending).
       await lockProductForPendingReference(tx, input.productId);
+      await lockReservationBatchesForPending(tx, input.id);
+      await lockProductBatches(tx, input.productId);
     }
 
     const current = await lockPendingForEdit(tx, input.id);
@@ -1788,6 +1865,21 @@ export async function updatePending(
       : operationalFieldsUnchanged(current, input);
     if (unchanged) return { rejection: null, before: current, outcome: "UNCHANGED", restricted };
 
+    // A product or quantity change rebuilds the claim. The old claim is
+    // released BEFORE the new quantity is written: the database rejects ready
+    // above quantity, so lowering the quantity with the old claim still in
+    // place failed. Released, ready is the delivered quantity, which the
+    // BELOW_COMMITTED rule above already keeps within the new quantity.
+    const claimChanges =
+      current.productId !== input.productId || current.quantity !== input.quantity;
+    if (claimChanges) {
+      await releasePendingReservations(tx, current.id);
+      await tx.pending.update({
+        where: { id: current.id },
+        data: { inventoryReadyQuantity: current.deliveredQuantity, reservedInventoryQuantity: 0 },
+      });
+    }
+
     // 7. Escritura. La restringida no puede tocar identidad, montos, vendedor
     //    escrito ni dueño: su helper no tiene esas columnas.
     if (protectedValues) {
@@ -1821,51 +1913,27 @@ export async function updatePending(
     }
 
     // Changing the product invalidates the missing item this pending raised:
-    // it was created to source ANOTHER product. It is cancelled so nobody buys
-    // what nobody asked for, and the pending is then claimed for the new
-    // product exactly like a registration: shelf stock is reserved per batch
-    // and the deficit becomes a missing item. Without that second half the
-    // pending sat in ESPERANDO with no missing item, and reception (which only
-    // allocates to pendings that own one) never saw it again (#332).
-    if (current.productId !== input.productId) {
+    // it was created to source ANOTHER product, so it is cancelled. Then the
+    // claim is rebuilt, for a product change and for a quantity change alike
+    // (#332): without it a product change left the pending in ESPERANDO with
+    // no missing item, invisible to reception, and a quantity change kept
+    // reservations that no longer matched what the customer asked for.
+    const productChanged = current.productId !== input.productId;
+    if (productChanged) {
       await tx.missingItem.updateMany({
         where: { originId: current.id, status: { in: ["FALTANTE", "PEDIDO", "EN_BODEGA"] } },
         data: { status: "CANCELADO" },
       });
-      await releasePendingReservations(tx, current.id);
-      const reserved = await reserveClaimableStockForPending(tx, {
+    }
+    if (claimChanges) {
+      await reclaimPendingStock(tx, {
         pendingId: current.id,
         productId: input.productId,
-        requestedQuantity: input.quantity,
+        quantity: input.quantity,
+        deliveredQuantity: current.deliveredQuantity,
+        ownerId: current.createdById,
         now,
       });
-      await tx.pending.update({
-        where: { id: current.id },
-        data: {
-          inventoryReadyQuantity: reserved,
-          reservedInventoryQuantity: reserved,
-          availabilityStatus:
-            reserved === 0
-              ? "ESPERANDO"
-              : reserved === input.quantity
-                ? "DISPONIBLE_COMPLETO"
-                : "DISPONIBLE_PARCIAL",
-        },
-      });
-      const deficit = computeMissingQuantity(input.quantity, reserved);
-      if (deficit > 0) {
-        await createMissingItem(
-          {
-            productId: input.productId,
-            quantity: deficit,
-            originId: current.id,
-            // Same attribution as registration: the need belongs to the
-            // pending's owner. Who corrected it is recorded by the audit.
-            createdById: current.createdById,
-          },
-          tx,
-        );
-      }
     }
 
     return { rejection: null, before: current, outcome: "UPDATED", restricted };

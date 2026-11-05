@@ -8,7 +8,7 @@ import type { ExpiryTier } from "@/lib/inventory/batch-status";
 import {
   listBatchesByProduct,
   listExpiringBatches,
-  stockByProduct,
+  freeStockByProduct,
   countExpiringBatches,
   type BatchListItem,
   type ExpiringBatchCounts,
@@ -25,8 +25,9 @@ export function getBatchesByProduct(params: {
   return listBatchesByProduct(params);
 }
 
+/** Physical stock minus units reserved for open pendings (#332). */
 export function getSellableStock(productId: string): Promise<number> {
-  return stockByProduct(productId);
+  return freeStockByProduct(productId);
 }
 
 /**

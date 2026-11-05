@@ -122,6 +122,43 @@ describe("corregir el producto de un pendiente", () => {
     expect(open[0]).toMatchObject({ productId: productB, quantity: 4 });
   });
 
+  it("con entregas parciales reserva solo lo que falta entregar", async () => {
+    await prisma.productBatch.create({
+      data: { productId: productB, batchCode: "B-3", quantity: 3, status: "DISPONIBLE" },
+    });
+    const created = await prisma.pending.create({
+      data: {
+        productId: productA,
+        quantity: 10,
+        promisedAt: new Date(Date.now() + 86_400_000),
+        customerName: "Cliente",
+        customerPhone: "3001234567",
+        createdById: ownerId,
+        status: "PARCIAL",
+        customerStatus: "FACTURADO",
+        invoicedQuantity: 4,
+        deliveredQuantity: 4,
+        inventoryReadyQuantity: 4,
+        reservedInventoryQuantity: 0,
+        availabilityStatus: "DISPONIBLE_PARCIAL",
+      },
+    });
+
+    const result = await changeToB(created);
+
+    expect(result.rejection).toBeNull();
+    const after = await prisma.pending.findUniqueOrThrow({ where: { id: created.id } });
+    expect(after.reservedInventoryQuantity).toBe(3);
+    expect(after.inventoryReadyQuantity).toBe(7);
+    expect(after.availabilityStatus).toBe("DISPONIBLE_PARCIAL");
+    expect(await reservedFor(created.id, productB)).toBe(3);
+    const open = await prisma.missingItem.findMany({
+      where: { originId: created.id, status: { in: ["FALTANTE", "PEDIDO", "EN_BODEGA"] } },
+    });
+    expect(open).toHaveLength(1);
+    expect(open[0]).toMatchObject({ productId: productB, quantity: 3 });
+  });
+
   it("no le quita stock a otro pendiente del producto nuevo", async () => {
     await prisma.productBatch.create({
       data: { productId: productB, batchCode: "B-2", quantity: 2, status: "DISPONIBLE" },
