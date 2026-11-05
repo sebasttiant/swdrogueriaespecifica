@@ -21,3 +21,4 @@ Restore the confirmed original product through an application-level repair. Prod
 - **L1** — "pero corrigamos eso directo dsde aca que no vuelva a pasar ya garantizamos que n ovuelve a salir"
 - **L2** — Production evidence: current product is ATODER `cmw15hzoy00pt01qs7m2g73b8`; target is active CITIVITAE `cmtvwdmrw00ce01nxpuzhebl8`, Orion `A33731`; reservations, allocations, originated missing items, and deliveries are all zero.
 - **L3** — User selected `admin@ilasesorias.com` as the audited repair actor.
+- **L4** — 2026-11-05 production apply of 2bb35960 blocked with "El código Orion del producto actual cambió." Pending stayed ATODER `cmw15hzoy00pt01qs7m2g73b8`, name unchanged, Orion now `A33915` (canonical rename after the manifest was written). Nothing was written. Expected current Orion updated from null to A33915. Target CITIVITAE A33731 was not reported as drifted.
