@@ -868,7 +868,9 @@ export async function deliverPending(
       expectedStatus: current.status,
       expectedDeliveredQuantity: current.deliveredQuantity,
       deliveredQuantity,
-      reservedInventoryQuantity: current.reservedInventoryQuantity - input.quantity,
+      // From the live ledger read under lock, never from the stored counter:
+      // a stale counter must not be carried forward.
+      reservedInventoryQuantity: reservedQuantity - input.quantity,
       status,
       completedAt,
     });
@@ -1758,12 +1760,11 @@ export async function updatePending(
       }
       if (input.protectedFields.state === "invalid") return rejectUpdate("INVALID_DATA");
       protectedValues = input.protectedFields.values;
-      // CONTENCIÓN (defecto conocido, sin corregir): soltar una reserva que
-      // asignó la recepción pierde las unidades, porque la recepción ya las
-      // sacó del lote y `releasePendingReservations` no las devuelve. Hasta
-      // que se corrija, el dueño de un pendiente con mercadería apartada no le
-      // cambia el producto salvo que tenga autoridad de compras. Gerencia sobre
-      // una fila ajena queda como estaba.
+      // The owner of a pending with goods set aside cannot change its product
+      // without purchasing authority: that would hand the reserved units back
+      // and re-source the order. Releasing no longer loses stock (#332), but
+      // the decision stays with purchasing. Management on another's row is
+      // unchanged.
       if (
         isOwner &&
         !input.canOrder &&
@@ -1819,24 +1820,52 @@ export async function updatePending(
       });
     }
 
-    // Cambiar de producto invalida el faltante que este pendiente originó: se
-    // generó para conseguir OTRA cosa. Se cancela para que nadie compre lo que
-    // ya nadie pidió; el déficit del producto nuevo lo levanta la próxima
-    // lectura de disponibilidad.
+    // Changing the product invalidates the missing item this pending raised:
+    // it was created to source ANOTHER product. It is cancelled so nobody buys
+    // what nobody asked for, and the pending is then claimed for the new
+    // product exactly like a registration: shelf stock is reserved per batch
+    // and the deficit becomes a missing item. Without that second half the
+    // pending sat in ESPERANDO with no missing item, and reception (which only
+    // allocates to pendings that own one) never saw it again (#332).
     if (current.productId !== input.productId) {
       await tx.missingItem.updateMany({
         where: { originId: current.id, status: { in: ["FALTANTE", "PEDIDO", "EN_BODEGA"] } },
         data: { status: "CANCELADO" },
       });
       await releasePendingReservations(tx, current.id);
+      const reserved = await reserveClaimableStockForPending(tx, {
+        pendingId: current.id,
+        productId: input.productId,
+        requestedQuantity: input.quantity,
+        now,
+      });
       await tx.pending.update({
         where: { id: current.id },
         data: {
-          inventoryReadyQuantity: 0,
-          reservedInventoryQuantity: 0,
-          availabilityStatus: "ESPERANDO",
+          inventoryReadyQuantity: reserved,
+          reservedInventoryQuantity: reserved,
+          availabilityStatus:
+            reserved === 0
+              ? "ESPERANDO"
+              : reserved === input.quantity
+                ? "DISPONIBLE_COMPLETO"
+                : "DISPONIBLE_PARCIAL",
         },
       });
+      const deficit = computeMissingQuantity(input.quantity, reserved);
+      if (deficit > 0) {
+        await createMissingItem(
+          {
+            productId: input.productId,
+            quantity: deficit,
+            originId: current.id,
+            // Same attribution as registration: the need belongs to the
+            // pending's owner. Who corrected it is recorded by the audit.
+            createdById: current.createdById,
+          },
+          tx,
+        );
+      }
     }
 
     return { rejection: null, before: current, outcome: "UPDATED", restricted };

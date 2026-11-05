@@ -139,9 +139,12 @@ async function upsertDeficitMissingItem(
   }
 
   if (existing) {
+    // `quantity` is the total need and `receivedQuantity` what already came
+    // in, so the outstanding part is their difference. Setting quantity to the
+    // deficit alone forgot partial receipts and could even drop below them.
     await tx.missingItem.update({
       where: { id: existing.id },
-      data: { quantity: input.deficit },
+      data: { quantity: existing.receivedQuantity + input.deficit },
     });
     return;
   }

@@ -236,6 +236,22 @@ describe("repairInventoryInvariant · apply", () => {
   });
 });
 
+describe("repairInventoryInvariant · pendings without a missing item", () => {
+  it("lists them for review and does not create a missing item", async () => {
+    const productId = await product("ORPHAN");
+    const orphan = await pending(productId, 3, 0, hoursAgo(1));
+    const discarded = await pending(productId, 2, 0, hoursAgo(1));
+    await prisma.missingItem.create({
+      data: { productId, quantity: 2, originId: discarded.id, status: "CANCELADO", discardedAt: new Date() },
+    });
+
+    const report = await repairInventoryInvariant({ actorId, apply: false });
+
+    expect(report.orphans).toEqual([{ pendingId: orphan.id, productId, deficit: 3 }]);
+    expect(await prisma.missingItem.count({ where: { originId: orphan.id } })).toBe(0);
+  });
+});
+
 describe("repairInventoryInvariant · fails closed", () => {
   it("blocks a reservation with no reception evidence", async () => {
     const productId = await product("SOFT");

@@ -22,6 +22,15 @@ misma transacción.
 
 Esos casos requieren revisión humana; la herramienta no adivina.
 
+## Pendientes sin faltante (solo se listan)
+
+La simulación lista los pendientes abiertos con demanda sin cubrir y sin
+ningún faltante. Típicamente son pendientes a los que se les corrigió el
+producto antes de #332: quedaban en `ESPERANDO` sin faltante y Bodega no los
+veía. La herramienta **no** les crea faltante: gerencia pudo haberlo
+descartado a propósito. Revisarlos con gerencia y, si corresponde, volver a
+registrar la necesidad desde la aplicación.
+
 ## Ventana operativa
 
 El código nuevo y la reparación salen juntos. Entre el deploy y el `--apply`

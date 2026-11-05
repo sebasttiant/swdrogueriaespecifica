@@ -296,6 +296,22 @@ describe("adjustBatchQuantity", () => {
     expect(pending.availabilityStatus).toBe("DISPONIBLE_PARCIAL");
   });
 
+  it("al recortar respeta lo ya recibido del faltante abierto", async () => {
+    const batch = await seedBatch(5);
+    const pendingId = await reserve(batch.id, 5);
+    await prisma.pending.update({ where: { id: pendingId }, data: { quantity: 8 } });
+    await prisma.missingItem.create({
+      data: { productId, quantity: 5, receivedQuantity: 2, originId: pendingId, status: "PEDIDO" },
+    });
+
+    await adjustBatchQuantity(input({ batchId: batch.id, targetQuantity: 4 }));
+
+    // Ready 4 of 8: 4 still to source on top of the 2 already received.
+    const missing = await prisma.missingItem.findFirstOrThrow({ where: { originId: pendingId } });
+    expect(missing.receivedQuantity).toBe(2);
+    expect(missing.quantity - missing.receivedQuantity).toBe(4);
+  });
+
   it("un reintento del MISMO intento no ajusta dos veces", async () => {
     const batch = await seedBatch(5);
     const idempotencyKey = randomUUID();

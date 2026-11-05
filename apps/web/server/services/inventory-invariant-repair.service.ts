@@ -56,11 +56,23 @@ export type InventoryInvariantClaim = {
   availabilityAfter: string;
 };
 
+/**
+ * An open pending with unsourced demand and no missing item. Listed for a
+ * person, never fixed automatically: management may have discarded that need
+ * on purpose, and recreating it would make purchasing buy what nobody wants.
+ */
+export type InventoryInvariantOrphan = {
+  pendingId: string;
+  productId: string;
+  deficit: number;
+};
+
 export type InventoryInvariantRepairReport = {
   status: "planned" | "applied" | "noop" | "blocked";
   fingerprint: string;
   restores: InventoryInvariantRestore[];
   claims: InventoryInvariantClaim[];
+  orphans: InventoryInvariantOrphan[];
   blockers: string[];
 };
 
@@ -101,7 +113,7 @@ function fingerprintOf(
 }
 
 function empty(status: InventoryInvariantRepairReport["status"], blockers: string[] = []) {
-  return { status, fingerprint: fingerprintOf([], []), restores: [], claims: [], blockers };
+  return { status, fingerprint: fingerprintOf([], []), restores: [], claims: [], orphans: [], blockers };
 }
 
 async function readLiveReservations(tx: Prisma.TransactionClient): Promise<LiveReservation[]> {
@@ -164,6 +176,23 @@ async function productsWithUncoveredClaims(tx: Prisma.TransactionClient): Promis
     ORDER BY 1
   `;
   return rows.map((row) => row.productId);
+}
+
+async function readOrphans(tx: Prisma.TransactionClient): Promise<InventoryInvariantOrphan[]> {
+  return tx.$queryRaw<InventoryInvariantOrphan[]>`
+    SELECT p.id AS "pendingId",
+           p."productId",
+           (p.quantity - p."inventoryReadyQuantity")::int AS deficit
+    FROM pendings p
+    WHERE p.status NOT IN ('ENTREGADO', 'CANCELADO', 'CLOSED_PARTIAL')
+      AND p.quantity - p."inventoryReadyQuantity" > 0
+      AND NOT EXISTS (
+        SELECT 1 FROM missing_items m
+        WHERE m."originId" = p.id
+          AND (m.status IN ('FALTANTE', 'PEDIDO', 'EN_BODEGA') OR m."discardedAt" IS NOT NULL)
+      )
+    ORDER BY p.id
+  `;
 }
 
 async function lockProducts(tx: Prisma.TransactionClient, productIds: string[]) {
@@ -272,6 +301,7 @@ async function runRepair(
     fingerprint,
     restores,
     claims,
+    orphans: await readOrphans(tx),
     blockers: [],
   };
   if (!input.apply) throw new DryRunRollback(report);
@@ -332,6 +362,10 @@ export function formatInventoryInvariantReport(report: InventoryInvariantRepairR
     lines.push(
       `  ${c.pendingId}: listo ${c.readyBefore}→${c.readyAfter}, reservado ${c.reservedBefore}→${c.reservedAfter}, ${c.availabilityAfter}`,
     );
+  }
+  lines.push(`Pendientes sin faltante (revisar a mano, no se tocan): ${report.orphans.length}`);
+  for (const o of report.orphans) {
+    lines.push(`  ${o.pendingId}: faltan ${o.deficit} del producto ${o.productId}`);
   }
   lines.push(`Huella: ${report.fingerprint}`);
   return lines.join("\n");
