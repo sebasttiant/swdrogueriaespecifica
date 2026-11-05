@@ -25,7 +25,6 @@ vi.mock("@/lib/db/prisma", () => ({ prisma: prismaMock }));
 // Mock the repositories so we assert their calls through the tx client
 // rather than re-testing Prisma internals here.
 vi.mock("@/server/repositories/product-batch.repository", () => ({
-  reserveReceivedBatchQuantity: vi.fn(),
   reserveBatchForPending: vi.fn(),
   upsertBatchQuantity: vi.fn(),
   lockBatchForEntry: vi.fn(),
@@ -52,7 +51,7 @@ vi.mock("@/server/services/notification-outbox.service", () => ({
 import { lockProductForEntry } from "@/server/repositories/product.repository";
 import {
   lockBatchForEntry,
-  reserveReceivedBatchQuantity,
+  reserveBatchForPending,
   upsertBatchQuantity,
 } from "@/server/repositories/product-batch.repository";
 import {
@@ -255,7 +254,7 @@ describe("registerInventoryEntry", () => {
     await registerInventoryEntry({ ...BASE_INPUT, quantity: 6, idempotencyKey: "fifo-6" });
     expect(tx.inventoryAllocation.create).toHaveBeenCalledWith({ data: { inventoryEntryId: "entry_1", missingItemId: "missing-1", pendingId: "pending-1", quantity: 6 } });
     expect(tx.pending.update).toHaveBeenCalledWith({ where: { id: "pending-1" }, data: { inventoryReadyQuantity: 10, reservedInventoryQuantity: 10, availabilityStatus: "DISPONIBLE_COMPLETO" } });
-    expect(reserveReceivedBatchQuantity).toHaveBeenCalledWith(tx, "batch_1", 6);
+    expect(reserveBatchForPending).toHaveBeenCalledWith(tx, "pending-1", "batch_1", 6);
   });
 
   it("marks reports received only after their MissingItem is fully received", async () => {
@@ -300,7 +299,7 @@ describe("registerInventoryEntry", () => {
 
     await registerInventoryEntry({ ...BASE_INPUT, quantity: 10, idempotencyKey: "fifo-all" });
 
-    expect(reserveReceivedBatchQuantity).toHaveBeenCalledWith(tx, "batch_1", 10);
+    expect(reserveBatchForPending).toHaveBeenCalledTimes(2);
     expect(tx.inventoryAllocation.create).toHaveBeenCalledTimes(2);
   });
 

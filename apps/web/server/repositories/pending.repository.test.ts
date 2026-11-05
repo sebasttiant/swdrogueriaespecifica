@@ -97,6 +97,7 @@ describe("updatePendingAfterDelivery", () => {
       expectedStatus: "PARCIAL",
       expectedDeliveredQuantity: 4,
       deliveredQuantity: 10,
+      reservedInventoryQuantity: 0,
       status: "ENTREGADO",
       completedAt,
     });
@@ -104,7 +105,7 @@ describe("updatePendingAfterDelivery", () => {
     expect(written).toBe(1);
     expect(tx.pending.updateMany).toHaveBeenCalledWith({
       where: { id: "pend-1", status: "PARCIAL", deliveredQuantity: 4 },
-      data: { deliveredQuantity: 10, status: "ENTREGADO", completedAt },
+      data: { deliveredQuantity: 10, reservedInventoryQuantity: 0, status: "ENTREGADO", completedAt },
     });
   });
 
@@ -117,6 +118,7 @@ describe("updatePendingAfterDelivery", () => {
       expectedStatus: "PENDIENTE",
       expectedDeliveredQuantity: 0,
       deliveredQuantity: 3,
+      reservedInventoryQuantity: 2,
       status: "PARCIAL",
       completedAt: null,
     });

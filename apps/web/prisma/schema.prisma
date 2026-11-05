@@ -949,6 +949,15 @@ model PendingInventoryReservation {
   @@map("pending_inventory_reservations")
 }
 
+// Issue #332: when the old inventory code stopped writing (one row, set by its
+// migration). The one-time repair only restores reservations created before it.
+model InventoryInvariantCutover {
+  id        Int      @id
+  cutoverAt DateTime
+
+  @@map("inventory_invariant_cutover")
+}
+
 model InventoryCutover {
   id                                  Int                   @id @default(1)
   state                               InventoryCutoverState @default(PREPARED)

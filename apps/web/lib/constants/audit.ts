@@ -98,6 +98,10 @@ export const AUDIT_ACTIONS = {
   // un ajuste declara que el sistema y la realidad no coinciden. Confundirlas
   // haría imposible responder después "¿cuánto entró de verdad este mes?".
   INVENTORY_ADJUST: "inventory.adjust",
+  // One-time #332 repair: units that legacy reception subtracted from a batch
+  // while they stayed on the shelf are returned to its physical total. Its own
+  // action so it is never confused with a counted adjustment.
+  INVENTORY_INVARIANT_RESTORE: "inventory.invariant.restore",
   // Recepción física aceptada explícitamente aunque el producto todavía no
   // tenga código de Orión. Es distinta de ENTRY_CREATE porque debe vivir en la
   // misma transacción que el inventario: si falta este testigo, no entra stock.

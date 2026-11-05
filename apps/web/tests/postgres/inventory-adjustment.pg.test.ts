@@ -268,6 +268,50 @@ describe("adjustBatchQuantity", () => {
     expect(pending.availabilityStatus).toBe("DISPONIBLE_PARCIAL");
   });
 
+  it("con entrega parcial conserva lo entregado y recorta solo la reserva viva", async () => {
+    const batch = await seedBatch(5);
+    const pendingId = await reserve(batch.id, 5);
+    await prisma.productBatch.update({ where: { id: batch.id }, data: { quantity: 3 } });
+    await prisma.pendingInventoryReservation.update({
+      where: { pendingId_batchId: { pendingId, batchId: batch.id } },
+      data: { quantity: 3 },
+    });
+    await prisma.pending.update({
+      where: { id: pendingId },
+      data: {
+        invoicedQuantity: 2,
+        deliveredQuantity: 2,
+        reservedInventoryQuantity: 3,
+        customerStatus: "FACTURADO",
+        status: "PARCIAL",
+      },
+    });
+
+    await adjustBatchQuantity(input({ batchId: batch.id, targetQuantity: 2 }));
+
+    const pending = await prisma.pending.findUniqueOrThrow({ where: { id: pendingId } });
+    expect(pending.deliveredQuantity).toBe(2);
+    expect(pending.inventoryReadyQuantity).toBe(4);
+    expect(pending.reservedInventoryQuantity).toBe(2);
+    expect(pending.availabilityStatus).toBe("DISPONIBLE_PARCIAL");
+  });
+
+  it("al recortar respeta lo ya recibido del faltante abierto", async () => {
+    const batch = await seedBatch(5);
+    const pendingId = await reserve(batch.id, 5);
+    await prisma.pending.update({ where: { id: pendingId }, data: { quantity: 8 } });
+    await prisma.missingItem.create({
+      data: { productId, quantity: 5, receivedQuantity: 2, originId: pendingId, status: "PEDIDO" },
+    });
+
+    await adjustBatchQuantity(input({ batchId: batch.id, targetQuantity: 4 }));
+
+    // Ready 4 of 8: 4 still to source on top of the 2 already received.
+    const missing = await prisma.missingItem.findFirstOrThrow({ where: { originId: pendingId } });
+    expect(missing.receivedQuantity).toBe(2);
+    expect(missing.quantity - missing.receivedQuantity).toBe(4);
+  });
+
   it("un reintento del MISMO intento no ajusta dos veces", async () => {
     const batch = await seedBatch(5);
     const idempotencyKey = randomUUID();

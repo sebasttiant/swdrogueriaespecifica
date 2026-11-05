@@ -1,6 +1,7 @@
 import type { Prisma } from "@/lib/generated/prisma/client";
 import { AUDIT_ACTIONS, AUDIT_MODULES } from "@/lib/constants/audit";
 import {
+  lockProductBatches,
   releasePendingReservations,
   reserveBatchForPending,
   stockByProduct,
@@ -139,9 +140,12 @@ async function upsertDeficitMissingItem(
   }
 
   if (existing) {
+    // `quantity` is the total need and `receivedQuantity` what already came
+    // in, so the outstanding part is their difference. Setting quantity to the
+    // deficit alone forgot partial receipts and could even drop below them.
     await tx.missingItem.update({
       where: { id: existing.id },
-      data: { quantity: input.deficit },
+      data: { quantity: existing.receivedQuantity + input.deficit },
     });
     return;
   }
@@ -171,6 +175,18 @@ export async function reconcilePendingClaimsForProduct(
   },
 ): Promise<ClaimReconcileResult> {
   const now = new Date();
+  // Lock order: products → batches → pendings. Callers hold the product row
+  // FOR UPDATE; the batches and open pendings are locked here BEFORE they are
+  // read, so a concurrent delivery or cancellation cannot change them between
+  // the read and the rebuild.
+  await lockProductBatches(tx, input.productId);
+  await tx.$queryRaw`
+    SELECT id FROM pendings
+    WHERE "productId" = ${input.productId}
+      AND status NOT IN ('ENTREGADO', 'CANCELADO', 'CLOSED_PARTIAL')
+    ORDER BY id
+    FOR UPDATE
+  `;
   const physicalStock = await stockByProduct(input.productId, now, tx);
 
   const pendings = await tx.pending.findMany({
@@ -182,24 +198,41 @@ export async function reconcilePendingClaimsForProduct(
     select: {
       id: true,
       quantity: true,
+      deliveredQuantity: true,
+      invoicedQuantity: true,
       inventoryReadyQuantity: true,
       reservedInventoryQuantity: true,
       availabilityStatus: true,
     },
   });
 
+  // Release every open promise of the product BEFORE rebuilding any of them.
+  // Rebuilding one at a time let a newer pending keep units on a batch while
+  // an older one was looking for free stock, so the oldest could be starved.
+  for (const pending of pendings) {
+    await releasePendingReservations(tx, pending.id);
+  }
+
   let remaining = physicalStock;
   const clampedPendingIds: string[] = [];
 
   for (const pending of pendings) {
-    const keepTarget = Math.min(
-      pending.inventoryReadyQuantity,
-      pending.quantity,
-      remaining,
+    const remainingDemand = Math.max(
+      pending.quantity - pending.deliveredQuantity,
+      0,
     );
+    const desiredLiveReservation = Math.min(
+      remainingDemand,
+      Math.max(
+        pending.inventoryReadyQuantity - pending.deliveredQuantity,
+        pending.invoicedQuantity - pending.deliveredQuantity,
+        0,
+      ),
+    );
+    const keepTarget = Math.min(desiredLiveReservation, remaining);
 
-    // Las reservas se reconstruyen contra el cupo: pueden estar desfasadas del
-    // ready (GLAUCOMED: 15 reservadas con 5 en estante).
+    // Reservations cover only undelivered physical units. Delivered units have
+    // already left the batch and remain represented in inventoryReadyQuantity.
     const placed = await rebuildSoftReservations(
       tx,
       pending.id,
@@ -207,23 +240,24 @@ export async function reconcilePendingClaimsForProduct(
       keepTarget,
       now,
     );
-    const keep = Math.min(keepTarget, placed);
-    remaining -= keep;
+    const keepReservation = Math.min(keepTarget, placed);
+    const keepReady = pending.deliveredQuantity + keepReservation;
+    remaining -= keepReservation;
 
     if (
-      keep === pending.inventoryReadyQuantity &&
-      keep === pending.reservedInventoryQuantity &&
+      keepReady === pending.inventoryReadyQuantity &&
+      keepReservation === pending.reservedInventoryQuantity &&
       placed === keepTarget
     ) {
       continue;
     }
 
-    const availabilityStatus = availabilityFor(pending.quantity, keep);
+    const availabilityStatus = availabilityFor(pending.quantity, keepReady);
     await tx.pending.update({
       where: { id: pending.id },
       data: {
-        inventoryReadyQuantity: keep,
-        reservedInventoryQuantity: keep,
+        inventoryReadyQuantity: keepReady,
+        reservedInventoryQuantity: keepReservation,
         availabilityStatus,
       },
     });
@@ -231,7 +265,7 @@ export async function reconcilePendingClaimsForProduct(
     await upsertDeficitMissingItem(tx, {
       pendingId: pending.id,
       productId: input.productId,
-      deficit: pending.quantity - keep,
+      deficit: pending.quantity - keepReady,
       actorId: input.actorId,
     });
 
@@ -246,8 +280,8 @@ export async function reconcilePendingClaimsForProduct(
         availabilityStatus: pending.availabilityStatus,
       },
       after: {
-        inventoryReadyQuantity: keep,
-        reservedInventoryQuantity: keep,
+        inventoryReadyQuantity: keepReady,
+        reservedInventoryQuantity: keepReservation,
         availabilityStatus,
         reason: input.reason,
         physicalStock,

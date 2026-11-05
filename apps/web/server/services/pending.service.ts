@@ -65,10 +65,12 @@ import { normalizeOrionCode } from "@/server/domain/catalog/sku-identity";
 import { findProductsSharingOrionIdentity } from "@/server/repositories/sku-review.repository";
 import { createMissingItem } from "@/server/repositories/missing-item.repository";
 import {
-  claimableStockForPending,
   consumePendingReservations,
   liveReservedQuantityForPending,
+  lockProductBatches,
+  lockReservationBatchesForPending,
   releasePendingReservations,
+  reserveClaimableStockForPending,
   lockReservedQuantityForPending,
 } from "@/server/repositories/product-batch.repository";
 import { prisma } from "@/lib/db/prisma";
@@ -666,12 +668,12 @@ function createPendingRegistration(
         context: { userId: data.createdById ?? null },
       });
     }
-    const inventoryReadyQuantity = await claimableStockForPending(
-      tx,
+    const inventoryReadyQuantity = await reserveClaimableStockForPending(tx, {
+      pendingId: pending.id,
       productId,
-      data.quantity,
-      new Date(),
-    );
+      requestedQuantity: data.quantity,
+      now: new Date(),
+    });
     await tx.pending.update({
       where: { id: pending.id },
       data: {
@@ -775,9 +777,20 @@ export async function deliverPending(
   now: Date = new Date(),
 ): Promise<DeliverPendingResult> {
   return prisma.$transaction(async (tx) => {
+    // Global lock order: product → reservation batches → pending → reservations.
+    // Reception follows the same product/batch-before-pending order, so delivery
+    // can consume physical stock without forming a deadlock cycle with an entry.
+    const productId = await readPendingProductId(tx, input.id);
+    if (!productId) throw new Error("Pending not found");
+    await lockProductForPendingReference(tx, productId);
+    await lockReservationBatchesForPending(tx, input.id);
+
     const current = await lockPendingForUpdate(tx, input.id);
     if (!current) {
       throw new Error("Pending not found");
+    }
+    if (current.productId !== productId) {
+      throw new PendingConcurrentModificationError(current.id);
     }
 
     // Reintento del MISMO intento (doble tap, reenvío tras un timeout): con la
@@ -856,6 +869,9 @@ export async function deliverPending(
       expectedStatus: current.status,
       expectedDeliveredQuantity: current.deliveredQuantity,
       deliveredQuantity,
+      // From the live ledger read under lock, never from the stored counter:
+      // a stale counter must not be carried forward.
+      reservedInventoryQuantity: reservedQuantity - input.quantity,
       status,
       completedAt,
     });
@@ -956,7 +972,14 @@ export async function cancelPendingCommitment(
       where: { originId: current.id, status: { in: ["FALTANTE", "PEDIDO", "EN_BODEGA"] } },
       data: { status: "CANCELADO" },
     });
-    await tx.pending.update({ where: { id: current.id }, data: { customerStatus: "CANCELADO" } });
+    await tx.pending.update({
+      where: { id: current.id },
+      data: {
+        customerStatus: "CANCELADO",
+        inventoryReadyQuantity: current.deliveredQuantity,
+        reservedInventoryQuantity: 0,
+      },
+    });
 
     return {
       pending: { id: current.id, status: "CANCELADO", cancelledAt: now },
@@ -1088,6 +1111,8 @@ export async function resolveWaitlistDecision(
         status: "CLOSED_PARTIAL",
         customerStatus: "ENTREGADO",
         cancelledQuantity: remaining,
+        inventoryReadyQuantity: current.deliveredQuantity,
+        reservedInventoryQuantity: 0,
         completedAt: now,
         cancelReason: `Cerrado sin los ${remaining} restantes: el cliente no los espera`,
       },
@@ -1243,8 +1268,13 @@ export async function invoicePending(
       if (pending.invoicedQuantity !== input.expectedInvoicedQuantity) return "STALE";
 
       const pendingToInvoice = Math.max(pending.quantity - pending.invoicedQuantity, 0);
+      const liveReservedQuantity = await liveReservedQuantityForPending(tx, pending.id);
+      const invoicedNotDelivered = Math.max(
+        pending.invoicedQuantity - pending.deliveredQuantity,
+        0,
+      );
       const stockToInvoice = Math.max(
-        pending.inventoryReadyQuantity - pending.invoicedQuantity,
+        liveReservedQuantity - invoicedNotDelivered,
         0,
       );
 
@@ -1660,6 +1690,75 @@ async function hasSupplyInProgress(
   return (await liveReservedQuantityForPending(tx, current.id)) > 0;
 }
 
+/**
+ * Rebuilds a pending's claim against the current shelf, as registration would:
+ * releases its live reservations, reserves what is still owed (quantity minus
+ * delivered) from free stock, and keeps exactly one open missing item for the
+ * rest. Delivered units already left the shelf, so they count as ready but are
+ * never reserved or bought again. Caller must hold product → batches → pending
+ * locks.
+ */
+async function reclaimPendingStock(
+  tx: Prisma.TransactionClient,
+  input: {
+    pendingId: string;
+    productId: string;
+    quantity: number;
+    deliveredQuantity: number;
+    ownerId: string | null;
+    now: Date;
+  },
+): Promise<void> {
+  await releasePendingReservations(tx, input.pendingId);
+  const owed = Math.max(input.quantity - input.deliveredQuantity, 0);
+  const reserved = await reserveClaimableStockForPending(tx, {
+    pendingId: input.pendingId,
+    productId: input.productId,
+    requestedQuantity: owed,
+    now: input.now,
+  });
+  const ready = input.deliveredQuantity + reserved;
+  await tx.pending.update({
+    where: { id: input.pendingId },
+    data: {
+      inventoryReadyQuantity: ready,
+      reservedInventoryQuantity: reserved,
+      availabilityStatus:
+        ready === 0 ? "ESPERANDO" : ready >= input.quantity ? "DISPONIBLE_COMPLETO" : "DISPONIBLE_PARCIAL",
+    },
+  });
+
+  const deficit = computeMissingQuantity(input.quantity, ready);
+  const open = await tx.missingItem.findFirst({
+    where: {
+      originId: input.pendingId,
+      productId: input.productId,
+      status: { in: ["FALTANTE", "PEDIDO", "EN_BODEGA"] },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  if (open) {
+    // `quantity` is the total need and `receivedQuantity` what already came
+    // in, so the outstanding part is their difference.
+    await tx.missingItem.update({
+      where: { id: open.id },
+      data: deficit > 0 ? { quantity: open.receivedQuantity + deficit } : { status: "CANCELADO" },
+    });
+  } else if (deficit > 0) {
+    await createMissingItem(
+      {
+        productId: input.productId,
+        quantity: deficit,
+        originId: input.pendingId,
+        // Same attribution as registration: the need belongs to the pending's
+        // owner. Who corrected it is recorded by the audit.
+        createdById: input.ownerId,
+      },
+      tx,
+    );
+  }
+}
+
 export async function updatePending(
   input: UpdatePendingInput,
   now: Date = new Date(),
@@ -1677,8 +1776,15 @@ export async function updatePending(
     // escritura por SQL crudo de `productId` tendría que actualizar
     // `"updatedAt"` también, o esta lectura sin candado dejaría de ser segura.
     const storedProductId = await readPendingProductId(tx, input.id);
-    if (storedProductId !== null && storedProductId !== input.productId) {
+    if (storedProductId !== null) {
+      // Global lock order: products → batches → pendings. A correction may
+      // release and re-reserve stock, so it takes the product and the batches
+      // it can touch BEFORE the pending, like delivery and reception do.
+      // Taking the pending first and the batches later formed a cycle with a
+      // delivery of the same pending (batches → pending).
       await lockProductForPendingReference(tx, input.productId);
+      await lockReservationBatchesForPending(tx, input.id);
+      await lockProductBatches(tx, input.productId);
     }
 
     const current = await lockPendingForEdit(tx, input.id);
@@ -1731,12 +1837,11 @@ export async function updatePending(
       }
       if (input.protectedFields.state === "invalid") return rejectUpdate("INVALID_DATA");
       protectedValues = input.protectedFields.values;
-      // CONTENCIÓN (defecto conocido, sin corregir): soltar una reserva que
-      // asignó la recepción pierde las unidades, porque la recepción ya las
-      // sacó del lote y `releasePendingReservations` no las devuelve. Hasta
-      // que se corrija, el dueño de un pendiente con mercadería apartada no le
-      // cambia el producto salvo que tenga autoridad de compras. Gerencia sobre
-      // una fila ajena queda como estaba.
+      // The owner of a pending with goods set aside cannot change its product
+      // without purchasing authority: that would hand the reserved units back
+      // and re-source the order. Releasing no longer loses stock (#332), but
+      // the decision stays with purchasing. Management on another's row is
+      // unchanged.
       if (
         isOwner &&
         !input.canOrder &&
@@ -1759,6 +1864,21 @@ export async function updatePending(
       ? allFieldsUnchanged(current, input, protectedValues)
       : operationalFieldsUnchanged(current, input);
     if (unchanged) return { rejection: null, before: current, outcome: "UNCHANGED", restricted };
+
+    // A product or quantity change rebuilds the claim. The old claim is
+    // released BEFORE the new quantity is written: the database rejects ready
+    // above quantity, so lowering the quantity with the old claim still in
+    // place failed. Released, ready is the delivered quantity, which the
+    // BELOW_COMMITTED rule above already keeps within the new quantity.
+    const claimChanges =
+      current.productId !== input.productId || current.quantity !== input.quantity;
+    if (claimChanges) {
+      await releasePendingReservations(tx, current.id);
+      await tx.pending.update({
+        where: { id: current.id },
+        data: { inventoryReadyQuantity: current.deliveredQuantity, reservedInventoryQuantity: 0 },
+      });
+    }
 
     // 7. Escritura. La restringida no puede tocar identidad, montos, vendedor
     //    escrito ni dueño: su helper no tiene esas columnas.
@@ -1792,23 +1912,27 @@ export async function updatePending(
       });
     }
 
-    // Cambiar de producto invalida el faltante que este pendiente originó: se
-    // generó para conseguir OTRA cosa. Se cancela para que nadie compre lo que
-    // ya nadie pidió; el déficit del producto nuevo lo levanta la próxima
-    // lectura de disponibilidad.
-    if (current.productId !== input.productId) {
+    // Changing the product invalidates the missing item this pending raised:
+    // it was created to source ANOTHER product, so it is cancelled. Then the
+    // claim is rebuilt, for a product change and for a quantity change alike
+    // (#332): without it a product change left the pending in ESPERANDO with
+    // no missing item, invisible to reception, and a quantity change kept
+    // reservations that no longer matched what the customer asked for.
+    const productChanged = current.productId !== input.productId;
+    if (productChanged) {
       await tx.missingItem.updateMany({
         where: { originId: current.id, status: { in: ["FALTANTE", "PEDIDO", "EN_BODEGA"] } },
         data: { status: "CANCELADO" },
       });
-      await releasePendingReservations(tx, current.id);
-      await tx.pending.update({
-        where: { id: current.id },
-        data: {
-          inventoryReadyQuantity: 0,
-          reservedInventoryQuantity: 0,
-          availabilityStatus: "ESPERANDO",
-        },
+    }
+    if (claimChanges) {
+      await reclaimPendingStock(tx, {
+        pendingId: current.id,
+        productId: input.productId,
+        quantity: input.quantity,
+        deliveredQuantity: current.deliveredQuantity,
+        ownerId: current.createdById,
+        now,
       });
     }
 

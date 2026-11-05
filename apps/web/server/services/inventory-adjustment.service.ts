@@ -166,6 +166,17 @@ export async function adjustBatchQuantity(
       };
     }
 
+    // Lock order: products → batches → pendings. The product row goes first and
+    // FOR UPDATE: the reconcile below rewrites reservations on every batch of
+    // the product, so registration, delivery and correction (which hold at
+    // least KEY SHARE on the product) must wait for the whole adjustment.
+    await tx.$queryRaw`
+      SELECT p.id FROM products p
+      JOIN product_batches b ON b."productId" = p.id
+      WHERE b.id = ${input.batchId}
+      FOR UPDATE OF p
+    `;
+
     // FOR UPDATE serializa a quien toque ESTE lote. Sin el lock, dos ajustes
     // simultáneos leen la misma cantidad vieja y el segundo pisa al primero.
     const locked = await tx.$queryRaw<{ quantity: number; productId: string }[]>`

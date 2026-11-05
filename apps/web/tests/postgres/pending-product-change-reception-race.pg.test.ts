@@ -222,9 +222,9 @@ async function assertInvariants(pendingId: string) {
   const reserved = reservations.reduce((total, r) => total + r.quantity, 0);
   expect(pending.inventoryReadyQuantity).toBe(reserved);
 
-  // 3. Conservación, por producto: lo recibido está en el estante, reservado o
-  //    entregado. Nunca desaparece. (Las entregas consumen reservas sin tocar el
-  //    lote; estos escenarios no entregan, pero el término va igual.)
+  // 3. Conservación, por producto: el lote es el total físico. La reserva es
+  //    un subconjunto y una entrega reduce el lote; por eso recibido menos
+  //    entregado equivale al físico actual, y reservas nunca lo superan.
   for (const productId of [productA, productB]) {
     const [received, shelf, reservedHere, delivered] = await Promise.all([
       prisma.inventoryEntry.aggregate({ where: { productId }, _sum: { quantity: true } }),
@@ -235,9 +235,12 @@ async function assertInvariants(pendingId: string) {
       }),
       prisma.pendingDelivery.aggregate({ where: { pending: { productId } }, _sum: { quantity: true } }),
     ]);
-    expect(
-      (shelf._sum.quantity ?? 0) + (reservedHere._sum.quantity ?? 0) + (delivered._sum.quantity ?? 0),
-    ).toBe(received._sum.quantity ?? 0);
+    expect((shelf._sum.quantity ?? 0) + (delivered._sum.quantity ?? 0)).toBe(
+      received._sum.quantity ?? 0,
+    );
+    expect(reservedHere._sum.quantity ?? 0).toBeLessThanOrEqual(
+      shelf._sum.quantity ?? 0,
+    );
   }
 }
 
@@ -528,22 +531,25 @@ describe("ventana entre pendientes y faltantes de la recepción", () => {
       expect(allocations.map((a) => a.pendingId)).toEqual([pendingId]);
       expect(allocations.reduce((total, a) => total + a.quantity, 0)).toBe(5);
 
-      // El tardío nació DESPUÉS de la entrada y su faltante no recibió nada de
-      // ella, aunque sobraron 5 en el estante. (El alta no las ve libres: el
-      // reparto de stock descuenta `inventoryReadyQuantity` de P, que la
-      // recepción ya sacó del lote; ese doble descuento es previo y ajeno a
-      // este test, que solo mira que el tardío no entre en la ventana.)
+      // El tardío nació DESPUÉS de la entrada: no participa de la asignación
+      // FIFO de esa recepción, pero sí reserva las 5 unidades físicas que
+      // quedaron libres y crea un faltante únicamente por las 3 restantes.
       const entry = await prisma.inventoryEntry.findUniqueOrThrow({ where: { id: r.value.entry.id } });
       const lateMissing = await prisma.missingItem.findUniqueOrThrow({
         where: { id: l.value.missingItemId },
       });
       expect(lateMissing.createdAt.getTime()).toBeGreaterThanOrEqual(entry.createdAt.getTime());
+      expect(lateMissing.quantity).toBe(3);
       expect(lateMissing.receivedQuantity).toBe(0);
       expect(
         await prisma.inventoryAllocation.count({ where: { missingItemId: l.value.missingItemId } }),
       ).toBe(0);
+      const latePending = await prisma.pending.findUniqueOrThrow({
+        where: { id: l.value.pendingId },
+      });
+      expect(latePending.inventoryReadyQuantity).toBe(5);
 
-      // Conservación del producto: 10 recibidas = 5 en el estante + 5 reservadas.
+      // Conservación del producto: 10 recibidas, 10 físicas, 10 reservadas.
       await assertInvariants(l.value.pendingId);
       await assertInvariants(pendingId);
       await cleanup();

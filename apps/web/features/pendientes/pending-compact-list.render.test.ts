@@ -766,7 +766,7 @@ describe("PendingCompactList · qué pasó con el pendiente", () => {
       pending({ quantity: 10, availabilityStatus: "DISPONIBLE_PARCIAL", inventoryReadyQuantity: 6 }),
     ]);
 
-    expect(countOccurrences(html, arrivalLine("Ya llegó parte a bodega"))).toBe(2);
+    expect(countOccurrences(html, arrivalLine("Reservado en bodega: una parte"))).toBe(2);
     expect(countOccurrences(html, "Listo para facturar: 6 de 10")).toBe(2);
   });
 
@@ -801,7 +801,7 @@ describe("PendingCompactList · qué pasó con el pendiente", () => {
       }),
     ]);
 
-    expect(countOccurrences(html, arrivalLine("Ya llegó a bodega"))).toBe(2);
+    expect(countOccurrences(html, arrivalLine("Reservado en bodega"))).toBe(2);
     expect(countOccurrences(html, "Listo para entregar")).toBe(2);
   });
 

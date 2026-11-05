@@ -707,7 +707,7 @@ describe("PendingList · qué pasó con el pendiente", () => {
       ],
     });
 
-    expect(html).toContain(arrivalLine("Ya llegó parte a bodega"));
+    expect(html).toContain(arrivalLine("Reservado en bodega: una parte"));
     expect(html).toContain("Listo para facturar: 6 de 10");
   });
 
@@ -746,7 +746,7 @@ describe("PendingList · qué pasó con el pendiente", () => {
       ],
     });
 
-    expect(html).toContain(arrivalLine("Ya llegó a bodega"));
+    expect(html).toContain(arrivalLine("Reservado en bodega"));
     expect(html).toContain("Listo para entregar");
   });
 

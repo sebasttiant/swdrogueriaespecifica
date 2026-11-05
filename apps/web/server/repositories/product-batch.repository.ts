@@ -410,21 +410,6 @@ export async function upsertBatchQuantity(
   });
 }
 
-/**
- * Removes units from the sellable balance of the batch that received them.
- * Allocations are reservations, so they must not remain available globally.
- */
-export function reserveReceivedBatchQuantity(
-  client: Prisma.TransactionClient,
-  batchId: string,
-  quantity: number,
-) {
-  return client.productBatch.update({
-    where: { id: batchId },
-    data: { quantity: { decrement: quantity } },
-  });
-}
-
 // Stock vendible: DISPONIBLE + con stock + no vencido. SUM por SQL, no en JS.
 // `client` permite leer el stock dentro de la misma transacción que lo consume
 // (pending.service), manteniendo la lectura consistente con las escrituras.
@@ -451,6 +436,34 @@ export async function stockByProduct(
 }
 
 /**
+ * Sellable stock: physical units minus units already reserved for open
+ * pendings. `stockByProduct` stays the physical total because reconciliation
+ * measures promises against it; screens that say "vendible" must use this.
+ */
+export async function freeStockByProduct(
+  productId: string,
+  now: Date = new Date(),
+  client: Prisma.TransactionClient = prisma,
+): Promise<number> {
+  const [physical, reserved] = await Promise.all([
+    stockByProduct(productId, now, client),
+    client.pendingInventoryReservation.aggregate({
+      where: {
+        batch: {
+          productId,
+          status: "DISPONIBLE",
+          quantity: { gt: 0 },
+          OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+        },
+        pending: { status: { notIn: ["ENTREGADO", "CANCELADO", "CLOSED_PARTIAL"] } },
+      },
+      _sum: { quantity: true },
+    }),
+  ]);
+  return Math.max(physical - (reserved._sum.quantity ?? 0), 0);
+}
+
+/**
  * Units a new Pending can claim, WITHOUT touching physical stock.
  *
  * Registering a customer request must never move `product_batches.quantity`:
@@ -464,34 +477,62 @@ export async function stockByProduct(
  * never written — so two simultaneous registrations of the same product cannot
  * both claim the same remainder.
  */
+type ClaimableBatch = {
+  id: string;
+  quantity: number;
+  reserved: number;
+};
+
+async function lockClaimableBatches(
+  client: Prisma.TransactionClient,
+  productId: string,
+  now: Date,
+): Promise<ClaimableBatch[]> {
+  const batches = await client.$queryRaw<Array<{ id: string; quantity: number }>>`
+    SELECT pb.id, pb.quantity
+    FROM product_batches pb
+    WHERE pb."productId" = ${productId}
+      AND pb.status = 'DISPONIBLE'
+      AND pb.quantity > 0
+      AND (pb."expiresAt" IS NULL OR pb."expiresAt" > ${now})
+    ORDER BY pb."expiresAt" ASC NULLS LAST, pb.id ASC
+    FOR UPDATE OF pb
+  `;
+  if (batches.length === 0) return [];
+
+  // This must be a second statement. Under READ COMMITTED, a transaction that
+  // waited for the batch lock gets a fresh snapshot here and sees reservations
+  // committed by the transaction that held the lock before it.
+  const reserved = await client.pendingInventoryReservation.groupBy({
+    by: ["batchId"],
+    where: {
+      batchId: { in: batches.map((batch) => batch.id) },
+      pending: {
+        status: { notIn: ["ENTREGADO", "CANCELADO", "CLOSED_PARTIAL"] },
+      },
+    },
+    _sum: { quantity: true },
+  });
+  const byBatch = new Map(
+    reserved.map((row) => [row.batchId, row._sum.quantity ?? 0]),
+  );
+  return batches.map((batch) => ({
+    ...batch,
+    reserved: byBatch.get(batch.id) ?? 0,
+  }));
+}
+
 export async function claimableStockForPending(
   client: Prisma.TransactionClient,
   productId: string,
   requestedQuantity: number,
   now: Date = new Date(),
 ): Promise<number> {
-  // El mismo predicado que `stockByProduct`, en SQL: un lote sin vencimiento es
-  // stock reclamable. Las dos lecturas TIENEN que coincidir, porque el techo se
-  // calcula con una y las filas se bloquean con la otra.
-  //
-  // `ORDER BY ... ASC` en PostgreSQL es NULLS LAST, que es justo el orden que se
-  // quiere: primero lo que vence antes, y lo que no se sabe cuándo vence al
-  // final. Es lo mismo que `Lot` documenta en el esquema.
-  await client.$queryRaw`
-    SELECT id FROM product_batches
-    WHERE "productId" = ${productId} AND status = 'DISPONIBLE'
-      AND quantity > 0 AND ("expiresAt" IS NULL OR "expiresAt" > ${now})
-    ORDER BY "expiresAt" ASC, id ASC FOR UPDATE
-  `;
-
-  const physical = await stockByProduct(productId, now, client);
-  const committed = await client.pending.aggregate({
-    // T2.2b: un cierre parcial es terminal y no compromete stock.
-    where: { productId, status: { notIn: ["ENTREGADO", "CANCELADO", "CLOSED_PARTIAL"] } },
-    _sum: { inventoryReadyQuantity: true },
-  });
-
-  const free = Math.max(physical - (committed._sum.inventoryReadyQuantity ?? 0), 0);
+  const batches = await lockClaimableBatches(client, productId, now);
+  const free = batches.reduce(
+    (total, batch) => total + Math.max(batch.quantity - batch.reserved, 0),
+    0,
+  );
   return Math.min(requestedQuantity, free);
 }
 
@@ -506,6 +547,65 @@ export async function reserveBatchForPending(
     create: { pendingId, batchId, quantity },
     update: { quantity: { increment: quantity } },
   });
+}
+
+export async function reserveClaimableStockForPending(
+  client: Prisma.TransactionClient,
+  params: {
+    pendingId: string;
+    productId: string;
+    requestedQuantity: number;
+    now?: Date;
+  },
+): Promise<number> {
+  const batches = await lockClaimableBatches(
+    client,
+    params.productId,
+    params.now ?? new Date(),
+  );
+  let remaining = params.requestedQuantity;
+  let reserved = 0;
+  for (const batch of batches) {
+    if (remaining === 0) break;
+    const available = Math.max(batch.quantity - batch.reserved, 0);
+    const quantity = Math.min(available, remaining);
+    if (quantity === 0) continue;
+    await reserveBatchForPending(client, params.pendingId, batch.id, quantity);
+    reserved += quantity;
+    remaining -= quantity;
+  }
+  return reserved;
+}
+
+// Every FOR UPDATE on product_batches uses this one total order:
+// "expiresAt" ASC NULLS LAST, id ASC. Two paths locking overlapping batch sets
+// in different orders deadlock (40P01), so no path may pick its own order.
+
+export async function lockReservationBatchesForPending(
+  client: Prisma.TransactionClient,
+  pendingId: string,
+): Promise<void> {
+  await client.$queryRaw`
+    SELECT pb.id
+    FROM product_batches pb
+    JOIN pending_inventory_reservations pir ON pir."batchId" = pb.id
+    WHERE pir."pendingId" = ${pendingId}
+    ORDER BY pb."expiresAt" ASC NULLS LAST, pb.id ASC
+    FOR UPDATE OF pb
+  `;
+}
+
+/** Locks every batch of a product, in the canonical batch order. */
+export async function lockProductBatches(
+  client: Prisma.TransactionClient,
+  productId: string,
+): Promise<void> {
+  await client.$queryRaw`
+    SELECT id FROM product_batches
+    WHERE "productId" = ${productId}
+    ORDER BY "expiresAt" ASC NULLS LAST, id ASC
+    FOR UPDATE
+  `;
 }
 
 /**
@@ -592,6 +692,13 @@ export async function consumePendingReservations(
   for (const reservation of reservations) {
     if (remaining === 0) break;
     const consumed = Math.min(reservation.quantity, remaining);
+    const physical = await client.productBatch.updateMany({
+      where: { id: reservation.batchId, quantity: { gte: consumed } },
+      data: { quantity: { decrement: consumed } },
+    });
+    if (physical.count !== 1) {
+      throw new Error("Pending reservation exceeds physical batch quantity");
+    }
     if (consumed === reservation.quantity) {
       await client.pendingInventoryReservation.delete({ where: { id: reservation.id } });
     } else {

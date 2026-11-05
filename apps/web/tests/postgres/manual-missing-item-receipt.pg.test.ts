@@ -212,8 +212,8 @@ describe("informativo viejo + pendiente de cliente nuevo", () => {
       where: { pendingId_batchId: { pendingId: pending.id, batchId: batch.id } },
     });
     expect(reservation.quantity).toBe(6);
-    // Reservar baja el saldo vendible del lote: todo quedó comprometido.
-    expect(batch.quantity).toBe(0);
+    // The batch keeps its physical total; the reservation commits all of it.
+    expect(batch.quantity).toBe(6);
 
     // El informativo, intacto.
     const informativoAfter = await prisma.missingItem.findUniqueOrThrow({ where: { id: informativo.id } });
@@ -229,7 +229,14 @@ describe("informativo viejo + pendiente de cliente nuevo", () => {
 
     const pendingAfter = await prisma.pending.findUniqueOrThrow({ where: { id: pending.id } });
     expect(pendingAfter.inventoryReadyQuantity).toBe(6);
-    expect((await onlyBatch()).quantity).toBe(4);
+    // Physical 10, reserved 6: the 4 left over stay sellable.
+    const batch = await onlyBatch();
+    expect(batch.quantity).toBe(10);
+    const reserved = await prisma.pendingInventoryReservation.aggregate({
+      where: { batchId: batch.id },
+      _sum: { quantity: true },
+    });
+    expect(batch.quantity - (reserved._sum.quantity ?? 0)).toBe(4);
 
     const informativoAfter = await prisma.missingItem.findUniqueOrThrow({ where: { id: informativo.id } });
     expect(informativoAfter.receivedQuantity).toBe(0);

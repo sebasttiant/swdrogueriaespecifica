@@ -212,9 +212,12 @@ async function assertInvariants(pendingIds: string[]) {
       prisma.pendingInventoryReservation.aggregate({ where: { batch: { productId } }, _sum: { quantity: true } }),
       prisma.pendingDelivery.aggregate({ where: { pending: { productId } }, _sum: { quantity: true } }),
     ]);
-    expect(
-      (shelf._sum.quantity ?? 0) + (reserved._sum.quantity ?? 0) + (delivered._sum.quantity ?? 0),
-    ).toBe(received._sum.quantity ?? 0);
+    // Physical-total invariant: the shelf holds everything received and not
+    // delivered; live reservations are a subset of it.
+    expect((shelf._sum.quantity ?? 0) + (delivered._sum.quantity ?? 0)).toBe(
+      received._sum.quantity ?? 0,
+    );
+    expect(reserved._sum.quantity ?? 0).toBeLessThanOrEqual(shelf._sum.quantity ?? 0);
   }
 }
 

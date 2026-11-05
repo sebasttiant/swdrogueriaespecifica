@@ -304,10 +304,14 @@ describe("pendingStateTone", () => {
 // una fila puede haber llegado y además estar lista para facturar.
 // --------------------------------------------------------------------------
 describe("arrivalNotice", () => {
+  // Only LLEGO_BODEGA is a warehouse arrival event. DISPONIBLE_* means stock is
+  // reserved for the pending, which also happens at registration when units
+  // were already on the shelf: calling that "arrived" is what misled sellers
+  // on 2026-11-04 (#332).
   it.each([
     ["LLEGO_BODEGA", "Ya llegó a bodega"],
-    ["DISPONIBLE_COMPLETO", "Ya llegó a bodega"],
-    ["DISPONIBLE_PARCIAL", "Ya llegó parte a bodega"],
+    ["DISPONIBLE_COMPLETO", "Reservado en bodega"],
+    ["DISPONIBLE_PARCIAL", "Reservado en bodega: una parte"],
   ] as const)("%s dice %s", (availabilityStatus, label) => {
     expect(arrivalNotice(pending({ availabilityStatus }))).toBe(label);
   });
@@ -332,7 +336,7 @@ describe("arrivalNotice", () => {
   it("convive con listo para facturar: se dicen las dos cosas", () => {
     const fila = pending({ availabilityStatus: "DISPONIBLE_COMPLETO", inventoryReadyQuantity: 10 });
 
-    expect(arrivalNotice(fila)).toBe("Ya llegó a bodega");
+    expect(arrivalNotice(fila)).toBe("Reservado en bodega");
     expect(fulfillmentNotice(fila)).toEqual({ label: "Listo para facturar", tone: "warning" });
   });
 });
