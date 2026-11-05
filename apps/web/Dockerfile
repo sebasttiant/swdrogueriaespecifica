@@ -102,6 +102,13 @@ ENV PATH="/app/apps/web/node_modules/.bin:/app/node_modules/.bin:$PATH"
 USER node
 ENTRYPOINT ["node_modules/.bin/tsx", "prisma/reconcile-pending-claims.ts"]
 
+# ---------- One-time #332 repair: physical-total batches + real reservations ----------
+FROM builder AS repair-invariant
+WORKDIR /app/apps/web
+ENV PATH="/app/apps/web/node_modules/.bin:/app/node_modules/.bin:$PATH"
+USER node
+ENTRYPOINT ["node_modules/.bin/tsx", "prisma/repair-inventory-invariant.ts"]
+
 # ---------- runner ----------
 FROM node:24.22.1-trixie-slim AS runner
 WORKDIR /app

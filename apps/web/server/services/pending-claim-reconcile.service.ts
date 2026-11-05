@@ -190,6 +190,13 @@ export async function reconcilePendingClaimsForProduct(
     },
   });
 
+  // Release every open promise of the product BEFORE rebuilding any of them.
+  // Rebuilding one at a time let a newer pending keep units on a batch while
+  // an older one was looking for free stock, so the oldest could be starved.
+  for (const pending of pendings) {
+    await releasePendingReservations(tx, pending.id);
+  }
+
   let remaining = physicalStock;
   const clampedPendingIds: string[] = [];
 

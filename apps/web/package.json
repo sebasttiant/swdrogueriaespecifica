@@ -26,6 +26,7 @@
     "db:backfill:reportes": "tsx prisma/backfill-missing-reports.ts",
     "postinstall": "prisma generate",
     "db:repair:identidad": "tsx prisma/repair-product-identity.ts",
+    "db:repair:invariante": "tsx prisma/repair-inventory-invariant.ts",
     "db:normalize:orion": "tsx prisma/normalize-orion-codes.ts",
     "db:merge:orion": "tsx prisma/merge-orion-conflicts.ts",
     "db:reconcile:claims": "tsx prisma/reconcile-pending-claims.ts"
