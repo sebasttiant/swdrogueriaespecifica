@@ -92,6 +92,11 @@ async function snapshot() {
 
 const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000);
 
+/** Moves the deploy cutover written by the migration. */
+async function setCutover(at: Date) {
+  await prisma.inventoryInvariantCutover.update({ where: { id: 1 }, data: { cutoverAt: at } });
+}
+
 /**
  * The MINOXITEN incident: 2 historical units promised without a reservation,
  * then a reception of 4 allocated 3 (2 + 1) and subtracted them from the batch.
@@ -116,11 +121,21 @@ async function seedOverPromised() {
   return { productId, batchId: b.id, olderId: older.id, newerId: newer.id };
 }
 
+let originalCutover: Date;
+
 beforeEach(async () => {
   actorId = (await prisma.user.create({ data: { email: `repair-${randomUUID()}@test.local`, name: "Admin" } })).id;
+  originalCutover = (await prisma.inventoryInvariantCutover.findUniqueOrThrow({ where: { id: 1 } })).cutoverAt;
+  // Legacy scenarios: everything seeded below was written by the OLD code.
+  await setCutover(new Date(Date.now() + 3_600_000));
 });
 
 afterEach(async () => {
+  await prisma.inventoryInvariantCutover.upsert({
+    where: { id: 1 },
+    update: { cutoverAt: originalCutover },
+    create: { id: 1, cutoverAt: originalCutover },
+  });
   await prisma.operationalCommand.deleteMany({ where: { commandType: INVENTORY_INVARIANT_REPAIR_COMMAND } });
   await prisma.pendingInventoryReservation.deleteMany({ where: { batch: { productId: { in: productIds } } } });
   await prisma.inventoryAllocation.deleteMany({ where: { missingItem: { productId: { in: productIds } } } });
@@ -249,6 +264,89 @@ describe("repairInventoryInvariant · pendings without a missing item", () => {
 
     expect(report.orphans).toEqual([{ pendingId: orphan.id, productId, deficit: 3 }]);
     expect(await prisma.missingItem.count({ where: { originId: orphan.id } })).toBe(0);
+  });
+});
+
+describe("repairInventoryInvariant · deploy cutover", () => {
+  it("never restores a reception reservation written by the new code", async () => {
+    await setCutover(hoursAgo(1));
+    const productId = await product("NEW-RECEPTION");
+    const b = await batch(productId, 5);
+    const p = await pending(productId, 2, 2, hoursAgo(1));
+    await legacyReceptionReservation(p.id, productId, b.id, 2);
+
+    const plan = await repairInventoryInvariant({ actorId, apply: false });
+    expect(plan.status).toBe("planned");
+    expect(plan.restores).toEqual([]);
+    expect(plan.blockers).toEqual([]);
+
+    await repairInventoryInvariant({ actorId, apply: true, expectedFingerprint: plan.fingerprint });
+    expect((await prisma.productBatch.findUniqueOrThrow({ where: { id: b.id } })).quantity).toBe(5);
+  });
+
+  it("a reservation without reception evidence after the cutover does not block", async () => {
+    await setCutover(hoursAgo(1));
+    const productId = await product("NEW-SOFT");
+    const b = await batch(productId, 2);
+    const p = await pending(productId, 2, 2, hoursAgo(1));
+    await prisma.pendingInventoryReservation.create({ data: { pendingId: p.id, batchId: b.id, quantity: 2 } });
+
+    const plan = await repairInventoryInvariant({ actorId, apply: false });
+
+    expect(plan.status).toBe("planned");
+    expect(plan.blockers).toEqual([]);
+  });
+
+  it("blocks when the cutover row is missing", async () => {
+    await seedMinoxiten();
+    await prisma.inventoryInvariantCutover.delete({ where: { id: 1 } });
+    const before = await snapshot();
+
+    const report = await repairInventoryInvariant({ actorId, apply: false });
+
+    expect(report.status).toBe("blocked");
+    expect(report.blockers.join(" ")).toContain("corte");
+    expect(await snapshot()).toEqual(before);
+  });
+});
+
+describe("repairInventoryInvariant · legacy units lost by old releases", () => {
+  it("reports them per product and never invents stock", async () => {
+    const productId = await product("LOST");
+    const b = await batch(productId, 1);
+    const p = await pending(productId, 3, 0, hoursAgo(3));
+    await prisma.pending.update({ where: { id: p.id }, data: { status: "CANCELADO", customerStatus: "CANCELADO" } });
+    const entry = await prisma.inventoryEntry.create({ data: { productId, quantity: 3, requestFingerprint: "legacy" } });
+    const missing = await prisma.missingItem.create({
+      data: { productId, quantity: 3, receivedQuantity: 3, originId: p.id, status: "RECIBIDO" },
+    });
+    await prisma.inventoryAllocation.create({
+      data: { inventoryEntryId: entry.id, missingItemId: missing.id, pendingId: p.id, quantity: 3 },
+    });
+
+    const plan = await repairInventoryInvariant({ actorId, apply: false });
+
+    expect(plan.lostUnits).toEqual([{ productId, productName: "LOST", units: 3 }]);
+    await repairInventoryInvariant({ actorId, apply: true, expectedFingerprint: plan.fingerprint });
+    expect((await prisma.productBatch.findUniqueOrThrow({ where: { id: b.id } })).quantity).toBe(1);
+  });
+});
+
+describe("repairInventoryInvariant · fingerprint", () => {
+  it("is stable for the same state and changes when the reservation spread would change", async () => {
+    const s = await seedMinoxiten();
+    const first = await repairInventoryInvariant({ actorId, apply: false });
+    const second = await repairInventoryInvariant({ actorId, apply: false });
+    expect(second.fingerprint).toBe(first.fingerprint);
+
+    // A lot that expires sooner appears: counters stay the same, but the
+    // rebuilt reservations would now sit on the new lot.
+    await prisma.productBatch.create({
+      data: { productId: s.productId, batchCode: "B-SOON", quantity: 10, status: "DISPONIBLE", expiresAt: new Date(Date.now() + 30 * 86_400_000) },
+    });
+
+    const applied = await repairInventoryInvariant({ actorId, apply: true, expectedFingerprint: first.fingerprint });
+    expect(applied.status).toBe("blocked");
   });
 });
 

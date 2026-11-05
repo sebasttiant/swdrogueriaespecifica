@@ -14,7 +14,16 @@ nuevo: **el lote es siempre el total físico y las reservas son un subconjunto**
 Todo queda auditado (`inventory.invariant.restore`, `pending.update`) en la
 misma transacción.
 
+## Marca de corte
+
+La migración `inventory_invariant_cutover` guarda el momento del deploy. La
+reparación solo devuelve unidades de reservas **anteriores** a esa marca: una
+recepción posterior ya no resta del lote, y devolverla duplicaría stock. Si la
+marca no existe, la reparación se bloquea.
+
 ## Cuándo se bloquea (no escribe nada)
+
+Solo se evalúan reservas anteriores al corte:
 
 - Una reserva sin evidencia de recepción.
 - Una reserva de un pendiente terminado o de un lote de otro producto.
@@ -31,12 +40,21 @@ veía. La herramienta **no** les crea faltante: gerencia pudo haberlo
 descartado a propósito. Revisarlos con gerencia y, si corresponde, volver a
 registrar la necesidad desde la aplicación.
 
+## Unidades posiblemente perdidas (solo se listan)
+
+Con el código viejo, cancelar, cerrar parcial o corregir un pendiente que
+tenía mercadería recibida borraba la reserva sin devolver las unidades al
+lote. No queda ningún registro de qué lote eran, así que la herramienta
+**no las inventa**: lista, por producto, cuántas probablemente faltan en el
+sistema. Bodega cuenta esos productos y los corrige con el ajuste auditado de
+inventario.
+
 ## Ventana operativa
 
-El código nuevo y la reparación salen juntos. Entre el deploy y el `--apply`
-el código nuevo lee lotes que todavía tienen unidades restadas: **no entregar
-ni facturar pendientes en esa ventana**. Hacerlo fuera del horario de atención
-y aplicar inmediatamente después del deploy.
+El código nuevo y la reparación salen juntos, **con la aplicación apagada**
+mientras se repara. Cualquier operación en esa ventana (registrar, recibir,
+cancelar, corregir, ajustar, entregar, facturar) cambia los datos que la
+reparación revisa. Hacerlo fuera del horario de atención.
 
 ## Pasos (en el VPS de producción)
 
@@ -44,13 +62,20 @@ y aplicar inmediatamente después del deploy.
 cd /opt/docker/swdrogueriaespecifica
 ```
 
-1. Obtener el id del actor (dentro de `psql`):
+1. Deploy normal con `deploy.sh`. Apenas termina, apagar la aplicación
+   (nunca usar `--remove-orphans`):
+
+   ```bash
+   docker compose stop web
+   ```
+
+2. Obtener el id del actor (dentro de `psql`):
 
    ```sql
    SELECT id FROM users WHERE lower(email) = 'admin@ilasesorias.com';
    ```
 
-2. Simulación (no escribe nada). Revisar unidades devueltas y pendientes
+3. Simulación (no escribe nada). Revisar unidades devueltas y pendientes
    reconciliados; copiar la línea `Huella:`.
 
    ```bash
@@ -58,7 +83,7 @@ cd /opt/docker/swdrogueriaespecifica
      ./scripts/run-inventory-invariant-repair.sh <actor id>
    ```
 
-3. Aplicar con la huella revisada:
+4. Aplicar con la huella revisada:
 
    ```bash
    DEPLOY_TARGET=vpsovhcloudilasesorias \
@@ -68,11 +93,11 @@ cd /opt/docker/swdrogueriaespecifica
    ```
 
    Si la base cambió desde la simulación, la huella no coincide y no se escribe
-   nada: volver al paso 2.
+   nada: volver al paso 3.
 
-4. Repetir el paso 3. Debe responder `Estado: noop`.
+5. Repetir el paso 4. Debe responder `Estado: noop`.
 
-5. Verificar (dentro de `psql`). Las dos consultas deben devolver 0 filas:
+6. Verificar (dentro de `psql`). Las dos consultas deben devolver 0 filas:
 
    ```sql
    -- Promesas abiertas que no son exactamente reservas vivas.
@@ -87,6 +112,16 @@ cd /opt/docker/swdrogueriaespecifica
    JOIN pending_inventory_reservations pir ON pir."batchId" = pb.id
    GROUP BY pb.id, pb.quantity HAVING sum(pir.quantity) > pb.quantity;
    ```
+
+7. Encender la aplicación:
+
+   ```bash
+   docker compose start web
+   ```
+
+Si la reparación se bloquea, **no encender** la aplicación sin decidirlo con
+quien mantiene el sistema: el código nuevo sobre datos sin reparar muestra
+menos stock libre del real.
 
 ## Después
 

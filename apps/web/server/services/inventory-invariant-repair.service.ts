@@ -67,12 +67,25 @@ export type InventoryInvariantOrphan = {
   deficit: number;
 };
 
+/**
+ * Units legacy reception subtracted from a batch whose reservation an old
+ * release (cancel, partial close, product change, rebuild) later deleted
+ * without returning them. No row says which batch they came from, so they are
+ * reported for a physical count instead of being added back by guess.
+ */
+export type InventoryInvariantLostUnits = {
+  productId: string;
+  productName: string;
+  units: number;
+};
+
 export type InventoryInvariantRepairReport = {
   status: "planned" | "applied" | "noop" | "blocked";
   fingerprint: string;
   restores: InventoryInvariantRestore[];
   claims: InventoryInvariantClaim[];
   orphans: InventoryInvariantOrphan[];
+  lostUnits: InventoryInvariantLostUnits[];
   blockers: string[];
 };
 
@@ -99,24 +112,35 @@ type LiveReservation = {
   pendingStatus: string;
   hasReceptionEvidence: boolean;
   adjustedAfter: boolean;
+  /** Written before the deploy cutover, i.e. by the old code. */
+  legacy: boolean;
 };
 
-function fingerprintOf(
-  restores: InventoryInvariantRestore[],
-  claims: InventoryInvariantClaim[],
-): string {
-  const canonical = JSON.stringify({
-    restores: [...restores].sort((a, b) => a.reservationId.localeCompare(b.reservationId)),
-    claims: [...claims].sort((a, b) => a.pendingId.localeCompare(b.pendingId)),
-  });
-  return createHash("sha256").update(canonical).digest("hex");
+function hash(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
 function empty(status: InventoryInvariantRepairReport["status"], blockers: string[] = []) {
-  return { status, fingerprint: fingerprintOf([], []), restores: [], claims: [], orphans: [], blockers };
+  return {
+    status,
+    fingerprint: hash({ status, blockers }),
+    restores: [],
+    claims: [],
+    orphans: [],
+    lostUnits: [],
+    blockers,
+  };
 }
 
-async function readLiveReservations(tx: Prisma.TransactionClient): Promise<LiveReservation[]> {
+async function readCutover(tx: Prisma.TransactionClient): Promise<Date | null> {
+  const row = await tx.inventoryInvariantCutover.findUnique({ where: { id: 1 } });
+  return row?.cutoverAt ?? null;
+}
+
+async function readLiveReservations(
+  tx: Prisma.TransactionClient,
+  cutoverAt: Date,
+): Promise<LiveReservation[]> {
   return tx.$queryRaw<LiveReservation[]>`
     SELECT pir.id,
            pir."pendingId",
@@ -137,7 +161,8 @@ async function readLiveReservations(tx: Prisma.TransactionClient): Promise<LiveR
              WHERE al.action = ${AUDIT_ACTIONS.INVENTORY_ADJUST}
                AND al."entityId" = pir."batchId"
                AND al."createdAt" > pir."createdAt"
-           ) AS "adjustedAfter"
+           ) AS "adjustedAfter",
+           pir."createdAt" < ${cutoverAt} AS legacy
     FROM pending_inventory_reservations pir
     JOIN pendings p ON p.id = pir."pendingId"
     JOIN product_batches pb ON pb.id = pir."batchId"
@@ -145,9 +170,15 @@ async function readLiveReservations(tx: Prisma.TransactionClient): Promise<LiveR
   `;
 }
 
+/**
+ * Only legacy rows are judged. A row written after the cutover follows the new
+ * rules by construction: it never subtracted the batch, so there is nothing to
+ * restore and nothing to doubt.
+ */
 function blockersOf(rows: LiveReservation[]): string[] {
   const blockers: string[] = [];
   for (const row of rows) {
+    if (!row.legacy) continue;
     if (TERMINAL.includes(row.pendingStatus)) {
       blockers.push(`Reserva ${row.id} pertenece al pendiente terminado ${row.pendingId}.`);
     } else if (row.pendingProductId !== row.batchProductId) {
@@ -195,12 +226,80 @@ async function readOrphans(tx: Prisma.TransactionClient): Promise<InventoryInvar
   `;
 }
 
+async function readLostUnits(
+  tx: Prisma.TransactionClient,
+  cutoverAt: Date,
+): Promise<InventoryInvariantLostUnits[]> {
+  return tx.$queryRaw<InventoryInvariantLostUnits[]>`
+    WITH allocated AS (
+      SELECT ia."pendingId", mi."productId", SUM(ia.quantity)::int AS units
+      FROM inventory_allocations ia
+      JOIN missing_items mi ON mi.id = ia."missingItemId"
+      WHERE ia."pendingId" IS NOT NULL AND ia."createdAt" < ${cutoverAt}
+      GROUP BY 1, 2
+    ), live AS (
+      SELECT "pendingId", SUM(quantity)::int AS units
+      FROM pending_inventory_reservations
+      WHERE "createdAt" < ${cutoverAt}
+      GROUP BY 1
+    ), lost AS (
+      SELECT a."productId",
+             GREATEST(a.units - p."deliveredQuantity" - COALESCE(l.units, 0), 0) AS units
+      FROM allocated a
+      JOIN pendings p ON p.id = a."pendingId"
+      LEFT JOIN live l ON l."pendingId" = a."pendingId"
+    )
+    SELECT lost."productId", pr.name AS "productName", SUM(lost.units)::int AS units
+    FROM lost JOIN products pr ON pr.id = lost."productId"
+    GROUP BY lost."productId", pr.name
+    HAVING SUM(lost.units) > 0
+    ORDER BY lost."productId"
+  `;
+}
+
+/**
+ * The full state the repair leaves on the affected products, without generated
+ * ids or timestamps. Hashing it means apply writes exactly what the reviewed
+ * dry-run showed: any drift (a new lot, a delivery, a different spread across
+ * batches) changes the fingerprint and apply refuses.
+ */
+async function postState(tx: Prisma.TransactionClient, productIds: string[]) {
+  const [batches, reservations, pendings, missing] = await Promise.all([
+    tx.productBatch.findMany({
+      where: { productId: { in: productIds } },
+      select: { id: true, quantity: true },
+      orderBy: { id: "asc" },
+    }),
+    tx.pendingInventoryReservation.findMany({
+      where: { batch: { productId: { in: productIds } } },
+      select: { pendingId: true, batchId: true, quantity: true },
+      orderBy: [{ pendingId: "asc" }, { batchId: "asc" }],
+    }),
+    tx.pending.findMany({
+      where: { productId: { in: productIds }, status: { notIn: ["ENTREGADO", "CANCELADO", "CLOSED_PARTIAL"] } },
+      select: { id: true, inventoryReadyQuantity: true, reservedInventoryQuantity: true, availabilityStatus: true },
+      orderBy: { id: "asc" },
+    }),
+    tx.missingItem.findMany({
+      where: {
+        productId: { in: productIds },
+        originId: { not: null },
+        status: { in: ["FALTANTE", "PEDIDO", "EN_BODEGA"] },
+      },
+      select: { originId: true, productId: true, quantity: true, receivedQuantity: true, status: true },
+      orderBy: [{ originId: "asc" }, { productId: "asc" }, { quantity: "asc" }],
+    }),
+  ]);
+  return { batches, reservations, pendings, missing };
+}
+
 async function lockProducts(tx: Prisma.TransactionClient, productIds: string[]) {
   if (productIds.length === 0) return;
-  // Global lock order: products → batches → pendings, the same order reception
-  // and delivery use, so the repair cannot deadlock with live operations.
+  // Global lock order: products → batches → pendings. Batches use the same
+  // total order as every other batch lock, so the repair cannot deadlock with
+  // live operations.
   await tx.$queryRaw`SELECT id FROM products WHERE id = ANY(${productIds}::text[]) ORDER BY id FOR UPDATE`;
-  await tx.$queryRaw`SELECT id FROM product_batches WHERE "productId" = ANY(${productIds}::text[]) ORDER BY id FOR UPDATE`;
+  await tx.$queryRaw`SELECT id FROM product_batches WHERE "productId" = ANY(${productIds}::text[]) ORDER BY "expiresAt" ASC NULLS LAST, id ASC FOR UPDATE`;
   await tx.$queryRaw`SELECT id FROM pendings WHERE "productId" = ANY(${productIds}::text[]) ORDER BY id FOR UPDATE`;
 }
 
@@ -223,17 +322,27 @@ async function runRepair(
   });
   if (done) return empty("noop");
 
+  const cutoverAt = await readCutover(tx);
+  if (!cutoverAt) {
+    return empty("blocked", [
+      "Falta la marca de corte del deploy (inventory_invariant_cutover). Sin ella no se puede distinguir lo que escribió el código viejo.",
+    ]);
+  }
+
   const candidates = new Set<string>(await productsWithUncoveredClaims(tx));
-  for (const row of await readLiveReservations(tx)) candidates.add(row.batchProductId);
+  for (const row of await readLiveReservations(tx, cutoverAt)) {
+    if (row.legacy) candidates.add(row.batchProductId);
+  }
   const productIds = [...candidates].sort((a, b) => a.localeCompare(b));
   await lockProducts(tx, productIds);
 
   // Re-read under the locks: this is the state the repair acts on.
-  const live = await readLiveReservations(tx);
+  const live = await readLiveReservations(tx, cutoverAt);
   const blockers = blockersOf(live);
   if (blockers.length > 0) return empty("blocked", blockers);
+  const lostUnits = await readLostUnits(tx, cutoverAt);
 
-  const restores: InventoryInvariantRestore[] = live.map((row) => ({
+  const restores: InventoryInvariantRestore[] = live.filter((row) => row.legacy).map((row) => ({
     reservationId: row.id,
     pendingId: row.pendingId,
     batchId: row.batchId,
@@ -295,13 +404,20 @@ async function runRepair(
     });
   }
 
-  const fingerprint = fingerprintOf(restores, claims);
+  const orphans = await readOrphans(tx);
+  const fingerprint = hash({
+    restores: [...restores].sort((a, b) => a.reservationId.localeCompare(b.reservationId)),
+    lostUnits,
+    orphans,
+    state: await postState(tx, productIds),
+  });
   const report: InventoryInvariantRepairReport = {
     status: input.apply ? "applied" : "planned",
     fingerprint,
     restores,
     claims,
-    orphans: await readOrphans(tx),
+    orphans,
+    lostUnits,
     blockers: [],
   };
   if (!input.apply) throw new DryRunRollback(report);
@@ -362,6 +478,10 @@ export function formatInventoryInvariantReport(report: InventoryInvariantRepairR
     lines.push(
       `  ${c.pendingId}: listo ${c.readyBefore}→${c.readyAfter}, reservado ${c.reservedBefore}→${c.reservedAfter}, ${c.availabilityAfter}`,
     );
+  }
+  lines.push(`Unidades posiblemente perdidas por liberaciones antiguas (requieren conteo físico): ${report.lostUnits.reduce((t, l) => t + l.units, 0)}`);
+  for (const l of report.lostUnits) {
+    lines.push(`  ${l.units} de ${l.productName} (${l.productId})`);
   }
   lines.push(`Pendientes sin faltante (revisar a mano, no se tocan): ${report.orphans.length}`);
   for (const o of report.orphans) {
