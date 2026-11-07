@@ -99,7 +99,7 @@ export default async function RevisionPendientesPage({
   const viewer = pendingViewerFor(session.user.role, session.user.id);
   // Estado de gestión: autoridad de compras (gerencia). Reusa la misma
   // capability que pedir un faltante, no la de cancelar.
-  const canManageStatus = can(session.user.role, "canOrderMissingItems");
+  const canManageStatus = can(session.user.role, "canSetPendingManagementStatus");
   // Eje propio: supervisión opera la cola entera y aun así no habla en
   // nombre de gerencia. Solo ADMIN/SUPERADMIN escriben la observación.
   const canWriteObservation = can(session.user.role, "canWriteManagementObservation");

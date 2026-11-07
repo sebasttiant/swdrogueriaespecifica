@@ -977,7 +977,10 @@ describe("canEditAllPendings (corrección compartida)", () => {
     ["ADMIN", { edit: "all", deliver: "all", cancel: "all", invoice: "all", contact: "all" }],
     ["SUPERVISOR", { edit: "all", deliver: "all", cancel: "all", invoice: "all", contact: "all" }],
     ["OPERADOR", { edit: "all", deliver: "own", cancel: "own", invoice: "own", contact: "own" }],
-    ["BODEGA", { edit: "all", deliver: "own", cancel: "own", invoice: "own", contact: "own" }],
+    // `cancel: "all"` desde la reunión del 2026-11-06: bodega ve llegar la
+    // mercadería y sabe cuándo un pedido ya no tiene sentido. Entrega y
+    // facturación siguen acotadas a lo suyo —eso no se abrió—.
+    ["BODEGA", { edit: "all", deliver: "own", cancel: "all", invoice: "own", contact: "own" }],
   ] as const)("%s: alcances por acción", (role, expected) => {
     expect({
       edit: editScopeFor(role),
@@ -1017,5 +1020,48 @@ describe("seesCustomerIdentityOf (identidad por fila)", () => {
     expect(seesCustomerIdentityOf("OPERADOR", "u-1", null)).toBe(true);
     expect(seesCustomerIdentityOf("OPERADOR", "u-1", undefined)).toBe(true);
     expect(seesCustomerIdentityOf("SUPERVISOR", "u-1", null)).toBe(true);
+  });
+});
+
+// --------------------------------------------------------------------------
+// Reunión con gerencia del 2026-11-06. Daniel definió el alcance de bodega:
+// "todas las personas pueden cancelar, pero no cualquier pendiente, el pendiente
+// de ellos... los perfiles de bodega y pendientes sí pueden cancelar todos".
+//
+// Y pidió además que bodega pueda marcar el estado del pendiente ("llegó pero
+// está agotado") y escribir la nota de qué pasó ("pedí jarabe de 90 ml y llegó
+// de 120"), que hasta hoy solo tenía gerencia.
+//
+// Lo que NO pidió, y por eso se prueba que sigue acotado: facturar y entregar lo
+// ajeno. Bodega recibe mercadería; facturarle el pedido a un vendedor no es suyo
+// y no se deshace.
+// --------------------------------------------------------------------------
+describe("alcance de bodega sobre pendientes ajenos", () => {
+  it("cancela cualquier pendiente, no solo los que anotó", () => {
+    expect(cancelScopeFor("BODEGA")).toBe("all");
+  });
+
+  it("marca el estado de gestión de cualquier pendiente", () => {
+    expect(can("BODEGA", "canSetPendingManagementStatus")).toBe(true);
+  });
+
+  it("escribe la observación de gestión", () => {
+    expect(can("BODEGA", "canWriteManagementObservation")).toBe(true);
+  });
+
+  it.each([
+    ["factura", invoiceScopeFor],
+    ["entrega", deliverScopeFor],
+    ["contacta", contactScopeFor],
+  ] as const)("%s solo lo propio: nadie pidió abrirlo", (_gesto, scopeFor) => {
+    expect(scopeFor("BODEGA")).toBe("own");
+  });
+
+  it("el vendedor sigue cancelando solo lo suyo", () => {
+    expect(cancelScopeFor("OPERADOR")).toBe("own");
+  });
+
+  it("marcar el estado del pendiente no arrastra la autoridad de compras", () => {
+    expect(can("BODEGA", "canOrderMissingItems")).toBe(false);
   });
 });

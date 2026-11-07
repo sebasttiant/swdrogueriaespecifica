@@ -1560,6 +1560,31 @@ describe("cancelPendingAction", () => {
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard");
   });
 
+  // El alcance que el server le pasa al service tiene que ser el MISMO que
+  // decide si la pantalla ofrece el botón. Cuando no lo era, bodega veía
+  // "Cancelar" y al tocarlo recibía NOT_OWNER: una promesa que el server
+  // rompía. Por eso se afirma el booleano exacto y no solo que la acción pase.
+  it.each([
+    // Gerencia definió el 2026-11-06 que bodega cancela cualquier pendiente,
+    // y lo hace sin `canManageAllPendings` —factura y entrega siguen acotadas—.
+    ["BODEGA", true],
+    ["SUPERVISOR", true],
+    // El vendedor cancela lo suyo: el service compara contra quién lo anotó.
+    ["OPERADOR", false],
+  ] as const)("%s llega al service con canManageAll=%s", async (role, canManageAll) => {
+    mocks.requireCapability.mockResolvedValue({ user: { id: "u-1", role } });
+    mocks.cancelPendingCommitment.mockResolvedValue({
+      rejection: null,
+      pending: { id: "pend-1", status: "CANCELADO", cancelledAt: new Date() },
+    });
+
+    await cancelPendingAction(PREV, cancelFormData());
+
+    expect(mocks.cancelPendingCommitment).toHaveBeenCalledWith(
+      expect.objectContaining({ canManageAll }),
+    );
+  });
+
 	const cancelRejectionCases = [
 		["ALREADY_DELIVERED", "No se puede cancelar un pendiente ya entregado."],
 		["ALREADY_CANCELLED", "Este pendiente ya está cancelado."],

@@ -259,6 +259,21 @@ export const CAPABILITIES = [
   // sin ver ni tocar nombre, teléfono, dirección ni montos. El service decide
   // qué campos entran en cada caso.
   "canEditAllPendings",
+  // Cancelar CUALQUIER pendiente, no solo los que uno anotó. Eje propio, igual
+  // que `canEditAllPendings`: abre el alcance de cancelación y nada más.
+  //
+  // Existe porque gerencia lo definió así en la reunión del 2026-11-06 —"los
+  // perfiles de bodega y pendientes sí pueden cancelar todos"— y bodega NO
+  // tiene `canManageAllPendings`. Colgarlo de esa capacidad le habría abierto
+  // también facturar y entregar lo ajeno, que nadie pidió y no se deshace.
+  "canCancelAllPendings",
+  // Marcar el estado de gestión de un pendiente: "ya lo pedí", "está agotado".
+  //
+  // Estaba colgado de `canOrderMissingItems`, que además autoriza PEDIR y
+  // DESCARTAR faltantes. Bodega necesita avisar que un pedido llegó agotado sin
+  // recibir con eso autoridad de compras, así que el gesto tiene su propia
+  // capacidad (reunión 2026-11-06).
+  "canSetPendingManagementStatus",
   // Contactar al cliente de un pendiente, y facturárselo. Son AUTORIDAD, no
   // alcance: dicen si el rol puede hacer el gesto, nunca sobre cuáles filas.
   //
@@ -454,7 +469,20 @@ const ROLE_CAPABILITIES: Record<SessionRole, readonly Capability[]> = {
     "canInvoicePendings",
     "canDeliverPendings",
     "canCancelPendings",
+    // Cancela CUALQUIER pendiente, no solo los que anotó. Gerencia lo definió en
+    // la reunión del 2026-11-06: bodega ve llegar la mercadería y es quien sabe
+    // que un pedido ya no tiene sentido. Va por su propio eje y no por
+    // `canManageAllPendings`, así factura y entrega solo lo suyo.
+    "canCancelAllPendings",
     "canReviewPendings",
+    // Avisar que lo pedido llegó agotado, y escribir qué pasó —"pedí jarabe de
+    // 90 ml y llegó de 120"—. Lo pidieron doña Marta y David en la misma
+    // reunión: hoy esa información se perdía en una llamada.
+    //
+    // `canSetPendingManagementStatus` y no `canOrderMissingItems`: la segunda
+    // autoriza además PEDIR y DESCARTAR faltantes, que es de compras.
+    "canSetPendingManagementStatus",
+    "canWriteManagementObservation",
     // Depósito de compra: bodega recibe lo que se pidió y anota de qué depósito
     // viene, en cualquier pendiente. Ver `canManagePurchaseDeposit`.
     "canManagePurchaseDeposit",
@@ -536,9 +564,20 @@ export function deliverScopeFor(role: SessionRole): PendingActionScope {
   return scopeFor(role, "canDeliverPendings");
 }
 
-/** Alcance de cancelación. */
+/**
+ * Alcance de CANCELACIÓN.
+ *
+ * Mismo molde que `editScopeFor`: la autoridad de entrada es
+ * `canCancelPendings` y el alcance sale de dos ejes, no de uno.
+ * `canManageAllPendings` (gerencia opera todo) o `canCancelAllPendings`
+ * (cancela todo sin operarlo). Bodega tiene el segundo y no el primero: cancela
+ * cualquier fila y sigue facturando y entregando solo la suya.
+ */
 export function cancelScopeFor(role: SessionRole): PendingActionScope {
-  return scopeFor(role, "canCancelPendings");
+  if (!can(role, "canCancelPendings")) return "none";
+  return can(role, "canManageAllPendings") || can(role, "canCancelAllPendings")
+    ? "all"
+    : "own";
 }
 
 /**
