@@ -1257,7 +1257,11 @@ export async function updatePendingManagementStatusAction(
   _prev: PendingFormState,
   formData: FormData,
 ): Promise<PendingFormState> {
-  const session = await requireCapability("canOrderMissingItems");
+  // La MISMA capacidad que decide si la pantalla ofrece el selector. Exigía
+  // `canOrderMissingItems`, que además autoriza pedir y descartar faltantes:
+  // bodega veía el control y al enviarlo caía en el dashboard (reunión
+  // 2026-11-06). Marcar que un pedido llegó agotado no es autoridad de compras.
+  const session = await requireCapability("canSetPendingManagementStatus");
 
   const parsed = pendingManagementStatusSchema.safeParse({
     id: formData.get("id"),

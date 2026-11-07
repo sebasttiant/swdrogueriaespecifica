@@ -82,3 +82,14 @@ autoridad de facturación ni de compras.
   716/718 PostgreSQL. Las dos que fallan son los `laboratory-*` de orden de filas
   (`bayer` contra `Bayer`), preexistentes en `main` y sin relación con permisos.
   PostgreSQL pendiente de registro.
+- **L12** — Hallazgo de la revisión automática en el PR #337, correcto y propio:
+  `updatePendingManagementStatusAction` seguía exigiendo `canOrderMissingItems`
+  mientras las tres pantallas ya decidían con `canSetPendingManagementStatus`.
+  Bodega habría visto el selector y al enviarlo habría caído en el dashboard.
+  Es la MISMA clase de defecto que se corrigió para cancelar, repetida en el
+  estado de gestión: la encontré en un camino y no la busqué en el otro.
+  Corregido con su prueba. Los tres usos de `canOrderMissingItems` en
+  `missing-item.actions.ts` NO se tocaron: pedir, descartar y marcar pedido sí
+  son autoridad de compras.
+- **L13** — Validación tras la corrección: typecheck 0, lint 0, 3139/3139
+  unitarias.
