@@ -60,7 +60,7 @@ export default async function PendientesPage({
   const viewer = pendingViewerFor(session.user.role, session.user.id);
   // Estado de gestión: autoridad de compras (gerencia). Reusa la misma
   // capability que pedir un faltante, no la de cancelar.
-  const canManageStatus = can(session.user.role, "canOrderMissingItems");
+  const canManageStatus = can(session.user.role, "canSetPendingManagementStatus");
   const canWriteObservation = can(session.user.role, "canWriteManagementObservation");
   // Depósito de compra: gerencia y bodega. El MISMO booleano decide si la
   // consulta lee la columna y si la lista la pinta.

@@ -109,17 +109,27 @@ beforeEach(() => {
 });
 
 describe("controles por fila · lista compacta", () => {
-  it.each(["OPERADOR", "BODEGA"] as const)(
-    "%s sobre una fila AJENA: solo Corregir",
-    (role) => {
-      const html = compact(role, [pending()]);
+  it("OPERADOR sobre una fila AJENA: solo Corregir", () => {
+    const html = compact("OPERADOR", [pending()]);
 
-      expect(html).toContain("Corregir");
-      expect(html).not.toContain("Entregar disponible");
-      expect(html).not.toContain("Cancelar");
-      expect(html).not.toContain("Lo espera");
-    },
-  );
+    expect(html).toContain("Corregir");
+    expect(html).not.toContain("Entregar disponible");
+    expect(html).not.toContain("Cancelar");
+    expect(html).not.toContain("Lo espera");
+  });
+
+  // Bodega dejó de comportarse como el vendedor el 2026-11-06: gerencia le abrió
+  // la cancelación sobre cualquier fila porque es quien ve llegar la mercadería
+  // y sabe cuándo un pedido ya no tiene sentido. Entrega y facturación NO se
+  // abrieron, y eso es lo que estas dos expectativas negativas cuidan.
+  it("BODEGA sobre una fila AJENA: corrige y cancela, no entrega ni factura", () => {
+    const html = compact("BODEGA", [pending()]);
+
+    expect(html).toContain("Corregir");
+    expect(html).toContain("Cancelar");
+    expect(html).not.toContain("Entregar disponible");
+    expect(html).not.toContain("Lo espera");
+  });
 
   it.each(["OPERADOR", "BODEGA"] as const)(
     "%s sobre una fila PROPIA: entrega, cancela, responde y corrige",
@@ -155,18 +165,25 @@ describe("controles por fila · lista compacta", () => {
 });
 
 describe("controles por fila · vista detallada", () => {
-  it.each(["OPERADOR", "BODEGA"] as const)(
-    "%s no ve entregar ni cancelar sobre una fila ajena, sí sobre la propia",
-    (role) => {
-      const foreign = detail(role, [pending()]);
-      expect(foreign).not.toContain("Entregar disponible");
-      expect(foreign).not.toContain("Cancelar");
+  it("OPERADOR no ve entregar ni cancelar sobre una fila ajena, sí sobre la propia", () => {
+    const foreign = detail("OPERADOR", [pending()]);
+    expect(foreign).not.toContain("Entregar disponible");
+    expect(foreign).not.toContain("Cancelar");
 
-      const mine = detail(role, [own()]);
-      expect(mine).toContain("Entregar disponible");
-      expect(mine).toContain("Cancelar");
-    },
-  );
+    const mine = detail("OPERADOR", [own()]);
+    expect(mine).toContain("Entregar disponible");
+    expect(mine).toContain("Cancelar");
+  });
+
+  it("BODEGA cancela cualquier fila y entrega solo la propia", () => {
+    const foreign = detail("BODEGA", [pending()]);
+    expect(foreign).toContain("Cancelar");
+    expect(foreign).not.toContain("Entregar disponible");
+
+    const mine = detail("BODEGA", [own()]);
+    expect(mine).toContain("Entregar disponible");
+    expect(mine).toContain("Cancelar");
+  });
 
   it("SUPERVISOR entrega y cancela cualquier fila", () => {
     const html = detail("SUPERVISOR", [pending()]);

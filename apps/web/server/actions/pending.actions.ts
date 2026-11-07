@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { checkCapability, requireCapability, type CapabilityDenial } from "@/lib/auth/require-role";
-import { can, invoiceScopeFor } from "@/lib/auth/permissions";
+import { can, cancelScopeFor, invoiceScopeFor } from "@/lib/auth/permissions";
 import { hashEmail, maskPhone, describeText } from "@/lib/observability/redaction";
 import { newSupportCode } from "@/lib/observability/support-code";
 import {
@@ -1257,7 +1257,11 @@ export async function updatePendingManagementStatusAction(
   _prev: PendingFormState,
   formData: FormData,
 ): Promise<PendingFormState> {
-  const session = await requireCapability("canOrderMissingItems");
+  // La MISMA capacidad que decide si la pantalla ofrece el selector. Exigía
+  // `canOrderMissingItems`, que además autoriza pedir y descartar faltantes:
+  // bodega veía el control y al enviarlo caía en el dashboard (reunión
+  // 2026-11-06). Marcar que un pedido llegó agotado no es autoridad de compras.
+  const session = await requireCapability("canSetPendingManagementStatus");
 
   const parsed = pendingManagementStatusSchema.safeParse({
     id: formData.get("id"),
@@ -1509,7 +1513,11 @@ export async function cancelPendingAction(
       id: parsed.data.id,
       cancelledById: session.user.id,
       reason: parsed.data.reason,
-      canManageAll: can(session.user.role, "canManageAllPendings"),
+      // El alcance de CANCELAR, no el de operar todo. Bodega cancela cualquier
+      // fila sin tener `canManageAllPendings` (reunión 2026-11-06), y es la
+      // misma función que decide si la pantalla ofrece el botón: si el server
+      // mirara otra cosa, el botón aparecería y fallaría al tocarlo.
+      canManageAll: cancelScopeFor(session.user.role) === "all",
     });
 
 		// Mismo criterio que la entrega. El `reason` que tipea el operador es texto

@@ -63,7 +63,7 @@ export default async function ListaDeEsperaPage({
 
       <PendingCompactList
         items={pendings.items}
-        canOrder={can(role, "canOrderMissingItems")}
+        canOrder={can(role, "canSetPendingManagementStatus")}
         canWriteObservation={can(role, "canWriteManagementObservation")}
         canViewPurchaseDeposit={canViewPurchaseDeposit}
         canDeliver={can(role, "canDeliverPendings")}

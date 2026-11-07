@@ -1560,6 +1560,31 @@ describe("cancelPendingAction", () => {
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard");
   });
 
+  // El alcance que el server le pasa al service tiene que ser el MISMO que
+  // decide si la pantalla ofrece el botón. Cuando no lo era, bodega veía
+  // "Cancelar" y al tocarlo recibía NOT_OWNER: una promesa que el server
+  // rompía. Por eso se afirma el booleano exacto y no solo que la acción pase.
+  it.each([
+    // Gerencia definió el 2026-11-06 que bodega cancela cualquier pendiente,
+    // y lo hace sin `canManageAllPendings` —factura y entrega siguen acotadas—.
+    ["BODEGA", true],
+    ["SUPERVISOR", true],
+    // El vendedor cancela lo suyo: el service compara contra quién lo anotó.
+    ["OPERADOR", false],
+  ] as const)("%s llega al service con canManageAll=%s", async (role, canManageAll) => {
+    mocks.requireCapability.mockResolvedValue({ user: { id: "u-1", role } });
+    mocks.cancelPendingCommitment.mockResolvedValue({
+      rejection: null,
+      pending: { id: "pend-1", status: "CANCELADO", cancelledAt: new Date() },
+    });
+
+    await cancelPendingAction(PREV, cancelFormData());
+
+    expect(mocks.cancelPendingCommitment).toHaveBeenCalledWith(
+      expect.objectContaining({ canManageAll }),
+    );
+  });
+
 	const cancelRejectionCases = [
 		["ALREADY_DELIVERED", "No se puede cancelar un pendiente ya entregado."],
 		["ALREADY_CANCELLED", "Este pendiente ya está cancelado."],
@@ -1655,16 +1680,34 @@ function managementFormData(overrides: Record<string, string> = {}) {
 }
 
 describe("updatePendingManagementStatusAction", () => {
-  // Autoridad de compras: gerencia (canOrderMissingItems), NO canCancelPendings.
-  it("exige la capacidad de compras y corta si no la tiene", async () => {
+  // La MISMA capacidad que decide si la pantalla ofrece el selector, y no
+  // `canOrderMissingItems`, que además autoriza pedir y descartar faltantes.
+  // Mientras fueron distintas, bodega veía el control y al enviarlo caía en el
+  // dashboard: la pantalla prometía algo que el servidor rechazaba.
+  it("exige la capacidad del estado de gestión y corta si no la tiene", async () => {
     mocks.requireCapability.mockRejectedValueOnce(new Error("REDIRECT:/dashboard"));
 
     await expect(
       updatePendingManagementStatusAction(PREV, managementFormData()),
     ).rejects.toThrow("REDIRECT:/dashboard");
 
-    expect(mocks.requireCapability).toHaveBeenCalledWith("canOrderMissingItems");
+    expect(mocks.requireCapability).toHaveBeenCalledWith("canSetPendingManagementStatus");
     expect(mocks.setPendingManagementStatus).not.toHaveBeenCalled();
+  });
+
+  // Que el perfil TENGA la capacidad se prueba en `permissions.test.ts`; acá se
+  // prueba que el server la exija y deje pasar a bodega hasta el service.
+  it("bodega marca el estado y llega al service", async () => {
+    mocks.requireCapability.mockResolvedValue({ user: { id: "bod-1", role: "BODEGA" } });
+    mocks.setPendingManagementStatus.mockResolvedValue({
+      pending: { id: "pend-1", purchaseStatus: "AGOTADO" },
+      rejection: null,
+    });
+
+    await updatePendingManagementStatusAction(PREV, managementFormData());
+
+    expect(mocks.requireCapability).toHaveBeenCalledWith("canSetPendingManagementStatus");
+    expect(mocks.setPendingManagementStatus).toHaveBeenCalled();
   });
 
   it("rechaza un status que no es de gestión sin llamar al service", async () => {
