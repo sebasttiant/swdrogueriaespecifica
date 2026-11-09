@@ -59,6 +59,8 @@ type MissingListProps = {
   // la vez es el mismo defecto de duplicación un nivel más abajo. Por defecto
   // apagado, para no tocar el árbol de nadie que no pida el modo.
   bulkMode?: boolean;
+  /** Solo gerencia: los conteos de cada grupo describen la página actual. */
+  pageLocalGroups?: boolean;
 };
 
 // Etiqueta y tono del encabezado de cada grupo de urgencia.
@@ -373,6 +375,7 @@ export function MissingList({
   canSeeRequestedAt,
   scope,
   bulkMode = false,
+  pageLocalGroups = false,
   now,
 }: MissingListProps) {
   // Estado y Pedido solo distinguen algo en "ordered"/"discarded": en
@@ -412,8 +415,11 @@ export function MissingList({
 
         return (
           <section key={group.key} className="space-y-3" aria-labelledby={headingId}>
-            <h2 id={headingId} className="flex items-center gap-2 text-sm font-semibold text-text">
-              {label.text}
+            <h2
+              id={headingId}
+              className="flex flex-wrap items-center gap-2 text-sm font-semibold text-text"
+            >
+              {label.text}{pageLocalGroups ? " en esta página" : ""}
               <Badge tone={label.tone}>{group.items.length}</Badge>
             </h2>
 
