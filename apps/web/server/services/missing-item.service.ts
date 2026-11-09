@@ -16,6 +16,7 @@ import {
   countOverdueMissingItems,
   createMissingItem,
   listMissingItems,
+  listMissingManagementPage,
   discardMissingItem,
   lockMissingItemForUpdate,
   listOpenMissingItemsForExport,
@@ -136,6 +137,39 @@ export async function getMissingItems(params: {
   const { canViewCustomerIdentity, canViewSupplierIdentity, ...listParams } = params;
   const { items, nextCursor } = await listMissingItems(listParams);
 
+  return {
+    items: await enrichMissingItems(
+      items,
+      canViewCustomerIdentity,
+      canViewSupplierIdentity,
+    ),
+    nextCursor,
+  };
+}
+
+export async function getMissingManagementPage(
+  params: Omit<Parameters<typeof getMissingItems>[0], "cursor" | "take"> & {
+    page?: number;
+  },
+) {
+  const { canViewCustomerIdentity, canViewSupplierIdentity, ...listParams } = params;
+  const result = await listMissingManagementPage(listParams);
+
+  return {
+    ...result,
+    items: await enrichMissingItems(
+      result.items,
+      canViewCustomerIdentity,
+      canViewSupplierIdentity,
+    ),
+  };
+}
+
+async function enrichMissingItems(
+  items: MissingItemListItem[],
+  canViewCustomerIdentity: boolean,
+  canViewSupplierIdentity: boolean,
+): Promise<MissingItemListEntry[]> {
   // El solicitante real: si el faltante nació de un reporte de vendedor, su
   // `createdBy` es gerencia (quien lo vinculó), así que el vendedor está en el
   // `reporter` del reporte. Una consulta por lote (índice `linkedMissingItemId`)
@@ -178,7 +212,7 @@ export async function getMissingItems(params: {
     return { ...base, requestedByName, requestedAt };
   });
 
-  return { items: enrichedItems, nextCursor };
+  return enrichedItems;
 }
 
 // Export (Mejora 3): filas ya aplanadas de TODOS los faltantes abiertos, para

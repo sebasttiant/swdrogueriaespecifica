@@ -3,6 +3,10 @@ import Link from "next/link";
 import { MissingBulkActions } from "@/features/faltantes/missing-bulk-actions";
 import { MissingExportActions } from "@/features/faltantes/missing-export-actions";
 import { MissingList } from "@/features/faltantes/missing-list";
+import {
+  MissingManagementPagination,
+  type MissingManagementPage,
+} from "@/features/faltantes/missing-management-pagination";
 import { canDiscard } from "@/features/faltantes/order-rules";
 import {
   missingPageHref,
@@ -37,6 +41,7 @@ import { cn } from "@/lib/utils/cn";
 type MissingQueueBoardProps = {
   items: Parameters<typeof MissingList>[0]["items"];
   nextCursor: string | null;
+  managementPage?: MissingManagementPage;
   scope: MissingQueueScope;
   canAct: boolean;
   canExport: boolean;
@@ -61,6 +66,7 @@ type MissingQueueBoardProps = {
 export function MissingQueueBoard({
   items,
   nextCursor,
+  managementPage,
   scope,
   canAct,
   canExport,
@@ -85,7 +91,8 @@ export function MissingQueueBoard({
   const list = (
     <MissingList
       items={items}
-      nextCursor={nextCursor}
+      nextCursor={managementPage ? null : nextCursor}
+      pageLocalGroups={Boolean(managementPage)}
       pageHref={(next) => missingPageHref(scope, next, route, isBulkMode)}
       canQuickAct={canAct}
       canSeeStatus={canAct}
@@ -132,11 +139,27 @@ export function MissingQueueBoard({
           y delega el conteo sobre las casillas que la lista ya monta en cada
           fila. Fuera de modo masivo no se monta nada acá — la lista sola,
           como siempre. */}
+      {managementPage ? (
+        <MissingManagementPagination
+          {...managementPage}
+          scope={scope}
+          route={route}
+          bulkMode={isBulkMode}
+        />
+      ) : null}
       {isBulkMode ? (
         <MissingBulkActions eligibleIds={eligibleIds}>{list}</MissingBulkActions>
       ) : (
         list
       )}
+      {managementPage ? (
+        <MissingManagementPagination
+          {...managementPage}
+          scope={scope}
+          route={route}
+          bulkMode={isBulkMode}
+        />
+      ) : null}
     </div>
   );
 }

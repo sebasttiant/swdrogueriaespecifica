@@ -27,6 +27,7 @@ const { repo } = vi.hoisted(() => ({
     lockMissingItemForUpdate: vi.fn(),
     discardMissingItem: vi.fn(),
     listMissingItems: vi.fn(),
+    listMissingManagementPage: vi.fn(),
     orderMissingItem: vi.fn(),
     createMissingItem: vi.fn(),
   },
@@ -80,6 +81,7 @@ import {
   discardMissingItems,
   createManualMissingItem,
   getMissingItems,
+  getMissingManagementPage,
   getMissingItemsSummary,
   markMissingItemsOrdered,
   orderMissingItem,
@@ -92,6 +94,62 @@ beforeEach(() => {
   // caen en `createdBy`/`createdAt`. Los tests de reporte-gana sobreescriben
   // este mapa.
   reportRepo.reporterAttributionByLinkedItemIds.mockResolvedValue(new Map());
+});
+
+describe("management page enrichment", () => {
+  it.each([true, false])(
+    "preserves attribution and identity capabilities (%s)",
+    async (allowed: boolean) => {
+      const item = missingItemRow({
+        supplierId: "supplier-1",
+        supplier: { id: "supplier-1", name: "Supplier" },
+      });
+      repo.listMissingManagementPage.mockResolvedValue({
+        items: [item],
+        page: 4,
+        pageSize: 50,
+        total: 195,
+      });
+      const reportedAt = new Date("2026-01-01");
+      reportRepo.reporterAttributionByLinkedItemIds.mockResolvedValue(
+        new Map([
+          [item.id, { name: "Reporter", createdAt: reportedAt }],
+        ]),
+      );
+      const filters = {
+        page: 4,
+        scope: "ordered" as const,
+        origin: "shelf" as const,
+        staleBefore: new Date(),
+      };
+
+      const result = await getMissingManagementPage({
+        ...filters,
+        canViewCustomerIdentity: allowed,
+        canViewSupplierIdentity: allowed,
+      });
+
+      expect(repo.listMissingManagementPage).toHaveBeenCalledWith(filters);
+      expect(repo.listMissingItems).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ page: 4, pageSize: 50, total: 195 });
+      expect(result.items[0]).toMatchObject({
+        requestedByName: "Reporter",
+        requestedAt: reportedAt,
+        supplier: allowed ? item.supplier : null,
+        supplierId: allowed ? item.supplierId : null,
+        origin: item.origin
+          ? {
+              ...item.origin,
+              customerName: allowed ? item.origin.customerName : null,
+            }
+          : null,
+      });
+      expect(reportRepo.reporterAttributionByLinkedItemIds).toHaveBeenCalledWith([
+        item.id,
+      ]);
+      expect(result.items[0]).not.toBe(item);
+    },
+  );
 });
 
 // Typed fixture for `listMissingItems` rows — mirrors `MissingItemListItem`

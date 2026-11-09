@@ -33,6 +33,7 @@ import {
   countUnclosedActionableMissingItemsBefore,
   createMissingItem,
   listMissingItems,
+  listMissingManagementPage,
   listOpenMissingItemsForExport,
   lockMissingItemForUpdate,
   orderMissingItem,
@@ -56,6 +57,80 @@ beforeEach(() => {
   vi.clearAllMocks();
   prismaMock.missingItem.findMany.mockResolvedValue([]);
   prismaMock.missingItem.count.mockResolvedValue(0);
+});
+
+describe("management offset pagination", () => {
+  it("traverses 195 rows as 50/50/50/45 without overlap", async () => {
+    const rows = Array.from({ length: 195 }, (_, id) => ({ id: String(id) }));
+    prismaMock.missingItem.count.mockResolvedValue(rows.length);
+    prismaMock.missingItem.findMany.mockImplementation(
+      ({ skip, take }: { skip: number; take: number }) =>
+        rows.slice(skip, skip + take),
+    );
+    const pages = [];
+
+    for (let page = 1; page <= 4; page++) {
+      pages.push(await listMissingManagementPage({ page }));
+    }
+
+    expect(pages.map((result) => result.items.length)).toEqual([50, 50, 50, 45]);
+    expect(pages.flatMap((result) => result.items)).toEqual(rows);
+    expect(pages.map((result) => result.page)).toEqual([1, 2, 3, 4]);
+    expect(
+      pages.every((result) => result.total === 195 && result.pageSize === 50),
+    ).toBe(true);
+  });
+
+  it.each(["actionable", "ordered", "discarded"] as const)(
+    "counts and lists the same %s shelf filter",
+    async (scope: "actionable" | "ordered" | "discarded") => {
+      const staleBefore = new Date("2026-01-01");
+      await listMissingManagementPage({ scope, origin: "shelf", staleBefore });
+      const where = missingQueueWhere(scope, "shelf", staleBefore);
+
+      expect(prismaMock.missingItem.count).toHaveBeenCalledWith({ where });
+      expect(prismaMock.missingItem.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where,
+          take: 50,
+          skip: 0,
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        }),
+      );
+    },
+  );
+
+  it.each([undefined, 0, -1, 1.5, NaN, Infinity])(
+    "safely normalizes invalid page %s",
+    async (page: number | undefined) => {
+      prismaMock.missingItem.count.mockResolvedValue(195);
+
+      expect((await listMissingManagementPage({ page })).page).toBe(1);
+    },
+  );
+
+  it("clamps out-of-range and emptied queues", async () => {
+    prismaMock.missingItem.count.mockResolvedValue(195);
+
+    expect((await listMissingManagementPage({ page: 999 })).page).toBe(4);
+    expect(prismaMock.missingItem.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        skip: 150,
+        take: 50,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      }),
+    );
+
+    prismaMock.missingItem.count.mockResolvedValue(0);
+    expect(await listMissingManagementPage({ page: 4 })).toMatchObject({
+      items: [],
+      page: 1,
+      total: 0,
+    });
+    expect(prismaMock.missingItem.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ skip: 0 }),
+    );
+  });
 });
 
 describe("listMissingItems · active confirmation filter", () => {
