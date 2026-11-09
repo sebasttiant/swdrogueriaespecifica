@@ -308,13 +308,24 @@ describe("arrivalNotice", () => {
   // reserved for the pending, which also happens at registration when units
   // were already on the shelf: calling that "arrived" is what misled sellers
   // on 2026-11-04 (#332).
-  it.each([
-    ["LLEGO_BODEGA", "Ya llegó a bodega"],
-    ["DISPONIBLE_COMPLETO", "Reservado en bodega"],
-    ["DISPONIBLE_PARCIAL", "Reservado en bodega: una parte"],
-  ] as const)("%s dice %s", (availabilityStatus, label) => {
-    expect(arrivalNotice(pending({ availabilityStatus }))).toBe(label);
-  });
+  it.each([["LLEGO_BODEGA", "Ya llegó a bodega"]] as const)(
+    "%s dice %s",
+    (availabilityStatus, label) => {
+      expect(arrivalNotice(pending({ availabilityStatus }))).toBe(label);
+    },
+  );
+
+  // Gerencia pidió sacar "Reservado en bodega" el 2026-11-06: en cuanto el
+  // mostrador vende, la reserva dejó de valer, así que la frase podía ser
+  // mentira. Y una frase que a veces miente confunde más que la ausencia de
+  // frase. Lo accionable —qué se puede facturar o entregar— lo sigue diciendo
+  // `fulfillmentNotice`.
+  it.each(["DISPONIBLE_COMPLETO", "DISPONIBLE_PARCIAL"] as const)(
+    "%s no habla de reserva",
+    (availabilityStatus) => {
+      expect(arrivalNotice(pending({ availabilityStatus }))).toBeNull();
+    },
+  );
 
   it("todavía esperando: nada", () => {
     expect(arrivalNotice(pending({ availabilityStatus: "ESPERANDO" }))).toBeNull();
@@ -333,10 +344,10 @@ describe("arrivalNotice", () => {
     ).toBeNull();
   });
 
-  it("convive con listo para facturar: se dicen las dos cosas", () => {
+  it("sin aviso de reserva, lo facturable se sigue diciendo", () => {
     const fila = pending({ availabilityStatus: "DISPONIBLE_COMPLETO", inventoryReadyQuantity: 10 });
 
-    expect(arrivalNotice(fila)).toBe("Reservado en bodega");
+    expect(arrivalNotice(fila)).toBeNull();
     expect(fulfillmentNotice(fila)).toEqual({ label: "Listo para facturar", tone: "warning" });
   });
 });

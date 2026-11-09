@@ -43,11 +43,20 @@ export function isTerminal(item: PendingListItem): boolean {
 // means units are reserved for this pending, which also happens at registration
 // when the stock was already on the shelf. Calling that "arrived" made sellers
 // believe the warehouse had received something it never touched (#332).
+//
+// DISPONIBLE_* says NOTHING here, by decision of the 2026-11-06 management
+// meeting: the reservation stops holding the moment the counter sells the
+// unit, so "Reservado en bodega" was a sentence that could be false while
+// still being read as a promise. Doa Marta asked for it to go and Daniel
+// closed it: "entre menos cosas adicionales que enreden más a las personas,
+// mucho mejor". Keeping stock separated for a customer is the drugstore's
+// internal control, not something this screen can assert.
+//
+// Nothing actionable is lost: `fulfillmentNotice` still says what can be
+// invoiced or delivered, which is what the seller decides on.
 export function arrivalNotice(item: PendingListItem): string | null {
   if (isTerminal(item)) return null;
   if (item.availabilityStatus === "LLEGO_BODEGA") return "Ya llegó a bodega";
-  if (item.availabilityStatus === "DISPONIBLE_COMPLETO") return "Reservado en bodega";
-  if (item.availabilityStatus === "DISPONIBLE_PARCIAL") return "Reservado en bodega: una parte";
   return null;
 }
 

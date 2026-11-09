@@ -695,7 +695,7 @@ describe("PendingList · qué pasó con el pendiente", () => {
     expect(html.indexOf(arrivalLine("Ya llegó a bodega"))).toBeLessThan(html.indexOf("Sin stock"));
   });
 
-  it("dice que llegó una parte, junto al amarillo de listo para facturar", () => {
+  it("no habla de reserva cuando hay una parte, pero sí de lo facturable", () => {
     const html = renderList({
       items: [
         pending({
@@ -707,7 +707,7 @@ describe("PendingList · qué pasó con el pendiente", () => {
       ],
     });
 
-    expect(html).toContain(arrivalLine("Reservado en bodega: una parte"));
+    expect(html).not.toContain("Reservado");
     expect(html).toContain("Listo para facturar: 6 de 10");
   });
 
@@ -734,7 +734,7 @@ describe("PendingList · qué pasó con el pendiente", () => {
     expect(html).not.toContain("Llegó a la droguería");
   });
 
-  it("el azul de listo para entregar sigue al lado de la llegada", () => {
+  it("el azul de listo para entregar no necesita hablar de reserva", () => {
     const html = renderList({
       items: [
         pending({
@@ -746,7 +746,7 @@ describe("PendingList · qué pasó con el pendiente", () => {
       ],
     });
 
-    expect(html).toContain(arrivalLine("Reservado en bodega"));
+    expect(html).not.toContain("Reservado");
     expect(html).toContain("Listo para entregar");
   });
 
