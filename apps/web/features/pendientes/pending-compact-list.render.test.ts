@@ -761,12 +761,12 @@ describe("PendingCompactList · qué pasó con el pendiente", () => {
     expect(countOccurrences(html, "Sin stock")).toBe(2);
   });
 
-  it("dice que llegó una parte en las dos vistas, junto al amarillo", () => {
+  it("no habla de reserva en las dos vistas, pero sí de lo facturable", () => {
     const html = render([
       pending({ quantity: 10, availabilityStatus: "DISPONIBLE_PARCIAL", inventoryReadyQuantity: 6 }),
     ]);
 
-    expect(countOccurrences(html, arrivalLine("Reservado en bodega: una parte"))).toBe(2);
+    expect(html).not.toContain("Reservado");
     expect(countOccurrences(html, "Listo para facturar: 6 de 10")).toBe(2);
   });
 
@@ -791,7 +791,7 @@ describe("PendingCompactList · qué pasó con el pendiente", () => {
     expect(html).not.toContain("Llegó a la droguería");
   });
 
-  it("el azul de listo para entregar sigue al lado de la llegada", () => {
+  it("el azul de listo para entregar no necesita hablar de reserva", () => {
     const html = render([
       pending({
         availabilityStatus: "DISPONIBLE_COMPLETO",
@@ -801,7 +801,7 @@ describe("PendingCompactList · qué pasó con el pendiente", () => {
       }),
     ]);
 
-    expect(countOccurrences(html, arrivalLine("Reservado en bodega"))).toBe(2);
+    expect(html).not.toContain("Reservado");
     expect(countOccurrences(html, "Listo para entregar")).toBe(2);
   });
 
