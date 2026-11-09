@@ -197,6 +197,43 @@ const LIST_SELECT = {
   discardedBy: { select: { id: true, name: true } },
 } as const;
 
+// Paginación local de la cola de GERENCIA. Es opt-in: los demás consumidores
+// conservan el contrato por cursor y su tamaño actual en `listMissingItems`.
+export async function listMissingManagementPage(params: {
+  page?: number;
+  scope?: MissingItemScope;
+  origin?: MissingItemOrigin;
+  staleBefore?: Date;
+}) {
+  const pageSize = 50;
+  const where = missingQueueWhere(
+    params.scope,
+    params.origin,
+    params.staleBefore,
+  );
+  const total = await prisma.missingItem.count({ where });
+  const requestedPage =
+    typeof params.page === "number" &&
+    Number.isSafeInteger(params.page) &&
+    params.page > 0
+      ? params.page
+      : 1;
+  const page = Math.min(
+    requestedPage,
+    Math.max(1, Math.ceil(total / pageSize)),
+  );
+  const direction = params.staleBefore ? ("asc" as const) : ("desc" as const);
+  const items: MissingItemListItem[] = await prisma.missingItem.findMany({
+    where,
+    skip: (page - 1) * pageSize,
+    take: pageSize,
+    orderBy: [{ createdAt: direction }, { id: direction }],
+    select: LIST_SELECT,
+  });
+
+  return { items, page, pageSize, total };
+}
+
 export async function listMissingItems(params: {
   cursor?: string | null;
   take?: number;
