@@ -20,7 +20,7 @@ vi.mock("@/server/services/missing-report.service", () => ({
 // consulta. Sin este doble el import arrastra Prisma y la prueba muere pidiendo
 // DATABASE_URL, que es exactamente lo que un test de página no debe necesitar.
 vi.mock("@/server/services/missing-item.service", () => ({
-  getMissingItems: mocks.getMissingItems,
+  getMissingManagementPage: mocks.getMissingItems,
   getActionableMissingCount: mocks.getActionableMissingCount,
 }));
 vi.mock("@/server/services/missing-receiver.service", async (original) => {
@@ -42,6 +42,8 @@ import RevisionFaltantesPage from "./page";
 function searchParams(
   params: {
     page?: string;
+    qpage?: string;
+    bulk?: string;
     scope?: string;
     view?: string;
     cursor?: string;
@@ -62,7 +64,12 @@ beforeEach(() => {
   mocks.requireCapability.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
   mocks.getMissingReportQueue.mockResolvedValue({ groups: [], hasMore: false, page: 1 });
   mocks.listReceiverQueue.mockResolvedValue([]);
-  mocks.getMissingItems.mockResolvedValue({ items: [], nextCursor: null });
+  mocks.getMissingItems.mockResolvedValue({
+    items: [],
+    page: 1,
+    pageSize: 50,
+    total: 0,
+  });
   mocks.getActionableMissingCount.mockResolvedValue(0);
 });
 
@@ -106,6 +113,35 @@ describe("RevisionFaltantesPage · authorization", () => {
 });
 
 describe("RevisionFaltantesPage · page param", () => {
+  it("uses qpage independently from report page and ignores legacy cursor", async () => {
+    await RevisionFaltantesPage({
+      searchParams: searchParams({ qpage: "4", page: "2", cursor: "old" }),
+    });
+
+    expect(mocks.getMissingItems).toHaveBeenCalledWith({
+      page: 4,
+      scope: "actionable",
+      origin: "shelf",
+      staleBefore: undefined,
+      canViewCustomerIdentity: true,
+      canViewSupplierIdentity: true,
+    });
+    expect(mocks.getMissingReportQueue).toHaveBeenCalledWith(
+      expect.objectContaining({ page: 2 }),
+    );
+  });
+
+  it.each([undefined, "0", "-1", "1.5", "junk"])(
+    "normalizes qpage %s",
+    async (qpage: string | undefined) => {
+      await RevisionFaltantesPage({ searchParams: searchParams({ qpage }) });
+
+      expect(mocks.getMissingItems).toHaveBeenCalledWith(
+        expect.objectContaining({ page: 1 }),
+      );
+    },
+  );
+
   it("defaults to the first page and the project page size", async () => {
     await RevisionFaltantesPage({ searchParams: searchParams() });
 

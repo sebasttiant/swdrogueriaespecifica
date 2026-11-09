@@ -17,8 +17,9 @@ import {
   REPORTS_TAB_SCOPE,
 } from "@/features/faltantes/missing-board-tabs";
 import { MissingQueueBoard } from "@/features/faltantes/missing-queue-board";
+import { parseMissingManagementPage } from "@/features/faltantes/missing-management-pagination";
 import {
-  MISSING_QUEUE_PATH,
+  missingScopeHref,
   SHELF_BOARD_ROUTE,
   repositoryScopeFor,
   resolveMissingBulkMode,
@@ -32,7 +33,7 @@ import {
 } from "@/features/faltantes/missing-stale";
 import {
   getActionableMissingCount,
-  getMissingItems,
+  getMissingManagementPage,
 } from "@/server/services/missing-item.service";
 import { can } from "@/lib/auth/permissions";
 import { requireCapability } from "@/lib/auth/require-role";
@@ -63,6 +64,7 @@ export default async function RevisionFaltantesPage({
 }: {
   searchParams: Promise<{
     page?: string;
+    qpage?: string;
     scope?: string;
     cursor?: string;
     /** Estado dentro del buzón de reportes, para no pisar `scope`. */
@@ -111,8 +113,8 @@ export default async function RevisionFaltantesPage({
 
   const {
     page: rawPage,
+    qpage: rawQueuePage,
     scope: rawScope,
-    cursor: rawCursor,
     rscope: rawReportScope,
     demora: rawStale,
     bulk: rawBulk,
@@ -176,8 +178,8 @@ export default async function RevisionFaltantesPage({
   const [queue, actionableCount, reports, pendingReportGroups] = await Promise.all([
     showingReports
       ? Promise.resolve(null)
-      : getMissingItems({
-          cursor: rawCursor,
+      : getMissingManagementPage({
+          page: parseMissingManagementPage(rawQueuePage),
           scope: repositoryScopeFor(scope),
           origin: SHELF_ONLY,
           staleBefore,
@@ -213,7 +215,7 @@ export default async function RevisionFaltantesPage({
           sin cerrarse, del más viejo al más nuevo.{" "}
           <Link
             prefetch={false}
-            href={MISSING_QUEUE_PATH}
+            href={missingScopeHref(scope, SHELF_BOARD_ROUTE, bulkMode)}
             className="font-semibold text-primary underline"
           >
             Ver todos
@@ -270,7 +272,8 @@ export default async function RevisionFaltantesPage({
       ) : (
         <MissingQueueBoard
           items={queue!.items}
-          nextCursor={queue!.nextCursor}
+          nextCursor={null}
+          managementPage={queue!}
           scope={scope}
           canAct={canAct}
           canExport={canExport}
