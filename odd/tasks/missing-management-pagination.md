@@ -21,7 +21,7 @@ Responsive wrapping classes and authenticated markup were inspected, but exact b
 
 ## Routing and delivery
 The original branch `feat/missing-management-pagination` is based on old restore work and contains mixed WIP commit `631b8e81`. Delivery was rebuilt in isolated worktree `feat/missing-management-pagination-vps` from local `origin/main` at `b63276ef`; the preliminary fetch failed because GitHub DNS was unavailable, so publication must verify the remote before push. Only pagination code, its tests and this task document belong in the delivery unit.
-Work-unit commits: `5e078253` (repository/service page contract), `d2224060` (pagination UI and cursor regressions), and `6ab293ac` (management route wiring and delivery evidence).
+Work-unit commits: `5e078253` (repository/service page contract), `d2224060` (pagination UI and cursor regressions), and `6ab293ac` (management route wiring and delivery evidence). The clean branch was published as `origin/feat/missing-management-pagination-vps` with verified feature head `e8234953b132abcf39cadcd3e80e315f9fc42fec`; `origin/main` remained at `b63276efc3789c1dc29be4304a9ac310f4f4d7b6` during publication.
 RDD native assess/inspect was unavailable during implementation: package-local-binary-missing; no lineage or receipt, no native approval claimed. Independent verifier fallback completed.
 Node 22.22.3 warns against required >=24.18.0 <25 despite successful checks. The first T3 setup attempt triggered an automatic dependency refresh, then stopped before tests; Git remained clean. One explicitly authorized bounded retry reused the prepared dependencies without further package mutation and completed the PostgreSQL/HTTP checks.
 
