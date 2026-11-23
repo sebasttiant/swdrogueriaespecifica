@@ -32,6 +32,10 @@ packages:
 #     vitest > jsdom. Toolchain de pruebas, no entra en la imagen. Se fija
 #     8.12.2 (publicada 2026-10-15) y no 8.12.3: esa tiene 6 días y queda por
 #     debajo de `minimumReleaseAge`. 8.12.2 cierra el aviso y ya maduró.
+#   effect <=3.22.0         -> GHSA-7589-6fvf-x4pw / CVE-2026-121707 (HIGH,
+#     ReDoS en Schema.TemplateLiteral). Entra vía prisma / @prisma/client >
+#     @prisma/config. Parche desde 3.22.1; se fija 3.22.4 (publicada
+#     2026-10-22, madura). 3.22.5 (2026-11-19) aún no cumple minimumReleaseAge.
 overrides:
   "uuid@<11.1.1": "^11.1.1"
   "brace-expansion@<1.1.21": "1.1.21"
@@ -47,6 +51,7 @@ overrides:
   "sharp@<0.35.5": "0.35.5"
   "vite@>=8.2.0 <8.2.4": "8.2.4"
   "undici@>=8.0.0 <8.12.2": "8.12.2"
+  "effect@<=3.22.0": "3.22.4"
 
 # Advisories SIN parche disponible. Se excluyen de `pnpm audit` de a uno, nunca
 # bajando `--audit-level`: bajar el umbral apaga el escáner entero y oculta los
